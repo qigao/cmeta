@@ -396,12 +396,12 @@ CMETA_INLINE cmeta_status cmeta_stl_cmeta_status(stl_status status) {
 #define SALTS_META_C1_METHOD_REFLECT_DISPATCH_I(kind,pub,op,extra,...) \
  CMETA_PP_CAT(SALTS_META_C1_METHOD_REFLECT_,kind)(pub,op,extra,__VA_ARGS__)
 
-#define SALTS_META_C1_METHOD_REFLECT_PUSH_VALUE(pub,op,extra,name,type,type_desc) \
- SALTS_META_C1_VALUE_METHOD(pub,name,type,type_desc)
-#define SALTS_META_C1_METHOD_REFLECT_PUSH_VALUE_ITER(pub,op,extra,name,type,type_desc) \
- SALTS_META_C1_VALUE_METHOD(pub,name,type,type_desc)
-#define SALTS_META_C1_METHOD_REFLECT_KEY_VALUE(pub,op,extra,name,type,type_desc) \
- SALTS_META_C1_VALUE_METHOD(pub,name,type,type_desc)
+#define SALTS_META_C1_METHOD_REFLECT_PUSH_VALUE(pub,op,extra,name,type,type_desc,emit) \
+ emit(pub,name,type,type_desc)
+#define SALTS_META_C1_METHOD_REFLECT_PUSH_VALUE_ITER(pub,op,extra,name,type,type_desc,emit) \
+ emit(pub,name,type,type_desc)
+#define SALTS_META_C1_METHOD_REFLECT_KEY_VALUE(pub,op,extra,name,type,type_desc,emit) \
+ emit(pub,name,type,type_desc)
 
 #define SALTS_META_C1_METHOD_REFLECT_INIT_SIZE SALTS_META_METHOD_REFLECT_SKIP
 #define SALTS_META_C1_METHOD_REFLECT_FROM_ARRAY_SIZE SALTS_META_METHOD_REFLECT_SKIP
@@ -460,7 +460,7 @@ CMETA_INLINE cmeta_status cmeta_stl_cmeta_status(stl_status status) {
 
 #define SALTS_META_C1_METHOD_METADATA(kind,name,type,type_desc,methods) \
  SALTS_META_RECEIVER_TYPE(name) \
- methods(SALTS_META_C1_METHOD_REFLECT_DISPATCH,(name,type,type_desc)) \
+ methods(SALTS_META_C1_METHOD_REFLECT_DISPATCH,(name,type,type_desc,SALTS_META_C1_VALUE_METHOD)) \
  CMETA_LOCAL const cmeta_receiver_operation name##_receiver_operations[] = { \
    methods(SALTS_META_C1_METHOD_ENTRY_DISPATCH,(name,type,type_desc)) \
  }; \
@@ -481,8 +481,8 @@ CMETA_INLINE cmeta_status cmeta_stl_cmeta_status(stl_status status) {
  CMETA_PP_CAT(SALTS_META_C2_METHOD_REFLECT_,kind)(pub,op,extra,__VA_ARGS__)
 
 #define SALTS_META_C2_METHOD_REFLECT_PUT( \
-    pub,op,extra,name,kt,vt,key_desc,value_desc) \
- SALTS_META_C2_PUT_METHOD(pub,name,kt,vt,key_desc,value_desc)
+    pub,op,extra,name,kt,vt,key_desc,value_desc,emit) \
+ emit(pub,name,kt,vt,key_desc,value_desc)
 
 #define SALTS_META_C2_METHOD_REFLECT_INIT_KV_HASH SALTS_META_METHOD_REFLECT_SKIP
 #define SALTS_META_C2_METHOD_REFLECT_FROM_ENTRIES SALTS_META_METHOD_REFLECT_SKIP
@@ -549,7 +549,7 @@ CMETA_INLINE cmeta_status cmeta_stl_cmeta_status(stl_status status) {
     kind,name,kt,vt,key_desc,value_desc,methods) \
  SALTS_META_RECEIVER_TYPE(name) \
  methods(SALTS_META_C2_METHOD_REFLECT_DISPATCH, \
-         (name,kt,vt,key_desc,value_desc)) \
+         (name,kt,vt,key_desc,value_desc,SALTS_META_C2_PUT_METHOD)) \
  CMETA_LOCAL const cmeta_receiver_operation name##_receiver_operations[] = { \
    methods(SALTS_META_C2_METHOD_ENTRY_DISPATCH, \
            (name,kt,vt,key_desc,value_desc)) \
@@ -777,6 +777,66 @@ CMETA_INLINE bool cmeta_stl_typed_map_range_next(
 #define SALTS_BTREE_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_BTree,name,k,v) SALTS_META_MAP_ACCEPT(name,k,v) SALTS_META_C2_CONSTRUCT(name,SALTS_STL_BTREE_INITIALIZER(k,v),name##_destroy(self)) SALTS_META_TREE_MAP_DATA(name,k,v,btree)
 #define SALTS_BPLUS_TREE_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_BPlusTree,name,k,v) SALTS_META_MAP_ACCEPT(name,k,v) SALTS_META_C2_CONSTRUCT(name,SALTS_STL_BPLUS_TREE_INITIALIZER(k,v),name##_destroy(self)) SALTS_META_TREE_MAP_DATA(name,k,v,bplus_tree)
 #define SALTS_VEC_DEFINE_EXPLICIT(name,type,type_desc,data_desc) SALTS_VEC_DEFINE_EXPLICIT_IDENTITY(name,type,type_desc,data_desc,NULL)
+/* Borrow the owner's metadata instead of statically initializing imported
+ * addresses. Raw methods are replayed from the same schema as local facades. */
+#define SALTS_META_IMPORTED_BASE(name,container_expr,methods_expr) \
+ CMETA_INLINE const cmeta_container_desc *name##_cmeta_descriptor(void){return (container_expr);} \
+ CMETA_INLINE const cmeta_receiver_operation_set *name##_receiver_operation_set(void){return (methods_expr);} \
+ CMETA_INLINE cmeta_collector name##_collector(name *output,size_t limit){return name##_cmeta_descriptor()->collector(output,limit);} \
+ CMETA_INLINE cmeta_collector name##_collector_erased(void *output,size_t limit){return name##_collector((name*)output,limit);} \
+ enum { name##_cmeta_typed = 1 };
+#define SALTS_META_IMPORTED_COMMON(name,container_expr,data_expr,methods_expr) \
+ SALTS_META_IMPORTED_BASE(name,container_expr,methods_expr) \
+ CMETA_INLINE const cmeta_data_desc *name##_cmeta_data(void){return (data_expr);} \
+ CMETA_DEFINE_DATA_TRAITS(name,name##_cmeta_data()); \
+ CMETA_LOCAL const cmeta_type_desc name##_cmeta_type={#name,sizeof(name),_Alignof(name),CMETA_T_OBJECT,NULL,&cmeta_traits_##name,NULL}; \
+ CMETA_INLINE cmeta_status name##_construct_init_zero(void *object){return cmeta_data_construct_init_zero(name##_cmeta_data(),object);} \
+ CMETA_INLINE void name##_construct_restore_zero(void *object){(void)cmeta_data_construct_restore_zero(name##_cmeta_data(),object);} \
+ CMETA_INLINE void name##_construct_move(void *destination,void *source){(void)cmeta_data_construct_move(name##_cmeta_data(),destination,source);} \
+ enum { name##_construct_flags = CMETA_LIFECYCLE_INIT_NOFAIL | CMETA_LIFECYCLE_MOVABLE }; \
+ CMETA_LOCAL const cmeta_data_construct_ops name##_construct_ops={sizeof(cmeta_data_construct_ops),CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,&name##_cmeta_type,name##_construct_init_zero,name##_construct_restore_zero,name##_construct_move,name##_construct_flags}; \
+ CMETA_DEFINE_STATIC_LIFECYCLE(name,name##_construct_ops,name##_construct_flags)
+#define SALTS_META_IMPORTED_METHOD(name,pub) \
+ CMETA_INLINE const cmeta_function_abi_desc *name##_##pub##_function_abi(void){const cmeta_receiver_operation *op=cmeta_receiver_operation_find(name##_receiver_operation_set(),#pub);return op!=NULL?op->abi:NULL;} \
+ CMETA_INLINE const cmeta_function_desc *name##_##pub##_function(void){const cmeta_function_abi_desc *abi=name##_##pub##_function_abi();return abi!=NULL?abi->function:NULL;}
+#define SALTS_META_C1_IMPORTED_METHOD(pub,name,type,type_desc) SALTS_META_IMPORTED_METHOD(name,pub)
+#define SALTS_META_C2_IMPORTED_METHOD(pub,name,k,v,key_desc,value_desc) SALTS_META_IMPORTED_METHOD(name,pub)
+#define SALTS_META_IMPORTED_RANGE(name,pub,member) \
+ CMETA_INLINE cmeta_range name##_##pub(const name *self){return name##_cmeta_descriptor()->member(self);}
+
+/* Storage, raw operation prefix and method membership come from the same kind
+ * row as local declarations. Replay the same reflection filter as well. */
+#define SALTS_STL_KIND_IMPORT(row,name,...) SALTS_STL_KIND_IMPORT_E(row,name,__VA_ARGS__)
+#define SALTS_STL_KIND_IMPORT_E(row,name,...) SALTS_STL_KIND_IMPORT_EXPAND(CMETA_PP_UNPAREN row,name,__VA_ARGS__)
+#define SALTS_STL_KIND_IMPORT_EXPAND(...) SALTS_STL_KIND_IMPORT_I(__VA_ARGS__)
+#define SALTS_STL_KIND_IMPORT_I(kind,arity,family,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags,name,...) \
+ CMETA_PP_CAT(SALTS_META_IMPORT_C,arity)(name,raw,prefix,methods,__VA_ARGS__)
+#define SALTS_META_IMPORT_C1(name,raw,prefix,methods,type,container_expr,data_expr,methods_expr) \
+ CMETA_CONTAINER1_DECLARE(name,raw); \
+ SALTS_META_IMPORTED_COMMON(name,container_expr,data_expr,methods_expr) \
+ CMETA_CONTAINER1_METHODS_WITH_DESCRIPTOR(name,type,name##_cmeta_descriptor()->element_type,raw,prefix,STL_OK,name##_cmeta_descriptor(),methods) \
+ SALTS_META_IMPORTED_RANGE(name,range,range) \
+ methods(SALTS_META_C1_METHOD_REFLECT_DISPATCH,(name,type,_,SALTS_META_C1_IMPORTED_METHOD))
+#define SALTS_META_IMPORT_C2(name,raw,prefix,methods,k,v,container_expr,data_expr,methods_expr) \
+ CMETA_CONTAINER2_DECLARE(name,k,v,raw); \
+ SALTS_META_IMPORTED_COMMON(name,container_expr,data_expr,methods_expr) \
+ CMETA_CONTAINER2_METHODS_WITH_DESCRIPTOR(name,k,v,name##_cmeta_descriptor()->key_type,name##_cmeta_descriptor()->value_type,raw,prefix,STL_OK,name##_cmeta_descriptor(),methods) \
+ SALTS_META_IMPORTED_RANGE(name,keys_range,keys_range) \
+ SALTS_META_IMPORTED_RANGE(name,values_range,values_range) \
+ SALTS_META_IMPORTED_RANGE(name,entries_range,entries_range) \
+ methods(SALTS_META_C2_METHOD_REFLECT_DISPATCH,(name,k,v,_,_,SALTS_META_C2_IMPORTED_METHOD))
+/* Heap deliberately keeps its existing method/range/collector-only contract. */
+#define SALTS_STL_HEAP_IMPORT(name,type,container_expr,methods_expr) \
+ SALTS_STL_HEAP_IMPORT_E(SALTS_STL_KIND_ROW_Heap,name,type,container_expr,methods_expr)
+#define SALTS_STL_HEAP_IMPORT_E(row,...) SALTS_STL_HEAP_IMPORT_EXPAND(CMETA_PP_UNPAREN row,__VA_ARGS__)
+#define SALTS_STL_HEAP_IMPORT_EXPAND(...) SALTS_STL_HEAP_IMPORT_I(__VA_ARGS__)
+#define SALTS_STL_HEAP_IMPORT_I(kind,arity,family,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags,name,type,container_expr,methods_expr) \
+ CMETA_CONTAINER1_DECLARE(name,raw); \
+ SALTS_META_IMPORTED_BASE(name,container_expr,methods_expr) \
+ CMETA_LOCAL const cmeta_type_desc name##_cmeta_type={#name,sizeof(name),_Alignof(name),CMETA_T_OBJECT,NULL,NULL,NULL}; \
+ CMETA_CONTAINER1_METHODS_WITH_DESCRIPTOR(name,type,name##_cmeta_descriptor()->element_type,raw,prefix,STL_OK,name##_cmeta_descriptor(),methods) \
+ SALTS_META_IMPORTED_RANGE(name,range,range) \
+ methods(SALTS_META_C1_METHOD_REFLECT_DISPATCH,(name,type,_,SALTS_META_C1_IMPORTED_METHOD))
 #define SALTS_VEC_DEFINE_EXPLICIT_IDENTITY(name,type,type_desc,data_desc,value_identity) SALTS_STL_KIND_APPLY_EXPLICIT(SALTS_STL_KIND_ROW_Vec,name,type,type_desc,data_desc,value_identity) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_VEC_INITIALIZER_WITH_TYPE(type,type_desc),name##_destroy(self)) SALTS_META_VEC_COLLECTION_DATA_WITH_DATA(name,type,data_desc)
 #define SALTS_DEQUE_DEFINE_EXPLICIT(name,type,type_desc,data_desc) SALTS_DEQUE_DEFINE_EXPLICIT_IDENTITY(name,type,type_desc,data_desc,NULL)
 #define SALTS_DEQUE_DEFINE_EXPLICIT_IDENTITY(name,type,type_desc,data_desc,value_identity) SALTS_STL_KIND_APPLY_EXPLICIT(SALTS_STL_KIND_ROW_Deque,name,type,type_desc,data_desc,value_identity) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_DEQUE_INITIALIZER_WITH_TYPE(type,type_desc),name##_destroy(self)) SALTS_META_INDEX_SEQUENCE_DATA_WITH_DATA(name,type,data_desc,CMETA_DATA_SEQUENCE)

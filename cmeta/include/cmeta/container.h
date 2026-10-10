@@ -163,10 +163,17 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
 #define CMETA_CONTAINER1_DECLARE(name, raw_type) \
     typedef struct name { cmeta_container_header cmeta; raw_type raw; } name
 
+/* Replay only methods for an already declared wrapper. descriptor_expr may
+ * query immutable metadata owned by another module at runtime. */
+#define CMETA_CONTAINER1_METHODS_WITH_DESCRIPTOR(name, type, type_desc, raw_type, prefix, ok_code, descriptor_expr, methods) \
+    methods(CMETA_C1_INLINE_DISPATCH, (name, type, type_desc, raw_type, prefix, ok_code, descriptor_expr))
+#define CMETA_CONTAINER2_METHODS_WITH_DESCRIPTOR(name, key_type, value_type, key_desc, value_desc, raw_type, prefix, ok_code, descriptor_expr, methods) \
+    methods(CMETA_C2_INLINE_DISPATCH, (name, key_type, value_type, key_desc, value_desc, raw_type, prefix, ok_code, descriptor_expr))
+
 #define CMETA_CONTAINER1_DEFINE_WITH_TYPE(name, type, type_desc, raw_type, prefix, ok_code, aux, methods) \
     CMETA_CONTAINER1_DECLARE(name, raw_type); \
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc; \
-    methods(CMETA_C1_INLINE_DISPATCH, (name, type, type_desc, raw_type, prefix, ok_code, aux))
+    CMETA_CONTAINER1_METHODS_WITH_DESCRIPTOR(name, type, type_desc, raw_type, prefix, ok_code, &name##_cmeta_container_desc, methods)
 #define CMETA_CONTAINER1_DEFINE(name, type, raw_type, prefix, ok_code, aux, methods) \
     CMETA_CONTAINER1_DEFINE_WITH_TYPE(name, type, CMETA_TYPEOF(type), raw_type, prefix, ok_code, aux, methods)
 
@@ -177,7 +184,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         if (!self) return CMETA_INVALID_ARGUMENT; \
         rc = CMETA_CONTAINER_API(prefix, op)(&self->raw, (type_desc), limit); \
         if (rc == (ok)) { \
-            self->cmeta.descriptor = &name##_cmeta_container_desc; \
+            self->cmeta.descriptor = (aux); \
         } \
         return rc; \
     }
@@ -188,7 +195,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         if (!self) return CMETA_INVALID_ARGUMENT; \
         rc = CMETA_CONTAINER_API(prefix, op)(&self->raw, values, count, (type_desc), limit); \
         if (rc == (ok)) { \
-            self->cmeta.descriptor = &name##_cmeta_container_desc; \
+            self->cmeta.descriptor = (aux); \
         } \
         return rc; \
     }
@@ -199,7 +206,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         if (!self) return CMETA_INVALID_ARGUMENT; \
         rc = CMETA_CONTAINER_API(prefix, op)(&self->raw, (type_desc), limit); \
         if (rc == (ok)) { \
-            self->cmeta.descriptor = &name##_cmeta_container_desc; \
+            self->cmeta.descriptor = (aux); \
         } \
         return rc; \
     }
@@ -210,7 +217,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         if (!self) return CMETA_INVALID_ARGUMENT; \
         rc = CMETA_CONTAINER_API(prefix, op)(&self->raw, values, count, (type_desc), limit); \
         if (rc == (ok)) { \
-            self->cmeta.descriptor = &name##_cmeta_container_desc; \
+            self->cmeta.descriptor = (aux); \
         } \
         return rc; \
     }
@@ -221,7 +228,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         if (!self) return CMETA_INVALID_ARGUMENT; \
         rc = CMETA_CONTAINER_API(prefix, op)(&self->raw, (type_desc), limit); \
         if (rc == (ok)) { \
-            self->cmeta.descriptor = &name##_cmeta_container_desc; \
+            self->cmeta.descriptor = (aux); \
         } \
         return rc; \
     }
@@ -232,7 +239,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         if (!self) return CMETA_INVALID_ARGUMENT; \
         rc = CMETA_CONTAINER_API(prefix, op)(&self->raw, values, count, (type_desc), limit); \
         if (rc == (ok)) { \
-            self->cmeta.descriptor = &name##_cmeta_container_desc; \
+            self->cmeta.descriptor = (aux); \
         } \
         return rc; \
     }
@@ -294,7 +301,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
 #define CMETA_CONTAINER2_DEFINE_WITH_TYPES(name, key_type, value_type, key_desc, value_desc, raw_type, prefix, ok_code, aux, methods) \
     CMETA_CONTAINER2_DECLARE(name, key_type, value_type, raw_type); \
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc; \
-    methods(CMETA_C2_INLINE_DISPATCH, (name, key_type, value_type, key_desc, value_desc, raw_type, prefix, ok_code, aux))
+    CMETA_CONTAINER2_METHODS_WITH_DESCRIPTOR(name, key_type, value_type, key_desc, value_desc, raw_type, prefix, ok_code, &name##_cmeta_container_desc, methods)
 #define CMETA_CONTAINER2_DEFINE(name, key_type, value_type, raw_type, prefix, ok_code, aux, methods) \
     CMETA_CONTAINER2_DEFINE_WITH_TYPES(name, key_type, value_type, CMETA_TYPEOF(key_type), CMETA_TYPEOF(value_type), raw_type, prefix, ok_code, aux, methods)
 
@@ -304,7 +311,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         if (!self) return CMETA_INVALID_ARGUMENT; \
         rc = CMETA_CONTAINER_API(prefix, op)(&self->raw, (key_desc), (value_desc), limit); \
         if (rc == (ok)) { \
-            self->cmeta.descriptor = &name##_cmeta_container_desc; \
+            self->cmeta.descriptor = (aux); \
         } \
         return rc; \
     }
@@ -314,7 +321,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         if (!self) return CMETA_INVALID_ARGUMENT; \
         rc = CMETA_CONTAINER_API(prefix, op)(&self->raw, (key_desc), (value_desc), limit); \
         if (rc == (ok)) { \
-            self->cmeta.descriptor = &name##_cmeta_container_desc; \
+            self->cmeta.descriptor = (aux); \
         } \
         return rc; \
     }
@@ -324,7 +331,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         if (!self) return CMETA_INVALID_ARGUMENT; \
         rc = CMETA_CONTAINER_API(prefix, op)(&self->raw, (key_desc), (value_desc), min_degree, limit); \
         if (rc == (ok)) { \
-            self->cmeta.descriptor = &name##_cmeta_container_desc; \
+            self->cmeta.descriptor = (aux); \
         } \
         return rc; \
     }
@@ -334,7 +341,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         if (!self) return CMETA_INVALID_ARGUMENT; \
         rc = CMETA_CONTAINER_API(prefix, op)(&self->raw, (key_desc), key_limit, (value_desc), value_limit); \
         if (rc == (ok)) { \
-            self->cmeta.descriptor = &name##_cmeta_container_desc; \
+            self->cmeta.descriptor = (aux); \
         } \
         return rc; \
     }

@@ -13,6 +13,21 @@ cmake_add_test(cstl_header_typed_test
   LIBS Salts::CSTL Salts::TinyTest
   FOLDER "cstl/tests")
 
+add_library(cstl_imported_metadata_fixture SHARED cstl_imported_metadata_fixture.c)
+target_link_libraries(cstl_imported_metadata_fixture PUBLIC Salts::Core Salts::CSTL)
+target_compile_definitions(cstl_imported_metadata_fixture PRIVATE CSTL_METADATA_PRODUCER)
+cmake_config_target(cstl_imported_metadata_fixture FOLDER "cstl/tests")
+cmake_add_test(cstl_imported_metadata_test
+  SOURCES cstl_imported_metadata_test.c
+  LIBS cstl_imported_metadata_fixture Salts::TinyTest
+  FOLDER "cstl/tests")
+cmake_add_test(cstl_imported_metadata_cpp_test
+  SOURCES cstl_imported_metadata_cpp_test.cpp
+  LIBS cstl_imported_metadata_fixture Salts::TinyTest
+  FOLDER "cstl/tests")
+set_target_properties(cstl_imported_metadata_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+
 if(WIN32)
   add_executable(cstl_imported_tstr_map_smoke
     cstl_imported_tstr_map_smoke.c)

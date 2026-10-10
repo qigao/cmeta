@@ -44,6 +44,68 @@ cmeta_type(BTree, IntTree, int, long);
 
 No `implement(...)`, `DeclareContainers(...)`, or `ImplementContainers(...)` call is required or exposed for typed containers.
 
+## Importing a C facade from a DLL
+
+Windows C cannot put addresses of DLL-imported data into static initializers.
+This affects element metadata in collection, range and method descriptors.
+For all 13 standard container kinds, `cstl_typed_import` replays the ordinary
+typed methods while borrowing the original module's immutable metadata:
+
+```c
+/* Producer: use the normal descriptor-explicit cmeta_type declaration, and
+ * export functions returning its container, data and receiver-operation set. */
+cstl_typed_import(Vec, SharedValues, Value,
+                  shared_values_container(), shared_values_data(),
+                  shared_values_methods());
+cstl_typed_import(Map, SharedLookup, Key, Value,
+                  shared_lookup_container(), shared_lookup_data(),
+                  shared_lookup_methods());
+/* Heap has no DataDesc or whole-container lifecycle provider. */
+cstl_typed_import(Heap, SharedPriority, Value,
+                  shared_priority_container(), shared_priority_methods());
+```
+
+| Kinds | Import arguments after kind/name | Capabilities |
+|---|---|---|
+| Vec, Deque, List, Stack, Queue, Set, HashSet | element C type, container/data/method queries | Typed methods, range, collector, reflection and container lifecycle |
+| Map, HashMap, MultiMap, BTree, BPlusTree | key/value C types, container/data/method queries | Typed methods, key/value/entry ranges, collector, reflection and container lifecycle |
+| Heap | element C type, container/method queries | Typed methods, range, collector and reflection, matching the local Heap declaration |
+
+All query expressions must return non-NULL descriptors for the same wrapper
+name, layout, kind and argument providers, produced by the normal explicit
+declaration without an additional wrapper identity argument (Heap uses its
+normal two-argument declaration). The producer must
+finish any graph initialization before returning them. Metadata and provider
+code remain borrowed: keep the module loaded until every value, range,
+collector and metadata borrow has ended. This is a linked-library contract,
+not admission of an unchecked dynamically loaded plugin.
+
+Typed methods, ranges, collectors, lifecycle traits, structured construction
+and method-reflection accessors retain their normal results and errors. Use
+`Name_cmeta_descriptor()`, `Name_cmeta_data()` and
+`Name_receiver_operation_set()` to query imported metadata; no header-local
+collection/map descriptor objects are emitted. Map entry ranges use the
+producer's entry TypeDesc. Existing `cmeta_type` declarations are unchanged.
+Importing does not add missing argument traits: hash keys still need HASH and
+EQUAL, ordered keys need COMPARE, and managed elements need their normal value
+lifecycle. Existing capacity errors and failed-collector cleanup also apply.
+Local and imported facades replay the same kind rows and reflection filters,
+including both Deque insertion ends and all three List insertion names.
+
+For a C++ consumer, declare the same wrapper with `cstl_typed_decl` and expose
+the producer's descriptor query functions with `extern "C"` linkage. The
+layout-only declaration owns no metadata; use the producer's DataDesc,
+container and operation callbacks to manage its values. The shared-library
+tests cover C and C++ consumers for all 13 kinds, including wrapper and map
+entry layout, owned-value copy/move, range lifetimes and collector rollback.
+Heap retains its range/collector contract without whole-container copy/move.
+
+The import path uses the existing descriptor ABIs. Runtime queries were chosen
+over mutable lazy descriptor copies or nullable static metadata because those
+would add publication races or lose object-independent inspection. Upgrade the
+SDK headers and rebuild consumers to adopt it; reverting requires regenerating
+or changing consumers back before removing the new macros.
+
 ## Owning nested values
 
 The descriptor-explicit `cmeta_type` forms attach whole-container COPY, MOVE and

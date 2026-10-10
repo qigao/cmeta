@@ -135,6 +135,44 @@
 
 #ifndef __cplusplus
 
+/* Full C facade borrowing immutable metadata from another module. The three
+ * expressions yield the exact wrapper's ContainerDesc, DataDesc and receiver
+ * operation set; they are evaluated only at runtime and must not return NULL.
+ * The owner uses the normal explicit declaration without an extra wrapper
+ * identity argument, or the normal two-argument Heap declaration. Kind, name,
+ * layout and argument providers must match.
+ * The module owns all providers and must outlive values, ranges and metadata
+ * borrows. No local collection/map provider objects are generated. Heap has
+ * no DataDesc/lifecycle provider and takes only container and methods queries. */
+#define CSTL_TYPED_IMPORT_Vec(name, type, container_expr, data_expr, methods_expr) \
+  SALTS_STL_KIND_IMPORT(SALTS_STL_KIND_ROW_Vec, name, type, container_expr, data_expr, methods_expr)
+#define CSTL_TYPED_IMPORT_Deque(name, type, container_expr, data_expr, methods_expr) \
+  SALTS_STL_KIND_IMPORT(SALTS_STL_KIND_ROW_Deque, name, type, container_expr, data_expr, methods_expr)
+#define CSTL_TYPED_IMPORT_List(name, type, container_expr, data_expr, methods_expr) \
+  SALTS_STL_KIND_IMPORT(SALTS_STL_KIND_ROW_List, name, type, container_expr, data_expr, methods_expr)
+#define CSTL_TYPED_IMPORT_Stack(name, type, container_expr, data_expr, methods_expr) \
+  SALTS_STL_KIND_IMPORT(SALTS_STL_KIND_ROW_Stack, name, type, container_expr, data_expr, methods_expr)
+#define CSTL_TYPED_IMPORT_Queue(name, type, container_expr, data_expr, methods_expr) \
+  SALTS_STL_KIND_IMPORT(SALTS_STL_KIND_ROW_Queue, name, type, container_expr, data_expr, methods_expr)
+#define CSTL_TYPED_IMPORT_Set(name, type, container_expr, data_expr, methods_expr) \
+  SALTS_STL_KIND_IMPORT(SALTS_STL_KIND_ROW_Set, name, type, container_expr, data_expr, methods_expr)
+#define CSTL_TYPED_IMPORT_HashSet(name, type, container_expr, data_expr, methods_expr) \
+  SALTS_STL_KIND_IMPORT(SALTS_STL_KIND_ROW_HashSet, name, type, container_expr, data_expr, methods_expr)
+#define CSTL_TYPED_IMPORT_Heap(name, type, container_expr, methods_expr) \
+  SALTS_STL_HEAP_IMPORT(name, type, container_expr, methods_expr)
+#define CSTL_TYPED_IMPORT_Map(name, key, value, container_expr, data_expr, methods_expr) \
+  SALTS_STL_KIND_IMPORT(SALTS_STL_KIND_ROW_Map, name, key, value, container_expr, data_expr, methods_expr)
+#define CSTL_TYPED_IMPORT_HashMap(name, key, value, container_expr, data_expr, methods_expr) \
+  SALTS_STL_KIND_IMPORT(SALTS_STL_KIND_ROW_HashMap, name, key, value, container_expr, data_expr, methods_expr)
+#define CSTL_TYPED_IMPORT_MultiMap(name, key, value, container_expr, data_expr, methods_expr) \
+  SALTS_STL_KIND_IMPORT(SALTS_STL_KIND_ROW_MultiMap, name, key, value, container_expr, data_expr, methods_expr)
+#define CSTL_TYPED_IMPORT_BTree(name, key, value, container_expr, data_expr, methods_expr) \
+  SALTS_STL_KIND_IMPORT(SALTS_STL_KIND_ROW_BTree, name, key, value, container_expr, data_expr, methods_expr)
+#define CSTL_TYPED_IMPORT_BPlusTree(name, key, value, container_expr, data_expr, methods_expr) \
+  SALTS_STL_KIND_IMPORT(SALTS_STL_KIND_ROW_BPlusTree, name, key, value, container_expr, data_expr, methods_expr)
+#define cstl_typed_import(kind, name, ...) \
+  CMETA_PP_CAT(CSTL_TYPED_IMPORT_, kind)(name, __VA_ARGS__)
+
 /* CSTL is a finite CMeta Generic provider. One cmeta_type(...) declaration
  * emits the concrete wrapper type, typed ABI, metadata, Range views and
  * collector. The declaration/expression initializers above remain erased
