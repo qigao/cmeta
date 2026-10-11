@@ -30,12 +30,15 @@ typedef struct remote_lane {
   cnet_stream_endpoint local;
   cnet_connection connection;
   cnet_managed_connection managed;
-  cnet_handoff_ticket taken_ticket;
+  cnet_handoff_ticket taken_ticket, held_ticket;
+  cnet_accepted_stream held_accepted;
   const void *owner_token;
   size_t connected, terminal, bytes, sent;
   size_t recycled, accept_completions, placement_calls;
   size_t published, taken, wake_submitted, wake_full, rejected_adopts;
+  size_t failed_publishes;
   bool sending, close_allowed, closing, done, client_destroyed, allow_adopt;
+  bool publication_held, allow_publish_after_seal, allow_empty_target_shutdown;
   int status;
 } remote_lane;
 
@@ -43,7 +46,7 @@ struct remote_case {
   native_io_sharded *sg;
   cnet_handoff inbox;
   remote_lane lane[REMOTE_SHARDS];
-  bool fail_adopt;
+  bool fail_adopt, seal_before_publish, seal_verified;
 };
 
 static native_io_backend_kind remote_backend(void) {
@@ -96,7 +99,8 @@ static void remote_state(void *user, cnet_connection connection,
    * The source may observe CLOSED or an OS-specific reset; neither is an
    * application ACK. Other transport failures must still fail this fixture. */
   if (state == CNET_CONNECTION_FAILED &&
-      !(lane->test->fail_adopt && lane->shard == 0u))
+      !((lane->test->fail_adopt || lane->test->seal_before_publish) &&
+        lane->shard == 0u))
     remote_error(lane, SALTS_ECONNRESET);
 }
 
@@ -250,6 +254,14 @@ static void remote_publish(remote_lane *lane) {
     remote_error(lane, SALTS_EPROTO);
     return;
   }
+  /* The source owns both descriptor and RESERVED ticket until publish succeeds.
+   * Hold them across an actual SG task barrier to let final Owner seal first. */
+  if (test->seal_before_publish) {
+    lane->held_accepted = accepted;
+    lane->held_ticket = ticket;
+    lane->publication_held = true;
+    return;
+  }
   rc = cnet_handoff_publish(&test->inbox, ticket, &accepted);
   if (rc != SALTS_OK) { remote_error(lane, rc); return; }
   if (accepted.internal_active != 0u) {
@@ -330,6 +342,29 @@ static void remote_adopt(remote_lane *lane) {
   lane->taken_ticket = ticket;
 }
 
+/* The final Owner seals its MPSC inbox after source reserves but before
+ * source publish, with no task concurrently mutating the reserved record. */
+static void remote_seal_target(native_io_sharded_context *context, void *user) {
+  remote_lane *lane = (remote_lane *)user;
+  remote_case *test = lane->test;
+  cnet_handoff_snapshot snapshot = {0};
+  if (lane->shard != REMOTE_TARGET ||
+      native_io_sharded_context_shard(context) != REMOTE_TARGET ||
+      cmeta_thread_current_token() != lane->owner_token) {
+    remote_error(lane, SALTS_EPERM);
+    return;
+  }
+  REMOTE_OK(lane, cnet_handoff_seal(&test->inbox));
+  REMOTE_OK(lane, cnet_handoff_get_snapshot(&test->inbox, &snapshot));
+  if (!snapshot.sealed || snapshot.drained ||
+      snapshot.reserved != 1u || snapshot.queued != 0u ||
+      snapshot.taken != 0u) {
+    remote_error(lane, SALTS_EPROTO);
+    return;
+  }
+  test->seal_verified = true;
+}
+
 static void remote_send(remote_lane *lane, const char *bytes) {
   mem_buffer_t *buffer = mem_get_buffer(mem_global(), 4u);
   int rc;
@@ -374,7 +409,8 @@ static void remote_progress(native_io_sharded_context *context, void *user) {
       completions, count, &routes, &accepts, &sharded));
   if (lane->shard == 0u && accepts != 0u) {
     lane->accept_completions += accepts;
-    if (accepts != 1u || lane->published != 0u) {
+    if (accepts != 1u || lane->published != 0u ||
+        lane->publication_held) {
       remote_error(lane, SALTS_EPROTO);
       return;
     }
@@ -386,6 +422,75 @@ static void remote_progress(native_io_sharded_context *context, void *user) {
     size_t work = 0u;
     REMOTE_OK(lane, cnet_manager_advance(&lane->manager, 1u, &work));
   }
+  /* A final-Owner shutdown interleaving cannot revoke a source-owned
+   * RESERVED credit or close the detached stream on publish failure. Stop
+   * producing after ESHUTDOWN, close the source-owned socket, release its
+   * credit once, and continue native progress to the real terminal. */
+  if (test->seal_before_publish) {
+    if (lane->shard == 0u) {
+      if (lane->publication_held && lane->allow_publish_after_seal) {
+        const uintptr_t socket = lane->held_accepted.internal_socket;
+        const int publish_rc = cnet_handoff_publish(
+            &test->inbox, lane->held_ticket, &lane->held_accepted);
+        if (publish_rc != SALTS_ESHUTDOWN ||
+            lane->held_accepted.internal_active != 1u ||
+            lane->held_accepted.internal_socket != socket) {
+          remote_error(lane, SALTS_EPROTO);
+          return;
+        }
+        REMOTE_OK(lane, cnet_handoff_release(&test->inbox, lane->held_ticket));
+        if (cnet_handoff_release(&test->inbox, lane->held_ticket) != SALTS_ENOENT) {
+          remote_error(lane, SALTS_EPROTO);
+          return;
+        }
+        REMOTE_OK(lane, cnet_accepted_stream_close(&lane->held_accepted));
+        if (lane->held_accepted.internal_active != 0u) {
+          remote_error(lane, SALTS_EPROTO);
+          return;
+        }
+        lane->publication_held = false;
+        ++lane->failed_publishes;
+      }
+      if (lane->failed_publishes != 0u && lane->connected != 0u &&
+          !lane->closing) {
+        int close_rc = cnet_close(&lane->client, lane->connection);
+        if (close_rc != SALTS_OK && close_rc != SALTS_EALREADY &&
+            close_rc != SALTS_ENOENT) {
+          remote_error(lane, close_rc);
+          return;
+        }
+        lane->closing = true;
+      }
+      if (lane->closing && lane->terminal != 0u) {
+        REMOTE_OK(lane, cnet_listener_close(&lane->listener));
+        REMOTE_OK(lane, cnet_listener_destroy(&lane->listener));
+        REMOTE_OK(lane, cnet_client_stop_external(&lane->client));
+        REMOTE_OK(lane, cnet_client_destroy(&lane->client));
+        lane->client_destroyed = true;
+        REMOTE_OK(lane, native_io_sharded_context_release_host(context, lane->lease));
+        lane->done = true;
+      }
+    } else if (lane->allow_empty_target_shutdown) {
+      cnet_manager_snapshot manager = {0};
+      cnet_handoff_snapshot handoff = {0};
+      REMOTE_OK(lane, cnet_manager_get_snapshot(&lane->manager, &manager));
+      REMOTE_OK(lane, cnet_handoff_get_snapshot(&test->inbox, &handoff));
+      if (!manager.drained || !handoff.sealed || !handoff.drained ||
+          handoff.reserved != 0u || handoff.queued != 0u ||
+          handoff.taken != 0u) {
+        remote_error(lane, SALTS_EPROTO);
+        return;
+      }
+      REMOTE_OK(lane, cnet_manager_destroy(&lane->manager));
+      REMOTE_OK(lane, cnet_client_stop_external(&lane->client));
+      REMOTE_OK(lane, cnet_client_destroy(&lane->client));
+      lane->client_destroyed = true;
+      REMOTE_OK(lane, native_io_sharded_context_release_host(context, lane->lease));
+      lane->done = true;
+    }
+    return;
+  }
+
   /* Failfast Manager adopt must still recycle its reservation and
    * terminalize the handed-off descriptor without inventing a transport
    * callback. The source connection shuts down independently after the
@@ -462,11 +567,12 @@ static void remote_progress(native_io_sharded_context *context, void *user) {
   }
 }
 
-static void remote_run_handoff(bool fail_adopt) {
+static void remote_run_handoff(bool fail_adopt, bool seal_before_publish) {
   remote_case test = {0};
   native_io_sharded_task setup[REMOTE_SHARDS] = {{0}};
   native_io_sharded_task progress[REMOTE_SHARDS] = {{0}};
   native_io_sharded_task dial = {0};
+  native_io_sharded_task target_seal = {0};
   const native_io_sharded_config config = {
       REMOTE_SHARDS, 8u,
       {remote_backend(), 24u, 48u, REMOTE_BATCH}};
@@ -474,13 +580,14 @@ static void remote_run_handoff(bool fail_adopt) {
   bool done = false;
 
   test.fail_adopt = fail_adopt;
+  test.seal_before_publish = seal_before_publish;
   check_equal(native_io_sharded_create(&config, &test.sg), SALTS_OK);
   check_not_null(test.sg);
   for (size_t i = 0u; i < REMOTE_SHARDS; ++i) {
     remote_lane *lane = &test.lane[i];
     lane->test = &test;
     lane->shard = i;
-    lane->allow_adopt = !fail_adopt;
+    lane->allow_adopt = !fail_adopt && !seal_before_publish;
     setup[i] = (native_io_sharded_task){remote_init, NULL, NULL, lane};
     progress[i] = (native_io_sharded_task){remote_progress, NULL, NULL, lane};
     check_equal(native_io_sharded_submit_to(test.sg, i, &setup[i]), SALTS_OK);
@@ -499,6 +606,41 @@ static void remote_run_handoff(bool fail_adopt) {
   check_equal(native_io_sharded_wait(test.sg), SALTS_OK);
   check_equal(test.lane[0].status, SALTS_OK);
 
+  if (seal_before_publish) {
+    /* Stop at real source RESERVE (with active detached TCP descriptor).
+     * SG task barriers establish producer/owner quiescence for this ordered
+     * adversarial interleaving without threads or wall-clock guesses. */
+    while ((!test.lane[0].publication_held ||
+            test.lane[0].connected == 0u) &&
+           cmeta_monotonic_ms() < deadline) {
+      for (size_t i = 0u; i < REMOTE_SHARDS; ++i)
+        check_equal(native_io_sharded_submit_to(
+            test.sg, i, &progress[i]), SALTS_OK);
+      check_equal(native_io_sharded_wait(test.sg), SALTS_OK);
+      check_equal(test.lane[0].status, SALTS_OK);
+      check_equal(test.lane[1].status, SALTS_OK);
+      cmeta_sleep_ms(1u);
+    }
+    check(test.lane[0].publication_held);
+    check_equal(test.lane[0].connected, (size_t)1u);
+    check_equal(test.lane[0].held_accepted.internal_active, 1u);
+    {
+      cnet_handoff_snapshot snapshot = {0};
+      check_equal(cnet_handoff_get_snapshot(&test.inbox, &snapshot), SALTS_OK);
+      check_equal(snapshot.reserved, (size_t)1u);
+      check_equal(snapshot.queued, (size_t)0u);
+      check_equal(snapshot.taken, (size_t)0u);
+    }
+    target_seal = (native_io_sharded_task){
+        remote_seal_target, NULL, NULL, &test.lane[REMOTE_TARGET]};
+    check_equal(native_io_sharded_submit_to(
+        test.sg, REMOTE_TARGET, &target_seal), SALTS_OK);
+    check_equal(native_io_sharded_wait(test.sg), SALTS_OK);
+    check_equal(test.lane[1].status, SALTS_OK);
+    check(test.seal_verified);
+    test.lane[0].allow_publish_after_seal = true;
+  }
+
   while (!done && cmeta_monotonic_ms() < deadline) {
     done = true;
     for (size_t i = 0u; i < REMOTE_SHARDS; ++i) {
@@ -513,7 +655,12 @@ static void remote_run_handoff(bool fail_adopt) {
     /* A round barrier makes both peers' application deliveries visible.
      * Only then may the owner-local close turns begin; this avoids treating
      * a send callback as proof of the remote application's receive. */
-    if (fail_adopt) {
+    if (seal_before_publish) {
+      /* The destination must not destroy its host/backend until the source
+       * has failed publication, returned RESERVED credit, closed its child
+       * descriptor and finished its own native terminal/progress. */
+      if (test.lane[0].done) test.lane[1].allow_empty_target_shutdown = true;
+    } else if (fail_adopt) {
       /* The source's real CONNECTED callback must complete before Owner 1
        * can reject/close its detached accepted child. All reads/writes here
        * occur only after native_io_sharded_wait's task barrier. */
@@ -533,20 +680,25 @@ static void remote_run_handoff(bool fail_adopt) {
     remote_lane *lane = &test.lane[i];
     check_equal(lane->status, SALTS_OK);
     check(lane->done);
-    check_equal(lane->connected, (size_t)(fail_adopt && i == REMOTE_TARGET ? 0u : 1u));
-    check_equal(lane->terminal, (size_t)(fail_adopt && i == REMOTE_TARGET ? 0u : 1u));
-    check_equal(lane->bytes, (size_t)(fail_adopt ? 0u : 4u));
-    check_equal(lane->sent, (size_t)(fail_adopt ? 0u : 4u));
+    check_equal(lane->connected, (size_t)((fail_adopt || seal_before_publish) &&
+                                           i == REMOTE_TARGET ? 0u : 1u));
+    check_equal(lane->terminal, (size_t)((fail_adopt || seal_before_publish) &&
+                                          i == REMOTE_TARGET ? 0u : 1u));
+    check_equal(lane->bytes, (size_t)(fail_adopt || seal_before_publish ? 0u : 4u));
+    check_equal(lane->sent, (size_t)(fail_adopt || seal_before_publish ? 0u : 4u));
     check_null(lane->client.impl);
   }
   check_equal(test.lane[0].accept_completions, (size_t)1u);
   check_equal(test.lane[0].placement_calls, (size_t)1u);
-  check_equal(test.lane[0].published, (size_t)1u);
+  check_equal(test.lane[0].published, (size_t)(seal_before_publish ? 0u : 1u));
   check_equal(test.lane[0].wake_submitted + test.lane[0].wake_full,
-              (size_t)1u);
-  check_equal(test.lane[1].taken, (size_t)1u);
-  check_equal(test.lane[1].recycled, (size_t)1u);
+              (size_t)(seal_before_publish ? 0u : 1u));
+  check_equal(test.lane[1].taken, (size_t)(seal_before_publish ? 0u : 1u));
+  check_equal(test.lane[1].recycled, (size_t)(seal_before_publish ? 0u : 1u));
   check_equal(test.lane[1].rejected_adopts, (size_t)(fail_adopt ? 1u : 0u));
+  check_equal(test.lane[0].failed_publishes,
+              (size_t)(seal_before_publish ? 1u : 0u));
+  if (seal_before_publish) check(test.seal_verified);
   {
     cnet_handoff_snapshot snapshot = {0};
     check_equal(cnet_handoff_get_snapshot(&test.inbox, &snapshot), SALTS_OK);
@@ -565,9 +717,12 @@ static void remote_run_handoff(bool fail_adopt) {
 
 spec("CNet SG remote Owner detached TCP handoff/credit lifecycle") {
   it("accepts on Owner 0, adopts on Owner 1, and recycles after real terminal") {
-    remote_run_handoff(false);
+    remote_run_handoff(false, false);
   }
   it("consumes invalid final-Owner Manager adopt and reclaims handoff credit") {
-    remote_run_handoff(true);
+    remote_run_handoff(true, false);
+  }
+  it("preserves source descriptor when final Owner seals before publish") {
+    remote_run_handoff(false, true);
   }
 }
