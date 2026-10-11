@@ -499,9 +499,12 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
       check_equal(cnet_send_buffer(&peers, accepted[1], reply), SALTS_OK);
       mem_buffer_release(reply);
     }
-    while (client_received < 4u && cmeta_monotonic_ms() < exchange_until)
+    /* A peer ACK may arrive before the local asynchronous send terminal. */
+    while ((client_received < 4u || raw_sends < 1u) &&
+           cmeta_monotonic_ms() < exchange_until)
       progress();
     check_equal(client_received, (size_t)4u);
+    check_equal(raw_sends, (size_t)1u);
 
     check_equal(cnet_managed_dial_protocol_ready(&dial, s.recovery_ticket, cmeta_monotonic_ms()),
                 SALTS_OK);
