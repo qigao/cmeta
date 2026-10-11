@@ -144,7 +144,7 @@ The deterministic seal-before-publish slice merged in
 [PR #1115](https://github.com/qigao/salts/pull/1115) after
 [exact-source CI #1766](https://github.com/qigao/salts/actions/runs/38116468224)
 passed. Both handoff and independent installed-SDK CTests actually executed on
-Linux GCC/Clang, macOS GCC/Clang and Windows MSVC. ARM64/mobile builds do not
+Linux GCC/Clang, both macOS AppleClang CI profiles and Windows MSVC. ARM64/mobile builds do not
 qualify these handoff scenarios on native devices; no SDK publication occurred.
 
 ### Concurrent listener publication and wake-tail fixture
