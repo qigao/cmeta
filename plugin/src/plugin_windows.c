@@ -97,13 +97,14 @@ cmeta_plugin_status cmeta_plugin_platform_open(
             free(wide_path);
             return CMETA_PLUGIN_LOAD_FAILED;
         }
+        /* Keep dependency discovery within the plugin directory and the
+         * application's explicitly trusted Windows search directories. */
         module = LoadLibraryExW(
-            absolute_path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+            absolute_path, NULL,
+            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
         free(absolute_path);
     } else {
-        /* Preserve the historical bare-name search semantics. Explicit paths
-         * use LOAD_WITH_ALTERED_SEARCH_PATH so private dependent DLLs are
-         * resolved relative to the plugin module, not the process cwd/PATH. */
+        /* Bare-name lookup remains the caller's existing platform policy. */
         module = LoadLibraryW(wide_path);
     }
     free(wide_path);

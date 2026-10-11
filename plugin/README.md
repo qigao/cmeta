@@ -7,6 +7,35 @@ Plugin and CFlow are independent capabilities. Plugin owns module publication,
 loading, registry, leases and quiescent unload; it does not own graph/execution
 semantics and does not link CFlow.
 
+## Windows 显式路径的依赖搜索
+
+带目录分隔符的 UTF-8 插件路径先转换为绝对路径，再使用
+`LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS`。
+依赖可来自插件目录、宿主程序目录、System32 和宿主显式注册的目录；
+不会把普通当前目录或 PATH 条目追加进这次搜索。裸文件名继续使用既有平台名称搜索语义，
+需要限定搜索范围的宿主应传入显式路径。Windows 自身已加载模块、KnownDLLs、
+API set 和重定向规则仍适用，这些标志不提供模块隔离或签名验证。
+语义依据：[Microsoft LoadLibraryExW](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibraryexw)。
+
+**HIGH／兼容性**：原先依赖当前目录或 PATH 才能找到的 DLL，需要部署到受信目录，
+或由宿主在启动阶段显式注册依赖目录。插件目录中的私有依赖继续受到支持。
+平台不支持这些标志或依赖不可解析时返回 `CMETA_PLUGIN_LOAD_FAILED`，不扩大搜索范围重试。
+Plugin/CMeta ABI、registry 状态归属、lease 和停止／卸载顺序保持不变。
+相对主插件路径仍以调用时的当前目录解析；宿主仍负责验证主插件路径和目录来源。
+
+正式测试 `cmeta_plugin_windows_search_test` 放在 `plugin/tests`，由 `BUILD_TESTS`
+和 Windows 平台条件控制，不依赖可选 CMetaNative。真实测试 DLL 覆盖同目录依赖、
+绝对／相对主插件路径，以及 `AddDllDirectory` 显式注册的独立依赖目录。
+测试通过 canonical Function ABI 验证后调用依赖函数，并按 lease → stop → quiescent → unload
+清理；注册目录仅在该测试进程存活期间使用，卸载后移除。
+
+**验证状态（2026-10-11）**：源码修复与上述测试已准备，未本地编译或运行，未发布 SDK。
+这三项正向用例不构成完整搜索边界验收；发布方还需在正式 Windows qualification 中覆盖
+宿主／系统目录、目录边界拒绝、加载失败清理及既有 ComponentPlugin 生命周期回归。
+按当前仓库 user presets 完成构建和 CTest 后才能记录通过，不能用源码审查代替运行结果。
+Retro 仍消费已发布 rc.11，并保留其 Windows 迁移门槛，等待包含修复的发布包和正式验收证据。
+回滚仅还原源码补丁及对应测试；不得据此移除消费方的搜索策略要求。
+
 ## 显式生成 Plugin 声明
 
 Plugin 的公开宏和枚举常量统一使用 `CMETA_PLUGIN_*` 前缀，类型和函数使用

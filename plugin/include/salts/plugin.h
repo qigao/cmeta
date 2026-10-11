@@ -268,6 +268,15 @@ cmeta_plugin_status cmeta_plugin_registry_init(
     cmeta_plugin_registry *registry,
     const cmeta_plugin_registry_config *config);
 
+/*
+ * path is borrowed, NUL-terminated UTF-8. On Windows, paths containing a
+ * directory separator are resolved to an absolute path before loading.
+ * Their dependency search uses DLL_LOAD_DIR | DEFAULT_DIRS: the plugin
+ * directory, application directory, System32 and explicitly registered user
+ * directories. Ordinary cwd/PATH entries are not added to that search.
+ * Bare names retain the platform's existing name-search policy. Loading
+ * failure returns CMETA_PLUGIN_LOAD_FAILED without retrying a broader policy.
+ */
 cmeta_plugin_status cmeta_plugin_registry_load(
     cmeta_plugin_registry *registry,
     const char *path,
