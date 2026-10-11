@@ -9,6 +9,7 @@
 #include <tinytest.h>
 
 #include <stdint.h>
+#include <stdatomic.h>
 #include <string.h>
 
 /* Real 2-SG-Owner TCP accept/handoff/adopt with ONE NativeIO observe authority
@@ -715,6 +716,322 @@ static void remote_run_handoff(bool fail_adopt, bool seal_before_publish) {
   check_equal(native_io_sharded_destroy(test.sg), SALTS_OK);
 }
 
+/* Three real listener Owners publish into one final Owner's MPSC inbox.
+ * Owner 0 publishes before seal and pauses in its actual publish -> wake tail;
+ * Owners 1/2 race publication against Owner 3 sealing admission. Queued children
+ * are canceled (take/close/release) on Owner 3, not adopted into a second
+ * transport. This isolates producer quiescence from the earlier adopt tests.
+ * Atomic gates deliberately pause test tasks, with a finite failure deadline;
+ * ordinary transport progress remains in short, single-observe SG turns. */
+enum { RACE_PRODUCERS = 3u, RACE_TARGET = 3u, RACE_SHARDS = 4u,
+       RACE_TASK_CAPACITY = 8u };
+typedef struct race_case race_case;
+typedef struct race_lane {
+  race_case *test;
+  size_t shard;
+  native_io_sharded_host_lease lease;
+  native_io_backend *backend;
+  cnet_client client;
+  cnet_listener listener;
+  cnet_connection connection;
+  cnet_accepted_stream accepted;
+  cnet_handoff_ticket ticket;
+  const void *owner_token;
+  size_t connected, terminal, accepts, wakes, taken, queue_tasks;
+  bool receiving, closing, released;
+  atomic_bool publish_finished, producer_done;
+  int status, publish_status, wake_status, early_release;
+} race_lane;
+struct race_case {
+  native_io_sharded *sg;
+  cnet_handoff inbox;
+  race_lane lane[RACE_SHARDS];
+  atomic_size_t race_ready;
+  atomic_bool start, wake_allowed, abort, target_probed, target_allowed;
+  bool full_wake_queue;
+};
+static race_case race_test;
+
+#define RACE_OK(lane, call) do { int race_rc_ = (call); \
+  if (race_rc_ != SALTS_OK) { (lane)->status = race_rc_; return; } \
+} while (0)
+
+static bool race_gate(race_lane *lane, atomic_bool *gate) {
+  const uint64_t end = cmeta_monotonic_ms() + REMOTE_DEADLINE_MS;
+  while (!atomic_load(gate)) {
+    if (atomic_load(&lane->test->abort)) return false;
+    if (cmeta_monotonic_ms() >= end) {
+      lane->status = SALTS_ETIMEDOUT;
+      return false;
+    }
+    cmeta_thread_yield();
+  }
+  return !atomic_load(&lane->test->abort);
+}
+
+static bool race_quiescent(void *user) {
+  race_lane *lane = user;
+  if (lane->client.impl != NULL || lane->listener.impl != NULL) return false;
+  if (lane->shard == RACE_TARGET) {
+    for (size_t i = 0u; i < RACE_PRODUCERS; ++i)
+      if (!atomic_load(&lane->test->lane[i].producer_done)) return false;
+  }
+  return true;
+}
+
+static void race_state(void *user, cnet_connection connection,
+                       cnet_connection_state state, const cnet_error *error) {
+  race_lane *lane = user;
+  (void)connection;
+  (void)error;
+  if (cmeta_thread_current_token() != lane->owner_token) {
+    lane->status = SALTS_EPERM;
+    return;
+  }
+  if (state == CNET_CONNECTION_CONNECTED) ++lane->connected;
+  if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED)
+    ++lane->terminal; /* Actual peer close/reset, never an application ACK. */
+}
+
+static void race_receive(void *user, cnet_connection connection,
+                         const cnet_receive_view *view) {
+  race_lane *lane = user;
+  (void)connection;
+  (void)view;
+  /* These children are canceled without application data. Receiving demand
+   * observes real EOF/reset; an unexpected payload is a fixture failure. */
+  lane->status = SALTS_EPROTO;
+}
+
+static void race_init(native_io_sharded_context *context, void *user) {
+  race_lane *lane = user;
+  cnet_client_config config = remote_client_config();
+  if (native_io_sharded_context_shard(context) != lane->shard) {
+    lane->status = SALTS_EPERM;
+    return;
+  }
+  lane->owner_token = cmeta_thread_current_token();
+  RACE_OK(lane, native_io_sharded_context_acquire_host(
+      context, race_quiescent, lane, &lane->lease, &lane->backend));
+  if (lane->shard == RACE_TARGET) {
+    const cnet_handoff_config inbox = {
+        sizeof(cnet_handoff_config), CNET_HANDOFF_VERSION,
+        RACE_PRODUCERS, RACE_PRODUCERS};
+    RACE_OK(lane, cnet_handoff_init(&lane->test->inbox, &inbox));
+  } else {
+    cnet_stream_endpoint bind = CNET_STREAM_ENDPOINT_INIT, local;
+    native_io_request request = {0};
+    cnet_observer observer = {0};
+    bind.family = CNET_DATAGRAM_ADDRESS_IPV4;
+    bind.address[0] = 127u;
+    bind.address[3] = 1u;
+    observer.on_state = race_state;
+    observer.on_receive = race_receive;
+    observer.user = lane;
+    RACE_OK(lane, cnet_client_init_external(&lane->client, &config, lane->backend));
+    RACE_OK(lane, cnet_listener_open(&lane->listener, remote_backend(),
+                                    CNET_DATAGRAM_ADDRESS_IPV4));
+    RACE_OK(lane, cnet_listener_bind_open_endpoint(&lane->listener, &bind));
+    RACE_OK(lane, cnet_listener_local_endpoint(&lane->listener, &local));
+    RACE_OK(lane, cnet_listener_listen(&lane->listener, 4u));
+    RACE_OK(lane, cnet_listener_attach_external(&lane->listener, lane->backend));
+    RACE_OK(lane, cnet_listener_submit_external_accept(&lane->listener, &request));
+    RACE_OK(lane, cnet_connect_endpoint(&lane->client, &local, NULL,
+                                       &observer, &lane->connection));
+  }
+}
+
+static void race_progress(native_io_sharded_context *context, void *user) {
+  race_lane *lane = user;
+  native_io_sharded_completion completions[REMOTE_BATCH];
+  cnet_client *clients[] = {&lane->client};
+  cnet_sg_host_routes routes = {
+      sizeof(cnet_sg_host_routes), CNET_SG_HOST_ROUTING_VERSION,
+      lane->listener.impl != NULL ? &lane->listener : NULL, clients, 1u};
+  size_t events = 0u, count = 0u, accepts = 0u, sg_owned = 0u;
+  int rc;
+  RACE_OK(lane, cnet_client_advance_external(&lane->client, &events));
+  rc = native_io_sharded_context_observe_host(
+      context, lane->lease, completions, REMOTE_BATCH, 0u, &count);
+  if (rc != SALTS_OK && rc != SALTS_ETIMEDOUT) { lane->status = rc; return; }
+  RACE_OK(lane, cnet_sg_host_route_batch(
+      completions, count, &routes, &accepts, &sg_owned));
+  if (accepts != 0u) {
+    lane->accepts += accepts;
+    if (lane->accepts != 1u) { lane->status = SALTS_EPROTO; return; }
+    RACE_OK(lane, cnet_listener_accept_detached(&lane->listener, &lane->accepted));
+    if (!atomic_load(&lane->test->abort))
+      RACE_OK(lane, cnet_handoff_reserve(&lane->test->inbox, &lane->ticket));
+  }
+  if (lane->connected != 0u && !lane->receiving && lane->terminal == 0u &&
+      !atomic_load(&lane->test->abort)) {
+    RACE_OK(lane, cnet_receive(&lane->client, lane->connection, 1u));
+    lane->receiving = true;
+  }
+}
+
+static void race_wake(native_io_sharded_context *context, void *user) {
+  race_lane *lane = user;
+  native_io_sharded_completion completions[REMOTE_BATCH];
+  size_t count = 0u;
+  int rc;
+  if (native_io_sharded_context_shard(context) != RACE_TARGET ||
+      cmeta_thread_current_token() != lane->owner_token ||
+      !atomic_load(&lane->test->target_probed) || lane->released) {
+    lane->status = SALTS_EPERM;
+    return;
+  }
+  /* A delayed real SG wake still reaches the leased backend after inbox drain. */
+  rc = native_io_sharded_context_observe_host(
+      context, lane->lease, completions, REMOTE_BATCH, 0u, &count);
+  if (rc != SALTS_OK && rc != SALTS_ETIMEDOUT) { lane->status = rc; return; }
+  for (size_t i = 0u; i < count; ++i)
+    if (!completions[i].sharded_owned) { lane->status = SALTS_EPROTO; return; }
+  ++lane->wakes;
+}
+
+static void race_queue_occupant(native_io_sharded_context *context, void *user) {
+  race_lane *lane = user;
+  if (native_io_sharded_context_shard(context) != RACE_TARGET ||
+      cmeta_thread_current_token() != lane->owner_token || lane->released) {
+    lane->status = SALTS_EPERM;
+    return;
+  }
+  ++lane->queue_tasks;
+}
+
+static void race_publish(native_io_sharded_context *context, void *user) {
+  race_lane *lane = user;
+  race_case *test = lane->test;
+  const uintptr_t socket = lane->accepted.internal_socket;
+  (void)context;
+  if (lane->shard != 0u) {
+    atomic_fetch_add(&test->race_ready, 1u);
+    if (!race_gate(lane, &test->start)) goto finished;
+  }
+  lane->publish_status = cnet_handoff_publish(&test->inbox, lane->ticket,
+                                             &lane->accepted);
+  if (lane->publish_status == SALTS_OK) {
+    if (lane->accepted.internal_active != 0u) lane->status = SALTS_EPROTO;
+  } else if (lane->publish_status == SALTS_ESHUTDOWN) {
+    if (lane->accepted.internal_active != 1u ||
+        lane->accepted.internal_socket != socket) lane->status = SALTS_EPROTO;
+    int rc = cnet_handoff_release(&test->inbox, lane->ticket);
+    if (rc != SALTS_OK) lane->status = rc;
+    if (cnet_handoff_release(&test->inbox, lane->ticket) != SALTS_ENOENT)
+      lane->status = SALTS_EPROTO;
+    rc = cnet_accepted_stream_close(&lane->accepted);
+    if (rc != SALTS_OK) lane->status = rc;
+  } else lane->status = lane->publish_status;
+  atomic_store(&lane->publish_finished, true);
+  if (lane->publish_status == SALTS_OK &&
+      race_gate(lane, &test->wake_allowed)) {
+    const native_io_sharded_task wake = {
+        race_wake, NULL, NULL, &test->lane[RACE_TARGET]};
+    lane->wake_status = native_io_sharded_try_submit_to(test->sg, RACE_TARGET, &wake);
+    if (lane->wake_status != SALTS_OK && lane->wake_status != SALTS_ENOBUFS)
+      lane->status = lane->wake_status;
+    /* Even a full wake queue cannot return the moved socket or its ticket. */
+  }
+finished:
+  atomic_store(&lane->producer_done, true);
+}
+
+static void race_seal_and_probe(native_io_sharded_context *context, void *user) {
+  race_lane *lane = user;
+  race_case *test = lane->test;
+  cnet_handoff_snapshot snapshot = {0};
+  atomic_fetch_add(&test->race_ready, 1u);
+  if (!race_gate(lane, &test->start)) return;
+  RACE_OK(lane, cnet_handoff_seal(&test->inbox));
+  for (size_t i = 0u; i < RACE_PRODUCERS; ++i)
+    if (!race_gate(lane, &test->lane[i].publish_finished)) return;
+  for (size_t i = 0u; i < RACE_PRODUCERS; ++i) {
+    cnet_accepted_stream stream = CNET_ACCEPTED_STREAM_INIT;
+    cnet_handoff_ticket ticket = {0};
+    int rc = cnet_handoff_take(&test->inbox, &ticket, &stream);
+    if (rc == SALTS_ENOENT) break;
+    if (rc != SALTS_OK) { lane->status = rc; return; }
+    RACE_OK(lane, cnet_accepted_stream_close(&stream));
+    RACE_OK(lane, cnet_handoff_release(&test->inbox, ticket));
+    if (cnet_handoff_release(&test->inbox, ticket) != SALTS_ENOENT) {
+      lane->status = SALTS_EPROTO;
+      return;
+    }
+    ++lane->taken;
+  }
+  RACE_OK(lane, cnet_handoff_get_snapshot(&test->inbox, &snapshot));
+  if (!snapshot.sealed || !snapshot.drained) { lane->status = SALTS_EPROTO; return; }
+  /* Target owns no raw endpoints/client now. Only the live publish -> wake
+   * producer tail prevents release; credit drain alone cannot authorize it. */
+  lane->early_release = native_io_sharded_context_release_host(context, lane->lease);
+  if (lane->early_release != SALTS_EBUSY) { lane->status = SALTS_EPROTO; return; }
+  atomic_store(&test->target_probed, true);
+  if (test->full_wake_queue) (void)race_gate(lane, &test->target_allowed);
+}
+
+static void race_cleanup(native_io_sharded_context *context, void *user) {
+  race_lane *lane = user;
+  race_case *test = lane->test;
+  int rc;
+  if (lane->released) return;
+  if (lane->shard == RACE_TARGET) {
+    if (test->inbox.impl != NULL) {
+      cnet_accepted_stream stream;
+      cnet_handoff_ticket ticket;
+      RACE_OK(lane, cnet_handoff_seal(&test->inbox));
+      while ((rc = cnet_handoff_take(&test->inbox, &ticket, &stream)) == SALTS_OK) {
+        RACE_OK(lane, cnet_accepted_stream_close(&stream));
+        RACE_OK(lane, cnet_handoff_release(&test->inbox, ticket));
+      }
+      if (rc != SALTS_ENOENT) { lane->status = rc; return; }
+    }
+  } else {
+    if (lane->accepted.internal_active) {
+      RACE_OK(lane, cnet_accepted_stream_close(&lane->accepted));
+      if (lane->ticket.slot != 0u) {
+        RACE_OK(lane, cnet_handoff_release(&test->inbox, lane->ticket));
+      }
+    }
+    if (lane->client.impl != NULL && lane->connection.slot != 0u &&
+        lane->terminal == 0u && !lane->closing) {
+      rc = cnet_close(&lane->client, lane->connection);
+      if (rc != SALTS_OK && rc != SALTS_EALREADY && rc != SALTS_ENOENT) {
+        lane->status = rc;
+        return;
+      }
+      lane->closing = true;
+    }
+    if (lane->listener.impl != NULL) {
+      rc = cnet_listener_close(&lane->listener);
+      if (rc == SALTS_EBUSY) { race_progress(context, user); return; }
+      if (rc != SALTS_OK && rc != SALTS_EALREADY) { lane->status = rc; return; }
+      RACE_OK(lane, cnet_listener_destroy(&lane->listener));
+    }
+    if (lane->client.impl != NULL) {
+      rc = cnet_client_stop_external(&lane->client);
+      if (rc == SALTS_EBUSY) { race_progress(context, user); return; }
+      if (rc != SALTS_OK) { lane->status = rc; return; }
+      RACE_OK(lane, cnet_client_destroy(&lane->client));
+    }
+  }
+  if (lane->backend != NULL) {
+    RACE_OK(lane, native_io_sharded_context_release_host(context, lane->lease));
+  }
+  lane->released = true;
+}
+
+static void race_submit(size_t shard, native_io_sharded_task_fn run) {
+  const native_io_sharded_task task = {run, NULL, NULL, &race_test.lane[shard]};
+  check_equal(native_io_sharded_submit_to(race_test.sg, shard, &task), SALTS_OK);
+}
+
+static void race_wait_flag(atomic_bool *flag) {
+  const uint64_t end = cmeta_monotonic_ms() + REMOTE_DEADLINE_MS;
+  while (!atomic_load(flag) && cmeta_monotonic_ms() < end) cmeta_thread_yield();
+  check(atomic_load(flag));
+}
+
 spec("CNet SG remote Owner detached TCP handoff/credit lifecycle") {
   it("accepts on Owner 0, adopts on Owner 1, and recycles after real terminal") {
     remote_run_handoff(false, false);
@@ -724,5 +1041,164 @@ spec("CNet SG remote Owner detached TCP handoff/credit lifecycle") {
   }
   it("preserves source descriptor when final Owner seals before publish") {
     remote_run_handoff(false, true);
+  }
+  group("concurrent real SG producers and shutdown wake tails") {
+    before_each() {
+      memset(&race_test, 0, sizeof(race_test));
+      atomic_init(&race_test.race_ready, 0u);
+      atomic_init(&race_test.start, false);
+      atomic_init(&race_test.wake_allowed, false);
+      atomic_init(&race_test.abort, false);
+      atomic_init(&race_test.target_probed, false);
+      atomic_init(&race_test.target_allowed, false);
+      for (size_t i = 0u; i < RACE_SHARDS; ++i) {
+        race_lane *lane = &race_test.lane[i];
+        lane->test = &race_test;
+        lane->shard = i;
+        lane->accepted = (cnet_accepted_stream)CNET_ACCEPTED_STREAM_INIT;
+        lane->publish_status = lane->wake_status = SALTS_EBUSY;
+        atomic_init(&lane->publish_finished, false);
+        atomic_init(&lane->producer_done, false);
+      }
+    }
+    after_each() {
+      if (race_test.sg != NULL) {
+        /* Abort gates before joining even when a fatal assertion fired. Keep
+         * fixture storage alive until every producer and real native request
+         * has settled; no timeout-authorized forced destruction. */
+        atomic_store(&race_test.abort, true);
+        check_equal(native_io_sharded_wait(race_test.sg), SALTS_OK);
+        for (size_t i = 0u; i < RACE_PRODUCERS; ++i)
+          atomic_store(&race_test.lane[i].producer_done, true);
+        const uint64_t end = cmeta_monotonic_ms() + REMOTE_DEADLINE_MS;
+        bool done = false;
+        while (!done && cmeta_monotonic_ms() < end) {
+          done = true;
+          for (size_t i = 0u; i < RACE_SHARDS; ++i) {
+            if (!race_test.lane[i].released) {
+              race_submit(i, race_cleanup);
+              done = false;
+            }
+          }
+          check_equal(native_io_sharded_wait(race_test.sg), SALTS_OK);
+        }
+        check(done);
+        if (race_test.inbox.impl != NULL)
+          check_equal(cnet_handoff_destroy(&race_test.inbox), SALTS_OK);
+        check_equal(native_io_sharded_shutdown(race_test.sg), SALTS_OK);
+        check_equal(native_io_sharded_destroy(race_test.sg), SALTS_OK);
+        race_test.sg = NULL;
+      }
+    }
+    for (size_t wake_mode = 0u; wake_mode < 2u; ++wake_mode) {
+      it("settles racing publications and retains a drained target with %s wake queue",
+         wake_mode == 0u ? "available" : "full") {
+        race_test.full_wake_queue = wake_mode != 0u;
+        const native_io_sharded_config config = {
+            RACE_SHARDS, RACE_TASK_CAPACITY, {remote_backend(), 24u, 48u, REMOTE_BATCH}};
+        const uint64_t end = cmeta_monotonic_ms() + REMOTE_DEADLINE_MS;
+        cnet_handoff_snapshot snapshot = {0};
+        bool ready = false;
+        check_equal(native_io_sharded_create(&config, &race_test.sg), SALTS_OK);
+        race_submit(RACE_TARGET, race_init);
+        check_equal(native_io_sharded_wait(race_test.sg), SALTS_OK);
+        check_equal(race_test.lane[RACE_TARGET].status, SALTS_OK);
+        for (size_t i = 0u; i < RACE_PRODUCERS; ++i) race_submit(i, race_init);
+        check_equal(native_io_sharded_wait(race_test.sg), SALTS_OK);
+        while (!ready && cmeta_monotonic_ms() < end) {
+          for (size_t i = 0u; i < RACE_PRODUCERS; ++i) race_submit(i, race_progress);
+          check_equal(native_io_sharded_wait(race_test.sg), SALTS_OK);
+          ready = true;
+          for (size_t i = 0u; i < RACE_PRODUCERS; ++i) {
+            race_lane *lane = &race_test.lane[i];
+            check_equal(lane->status, SALTS_OK);
+            if (lane->connected != 1u || lane->accepted.internal_active != 1u) ready = false;
+            check(lane->owner_token != race_test.lane[RACE_TARGET].owner_token);
+          }
+        }
+        check(ready);
+        for (size_t i = 0u; i < RACE_SHARDS; ++i) {
+          for (size_t j = i + 1u; j < RACE_SHARDS; ++j) {
+            check(race_test.lane[i].owner_token != race_test.lane[j].owner_token);
+            check(race_test.lane[i].backend != race_test.lane[j].backend);
+          }
+        }
+        check_equal(cnet_handoff_get_snapshot(&race_test.inbox, &snapshot), SALTS_OK);
+        check_equal(snapshot.reserved, (size_t)RACE_PRODUCERS);
+        race_submit(0u, race_publish);
+        race_wait_flag(&race_test.lane[0].publish_finished);
+        race_submit(1u, race_publish);
+        race_submit(2u, race_publish);
+        race_submit(RACE_TARGET, race_seal_and_probe);
+        while (atomic_load(&race_test.race_ready) != 3u && cmeta_monotonic_ms() < end)
+          cmeta_thread_yield();
+        check_equal(atomic_load(&race_test.race_ready), (size_t)3u);
+        atomic_store(&race_test.start, true);
+        race_wait_flag(&race_test.target_probed);
+        check_false(atomic_load(&race_test.lane[0].producer_done));
+        check_equal(cnet_handoff_get_snapshot(&race_test.inbox, &snapshot), SALTS_OK);
+        check(snapshot.sealed && snapshot.drained);
+        check_equal(snapshot.reserved + snapshot.queued + snapshot.taken, (size_t)0u);
+        size_t queued = 0u;
+        if (race_test.full_wake_queue) {
+          /* Owner 3 is parked after the release probe. Occupy its actual bounded
+           * SG task queue so every source's post-publication wake fails FULL.
+           * No fabricated completion and no ownership rollback/republication. */
+          const native_io_sharded_task task = {
+              race_queue_occupant, NULL, NULL, &race_test.lane[RACE_TARGET]};
+          int rc = SALTS_OK;
+          for (size_t i = 0u; i <= RACE_TASK_CAPACITY; ++i) {
+            rc = native_io_sharded_try_submit_to(race_test.sg, RACE_TARGET, &task);
+            if (rc != SALTS_OK) break;
+            ++queued;
+          }
+          check_equal(rc, SALTS_ENOBUFS);
+          check_equal(queued, (size_t)RACE_TASK_CAPACITY);
+        }
+        atomic_store(&race_test.wake_allowed, true);
+        if (race_test.full_wake_queue) {
+          for (size_t i = 0u; i < RACE_PRODUCERS; ++i)
+            race_wait_flag(&race_test.lane[i].producer_done);
+          atomic_store(&race_test.target_allowed, true);
+        }
+        check_equal(native_io_sharded_wait(race_test.sg), SALTS_OK);
+        size_t published = 0u, wake_accepted = 0u;
+        for (size_t i = 0u; i < RACE_PRODUCERS; ++i) {
+          race_lane *lane = &race_test.lane[i];
+          check_equal(lane->status, SALTS_OK);
+          check(atomic_load(&lane->producer_done));
+          check(lane->publish_status == SALTS_OK || lane->publish_status == SALTS_ESHUTDOWN);
+          check_equal(lane->accepted.internal_active, 0u);
+          if (lane->publish_status == SALTS_OK) {
+            ++published;
+            check_equal(lane->wake_status,
+                        race_test.full_wake_queue ? SALTS_ENOBUFS : SALTS_OK);
+            if (lane->wake_status == SALTS_OK) ++wake_accepted;
+          } else check_equal(lane->wake_status, SALTS_EBUSY); /* No wake on rejection. */
+        }
+        check_equal(race_test.lane[0].publish_status, SALTS_OK);
+        check_equal(race_test.lane[RACE_TARGET].status, SALTS_OK);
+        check_equal(race_test.lane[RACE_TARGET].early_release, SALTS_EBUSY);
+        check_equal(race_test.lane[RACE_TARGET].taken, published);
+        check_equal(race_test.lane[RACE_TARGET].wakes, wake_accepted);
+        check_equal(race_test.lane[RACE_TARGET].queue_tasks, queued);
+        ready = false;
+        while (!ready && cmeta_monotonic_ms() < end) {
+          for (size_t i = 0u; i < RACE_PRODUCERS; ++i) race_submit(i, race_progress);
+          check_equal(native_io_sharded_wait(race_test.sg), SALTS_OK);
+          ready = true;
+          for (size_t i = 0u; i < RACE_PRODUCERS; ++i) {
+            check_equal(race_test.lane[i].status, SALTS_OK);
+            if (race_test.lane[i].terminal != 1u) ready = false;
+          }
+        }
+        check(ready);
+        for (size_t i = 0u; i < RACE_PRODUCERS; ++i) {
+          check_equal(race_test.lane[i].accepts, (size_t)1u);
+          check_equal(race_test.lane[i].connected, (size_t)1u);
+          check_equal(race_test.lane[i].terminal, (size_t)1u);
+        }
+      }
+    }
   }
 }
