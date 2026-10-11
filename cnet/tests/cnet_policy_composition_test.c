@@ -25,7 +25,7 @@ static size_t connected, terminals, raw_sends, tags, received, accept_count, gat
 static size_t client_received, expected_client_reply, reconnected_reply_bytes;
 static cnet_connection reconnected_peer, reconnected_outgoing;
 static size_t reconnected_peer_bytes;
-static unsigned char reconnected_peer_wire[8];
+static unsigned char reconnected_peer_wire[8], reconnected_reply_wire[8];
 static int tag_status;
 static uint64_t last_tag;
 static unsigned char wire[256];
@@ -71,7 +71,10 @@ static void client_receive_cb(void *u, cnet_connection c, const cnet_receive_vie
   if (expected_client_reply != 0u &&
       c.slot == reconnected_outgoing.slot &&
       c.generation == reconnected_outgoing.generation) {
-    reconnected_reply_bytes += v->size;
+    if (reconnected_reply_bytes + v->size <= sizeof(reconnected_reply_wire)) {
+      memcpy(reconnected_reply_wire + reconnected_reply_bytes, v->data, v->size);
+      reconnected_reply_bytes += v->size;
+    } else check_warn(false);
     if (reconnected_reply_bytes < expected_client_reply)
       check_warn(cnet_receive(&client, c, 1u) == SALTS_OK);
   }
@@ -220,6 +223,7 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     reconnected_peer_bytes = 0u;
     reconnected_peer = reconnected_outgoing = (cnet_connection){0};
     memset(reconnected_peer_wire, 0, sizeof(reconnected_peer_wire));
+    memset(reconnected_reply_wire, 0, sizeof(reconnected_reply_wire));
     tag_status = SALTS_OK;
     last_tag = 0u;
 #if defined(CNET_COMPOSITION_TLS)
@@ -529,6 +533,7 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
            cmeta_monotonic_ms() < exchange_until)
       progress();
     check_equal(reconnected_reply_bytes, (size_t)4u);
+    check_equal(memcmp(reconnected_reply_wire, "PONG", 4u), 0);
     check_equal(raw_sends, (size_t)1u);
 
     check_equal(cnet_managed_dial_protocol_ready(&dial, s.recovery_ticket, cmeta_monotonic_ms()),
