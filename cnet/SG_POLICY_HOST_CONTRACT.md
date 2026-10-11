@@ -177,7 +177,36 @@ building `cnet_sg_handoff_owner_test` and running its CTest; use CTest
 `--repeat until-fail:50` for repeated interleavings. This is correctness
 qualification, not a saturation benchmark or exhaustive schedule proof.
 
-Real TLS handshake rejection, final transport/Manager capacity exhaustion,
+### Final-Owner capacity rejection
+
+The same two-Owner handoff fixture distinguishes three exhausted resources:
+
+- A RESERVED Manager record fills the helper's admission budget before the
+  detached child arrives. `cnet_manager_reserve` returns `ENOBUFS` without
+  consuming the taken stream; the final Owner explicitly closes it.
+- A canceled record retains an explicit context hold. Even with no RESERVED
+  or BOUND connection, that RETIRED record prevents another reservation until
+  the host releases the hold and Owner-local `advance` recycles it.
+- A separate, actually CONNECTED loopback occupies the final raw CNet client's
+  only connection slot. Manager reservation succeeds independently, but
+  `cnet_manager_adopt` returns `ENOBUFS`, consumes the detached stream and
+  retires its attachment without fabricating CONNECTED or terminal callbacks.
+
+All three cases use a real source listener completion and one successful
+cross-Owner publication/take. Context holds survive an SG task barrier;
+Manager destruction returns `EBUSY` and recycle stays at zero until explicit
+release. Exactly one recycle precedes final handoff-credit settlement, and
+duplicate ticket release fails. The unrelated raw connection reaches its own
+terminal only after an explicit close. Source callbacks, raw-neighbor callbacks,
+and rejected-admission callbacks are counted separately on their fixed Owners.
+
+The fixture keeps descriptors and callback storage available to owner-local
+teardown after fatal assertions. Pending accepts and connections continue
+through the same SG observe/router until drain; a deadline never permits
+force-freeing the backend. These cases qualify bounded capacity rejection,
+not a load, fairness or real TLS-handshake test.
+
+Real TLS handshake rejection,
 multi-listener overload/fairness, fault-isolated neighbor consumers and
 downstream protocol/benchmark/release gates remain open under
 #1052/#1056/#1057. These test slices do not qualify the entire product interface.
