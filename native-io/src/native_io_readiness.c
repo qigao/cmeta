@@ -672,10 +672,15 @@ static int readiness_release_endpoint(cmeta_io_readiness_impl *impl,
   }
   if (endpoint->interests != 0u) {
     if (!impl->driver_ops->persistent_interests) return SALTS_EBUSY;
-    const int status = impl->driver_ops->update(impl->driver_state, endpoint->fd,
-        readiness_endpoint_token(endpoint_handle.slot - 1u, endpoint->generation),
-        endpoint->interests, 0u);
-    if (status != SALTS_OK) return status;
+    /* Socket release follows caller close. Watch lifetime belongs to the kernel;
+     * another owner may already have reused the fd, so only metadata is ours now.
+     * A drained pipe can still be open, so its watch must be removed explicitly. */
+    if (!socket_endpoint) {
+      const int status = impl->driver_ops->update(impl->driver_state, endpoint->fd,
+          readiness_endpoint_token(endpoint_handle.slot - 1u, endpoint->generation),
+          endpoint->interests, 0u);
+      if (status != SALTS_OK) return status;
+    }
     endpoint->interests = 0u;
   }
   index = endpoint_handle.slot - 1u;

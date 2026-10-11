@@ -48,6 +48,14 @@ set_target_properties(native_io_sharded_host_lease_test PROPERTIES
 add_dependencies(native_io_test native_io_sharded_host_lease_test)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  cmake_add_test(native_io_readiness_lifetime_test
+    SOURCES native_io_readiness_lifetime_test.c
+    LIBS Salts::NativeIO Salts::TinyTest Salts::Platform
+    FOLDER "native-io/tests")
+  set_target_properties(native_io_readiness_lifetime_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  add_dependencies(native_io_test native_io_readiness_lifetime_test)
+
   add_executable(native_io_uring_batch_test native_io_uring_batch_test.c)
   target_link_libraries(native_io_uring_batch_test PRIVATE Salts::NativeIO Salts::TinyTest)
   set_target_properties(native_io_uring_batch_test PROPERTIES

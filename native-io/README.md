@@ -172,6 +172,15 @@ direct backend 初始化时预分配 endpoint/request/native event storage，之
 readiness 的 kernel interest 是监听策略的镜像，不是请求事实源；epoll ET 允许它跨空 lane
 保留，kqueue 按 pending lane 更新。endpoint/request/terminal storage 和 native event batch 均有固定上限。
 
+socket 的关闭顺序仍是停止提交、drain 所有请求、由调用方关闭 socket，最后
+`release_socket`。epoll 的 socket release 只释放 endpoint 元数据，不对已经关闭的
+fd 调用 `epoll_ctl`：该数字可能已经属于其他 owner。内核管理 watch 生命周期；
+存在指向同一 open file description 的重复 fd 时，watch 可能继续存在，旧事件由
+slot/generation 校验拒绝（见 [epoll 的关闭与重复 fd 语义](https://man7.org/linux/man-pages/man7/epoll.7.html)）。
+仍打开的 drained pipe 则在 `release_pipe` 时显式移除监听，允许同一 fd 重新 attach。
+`native_io_readiness_lifetime_test` 覆盖关闭后跨线程复用 fd 与仍打开的 pipe 重接入；
+并发竞争需在 `linux-tsan-ci` 下验证，普通运行不提供数据竞争检测。
+
 从未 spawn coroutine 或当前没有活动 coroutine 时，`native_io_backend_observe()` 直接进入所选 OS driver，不经过 completion 路由缓冲或 coroutine context switch。纯 direct 使用也不会创建 coroutine owner/pool。因此 direct benchmark 仍测量原生 NativeIO 路径；只有显式 spawn coroutine 的调用方承担 owner storage 与 suspend/resume 成本。
 
 ## 最小示例
