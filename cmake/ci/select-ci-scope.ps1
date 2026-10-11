@@ -100,6 +100,9 @@ $nativeRuntime = Test-Changed '^native-io/(src/|include/|CMakeLists\.txt$)'
 $cnetRuntime = Test-Changed '^cnet/(src/|include/|CMakeLists\.txt$)'
 $cnetProgressQualification = (-not $PrepareRelease) -and ($full -or
   (Test-Changed '^cnet/(src/cnet_client\.c|include/cnet/cnet\.h|tests/cnet_progress_strategy_test\.c)$'))
+# Ownership regressions need sanitizers even when only their formal tests change.
+$cnetHandoffQualification = (-not $PrepareRelease) -and ($full -or
+  (Test-Changed '^cnet/(src/cnet_(manager|handoff|sg_host)\.c|include/cnet/(manager|handoff|sg_host)\.h|tests/cnet_(manager|handoff|sg_handoff_owner|sg_hosted_gateway)_test\.c)$'))
 $nativeBenchCommon = Test-Changed '^native-io/benchmarks/(CMakeLists\.txt$|.*\.(h|cmake)$)'
 $cnetBenchCommon = Test-Changed '^cnet/(benchmarks/(CMakeLists\.txt$|cnet_benchmark_|cnet_io_benchmark_config|.*\.(h|cmake)$)|tests/fixtures/)'
 $nativeOwner = $benchmarkCommon -or $nativeRuntime -or $concurrencyRuntime -or $platformRuntime -or
@@ -194,7 +197,7 @@ $profiles = @(
   @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
   @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' }
 )
-if ($aceSanitizerQualification -or $unifiedSanitizerQualification -or $concurrencyQualification -or $cnetProgressQualification) {
+if ($aceSanitizerQualification -or $unifiedSanitizerQualification -or $concurrencyQualification -or $cnetProgressQualification -or $cnetHandoffQualification) {
   # Reuse existing Debug ASan and independent TSan CMake presets; the ASan
   # profile adds UBSan via the canonical Sanitizers.cmake flag. Do not combine
   # TSan with ASan, or reuse release binaries for sanitizer checks.
