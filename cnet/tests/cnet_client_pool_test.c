@@ -12,6 +12,7 @@ static cnet_manager test_manager;
 static cnet_client_pool test_pool;
 static cnet_managed_connection records[POOL_TEST_CAPACITY];
 static char test_uri[100];
+static size_t connected_callbacks;
 
 static native_io_backend_kind test_backend(void) {
 #if defined(_WIN32)
@@ -24,7 +25,8 @@ static native_io_backend_kind test_backend(void) {
 }
 static void state_cb(void *user, cnet_connection connection,
                      cnet_connection_state state, const cnet_error *error) {
-  (void)user; (void)connection; (void)state; (void)error;
+  (void)user; (void)connection; (void)error;
+  if (state == CNET_CONNECTION_CONNECTED) ++connected_callbacks;
 }
 static cnet_pool_key pool_key(uint64_t authority) {
   cnet_pool_key key = {0};
@@ -61,6 +63,14 @@ static cnet_managed_connection bind_manager(size_t index) {
   check_equal(cnet_manager_connect(&test_manager, records[index], &options, &connection), SALTS_OK);
   check(connection.slot != 0u);
   return records[index];
+}
+static void wait_connected_count(size_t expected) {
+  const uint64_t deadline = cmeta_monotonic_ms() + 3000u;
+  while (connected_callbacks < expected && cmeta_monotonic_ms() < deadline) {
+    size_t events = 0u;
+    check_equal(cnet_client_poll(&test_client, 1u, &events), SALTS_OK);
+  }
+  check_equal(connected_callbacks, expected);
 }
 static void finish_managed_connection(cnet_managed_connection managed) {
   cnet_manager_entry entry = {0};
@@ -108,6 +118,7 @@ spec("CNet owner-local client pool") {
     const cnet_pool_config config = pool_config();
     uint16_t port = 0u;
     memset(records, 0, sizeof(records));
+    connected_callbacks = 0u;
     check_equal(cnet_client_init(&test_client, &client_config), SALTS_OK);
     check_equal(cnet_listener_init(&test_listener, &listener_config), SALTS_OK);
     check_equal(cnet_listener_port(&test_listener, &port), SALTS_OK);
@@ -182,6 +193,128 @@ spec("CNet owner-local client pool") {
     finish_managed_connection(bound);
     check_equal(cnet_pool_terminal(&test_pool, physical), SALTS_OK);
     check_equal(cnet_pool_get_snapshot(&test_pool, &(cnet_pool_snapshot){0}), SALTS_OK);
+  }
+  it("keeps two real Manager connections isolated across policy identity and drain") {
+    cnet_pool_key a = pool_key(101u), b = pool_key(202u);
+    cnet_pool_key incompatible[11];
+    cnet_pool_connection first = {0}, second = {0}, replacement = {0};
+    cnet_pool_lease first_lease = {0}, second_lease = {0}, next_lease = {0};
+    cnet_pool_lease rejected = {0};
+    cnet_managed_connection a_managed, b_managed, replacement_managed, selected = {0};
+    cnet_pool_snapshot snapshot = {0};
+
+    /* Identical physical destination, distinct host-authorized authorities
+     * and security/protocol/session identities. These are stable IDs, not a
+     * TLS identity provider or a substitute for protocol authentication. */
+    b.endpoint_id++;
+    b.peer_generation++;
+    b.tls_trust_id++;
+    b.tls_sni_id = 77u;
+    b.client_identity_id = 88u;
+    b.alpn_id = 99u;
+    b.protocol_id++;
+    b.session_id++;
+
+    check_equal(cnet_pool_reserve_connecting(&test_pool, &a, &first), SALTS_OK);
+    check_equal(cnet_pool_reserve_connecting(&test_pool, &b, &second), SALTS_OK);
+    a_managed = bind_manager(0u);
+    b_managed = bind_manager(1u);
+    wait_connected_count(2u);
+    /* A real Manager BOUND record and actual TCP CONNECTED are prerequisites,
+     * but protocol READY remains the host's responsibility. This host now
+     * asserts readiness for its test-only nonmultiplexed TCP profile; no
+     * protocol authentication or real TLS identity is implied. */
+    check_equal(cnet_pool_bind_ready(&test_pool, first, a_managed, 1u), SALTS_OK);
+    check_equal(cnet_pool_bind_ready(&test_pool, second, b_managed, 1u), SALTS_OK);
+
+    for (size_t i = 0u; i < sizeof(incompatible) / sizeof(incompatible[0]); ++i)
+      incompatible[i] = a;
+    incompatible[0].runtime_id++;
+    incompatible[1].endpoint_id++;
+    incompatible[2].peer_generation++;
+    incompatible[3].authority_id++;
+    incompatible[4].transport_id++;
+    incompatible[5].tls_trust_id++;
+    incompatible[6].tls_sni_id++;
+    incompatible[7].client_identity_id++;
+    incompatible[8].alpn_id++;
+    incompatible[9].protocol_id++;
+    incompatible[10].session_id++;
+    for (size_t i = 0u; i < sizeof(incompatible) / sizeof(incompatible[0]); ++i) {
+      check_equal(cnet_pool_try_acquire(&test_pool, &incompatible[i],
+                                        NULL, &rejected, &selected), SALTS_ENOBUFS);
+      check_equal(rejected.slot, (size_t)0u);
+      check_equal(selected.slot, (size_t)0u);
+    }
+    check_equal(cnet_pool_try_acquire(&test_pool, &a, NULL, &first_lease, &selected),
+                SALTS_OK);
+    check_equal(selected.slot, a_managed.slot);
+    check_equal(selected.generation, a_managed.generation);
+    check_equal(cnet_pool_try_acquire(&test_pool, &b, NULL, &second_lease, &selected),
+                SALTS_OK);
+    check_equal(selected.slot, b_managed.slot);
+    check_equal(selected.generation, b_managed.generation);
+    check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_OK);
+    check_equal(snapshot.ready, (size_t)2u);
+    check_equal(snapshot.active_leases, (size_t)2u);
+
+    /* Draining A must neither grant more A leases nor stop B. */
+    check_equal(cnet_pool_begin_drain(&test_pool, first), SALTS_OK);
+    check_equal(cnet_pool_terminal(&test_pool, first), SALTS_EBUSY);
+    check_equal(cnet_pool_try_acquire(&test_pool, &a, NULL, &rejected, &selected),
+                SALTS_ENOBUFS);
+    check_equal(cnet_pool_release(&test_pool, second_lease), SALTS_OK);
+    check_equal(cnet_pool_try_acquire(&test_pool, &b, NULL, &next_lease, &selected),
+                SALTS_OK);
+    check_equal(selected.slot, b_managed.slot);
+    check_equal(selected.generation, b_managed.generation);
+    check_equal(cnet_pool_release(&test_pool, second_lease), SALTS_ENOENT);
+    check_equal(cnet_pool_release(&test_pool, next_lease), SALTS_OK);
+
+    /* Actual transport terminal precedes Pool terminal, while the old
+     * application lease intentionally survives both until explicit release. */
+    finish_managed_connection(a_managed);
+    check_equal(cnet_pool_terminal(&test_pool, first), SALTS_OK);
+    check_equal(cnet_pool_destroy(&test_pool), SALTS_EBUSY);
+    check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_OK);
+    check_equal(snapshot.terminal_waiting_for_leases, (size_t)1u);
+    check_equal(snapshot.active_leases, (size_t)1u);
+    check_equal(cnet_pool_release(&test_pool, first_lease), SALTS_OK);
+    check_equal(cnet_pool_release(&test_pool, first_lease), SALTS_ENOENT);
+    check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_OK);
+    check_equal(snapshot.physical_in_use, (size_t)1u);
+    check_equal(snapshot.ready, (size_t)1u);
+
+    /* Reusing the freed physical record cannot resurrect a stale ticket. */
+    check_equal(cnet_pool_reserve_connecting(&test_pool, &a, &replacement), SALTS_OK);
+    check_equal(replacement.slot, first.slot);
+    check(replacement.generation != first.generation);
+    replacement_managed = bind_manager(2u);
+    wait_connected_count(3u);
+    check_equal(cnet_pool_bind_ready(&test_pool, replacement, replacement_managed, 1u),
+                SALTS_OK);
+    check_equal(cnet_pool_terminal(&test_pool, first), SALTS_ENOENT);
+    check_equal(cnet_pool_try_acquire(&test_pool, &a, NULL, &next_lease, &selected),
+                SALTS_OK);
+    check_equal(selected.slot, replacement_managed.slot);
+    check_equal(selected.generation, replacement_managed.generation);
+    check_equal(cnet_pool_release(&test_pool, first_lease), SALTS_ENOENT);
+
+    /* Neighbor B remains reusable across A's retirement and replacement. */
+    check_equal(cnet_pool_try_acquire(&test_pool, &b, NULL, &second_lease, &selected),
+                SALTS_OK);
+    check_equal(selected.slot, b_managed.slot);
+    check_equal(selected.generation, b_managed.generation);
+    check_equal(cnet_pool_release(&test_pool, second_lease), SALTS_OK);
+    check_equal(cnet_pool_release(&test_pool, next_lease), SALTS_OK);
+    finish_managed_connection(b_managed);
+    finish_managed_connection(replacement_managed);
+    check_equal(cnet_pool_terminal(&test_pool, second), SALTS_OK);
+    check_equal(cnet_pool_terminal(&test_pool, replacement), SALTS_OK);
+    check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_OK);
+    check(snapshot.drained);
+    check_equal(snapshot.active_leases, (size_t)0u);
+    check_equal(snapshot.physical_in_use, (size_t)0u);
   }
   it("keeps terminal storage until every multiplexed lease settles") {
     cnet_pool_key key = pool_key(7u);
