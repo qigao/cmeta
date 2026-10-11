@@ -92,7 +92,12 @@ static void remote_state(void *user, cnet_connection connection,
   if (state == CNET_CONNECTION_CONNECTED) ++lane->connected;
   if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED)
     ++lane->terminal;
-  if (state == CNET_CONNECTION_FAILED) remote_error(lane, SALTS_ECONNRESET);
+  /* A rejected final-Owner adopt closes its real detached TCP descriptor.
+   * The source may observe CLOSED or an OS-specific reset; neither is an
+   * application ACK. Other transport failures must still fail this fixture. */
+  if (state == CNET_CONNECTION_FAILED &&
+      !(lane->test->fail_adopt && lane->shard == 0u))
+    remote_error(lane, SALTS_ECONNRESET);
 }
 
 static void remote_receive(void *user, cnet_connection connection,
