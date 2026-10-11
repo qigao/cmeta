@@ -76,6 +76,23 @@ struct hosted_state {
 #endif
 };
 
+/* A foreign shard must not manage another Owner's live CNet helper state.
+ * The fixture runs these probes only between completed SG task rounds, so
+ * the target Owner cannot be mutating its borrowed helpers concurrently. */
+typedef struct host_foreign_managed_probe {
+  hosted_state *target;
+  size_t caller_shard, observed_shard;
+  bool same_thread;
+  int manager_snapshot_rc, manager_reserve_rc, manager_seal_rc;
+  int dial_snapshot_rc, dial_advance_rc, dial_seal_rc;
+  int pool_snapshot_rc, pool_reserve_rc, pool_acquire_rc;
+  int pool_drain_rc, pool_seal_rc;
+  cnet_managed_connection reserved_managed, acquired_managed;
+  cnet_pool_connection reserved_physical;
+  cnet_pool_lease acquired_lease;
+  uint64_t dial_wait_ms;
+} host_foreign_managed_probe;
+
 /* Unsupported/invalid static policy fails fast. Never fall back to another
  * Owner, a different TLS authority, raw CNet or a default strategy. */
 static int host_policy_validate(const host_policy_plan *plan) {
@@ -623,6 +640,35 @@ static void host_progress(native_io_sharded_context *context, void *arg) {
   }
 }
 
+static void host_foreign_managed_check(native_io_sharded_context *context, void *arg) {
+  host_foreign_managed_probe *probe = (host_foreign_managed_probe *)arg;
+  hosted_state *f = probe->target;
+  cnet_manager_snapshot manager = {0};
+  cnet_managed_dial_snapshot dial = {0};
+  cnet_pool_snapshot pool = {0};
+  const cnet_manager_attachment attachment = {
+      .observer = host_observer(&f->out_probe)
+  };
+  probe->observed_shard = native_io_sharded_context_shard(context);
+  probe->same_thread = f->owner_thread == cmeta_thread_current_token();
+  probe->manager_snapshot_rc = cnet_manager_get_snapshot(&f->manager, &manager);
+  probe->dial_snapshot_rc = cnet_managed_dial_get_snapshot(&f->dial, &dial);
+  probe->pool_snapshot_rc = cnet_pool_get_snapshot(&f->pool, &pool);
+  probe->manager_reserve_rc = cnet_manager_reserve(
+      &f->manager, &attachment, &probe->reserved_managed);
+  probe->pool_reserve_rc = cnet_pool_reserve_connecting(
+      &f->pool, &f->pool_key, &probe->reserved_physical);
+  probe->pool_acquire_rc = cnet_pool_try_acquire(
+      &f->pool, &f->pool_key, NULL, &probe->acquired_lease,
+      &probe->acquired_managed);
+  probe->dial_advance_rc = cnet_managed_dial_advance(
+      &f->dial, cmeta_monotonic_ms(), &probe->dial_wait_ms);
+  probe->pool_drain_rc = cnet_pool_begin_drain(&f->pool, f->physical);
+  probe->manager_seal_rc = cnet_manager_seal(&f->manager);
+  probe->dial_seal_rc = cnet_managed_dial_seal(&f->dial);
+  probe->pool_seal_rc = cnet_pool_seal(&f->pool);
+}
+
 /*
  * Drive each Owner with a bounded routed task. Only its Owner sees the CNet
  * listener, clients, endpoint and completion records. Waiting for the finite
@@ -635,6 +681,8 @@ static void host_run_topology(size_t owner_count) {
   native_io_sharded *sg = NULL;
   native_io_sharded_task initialize[HOST_MAX_OWNERS] = {{0}};
   native_io_sharded_task progress[HOST_MAX_OWNERS] = {{0}};
+  native_io_sharded_task foreign_tasks[HOST_MAX_OWNERS] = {{0}};
+  host_foreign_managed_probe foreign[HOST_MAX_OWNERS] = {{0}};
   const native_io_sharded_config config = {
       owner_count, 8u, {host_kind(), 24u, 48u, HOST_BATCH}};
   const uint64_t deadline = cmeta_monotonic_ms() + HOST_TIMEOUT_MS;
@@ -665,6 +713,45 @@ static void host_run_topology(size_t owner_count) {
     check_equal(hosts[i].lease.owner_shard, (uint32_t)i);
     for (size_t j = 0u; j < i; ++j)
       check(hosts[i].backend != hosts[j].backend);
+  }
+
+  /* All home-Owner initialization is complete, and none of their progress
+   * tasks is active. Submit one *other-Owner* task per live Managed set, then
+   * wait at the SG task barrier before inspecting results on this test thread.
+   * Unauthorized reads/mutations must fail without leaking credits or changing
+   * the Manager/Dial/Pool states needed by the following real TCP exchange. */
+  if (owner_count > 1u) {
+    for (size_t i = 0u; i < owner_count; ++i) {
+      foreign[i].target = &hosts[i];
+      foreign[i].caller_shard = (i + 1u) % owner_count;
+      foreign_tasks[i] = (native_io_sharded_task){
+          host_foreign_managed_check, NULL, NULL, &foreign[i]};
+      check_equal(native_io_sharded_submit_to(
+          sg, foreign[i].caller_shard, &foreign_tasks[i]), SALTS_OK);
+    }
+    check_equal(native_io_sharded_wait(sg), SALTS_OK);
+    for (size_t i = 0u; i < owner_count; ++i) {
+      const host_foreign_managed_probe *p = &foreign[i];
+      check_equal(p->observed_shard, p->caller_shard);
+      check(!p->same_thread);
+      check_equal(p->manager_snapshot_rc, SALTS_EPERM);
+      check_equal(p->manager_reserve_rc, SALTS_EPERM);
+      check_equal(p->manager_seal_rc, SALTS_EPERM);
+      check_equal(p->dial_snapshot_rc, SALTS_EPERM);
+      check_equal(p->dial_advance_rc, SALTS_EPERM);
+      check_equal(p->dial_seal_rc, SALTS_EPERM);
+      check_equal(p->pool_snapshot_rc, SALTS_EPERM);
+      check_equal(p->pool_reserve_rc, SALTS_EPERM);
+      check_equal(p->pool_acquire_rc, SALTS_EPERM);
+      check_equal(p->pool_drain_rc, SALTS_EPERM);
+      check_equal(p->pool_seal_rc, SALTS_EPERM);
+      check_equal(p->reserved_managed.slot, (size_t)0u);
+      check_equal(p->reserved_physical.slot, (size_t)0u);
+      check_equal(p->acquired_managed.slot, (size_t)0u);
+      check_equal(p->acquired_lease.slot, (size_t)0u);
+      check_equal(p->dial_wait_ms, UINT64_C(0));
+      check_equal(hosts[i].status, SALTS_OK);
+    }
   }
 
   while (!all_done && cmeta_monotonic_ms() < deadline) {
