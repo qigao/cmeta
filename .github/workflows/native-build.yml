@@ -292,7 +292,7 @@ jobs:
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.execution }}
         timeout-minutes: 30
         shell: bash
-        run: ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_.*_test$|native_ipc(_header_cpp)?_test$|cmeta_native_|thread_pool_test$|thread_pool_lf_test$|thread_pool_lf_installed_test$|disruptor_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cflow_(owner_executor|owner_scheduler|reactive|actor|machine_instance|statechart_instance|statechart_actor|execution)_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
+        run: ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(test_cmeta_process$|native_io_test$|cflow_io_(actor|native_adapter|pipe)_test$|tinytest_regression_runtime$|cnet_.*_test$|native_ipc(_header_cpp)?_test$|cmeta_native_|thread_pool_test$|thread_pool_lf_test$|thread_pool_lf_installed_test$|disruptor_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cflow_(owner_executor|owner_scheduler|reactive|actor|machine_instance|statechart_instance|statechart_actor|execution)_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
       - name: Run Windows execution and nested CSTL contracts
         if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.execution }}
         timeout-minutes: 30
@@ -302,7 +302,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(tinytest_regression_runtime$|cnet_.*_test$|native_ipc(_header_cpp)?_test$|cmeta_native_|thread_pool_test$|thread_pool_lf_test$|thread_pool_lf_installed_test$|disruptor_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cflow_(owner_executor|owner_scheduler|reactive|actor|machine_instance|statechart_instance|statechart_actor|execution)_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
+          ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(test_cmeta_process$|native_io_test$|cflow_io_(actor|native_adapter|pipe)_test$|tinytest_regression_runtime$|cnet_.*_test$|native_ipc(_header_cpp)?_test$|cmeta_native_|thread_pool_test$|thread_pool_lf_test$|thread_pool_lf_installed_test$|disruptor_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cflow_(owner_executor|owner_scheduler|reactive|actor|machine_instance|statechart_instance|statechart_actor|execution)_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
           if errorlevel 1 exit /b 1
       - name: Run reflected CFlow contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.projection }}
