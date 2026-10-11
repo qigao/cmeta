@@ -1321,7 +1321,10 @@ int cmeta_fs_root_opendir_self(
   dir->restart = true;
 #else
   {
-    int fd = cmeta_fs_root_dup_dir_fd(root->fd);
+    /* dup() shares the directory offset. Each stream must start independently
+     * while remaining anchored to the admitted root, even after a rename. */
+    int fd = openat(
+        root->fd, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0) {
       int rc = -errno;
       free(dir);

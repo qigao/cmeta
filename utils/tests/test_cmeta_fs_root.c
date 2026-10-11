@@ -91,6 +91,79 @@ spec("Salts secure root-relative FS") {
     reset_fixture();
   }
 
+  group("independent root directory streams") {
+    static cmeta_fs_root_t *root;
+    static cmeta_fs_root_dir_t *first;
+    static cmeta_fs_root_dir_t *second;
+
+    before_each() {
+      char path[1024];
+      reset_fixture();
+      check_equal(cmeta_fs_mkdir(root_path, 0755), 0);
+      check_equal(join_path(path, sizeof(path), root_path, "data.txt"), 0);
+      check_equal(write_ambient(path, "data"), 0);
+      check_equal(join_path(path, sizeof(path), root_path, "append.txt"), 0);
+      check_equal(write_ambient(path, "append"), 0);
+      check_equal(cmeta_fs_root_open(root_path, &root), 0);
+    }
+
+    after_each() {
+      if (first) (void)cmeta_fs_root_closedir(first);
+      if (second) (void)cmeta_fs_root_closedir(second);
+      first = second = NULL;
+      if (root) (void)cmeta_fs_root_close(root);
+      root = NULL;
+      reset_fixture();
+    }
+
+    it("reopens at the beginning after an interrupted enumeration") {
+      char name[64];
+      cmeta_fs_root_dirent_t entry;
+      uint64_t cookie = 0;
+      size_t count = 0;
+      int rc;
+      check_equal(cmeta_fs_root_opendir_self(root, &first), 0);
+      check_equal(cmeta_fs_root_readdir(first, 0, name, sizeof(name), &entry), 1);
+      check_equal(cmeta_fs_root_closedir(first), 0);
+      first = NULL;
+      check_equal(cmeta_fs_root_opendir_self(root, &second), 0);
+      while ((rc = cmeta_fs_root_readdir(second, cookie, name, sizeof(name), &entry)) > 0) {
+        check_true(strcmp(name, "data.txt") == 0 || strcmp(name, "append.txt") == 0);
+        cookie = entry.next_cookie;
+        ++count;
+      }
+      check_equal(rc, 0);
+      check_equal(count, 2u);
+    }
+
+    it("keeps interleaved enumeration cursors independent") {
+      char first_name[64], second_name[64];
+      cmeta_fs_root_dirent_t first_entry, second_entry;
+      check_equal(cmeta_fs_root_opendir_self(root, &first), 0);
+      check_equal(cmeta_fs_root_opendir_self(root, &second), 0);
+      check_equal(cmeta_fs_root_readdir(first, 0, first_name, sizeof(first_name), &first_entry), 1);
+      check_equal(cmeta_fs_root_readdir(second, 0, second_name, sizeof(second_name), &second_entry), 1);
+      check_equal(cmeta_fs_root_readdir(first, first_entry.next_cookie,
+          first_name, sizeof(first_name), &first_entry), 1);
+      check_equal(cmeta_fs_root_readdir(first, first_entry.next_cookie,
+          first_name, sizeof(first_name), &first_entry), 0);
+      check_equal(cmeta_fs_root_readdir(second, second_entry.next_cookie,
+          second_name, sizeof(second_name), &second_entry), 1);
+      check_equal(cmeta_fs_root_readdir(second, second_entry.next_cookie,
+          second_name, sizeof(second_name), &second_entry), 0);
+    }
+
+    it("reopens the admitted directory after its path is renamed") {
+      char name[64];
+      cmeta_fs_root_dirent_t entry;
+      check_equal(cmeta_fs_rename(root_path, moved_path), 0);
+      check_equal(cmeta_fs_mkdir(root_path, 0755), 0);
+      check_equal(cmeta_fs_root_opendir_self(root, &first), 0);
+      check_equal(cmeta_fs_root_readdir(first, 0, name, sizeof(name), &entry), 1);
+      check_true(strcmp(name, "data.txt") == 0 || strcmp(name, "append.txt") == 0);
+    }
+  }
+
   it("admits an absolute root and rejects guest escape syntax") {
     cmeta_fs_root_t *root = NULL;
     cmeta_fs_root_file_t *file = NULL;
