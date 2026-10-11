@@ -573,6 +573,17 @@ static int iocp_submit(cmeta_io_impl *base, const native_io_operation *operation
       *out_request = request->request;
       return SALTS_OK;
     }
+    if (operation->kind == NATIVE_IO_OPERATION_PIPE_READ &&
+        (native_error == ERROR_BROKEN_PIPE || native_error == ERROR_HANDLE_EOF)) {
+      /* Immediate EOF queues no OS packet. Retain the lease until observe,
+       * using the same zero-byte read completion as asynchronous EOF. */
+      if (PostQueuedCompletionStatus(impl->port, 0u, 0u, &request->overlapped)) {
+        iocp_counter_increment(&impl->submitted);
+        *out_request = request->request;
+        return SALTS_OK;
+      }
+      native_error = GetLastError();
+    }
     iocp_release_request(impl, request, index);
     iocp_counter_increment(&impl->native_submit_errors);
     return iocp_native_error(native_error);

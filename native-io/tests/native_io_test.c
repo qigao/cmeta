@@ -2191,6 +2191,20 @@ static void native_io_test_iocp_pipe_cancel_and_eof(void) {
   check_equal(event.kind, NATIVE_IO_COMPLETION_EOF);
   check_equal(event.status, SALTS_EOF);
 
+  /* A new read after peer closure must still be admitted and completed once. */
+  request = (native_io_request){0};
+  event = (native_io_completion){0};
+  count = 0u;
+  check_equal(native_io_backend_submit(&backend, &operation, &request), SALTS_OK);
+  check_equal(native_io_backend_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS,
+                                       &count), SALTS_OK);
+  check_equal(count, 1u);
+  check_equal(event.kind, NATIVE_IO_COMPLETION_EOF);
+  check_equal(event.status, SALTS_EOF);
+  check_equal(event.bytes, (size_t)0u);
+  check_equal(native_io_backend_observe(&backend, &event, 1u, 0u, &count), SALTS_ETIMEDOUT);
+  check_equal(count, (size_t)0u);
+
   check_equal(native_io_backend_close(&backend), SALTS_OK);
   native_io_test_close_pipe(pipes[0]);
   check_equal(native_io_backend_release_pipe(&backend, endpoint), SALTS_OK);
