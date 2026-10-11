@@ -136,14 +136,51 @@ After owner/backend quiescence the caller seals/destroys the inbox and
 shuts down SG. There is no cross-shard socket migration *after* adoption
 and no per-packet placement, Actor or duplicate NativeIO observe.
 
-Exact-head CI result **pending**. The negative paths exercised in this
-fixture are bounded credit denial and rejected stale publish, plus
-double-release protection after real terminal. Additional rejection
-at actual `manager_adopt` (full transport, TLS init errors), publish-vs-
-seal races, backpressure across multiple accepted connections, competing
-listeners, failed notification during shutdown and fault-isolated
-neighbor consumers remain separate #1052/#1056/#1057 gates. Do not mark
-the remote handoff product interface fully qualified from a single loopback.
+The consuming-adopt-error slice merged in
+[PR #1114](https://github.com/qigao/salts/pull/1114) after
+[exact-source CI #1764](https://github.com/qigao/salts/actions/runs/38115634926)
+passed. It uses an invalid TLS-server handle, not a real TLS handshake failure.
+The deterministic seal-before-publish slice merged in
+[PR #1115](https://github.com/qigao/salts/pull/1115) after
+[exact-source CI #1766](https://github.com/qigao/salts/actions/runs/38116468224)
+passed. Both handoff and independent installed-SDK CTests actually executed on
+Linux GCC/Clang, macOS GCC/Clang and Windows MSVC. ARM64/mobile builds do not
+qualify these handoff scenarios on native devices; no SDK publication occurred.
+
+### Concurrent listener publication and wake-tail fixture
+
+The same formal `cnet_sg_handoff_owner_test` now also creates four actual SG
+Owners. Owners 0/1/2 each accept a real detached TCP child and reserve one credit
+in Owner 3's bounded MPSC inbox. Owner 0 publishes first and pauses before its
+host wake; Owners 1/2 concurrently attempt publication while Owner 3 seals.
+The racing attempts may succeed or return `SALTS_ESHUTDOWN`. Success transfers
+the descriptor; rejection preserves the source socket and RESERVED ticket,
+which the source explicitly closes/releases once.
+
+Owner 3 cancels queued children using `take -> close -> release`, including
+after seal. Once credits are drained, the **host-supplied quiescence predicate**
+still refuses backend lease release while a producer's publish-to-wake tail is
+live. Handoff does not automatically retain the inbox or wake target. Atomic
+test gates hold these interleavings with finite deadlines, and an SG task
+barrier establishes actual producer completion before teardown.
+
+Two variants prove delayed successful SG notification and deterministic
+`SALTS_ENOBUFS` from a full actual target SG task queue. Neither notification
+outcome authorizes republishing or reclaiming transferred resources. Each
+source observes one real CNet terminal; teardown drains NativeIO, releases host
+leases, then destroys the inbox and SG. This is queued cancellation, separate
+from the existing final-Owner Manager adopt/recycle fixtures.
+
+Native multi-platform CI for this new fixture remains a separate acceptance
+gate. Reproduce locally with the project's configure/build/test user presets,
+building `cnet_sg_handoff_owner_test` and running its CTest; use CTest
+`--repeat until-fail:50` for repeated interleavings. This is correctness
+qualification, not a saturation benchmark or exhaustive schedule proof.
+
+Real TLS handshake rejection, final transport/Manager capacity exhaustion,
+multi-listener overload/fairness, fault-isolated neighbor consumers and
+downstream protocol/benchmark/release gates remain open under
+#1052/#1056/#1057. These test slices do not qualify the entire product interface.
 
 ## UDP and WebSocket policy review (#1095)
 
