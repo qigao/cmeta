@@ -490,7 +490,12 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     check(s.recovery.awaiting_protocol);
     check(!s.recovery.protocol_ready);
     check(s.managed.slot != 0u);
-    check(s.managed.generation != old_managed.generation);
+    /* Managed record identity is (manager, incarnation, slot, generation).
+     * Different record slots may legitimately have the same generation. */
+    check(s.managed.manager != old_managed.manager ||
+          s.managed.incarnation != old_managed.incarnation ||
+          s.managed.slot != old_managed.slot ||
+          s.managed.generation != old_managed.generation);
     check(s.recovery_ticket.generation != old_ticket.generation);
     check_equal(cnet_managed_dial_protocol_ready(&dial, old_ticket, cmeta_monotonic_ms()),
                 SALTS_ENOENT);
@@ -530,6 +535,9 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
                 SALTS_OK);
     check_equal(cnet_pool_bind_ready(&pool, physical, s.managed, 1u), SALTS_OK);
     check_equal(cnet_pool_try_acquire(&pool, &key, NULL, &lease, &managed), SALTS_OK);
+    check_equal(managed.manager, s.managed.manager);
+    check_equal(managed.incarnation, s.managed.incarnation);
+    check_equal(managed.slot, s.managed.slot);
     check_equal(managed.generation, s.managed.generation);
     check_equal(cnet_pool_release(&pool, old_lease), SALTS_ENOENT);
     check_equal(cnet_pool_get_snapshot(&pool, &pool_state), SALTS_OK);
