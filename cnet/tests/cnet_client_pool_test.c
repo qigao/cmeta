@@ -102,6 +102,43 @@ static void release_protocol(void *arg, uint64_t token) {
   ++probe->released;
 }
 
+/* Protocol-side slot reservations are authoritative and may fail even when
+ * CNet Pool physical capacity is available. The probe deliberately rejects
+ * one real Manager connection while authorizing another compatible one. */
+typedef struct selective_protocol_probe {
+  cnet_managed_connection denied_connection;
+  cnet_managed_connection admitted_connection;
+  size_t denied_calls, admitted_calls, committed_tokens, released_tokens;
+  int admitted_error;
+} selective_protocol_probe;
+static bool same_manager_identity(cnet_managed_connection a, cnet_managed_connection b) {
+  return a.manager == b.manager && a.incarnation == b.incarnation &&
+         a.slot == b.slot && a.generation == b.generation;
+}
+static int selective_reserve(void *arg, cnet_managed_connection managed, uint64_t *out_token) {
+  selective_protocol_probe *probe = (selective_protocol_probe *)arg;
+  cnet_pool_snapshot snapshot = {0};
+  if (out_token == NULL || cnet_pool_get_snapshot(&test_pool, &snapshot) != SALTS_EBUSY)
+    return SALTS_EPROTO; /* Pool mutation during a protocol callback is forbidden. */
+  if (same_manager_identity(managed, probe->denied_connection)) {
+    ++probe->denied_calls;
+    return SALTS_ENOBUFS; /* Protocol-local FULL, not CNet physical FULL. */
+  }
+  if (!same_manager_identity(managed, probe->admitted_connection))
+    return SALTS_EINVAL;
+  ++probe->admitted_calls;
+  if (probe->admitted_error != SALTS_OK) return probe->admitted_error;
+  *out_token = ++probe->committed_tokens;
+  return SALTS_OK;
+}
+static void selective_release(void *arg, uint64_t token) {
+  selective_protocol_probe *probe = (selective_protocol_probe *)arg;
+  cnet_pool_snapshot snapshot = {0};
+  check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_EBUSY);
+  check(token != 0u && token <= probe->committed_tokens);
+  ++probe->released_tokens;
+}
+
 spec("CNet owner-local client pool") {
   before_each() {
     const cnet_client_config client_config = {
@@ -315,6 +352,85 @@ spec("CNet owner-local client pool") {
     check(snapshot.drained);
     check_equal(snapshot.active_leases, (size_t)0u);
     check_equal(snapshot.physical_in_use, (size_t)0u);
+  }
+  it("tries another compatible physical connection only on protocol FULL") {
+    const cnet_pool_key key = pool_key(63u);
+    cnet_pool_connection a = {0}, b = {0};
+    cnet_pool_lease first = {0}, second = {0}, rejected = {0};
+    cnet_managed_connection picked = {0};
+    cnet_pool_snapshot snapshot = {0};
+    selective_protocol_probe probe = {0};
+    const cnet_pool_protocol_ops protocol = {selective_reserve, selective_release, &probe};
+
+    /* Both actual TCP transports have the same Pool key. Physical READY
+     * does not reserve a protocol slot; the host is the protocol authority. */
+    check_equal(cnet_pool_reserve_connecting(&test_pool, &key, &a), SALTS_OK);
+    check_equal(cnet_pool_reserve_connecting(&test_pool, &key, &b), SALTS_OK);
+    probe.denied_connection = bind_manager(0u);
+    probe.admitted_connection = bind_manager(1u);
+    wait_connected_count(2u);
+    check_equal(cnet_pool_bind_ready(&test_pool, a, probe.denied_connection, 2u), SALTS_OK);
+    check_equal(cnet_pool_bind_ready(&test_pool, b, probe.admitted_connection, 2u), SALTS_OK);
+
+    /* Multiplexed physical capacity never grants an unauthenticated lease. */
+    check_equal(cnet_pool_try_acquire(&test_pool, &key, NULL, &rejected, &picked),
+                SALTS_ENOTSUP);
+    check_equal(rejected.slot, (size_t)0u);
+    check_equal(picked.slot, (size_t)0u);
+
+    /* A protocol FULL may try another *compatible* connection. An actual
+     * error on B instead propagates: no synthetic retry or credit is added. */
+    probe.admitted_error = SALTS_EIO;
+    check_equal(cnet_pool_try_acquire(&test_pool, &key, &protocol, &rejected, &picked),
+                SALTS_EIO);
+    check_equal(rejected.slot, (size_t)0u);
+    check_equal(picked.slot, (size_t)0u);
+    check_equal(probe.denied_calls, (size_t)1u);
+    check_equal(probe.admitted_calls, (size_t)1u);
+    check_equal(probe.committed_tokens, (size_t)0u);
+    check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_OK);
+    check_equal(snapshot.active_leases, (size_t)0u);
+    check_equal(snapshot.ready, (size_t)2u);
+
+    probe.admitted_error = SALTS_OK;
+    check_equal(cnet_pool_try_acquire(&test_pool, &key, &protocol, &first, &picked),
+                SALTS_OK);
+    check(same_manager_identity(picked, probe.admitted_connection));
+    check_equal(cnet_pool_try_acquire(&test_pool, &key, &protocol, &second, &picked),
+                SALTS_OK);
+    check(same_manager_identity(picked, probe.admitted_connection));
+    check_equal(cnet_pool_try_acquire(&test_pool, &key, &protocol, &rejected, &picked),
+                SALTS_ENOBUFS);
+    check_equal(rejected.slot, (size_t)0u);
+    check_equal(probe.committed_tokens, (size_t)2u);
+    check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_OK);
+    check_equal(snapshot.active_leases, (size_t)2u);
+    check_equal(snapshot.ready, (size_t)2u);
+
+    /* Draining B must revoke future admission, but must retain the
+     * accepted stream tokens until the real terminal and both releases. */
+    check_equal(cnet_pool_begin_drain(&test_pool, b), SALTS_OK);
+    check_equal(cnet_pool_try_acquire(&test_pool, &key, &protocol, &rejected, &picked),
+                SALTS_ENOBUFS);
+    check_equal(cnet_pool_terminal(&test_pool, b), SALTS_EBUSY);
+    finish_managed_connection(probe.admitted_connection);
+    check_equal(cnet_pool_terminal(&test_pool, b), SALTS_OK);
+    check_equal(cnet_pool_destroy(&test_pool), SALTS_EBUSY);
+    check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_OK);
+    check_equal(snapshot.active_leases, (size_t)2u);
+    check_equal(snapshot.terminal_waiting_for_leases, (size_t)1u);
+    check_equal(cnet_pool_release(&test_pool, first), SALTS_OK);
+    check_equal(cnet_pool_release(&test_pool, first), SALTS_ENOENT);
+    check_equal(cnet_pool_release(&test_pool, second), SALTS_OK);
+    check_equal(probe.released_tokens, (size_t)2u);
+    check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_OK);
+    check_equal(snapshot.active_leases, (size_t)0u);
+    check_equal(snapshot.physical_in_use, (size_t)1u);
+
+    finish_managed_connection(probe.denied_connection);
+    check_equal(cnet_pool_terminal(&test_pool, a), SALTS_OK);
+    check_equal(cnet_pool_get_snapshot(&test_pool, &snapshot), SALTS_OK);
+    check(snapshot.drained);
   }
   it("keeps terminal storage until every multiplexed lease settles") {
     cnet_pool_key key = pool_key(7u);
