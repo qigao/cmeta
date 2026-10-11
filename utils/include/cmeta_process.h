@@ -41,11 +41,22 @@ typedef enum {
   SALTS_PROCESS_CAPTURE_STDOUT = 1U << 1,
   SALTS_PROCESS_CAPTURE_STDERR = 1U << 2,
   /** Do not inherit parent variables; env becomes the complete child environment. */
-  SALTS_PROCESS_CLEAN_ENVIRONMENT = 1U << 3
+  SALTS_PROCESS_CLEAN_ENVIRONMENT = 1U << 3,
+  /**
+   * Interpret program as a shell command; args must be NULL. Remaining job/
+   * process-group members are terminated when the root shell exits, before
+   * publishing its result. Background jobs cannot outlive this command owner.
+   */
+  SALTS_PROCESS_SHELL_COMMAND = 1U << 4
 } cmeta_process_flags_t;
 
 typedef struct {
-  /** Executable path or name. A shell is never invoked implicitly. */
+  /**
+   * Executable path/name, or command text with SALTS_PROCESS_SHELL_COMMAND.
+   * Explicit shell mode uses /bin/sh -c on POSIX and the system cmd.exe
+   * /d /s /c on Windows. Command text is interpreted verbatim by that shell;
+   * it is not an argv escaping API. Empty commands are rejected.
+   */
   const char *program;
   /** NULL-terminated arguments excluding argv[0], or NULL for no arguments. */
   const char *const *args;

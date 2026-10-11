@@ -140,6 +140,47 @@ static int path_exists(const char *path) {
 
 spec("cmeta_process") {
   group("configuration") {
+    it("rejects argv in explicit shell mode") {
+      cmeta_process_options_t options;
+      cmeta_process_t *process = NULL;
+      const char *args[] = {NULL};
+      cmeta_process_options_init(&options);
+      options.program = "echo unreachable";
+      options.args = args;
+      options.flags |= SALTS_PROCESS_SHELL_COMMAND;
+      check_equal(cmeta_process_spawn(&options, &process), SALTS_EINVAL);
+      check_null(process);
+    }
+
+    it("preserves quotes and shell metacharacters in explicit shell mode") {
+      cmeta_process_options_t options;
+      cmeta_process_t *process = NULL;
+      cmeta_process_result_t result;
+      char output[128];
+      size_t count = 0u;
+      int wait_status;
+      int read_status;
+      cmeta_process_options_init(&options);
+#ifdef _WIN32
+      options.program = "echo \"quoted & text\" & exit /b 7";
+#else
+      options.program = "printf '%s' 'quoted & text'; exit 7";
+#endif
+      options.flags |= SALTS_PROCESS_SHELL_COMMAND;
+      options.timeout_ms = 5000u;
+      check_equal(cmeta_process_spawn(&options, &process), SALTS_OK);
+      wait_status = cmeta_process_wait(process, &result);
+      read_status = read_all(process, 1, output, sizeof(output), &count);
+      cmeta_process_destroy(process);
+      check_equal(wait_status, SALTS_OK);
+      check_true(read_status == SALTS_OK || read_status == SALTS_EOF);
+      info("shell state=%d exit=%d error=%d", result.state, result.exit_code, result.error_code);
+      check_equal(result.state, SALTS_PROCESS_EXITED);
+      check_equal(result.exit_code, 7);
+      check_contains(output, "quoted & text");
+      check_null(strchr(output, '\\'));
+    }
+
     it("rejects an external stdout binding combined with capture") {
       cmeta_process_options_t options;
       cmeta_process_stdio_bindings_t bindings = {

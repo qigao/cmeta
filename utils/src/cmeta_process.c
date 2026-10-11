@@ -30,6 +30,9 @@
   #include <signal.h>
   #include <sys/wait.h>
   #include <unistd.h>
+  #ifdef __APPLE__
+    #include <sys/sysctl.h>
+  #endif
 
 extern char **environ;
 #endif
@@ -46,6 +49,7 @@ struct cmeta_process_s {
   cmeta_process_result_t result;
   int terminate_requested;
   int native_active;
+  bool shell_command;
   uint64_t timeout_ms;
   size_t max_output_bytes;
   size_t captured_bytes;
@@ -80,9 +84,11 @@ static int process_state_terminal(cmeta_process_state_t state) {
 static int process_validate_options(const cmeta_process_options_t *options) {
   const unsigned int known_flags =
       SALTS_PROCESS_PIPE_STDIN | SALTS_PROCESS_CAPTURE_STDOUT | SALTS_PROCESS_CAPTURE_STDERR |
-      SALTS_PROCESS_CLEAN_ENVIRONMENT;
+      SALTS_PROCESS_CLEAN_ENVIRONMENT | SALTS_PROCESS_SHELL_COMMAND;
   if (!options || !options->program || options->program[0] == '\0') return SALTS_EINVAL;
   if ((options->flags & ~known_flags) != 0U) return SALTS_EINVAL;
+  if ((options->flags & SALTS_PROCESS_SHELL_COMMAND) != 0U && options->args != NULL)
+    return SALTS_EINVAL;
   return SALTS_OK;
 }
 
@@ -122,6 +128,7 @@ static int process_init(cmeta_process_t *process, const cmeta_process_options_t 
   process->result.pid = -1;
   process->result.exit_code = -1;
   process->timeout_ms = options->timeout_ms;
+  process->shell_command = (options->flags & SALTS_PROCESS_SHELL_COMMAND) != 0u;
   process->max_output_bytes = options->max_output_bytes != 0
                                   ? options->max_output_bytes
                                   : SALTS_PROCESS_DEFAULT_MAX_OUTPUT_BYTES;
@@ -439,6 +446,52 @@ static wchar_t *windows_quote_arg(wchar_t *output, const wchar_t *arg) {
   return output;
 }
 
+/* cmd /s removes the outer pair only; CRT argv quoting corrupts inner quotes. */
+static int build_windows_shell_command(const char *text, wchar_t **out_command) {
+  static const wchar_t suffix[] = L"\\cmd.exe\" /d /s /c \"";
+  wchar_t *body = NULL;
+  wchar_t *command;
+  UINT directory_capacity = GetSystemDirectoryW(NULL, 0);
+  UINT directory_length;
+  size_t body_length;
+  size_t suffix_length = sizeof(suffix) / sizeof(suffix[0]) - 1u;
+  size_t capacity;
+  size_t offset;
+  int rc;
+  if (directory_capacity == 0u) return win32_error();
+  rc = utf8_to_utf16(text, &body);
+  if (rc != SALTS_OK) return rc;
+  body_length = wcslen(body);
+  if (directory_capacity >= SALTS_PROCESS_WINDOWS_BLOCK_MAX ||
+      body_length >= SALTS_PROCESS_WINDOWS_BLOCK_MAX - directory_capacity ||
+      suffix_length + 3u >= SALTS_PROCESS_WINDOWS_BLOCK_MAX - directory_capacity - body_length) {
+    free(body);
+    return SALTS_EINVAL;
+  }
+  capacity = directory_capacity + suffix_length + body_length + 3u;
+  command = (wchar_t *)calloc(capacity, sizeof(*command));
+  if (command == NULL) {
+    free(body);
+    return SALTS_ENOMEM;
+  }
+  command[0] = L'"';
+  directory_length = GetSystemDirectoryW(command + 1u, directory_capacity);
+  if (directory_length == 0u || directory_length >= directory_capacity) {
+    rc = directory_length == 0u ? win32_error() : SALTS_ERANGE;
+    free(body);
+    free(command);
+    return rc;
+  }
+  offset = 1u + directory_length;
+  memcpy(command + offset, suffix, suffix_length * sizeof(*command));
+  offset += suffix_length;
+  memcpy(command + offset, body, body_length * sizeof(*command));
+  command[offset + body_length] = L'"';
+  free(body);
+  *out_command = command;
+  return SALTS_OK;
+}
+
 static int build_windows_command(const cmeta_process_options_t *options, wchar_t **out_command) {
   size_t count = 1;
   size_t total = 0;
@@ -447,6 +500,9 @@ static int build_windows_command(const cmeta_process_options_t *options, wchar_t
   wchar_t *command;
   wchar_t *cursor;
   int rc;
+
+  if ((options->flags & SALTS_PROCESS_SHELL_COMMAND) != 0U)
+    return build_windows_shell_command(options->program, out_command);
 
   if (options->args) {
     while (options->args[count - 1]) {
@@ -693,6 +749,10 @@ static void process_monitor(void *arg) {
 
     wait_result = WaitForSingleObject(process->process_handle, SALTS_PROCESS_POLL_INTERVAL_MS);
     if (wait_result == WAIT_OBJECT_0) {
+      if (process->shell_command && !TerminateJobObject(process->job_handle, 1u)) {
+        terminal = SALTS_PROCESS_WAIT_FAILED;
+        error_code = win32_error();
+      }
       cmeta_mutex_lock(&process->mutex);
       process->native_active = 0;
       cmeta_mutex_unlock(&process->mutex);
@@ -1209,6 +1269,43 @@ static int drain_posix_fd(cmeta_process_t *process, int fd, int is_stdout, atomi
   return SALTS_OK;
 }
 
+static int process_cleanup_shell_group(pid_t pid) {
+  int error;
+  if (kill(-pid, SIGKILL) == 0) return SALTS_OK;
+  error = errno;
+#ifdef __APPLE__
+  if (error == EPERM) {
+    int query[] = {CTL_KERN, KERN_PROC, KERN_PROC_PGRP, pid};
+    struct kinfo_proc remaining;
+    size_t size = sizeof(remaining);
+    /* Darwin skips zombies when signalling a group and reports EPERM when
+     * none remain signalable. Only accept the known unreaped root (or an
+     * empty group); additional members or a failed query retain the error. */
+    if (sysctl(query, sizeof(query) / sizeof(query[0]), &remaining, &size, NULL, 0) == 0 &&
+        (size == 0u || (size == sizeof(remaining) && remaining.kp_proc.p_pid == pid &&
+                       remaining.kp_proc.p_stat == SZOMB)))
+      return SALTS_OK;
+  }
+#endif
+  return error == ESRCH ? SALTS_OK : -error;
+}
+
+static pid_t process_poll_posix(cmeta_process_t *process, int *status, int *tree_error) {
+  if (process->shell_command) {
+    siginfo_t info;
+    int rc;
+    memset(&info, 0, sizeof(info));
+    do {
+      rc = waitid(P_PID, (id_t)process->pid, &info, WEXITED | WNOHANG | WNOWAIT);
+    } while (rc < 0 && errno == EINTR);
+    if (rc < 0) return -1;
+    if (info.si_pid == 0) return 0;
+    /* Keep the root waitable until group cleanup, preventing PID/PGID reuse. */
+    *tree_error = process_cleanup_shell_group(process->pid);
+  }
+  return waitpid(process->pid, status, WNOHANG);
+}
+
 static void process_monitor(void *arg) {
   cmeta_process_t *process = (cmeta_process_t *)arg;
   uint64_t started = cmeta_monotonic_ms();
@@ -1224,6 +1321,7 @@ static void process_monitor(void *arg) {
                      ? drain_posix_fd(process, process->stderr_fd, 0, &process->stderr_open)
                      : SALTS_OK;
     pid_t waited;
+    int tree_error = SALTS_OK;
     if (out_rc == SALTS_ERANGE || err_rc == SALTS_ERANGE) {
       terminal = SALTS_PROCESS_OUTPUT_LIMIT_EXCEEDED;
       process_platform_terminate(process);
@@ -1235,10 +1333,14 @@ static void process_monitor(void *arg) {
 
     cmeta_mutex_lock(&process->mutex);
     do {
-      waited = waitpid(process->pid, &status, WNOHANG);
+      waited = process_poll_posix(process, &status, &tree_error);
     } while (waited < 0 && errno == EINTR);
     if (waited == process->pid || waited < 0) process->native_active = 0;
     cmeta_mutex_unlock(&process->mutex);
+    if (tree_error != SALTS_OK) {
+      terminal = SALTS_PROCESS_WAIT_FAILED;
+      error_code = tree_error;
+    }
     if (waited == process->pid) break;
     if (waited < 0) {
       terminal = SALTS_PROCESS_WAIT_FAILED;
@@ -1501,6 +1603,10 @@ static int process_spawn(const cmeta_process_options_t *options,
                          const cmeta_process_stdio_bindings_t *bindings,
                          cmeta_process_t **out_process) {
   cmeta_process_t *process;
+#ifndef _WIN32
+  cmeta_process_options_t shell_options;
+  const char *shell_args[] = {"-c", NULL, NULL};
+#endif
   int rc;
   if (!out_process) return SALTS_EINVAL;
   *out_process = NULL;
@@ -1510,6 +1616,15 @@ static int process_spawn(const cmeta_process_options_t *options,
     rc = process_validate_stdio_conflicts(options, bindings);
     if (rc != SALTS_OK) return rc;
   }
+#ifndef _WIN32
+  if ((options->flags & SALTS_PROCESS_SHELL_COMMAND) != 0U) {
+    shell_options = *options;
+    shell_args[1] = options->program;
+    shell_options.program = "/bin/sh";
+    shell_options.args = shell_args;
+    options = &shell_options;
+  }
+#endif
   process = (cmeta_process_t *)calloc(1, sizeof(*process));
   if (!process) return SALTS_ENOMEM;
   rc = process_init(process, options);
