@@ -29,10 +29,15 @@ Plugin/CMeta ABI、registry 状态归属、lease 和停止／卸载顺序保持�
 测试通过 canonical Function ABI 验证后调用依赖函数，并按 lease → stop → quiescent → unload
 清理；注册目录仅在该测试进程存活期间使用，卸载后移除。
 
-**验证状态（2026-10-11）**：源码修复与上述测试已准备，未本地编译或运行，未发布 SDK。
-这三项正向用例不构成完整搜索边界验收；发布方还需在正式 Windows qualification 中覆盖
-宿主／系统目录、目录边界拒绝、加载失败清理及既有 ComponentPlugin 生命周期回归。
-按当前仓库 user presets 完成构建和 CTest 后才能记录通过，不能用源码审查代替运行结果。
+**验证状态（2026-10-11）**：[草稿 PR #1119](https://github.com/qigao/salts/pull/1119) 的
+源码提交 `e1a26b89ffaccd4cfad7dd8680020ffc35370f3b` 已通过
+[Salts CI 38131873603](https://github.com/qigao/salts/actions/runs/38131873603)。
+Windows 使用 `win-release-ci` 完整构建；本测试 3 个用例、47 条断言全部通过，无跳过或过滤。
+Windows native/plugin CTest 38/38、execution CTest 97/97 通过，包含既有 ComponentPlugin
+DSO、generation、scope、publication、runtime failure 和 concurrency 回归；这两组有重叠，不相加为独立测试数。
+其余七个平台构建任务也通过；Android/iOS 结果仅代表交叉构建。
+未本地构建 SDK、未合并或发布。这三项正向用例不构成完整搜索边界验收；
+宿主／系统目录、目录边界拒绝及搜索策略加载失败清理仍需正式 Windows qualification。
 Retro 仍消费已发布 rc.11，并保留其 Windows 迁移门槛，等待包含修复的发布包和正式验收证据。
 回滚仅还原源码补丁及对应测试；不得据此移除消费方的搜索策略要求。
 
