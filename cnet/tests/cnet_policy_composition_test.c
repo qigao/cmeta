@@ -22,7 +22,7 @@ static mem_buffer_t *output;
 static cnet_connection outgoing, accepted[3];
 static tstr uri;
 static size_t connected, terminals, raw_sends, tags, received, accept_count, gate_calls;
-static size_t client_received;
+static size_t client_received, expected_client_reply;
 static int tag_status;
 static uint64_t last_tag;
 static unsigned char wire[256];
@@ -64,6 +64,9 @@ static void client_receive_cb(void *u, cnet_connection c, const cnet_receive_vie
   (void)u;
   (void)c;
   client_received += v->size;
+  /* A real application reply may be fragmented across transport receives. */
+  if (expected_client_reply != 0u && client_received < expected_client_reply)
+    check_warn(cnet_receive(&client, c, 1u) == SALTS_OK);
 }
 static void receive_cb(void *u, cnet_connection c, const cnet_receive_view *v) {
   (void)u;
@@ -197,7 +200,7 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     uint64_t wait;
     stopping = false;
     connected = terminals = raw_sends = tags = received = accept_count = gate_calls = 0u;
-    client_received = 0u;
+    client_received = expected_client_reply = 0u;
     tag_status = SALTS_OK;
     last_tag = 0u;
 #if defined(CNET_COMPOSITION_TLS)
@@ -412,18 +415,24 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     check_equal(tag_status, SALTS_ECANCELED);
     check_equal(cnet_websocket_transport_destroy(&ws_transport), SALTS_OK);
   }
-  it("blocks replacement dial until old WS and leases settle and real pool capacity is reserved") {
+  it("requalifies a real replacement TCP lease only after WS and old Pool state drain") {
     cnet_managed_dial_snapshot s;
-    cnet_managed_connection managed;
+    cnet_managed_connection managed, old_managed;
+    cnet_reconnect_ticket old_ticket;
     cnet_pool_connection competing;
+    cnet_pool_lease old_lease, rejected = {0};
+    cnet_pool_snapshot pool_state;
     size_t events;
     uint64_t wait;
     check_equal(bind_ws(), SALTS_OK);
     check_equal(cnet_managed_dial_get_snapshot(&dial, &s), SALTS_OK);
+    old_ticket = s.recovery_ticket;
+    old_managed = s.managed;
     check_equal(cnet_managed_dial_protocol_ready(&dial, s.recovery_ticket, cmeta_monotonic_ms()),
                 SALTS_OK);
     check_equal(cnet_pool_bind_ready(&pool, physical, s.managed, 1u), SALTS_OK);
     check_equal(cnet_pool_try_acquire(&pool, &key, NULL, &lease, &managed), SALTS_OK);
+    old_lease = lease;
     check_equal(cnet_websocket_send_tagged(ws, CNET_WEBSOCKET_MESSAGE_BINARY, "abc", 3u, 10u),
                 SALTS_OK);
     check_equal(cnet_pool_begin_drain(&pool, physical), SALTS_OK);
@@ -458,7 +467,53 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     check_equal(cnet_managed_dial_get_snapshot(&dial, &s), SALTS_OK);
     check_equal(s.recovery.attempts, (uint32_t)1u);
     check_equal(tags, 1u);
-    check_equal(raw_sends, 0u); /* no replay */
+    check_equal(raw_sends, 0u); /* no WS/application replay during reconnect */
+    check(s.recovery.awaiting_protocol);
+    check(!s.recovery.protocol_ready);
+    check(s.managed.slot != 0u);
+    check(s.managed.generation != old_managed.generation);
+    check(s.recovery_ticket.generation != old_ticket.generation);
+    check_equal(cnet_managed_dial_protocol_ready(&dial, old_ticket, cmeta_monotonic_ms()),
+                SALTS_ENOENT);
+    check_equal(cnet_pool_try_acquire(&pool, &key, NULL, &rejected, &managed), SALTS_ENOBUFS);
+    check_equal(rejected.slot, (size_t)0u);
+    {
+      cnet_manager_entry recycled = {0};
+      check_equal(cnet_manager_lookup(&manager, old_managed, &recycled), SALTS_ENOENT);
+    }
+
+    /* Full protocol qualification is owned by the host, not TCP CONNECTED.
+     * Exchange actual new-generation payload in both directions before READY. */
+    outgoing = s.connection;
+    const size_t old_received = received;
+    const uint64_t exchange_until = cmeta_monotonic_ms() + WAIT_MS;
+    send_raw(outgoing, "PING", 4u);
+    while (received < old_received + 4u && cmeta_monotonic_ms() < exchange_until)
+      progress();
+    check_equal(received, old_received + 4u);
+    check_equal(memcmp(wire + old_received, "PING", 4u), 0);
+    expected_client_reply = 4u;
+    check_equal(cnet_receive(&client, outgoing, 1u), SALTS_OK);
+    {
+      mem_buffer_t *reply = bytes("PONG", 4u);
+      check_equal(cnet_send_buffer(&peers, accepted[1], reply), SALTS_OK);
+      mem_buffer_release(reply);
+    }
+    while (client_received < 4u && cmeta_monotonic_ms() < exchange_until)
+      progress();
+    check_equal(client_received, (size_t)4u);
+
+    check_equal(cnet_managed_dial_protocol_ready(&dial, s.recovery_ticket, cmeta_monotonic_ms()),
+                SALTS_OK);
+    check_equal(cnet_pool_bind_ready(&pool, physical, s.managed, 1u), SALTS_OK);
+    check_equal(cnet_pool_try_acquire(&pool, &key, NULL, &lease, &managed), SALTS_OK);
+    check_equal(managed.generation, s.managed.generation);
+    check_equal(cnet_pool_release(&pool, old_lease), SALTS_ENOENT);
+    check_equal(cnet_pool_get_snapshot(&pool, &pool_state), SALTS_OK);
+    check_equal(pool_state.ready, (size_t)1u);
+    check_equal(pool_state.active_leases, (size_t)1u);
+    check_equal(raw_sends, (size_t)1u); /* only the new explicit PING */
+    check_equal(tags, (size_t)1u);      /* the retired WS tag did not replay */
   }
   it("settles the accepted tagged write once across an abortive peer close, without replay") {
     size_t events, work;
