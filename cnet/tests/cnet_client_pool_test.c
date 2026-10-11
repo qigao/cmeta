@@ -12,6 +12,7 @@ static cnet_manager test_manager;
 static cnet_client_pool test_pool;
 static cnet_managed_connection records[POOL_TEST_CAPACITY];
 static char test_uri[100];
+static size_t connected_callbacks;
 
 static native_io_backend_kind test_backend(void) {
 #if defined(_WIN32)
@@ -24,7 +25,8 @@ static native_io_backend_kind test_backend(void) {
 }
 static void state_cb(void *user, cnet_connection connection,
                      cnet_connection_state state, const cnet_error *error) {
-  (void)user; (void)connection; (void)state; (void)error;
+  (void)user; (void)connection; (void)error;
+  if (state == CNET_CONNECTION_CONNECTED) ++connected_callbacks;
 }
 static cnet_pool_key pool_key(uint64_t authority) {
   cnet_pool_key key = {0};
@@ -61,6 +63,14 @@ static cnet_managed_connection bind_manager(size_t index) {
   check_equal(cnet_manager_connect(&test_manager, records[index], &options, &connection), SALTS_OK);
   check(connection.slot != 0u);
   return records[index];
+}
+static void wait_connected_count(size_t expected) {
+  const uint64_t deadline = cmeta_monotonic_ms() + 3000u;
+  while (connected_callbacks < expected && cmeta_monotonic_ms() < deadline) {
+    size_t events = 0u;
+    check_equal(cnet_client_poll(&test_client, 1u, &events), SALTS_OK);
+  }
+  check_equal(connected_callbacks, expected);
 }
 static void finish_managed_connection(cnet_managed_connection managed) {
   cnet_manager_entry entry = {0};
@@ -108,6 +118,7 @@ spec("CNet owner-local client pool") {
     const cnet_pool_config config = pool_config();
     uint16_t port = 0u;
     memset(records, 0, sizeof(records));
+    connected_callbacks = 0u;
     check_equal(cnet_client_init(&test_client, &client_config), SALTS_OK);
     check_equal(cnet_listener_init(&test_listener, &listener_config), SALTS_OK);
     check_equal(cnet_listener_port(&test_listener, &port), SALTS_OK);
@@ -208,8 +219,11 @@ spec("CNet owner-local client pool") {
     check_equal(cnet_pool_reserve_connecting(&test_pool, &b, &second), SALTS_OK);
     a_managed = bind_manager(0u);
     b_managed = bind_manager(1u);
-    /* A real Manager BOUND record is necessary but protocol READY remains the
-     * caller's responsibility; this test covers Pool admission, not auth. */
+    wait_connected_count(2u);
+    /* A real Manager BOUND record and actual TCP CONNECTED are prerequisites,
+     * but protocol READY remains the host's responsibility. This host now
+     * asserts readiness for its test-only nonmultiplexed TCP profile; no
+     * protocol authentication or real TLS identity is implied. */
     check_equal(cnet_pool_bind_ready(&test_pool, first, a_managed, 1u), SALTS_OK);
     check_equal(cnet_pool_bind_ready(&test_pool, second, b_managed, 1u), SALTS_OK);
 
@@ -276,6 +290,7 @@ spec("CNet owner-local client pool") {
     check_equal(replacement.slot, first.slot);
     check(replacement.generation != first.generation);
     replacement_managed = bind_manager(2u);
+    wait_connected_count(3u);
     check_equal(cnet_pool_bind_ready(&test_pool, replacement, replacement_managed, 1u),
                 SALTS_OK);
     check_equal(cnet_pool_terminal(&test_pool, first), SALTS_ENOENT);
