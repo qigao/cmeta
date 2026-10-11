@@ -22,7 +22,10 @@ static mem_buffer_t *output;
 static cnet_connection outgoing, accepted[3];
 static tstr uri;
 static size_t connected, terminals, raw_sends, tags, received, accept_count, gate_calls;
-static size_t client_received, expected_client_reply;
+static size_t client_received, expected_client_reply, reconnected_reply_bytes;
+static cnet_connection reconnected_peer, reconnected_outgoing;
+static size_t reconnected_peer_bytes;
+static unsigned char reconnected_peer_wire[8];
 static int tag_status;
 static uint64_t last_tag;
 static unsigned char wire[256];
@@ -64,12 +67,25 @@ static void client_receive_cb(void *u, cnet_connection c, const cnet_receive_vie
   (void)u;
   (void)c;
   client_received += v->size;
-  /* A real application reply may be fragmented across transport receives. */
-  if (expected_client_reply != 0u && client_received < expected_client_reply)
-    check_warn(cnet_receive(&client, c, 1u) == SALTS_OK);
+  /* Only the new connection may authorize this generation's reply. */
+  if (expected_client_reply != 0u &&
+      c.slot == reconnected_outgoing.slot &&
+      c.generation == reconnected_outgoing.generation) {
+    reconnected_reply_bytes += v->size;
+    if (reconnected_reply_bytes < expected_client_reply)
+      check_warn(cnet_receive(&client, c, 1u) == SALTS_OK);
+  }
 }
 static void receive_cb(void *u, cnet_connection c, const cnet_receive_view *v) {
   (void)u;
+  if (reconnected_peer.slot != 0u &&
+      c.slot == reconnected_peer.slot &&
+      c.generation == reconnected_peer.generation) {
+    if (reconnected_peer_bytes + v->size <= sizeof(reconnected_peer_wire)) {
+      memcpy(reconnected_peer_wire + reconnected_peer_bytes, v->data, v->size);
+      reconnected_peer_bytes += v->size;
+    } else check_warn(false);
+  }
   if (received + v->size <= sizeof(wire)) {
     memcpy(wire + received, v->data, v->size);
     received += v->size;
@@ -200,7 +216,10 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     uint64_t wait;
     stopping = false;
     connected = terminals = raw_sends = tags = received = accept_count = gate_calls = 0u;
-    client_received = expected_client_reply = 0u;
+    client_received = expected_client_reply = reconnected_reply_bytes = 0u;
+    reconnected_peer_bytes = 0u;
+    reconnected_peer = reconnected_outgoing = (cnet_connection){0};
+    memset(reconnected_peer_wire, 0, sizeof(reconnected_peer_wire));
     tag_status = SALTS_OK;
     last_tag = 0u;
 #if defined(CNET_COMPOSITION_TLS)
@@ -485,13 +504,14 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
     /* Full protocol qualification is owned by the host, not TCP CONNECTED.
      * Exchange actual new-generation payload in both directions before READY. */
     outgoing = s.connection;
-    const size_t old_received = received;
+    reconnected_outgoing = outgoing;
+    reconnected_peer = accepted[1];
     const uint64_t exchange_until = cmeta_monotonic_ms() + WAIT_MS;
     send_raw(outgoing, "PING", 4u);
-    while (received < old_received + 4u && cmeta_monotonic_ms() < exchange_until)
+    while (reconnected_peer_bytes < 4u && cmeta_monotonic_ms() < exchange_until)
       progress();
-    check_equal(received, old_received + 4u);
-    check_equal(memcmp(wire + old_received, "PING", 4u), 0);
+    check_equal(reconnected_peer_bytes, (size_t)4u);
+    check_equal(memcmp(reconnected_peer_wire, "PING", 4u), 0);
     expected_client_reply = 4u;
     check_equal(cnet_receive(&client, outgoing, 1u), SALTS_OK);
     {
@@ -500,10 +520,10 @@ spec("CNet dedicated WS transport and pooled recovery composition") {
       mem_buffer_release(reply);
     }
     /* A peer ACK may arrive before the local asynchronous send terminal. */
-    while ((client_received < 4u || raw_sends < 1u) &&
+    while ((reconnected_reply_bytes < 4u || raw_sends < 1u) &&
            cmeta_monotonic_ms() < exchange_until)
       progress();
-    check_equal(client_received, (size_t)4u);
+    check_equal(reconnected_reply_bytes, (size_t)4u);
     check_equal(raw_sends, (size_t)1u);
 
     check_equal(cnet_managed_dial_protocol_ready(&dial, s.recovery_ticket, cmeta_monotonic_ms()),
