@@ -1,6 +1,7 @@
 #include "disruptor.h"
 #include "tinytest.h"
 #include "cmeta_thread.h"
+#include <salts/clock.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -32,7 +33,126 @@ static void disruptor_test_worker_wait(void *ctx) {
   atomic_store_explicit(&test->result, result, memory_order_release);
 }
 
+enum { HANDOFF_THREADS = 4, HANDOFF_ROUNDS = 1024, HANDOFF_DEADLINE_MS = 10000 };
+typedef struct disruptor_handoff_lane {
+  disruptor_cursor_t cursor;
+  cmeta_thread_t thread;
+  int result;
+} disruptor_handoff_lane;
+static struct {
+  disruptor_t *ring;
+  disruptor_mode_t mode;
+  atomic_uint phase;
+  atomic_size_t finished;
+  atomic_bool abort;
+  disruptor_handoff_lane lane[HANDOFF_THREADS];
+  size_t started;
+} handoff;
+
+static void disruptor_test_handoff(void *ctx) {
+  disruptor_handoff_lane *lane = ctx;
+  unsigned int previous = 0u;
+  for (;;) {
+    unsigned int phase;
+    do {
+      if (atomic_load_explicit(&handoff.abort, memory_order_acquire)) return;
+      phase = atomic_load_explicit(&handoff.phase, memory_order_acquire);
+      if (phase == previous) cmeta_thread_yield();
+    } while (phase == previous);
+    previous = phase;
+    lane->result = 1;
+    if ((phase & 1u) != 0u) {
+      *(uint64_t *)disruptor_acquire_entry(handoff.ring, &lane->cursor) = lane->cursor.sequence;
+      if ((lane->cursor.sequence & 1u) != 0u) cmeta_thread_yield();
+      lane->result = disruptor_publisher_publish(handoff.ring, &lane->cursor);
+    } else if (handoff.mode == DISRUPTOR_MODE_WORKER_POOL) {
+      if ((lane->cursor.sequence & 1u) != 0u) cmeta_thread_yield();
+      disruptor_worker_release_entry(handoff.ring, &lane->cursor);
+    }
+    atomic_fetch_add_explicit(&handoff.finished, 1u, memory_order_acq_rel);
+  }
+}
+
+static void disruptor_test_handoff_barrier(unsigned int phase) {
+  const size_t expected = (size_t)phase * HANDOFF_THREADS;
+  const uint64_t deadline = cmeta_monotonic_ms() + HANDOFF_DEADLINE_MS;
+  atomic_store_explicit(&handoff.phase, phase, memory_order_release);
+  while (atomic_load_explicit(&handoff.finished, memory_order_acquire) != expected &&
+         cmeta_monotonic_ms() < deadline)
+    cmeta_thread_yield();
+  check_equal(atomic_load_explicit(&handoff.finished, memory_order_acquire), expected);
+  for (size_t i = 0u; i < HANDOFF_THREADS; ++i) check_equal(handoff.lane[i].result, 1);
+}
+
 spec("Disruptor Tests") {
+  group("concurrent publication and completion cursor handoff") {
+    before_each() {
+      memset(&handoff, 0, sizeof(handoff));
+      atomic_init(&handoff.phase, 0u);
+      atomic_init(&handoff.finished, 0u);
+      atomic_init(&handoff.abort, false);
+    }
+    after_each() {
+      atomic_store_explicit(&handoff.abort, true, memory_order_release);
+      while (handoff.started != 0u) {
+        disruptor_handoff_lane *lane = &handoff.lane[handoff.started - 1u];
+        check_equal(cmeta_thread_join(&lane->thread), SALTS_OK);
+        cmeta_thread_destroy(&lane->thread);
+        --handoff.started;
+      }
+      /* All publishers/releases have returned, including on fatal checks. */
+      disruptor_destroy(handoff.ring);
+      handoff.ring = NULL;
+    }
+    for (size_t worker_mode = 0u; worker_mode < 2u; ++worker_mode) {
+      it("exposes and reuses every completed batch in %s mode",
+         worker_mode != 0u ? "worker-pool" : "broadcast") {
+        disruptor_consumer_t consumer = {0};
+        handoff.mode = worker_mode != 0u ? DISRUPTOR_MODE_WORKER_POOL : DISRUPTOR_MODE_BROADCAST;
+        const disruptor_config_t config = {sizeof(uint64_t), HANDOFF_THREADS, 1u, handoff.mode};
+        handoff.ring = disruptor_create(&config);
+        check_not_null(handoff.ring);
+        if (handoff.mode == DISRUPTOR_MODE_BROADCAST)
+          check_equal(disruptor_consumer_register(handoff.ring, &consumer), UINT64_C(1));
+        for (size_t i = 0u; i < HANDOFF_THREADS; ++i) {
+          check_equal(cmeta_thread_create(&handoff.lane[i].thread,
+                                         disruptor_test_handoff, &handoff.lane[i]), SALTS_OK);
+          ++handoff.started;
+        }
+        for (unsigned int round = 0u; round < HANDOFF_ROUNDS; ++round) {
+          disruptor_sequence_range_t range = {0};
+          /* Exclusive claims isolate publication/completion from try-claim
+           * contention. Each full batch must drain without a later publisher
+           * rescuing a cursor left behind by an out-of-order completion. */
+          check_equal(disruptor_publisher_try_claim_n(handoff.ring, HANDOFF_THREADS, &range), 1);
+          for (size_t i = 0u; i < HANDOFF_THREADS; ++i)
+            handoff.lane[i].cursor.sequence = range.first_sequence + i;
+          disruptor_test_handoff_barrier(round * 2u + 1u);
+          if (handoff.mode == DISRUPTOR_MODE_WORKER_POOL) {
+            for (size_t i = 0u; i < HANDOFF_THREADS; ++i) {
+              disruptor_cursor_t read = {0};
+              check_equal(disruptor_worker_try_claim(handoff.ring, &read), 1);
+              check_equal(read.sequence, range.first_sequence + i);
+              check_equal(*(const uint64_t *)disruptor_show_entry(handoff.ring, &read), read.sequence);
+              handoff.lane[HANDOFF_THREADS - 1u - i].cursor = read;
+            }
+            disruptor_cursor_t empty = {0};
+            check_equal(disruptor_worker_try_claim(handoff.ring, &empty), 0);
+          } else {
+            disruptor_cursor_t read = {range.first_sequence};
+            check_equal(disruptor_consumer_wait_for_nonblocking_for(handoff.ring, &consumer, &read), 1);
+            check_equal(read.sequence, range.last_sequence);
+            for (size_t i = 0u; i < HANDOFF_THREADS; ++i) {
+              const disruptor_cursor_t entry = {range.first_sequence + i};
+              check_equal(*(const uint64_t *)disruptor_show_entry(handoff.ring, &entry), entry.sequence);
+            }
+            disruptor_consumer_release_entry(handoff.ring, &consumer, &read);
+          }
+          disruptor_test_handoff_barrier(round * 2u + 2u);
+        }
+      }
+    }
+  }
   it("should create and destroy cleanly") {
     disruptor_config_t cfg = {
         .entry_size = ENTRY_SIZE, .capacity = CAPACITY, .consumer_capacity = CONSUMERS};

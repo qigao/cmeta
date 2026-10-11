@@ -236,8 +236,13 @@ static void disruptor_mark_published(disruptor_t *disruptor, uint64_t sequence) 
 
 static uint64_t disruptor_try_advance_published_cursor(disruptor_t *disruptor) {
   while (1) {
+    /* Serialize marker publication with other advancers before scanning.
+     * A load can miss their cursor/marker stores: both publishers then return
+     * without closing a gap. An acquire/release RMW reads the latest cursor
+     * modification and carries earlier markers through its release sequence,
+     * even when this publisher cannot advance the cursor itself. */
     uint64_t current =
-        atomic_load_explicit(&disruptor->max_read_cursor.sequence, memory_order_relaxed);
+        atomic_fetch_add_explicit(&disruptor->max_read_cursor.sequence, 0U, memory_order_acq_rel);
     uint64_t next = current + 1U;
     uint64_t probe = next;
 
@@ -281,8 +286,11 @@ static void disruptor_mark_worker_completed(disruptor_t *disruptor, uint64_t seq
 
 static uint64_t disruptor_try_advance_worker_completed_cursor(disruptor_t *disruptor) {
   while (1) {
+    /* Completion markers need the same handoff as publication markers; every
+     * released slot must become reusable without waiting for another release. */
     uint64_t current =
-        atomic_load_explicit(&disruptor->worker_completed_cursor.sequence, memory_order_relaxed);
+        atomic_fetch_add_explicit(&disruptor->worker_completed_cursor.sequence, 0U,
+                                  memory_order_acq_rel);
     uint64_t next = current + 1U;
     uint64_t probe = next;
 
