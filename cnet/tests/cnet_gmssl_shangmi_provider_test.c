@@ -16,6 +16,11 @@
 #include <stdio.h>
 #include <string.h>
 
+/* RFC 8998 exact registered identifiers; this is a pinned-provider ABI gate. */
+_Static_assert(TLS_cipher_sm4_gcm_sm3 == 0x00c6, "wrong RFC 8998 SM4-GCM suite");
+_Static_assert(TLS_sig_sm2sig_sm3 == 0x0708, "wrong RFC 8998 SM2 scheme");
+_Static_assert(TLS_curve_sm2p256v1 == 41, "wrong RFC 8998 SM2 curve");
+
 static int hex_digit(char c) {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -346,23 +351,41 @@ done:
 static int probe_protocol_configuration(int protocol, int cipher) {
   static const int groups[] = {TLS_curve_sm2p256v1};
   static const int sigs[] = {TLS_sig_sm2sig_sm3};
+  int wrong_cipher = protocol == TLS_protocol_tls13
+                         ? TLS_cipher_ecc_sm4_gcm_sm3
+                         : TLS_cipher_sm4_gcm_sm3;
   TLS_CTX ctx;
   int ok = 0;
   if (tls_ctx_init(&ctx, protocol, TLS_client_mode) != 1) {
     fprintf(stderr, "GmSSL protocol context init failed: 0x%x\n", protocol);
     return 0;
   }
-  if (tls_ctx_set_cipher_suites(&ctx, &cipher, 1u) == 1 &&
+  /* The native GmSSL default allows several versions. Pin exactly one
+   * version per future strict CNet policy, with no downgrade or TLCP crossover.
+   */
+  if (tls_ctx_set_supported_versions(&ctx, &protocol, 1u) == 1 &&
+      tls_ctx_set_cipher_suites(&ctx, &cipher, 1u) == 1 &&
       tls_ctx_set_supported_groups(&ctx, groups, 1u) == 1 &&
-      tls_ctx_set_signature_algorithms(&ctx, sigs, 1u) == 1)
+      tls_ctx_set_signature_algorithms(&ctx, sigs, 1u) == 1 &&
+      ctx.supported_versions_cnt == 1u &&
+      ctx.supported_versions[0] == protocol &&
+      tls_ctx_set_cipher_suites(&ctx, &wrong_cipher, 1u) != 1 &&
+      ctx.cipher_suites_cnt == 1u &&
+      ctx.cipher_suites[0] == cipher)
     ok = 1;
   tls_ctx_cleanup(&ctx);
   if (!ok)
-    fprintf(stderr, "GmSSL cannot configure ShangMi protocol 0x%x\n", protocol);
+    fprintf(stderr, "GmSSL cannot strictly configure ShangMi protocol 0x%x\n",
+            protocol);
   return ok;
 }
 
 int main(void) {
+  if (strcmp(TLS13_SM2_ID, "TLSv1.3+GM+Cipher+Suite") != 0 ||
+      TLS13_SM2_ID_LENGTH != sizeof("TLSv1.3+GM+Cipher+Suite") - 1u) {
+    fprintf(stderr, "RFC 8998 TLS 1.3 SM2 CertificateVerify identity mismatch\n");
+    return 1;
+  }
   if (!probe_sm3_hmac_hkdf()) return 1;
   if (!probe_sm4_rfc8998_kat()) return 1;
   if (!probe_sm4_gcm()) return 1;
