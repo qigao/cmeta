@@ -51,6 +51,10 @@ def recorded_symbols(path: Path) -> dict[str, object]:
         raise RuntimeError(f"missing actual linked ELF image {path}")
     static = run(["nm", "--defined-only", str(path)]).stdout
     dynamic = run(["nm", "-D", "--defined-only", str(path)]).stdout
+    # GCC ASan runtime entrypoints are *undefined imports* from libasan.so,
+    # not symbols defined inside each instrumented DSO. Inspect all ELF
+    # symbol entries and DT_NEEDED; --defined-only rejects valid ASan code.
+    all_symbols = run(["nm", "-a", str(path)]).stdout
     needed = run(["readelf", "-d", str(path)]).stdout
     return {
         "image": str(path),
@@ -64,7 +68,9 @@ def recorded_symbols(path: Path) -> dict[str, object]:
         "needs_shared_cstl": bool(re.search(
             r"\(NEEDED\).*libcmeta_cstl\.so", needed
         )),
-        "asan_symbols": "__asan_" in static or "__asan_" in dynamic,
+        "asan_symbols": (
+            "__asan_" in all_symbols and "libasan.so" in needed
+        ),
         "needed_entries": [
             line.strip() for line in needed.splitlines() if "(NEEDED)" in line
         ],
