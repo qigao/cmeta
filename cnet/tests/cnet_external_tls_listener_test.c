@@ -331,8 +331,16 @@ static void test_external_tls_listener_shared_progress(void) {
   server_observer.user = &server_probe;
 
   deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
-  while ((!client_probe.connected || !server_probe.connected) &&
-         !client_probe.failed && !server_probe.failed &&
+  while (
+#if CNET_SHANGMI_TLS13_TEST
+         (expect_failure
+              ? (!client_probe.failed && !client_probe.connected)
+              : ((!client_probe.connected || !server_probe.connected) &&
+                 !client_probe.failed && !server_probe.failed)) &&
+#else
+         ((!client_probe.connected || !server_probe.connected) &&
+          !client_probe.failed && !server_probe.failed) &&
+#endif
          cmeta_monotonic_ms() < deadline) {
     check(drive_shared_once(
                &listener, &server, &client, &backend,
