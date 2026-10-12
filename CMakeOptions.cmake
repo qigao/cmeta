@@ -28,6 +28,8 @@ option(CMETA_BUILD_BENCHMARKS
        "Build CMeta benchmarks independently" OFF)
 option(CMETA_BUILD_NATIVE_THUNKS
        "Build opt-in exact x86-64 native specialization" OFF)
+option(SALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE
+       "Build an isolated, unexported Component runtime migration candidate" OFF)
 
 option(SALTS_ENABLE_EPOLL_READINESS
        "Enable the Linux epoll readiness backend" OFF)
