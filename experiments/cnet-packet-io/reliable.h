@@ -60,6 +60,7 @@ typedef struct rl_callbacks {
   rl_terminal_fn on_terminal;
   void *user;
   rl_mac_fn mac; /* required; there is no unauthenticated fallback */
+  void *mac_user; /* required: Owner-bound crypto provider, separate from callbacks.user */
 } rl_callbacks;
 
 typedef struct rl_config {

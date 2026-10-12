@@ -52,3 +52,9 @@ The crypto library is **not linked into `packet_reliable_research`** or the inst
 CTest targets: `packet_reliable_conformance`, `packet_reliable_packet_io`, and `packet_io_fake_owner`; optional standalone DPDK `net_ring` smoke is unchanged. Configure `experiments/cnet-packet-io` with `-DPACKET_IO_ENABLE_DPDK=OFF`, build and run `ctest --test-dir <build-directory> --output-on-failure`. The research test target requires a system OpenSSL development package for its HMAC fixture; this does not add a requirement to production Salts.
 
 **Still open:** production GmSSL provider, authenticated peer/key provision and renewal, real Ethernet demux, multi-peer scheduling and NIC hardware completion. Keep Draft PR #1149 unmerged.
+
+## Pinned GmSSL R2 MAC experiment (#1151)
+
+The standalone `-DPACKET_IO_ENABLE_GMSSL=ON` option builds an **explicitly selected**, Owner-bound `GmSSL::GmSSL` HMAC-SHA256 MAC adapter with Generation/peer/epoch lease fencing. Read the [GmSSL Provider contract](GMSSL_PROVIDER.md) for the exact build/credential/teardown boundaries. The isolated Linux GitHub job pins the upstream GmSSL source commit used by Salts' GmSSL vcpkg registry. OpenSSL stays an independent **test-only** comparator; there is no production `Salts::CNet` linkage or automatic fallback.
+
+The provider's MAC context is supplied as the **required** `rl_callbacks.mac_user`, separate from application `callbacks.user`. MAC requests before explicit bind or after lease release fail closed. Successful `rl_stop` wipes R2-owned keys; physical Packet I/O and DMA must be drained independently. **A production Salts::Core/CMeta SDK adapter, trusted peer authentication and secure key provisioning are still open issues.**

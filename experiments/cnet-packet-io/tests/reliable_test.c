@@ -101,8 +101,8 @@ static int initialize(pair *p, rl_config a, rl_config b) {
   p->b.side = 1;
   p->a.link = &p->link;
   p->b.link = &p->link;
-  rl_callbacks ca = {emit, delivered, terminal, &p->a, fixture_hmac_sha256};
-  rl_callbacks cb = {emit, delivered, terminal, &p->b, fixture_hmac_sha256};
+  rl_callbacks ca = {emit, delivered, terminal, &p->a, fixture_hmac_sha256, &p->a};
+  rl_callbacks cb = {emit, delivered, terminal, &p->b, fixture_hmac_sha256, &p->b};
   CHECK(rl_start(&p->a.session, &a, ca, 1, &p->a.ticket) == RL_OK);
   CHECK(rl_start(&p->b.session, &b, cb, 1, &p->b.ticket) == RL_OK);
   return 0;
@@ -373,7 +373,7 @@ static int stop_recycle_stale_and_reentrant(void) {
   CHECK(rl_stop(&p.a.session, p.a.ticket) == RL_OK);
   CHECK(rl_cancel(&p.a.session, p.a.ticket) == RL_STALE);
   rl_ticket again = {0};
-  rl_callbacks ca = {emit, delivered, terminal, &p.a, fixture_hmac_sha256};
+  rl_callbacks ca = {emit, delivered, terminal, &p.a, fixture_hmac_sha256, &p.a};
   CHECK(rl_start(&p.a.session, &p.config_a, ca, 1, &again) == RL_STALE);
   p.config_a.epoch++;
   CHECK(rl_start(&p.a.session, &p.config_a, ca, 2, &again) == RL_OK);
@@ -536,7 +536,7 @@ static int hmac_known_answer_and_fail_closed_admission(void) {
   rl_ticket ticket = {0};
   node n = {0};
   rl_config cfg = defaults(17, 29);
-  rl_callbacks cb = {emit, delivered, terminal, &n, fixture_hmac_sha256};
+  rl_callbacks cb = {emit, delivered, terminal, &n, fixture_hmac_sha256, &n};
   n.session = s;
   cb.mac = NULL;
   CHECK(rl_start(&s, &cfg, cb, 1, &ticket) == RL_INVALID);
@@ -623,7 +623,7 @@ static int stale_epoch_replay_and_key_erasure(void) {
   b.tx_auth_key[0] ^= 0x20u;
   b.rx_auth_key[0] ^= 0x10u;
   rl_ticket t = {0};
-  rl_callbacks cb = {emit, delivered, terminal, &p.b, fixture_hmac_sha256};
+  rl_callbacks cb = {emit, delivered, terminal, &p.b, fixture_hmac_sha256, &p.b};
   CHECK(rl_start(&p.b.session, &b, cb, 2, &t) == RL_OK);
   CHECK(rl_input(&p.b.session, t, old.bytes, old.size, 1) == RL_PROTOCOL);
   CHECK(p.b.delivers == 0 && p.b.session.stats.rx_invalid == 1);

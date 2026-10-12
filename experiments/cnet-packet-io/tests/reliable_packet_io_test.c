@@ -139,7 +139,7 @@ static int init(channel *c) {
     config.window = 3;
     config.max_retries = 3;
     fixture_set_directional_keys(&config);
-    rl_callbacks cb = {emit, on_deliver, on_terminal, p, fixture_hmac_sha256};
+    rl_callbacks cb = {emit, on_deliver, on_terminal, p, fixture_hmac_sha256, p};
     CHECK(rl_start(&p->protocol, &config, cb, 1,
                    &p->protocol_ticket) == RL_OK);
   }

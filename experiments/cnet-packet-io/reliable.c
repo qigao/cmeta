@@ -101,7 +101,7 @@ static size_t serialize(const rl_session *s, uint8_t *packet, unsigned type,
   put32(packet + 28, mask);
   if (payload_size) memcpy(packet + RL_WIRE_HEADER_BYTES, payload, payload_size);
   put32(packet + 32, checksum(packet, packet_size));
-  if (!s->callbacks.mac(s->callbacks.user, s->config.tx_auth_key,
+  if (!s->callbacks.mac(s->callbacks.mac_user, s->config.tx_auth_key,
                         packet, packet_size, packet + packet_size)) return 0;
   return packet_size + RL_MAC_BYTES;
 }
@@ -109,7 +109,7 @@ static size_t serialize(const rl_session *s, uint8_t *packet, unsigned type,
 rl_result rl_start(rl_session *s, const rl_config *config, rl_callbacks callbacks,
                    uint64_t generation, rl_ticket *out_ticket) {
   if (!s || !config || !out_ticket || !callbacks.emit || !callbacks.on_deliver ||
-      !callbacks.on_terminal || !callbacks.mac || !generation ||
+      !callbacks.on_terminal || !callbacks.mac || !callbacks.mac_user || !generation ||
       !config->local_id || !config->peer_id || config->local_id == config->peer_id ||
       !config->epoch || !config->first_message_id ||
       !config->window || config->window > RL_MAX_FRAGMENTS ||
@@ -198,7 +198,7 @@ rl_result rl_input(rl_session *s, rl_ticket t, const void *wire, size_t size,
   /* The external authenticator is a synchronous borrowed callback: fence
    * nested session operations just as we do for emit and terminal hooks. */
   s->in_call = true;
-  bool verified = s->callbacks.mac(s->callbacks.user, s->config.rx_auth_key,
+  bool verified = s->callbacks.mac(s->callbacks.mac_user, s->config.rx_auth_key,
                                    p, size - RL_MAC_BYTES, computed);
   s->in_call = false;
   bool matches = constant_time_equal(computed, p + size - RL_MAC_BYTES,

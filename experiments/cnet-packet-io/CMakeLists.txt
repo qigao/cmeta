@@ -66,3 +66,36 @@ if(PACKET_IO_ENABLE_DPDK)
     set_tests_properties(packet_io_dpdk_ring PROPERTIES TIMEOUT 45 SKIP_RETURN_CODE 77)
   endif()
 endif()
+
+# Standalone *explicitly selected* native GmSSL R2 provider research.
+# Never link the provider or its system package into the installed Salts::CNet
+# target, NativeIO, or the default Packet I/O conformance build.
+option(PACKET_IO_ENABLE_GMSSL "Build opt-in pinned GmSSL R2 MAC conformance" OFF)
+if(PACKET_IO_ENABLE_GMSSL)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "Research GmSSL R2 MAC qualification is Linux-only")
+  endif()
+  if(NOT BUILD_TESTING)
+    message(FATAL_ERROR "Research GmSSL R2 MAC requires BUILD_TESTING=ON")
+  endif()
+  find_package(GmSSL CONFIG REQUIRED)
+  if(NOT TARGET GmSSL::GmSSL)
+    message(FATAL_ERROR "GmSSL package lacks the required GmSSL::GmSSL target")
+  endif()
+
+  add_library(packet_gmssl_mac_research STATIC gmssl_mac.c)
+  target_compile_features(packet_gmssl_mac_research PRIVATE c_std_11)
+  target_link_libraries(packet_gmssl_mac_research PUBLIC packet_reliable_research
+    PRIVATE GmSSL::GmSSL)
+  set_target_properties(packet_gmssl_mac_research PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
+  add_executable(packet_gmssl_mac_test tests/gmssl_mac_test.c)
+  target_compile_features(packet_gmssl_mac_test PRIVATE c_std_11)
+  target_link_libraries(packet_gmssl_mac_test PRIVATE
+    packet_gmssl_mac_research GmSSL::GmSSL packet_test_hmac)
+  set_target_properties(packet_gmssl_mac_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  add_test(NAME packet_gmssl_mac_conformance COMMAND packet_gmssl_mac_test)
+  set_tests_properties(packet_gmssl_mac_conformance PROPERTIES TIMEOUT 30)
+endif()

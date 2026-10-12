@@ -73,3 +73,58 @@ jobs:
           # Execute the program, not merely ctest's SKIP_RETURN_CODE 77:
           # unavailable EAL must NOT be misrepresented as a passing PMD run.
           ./build/cnet-packet-dpdk/packet_io_dpdk_ring_test
+
+  gmssl-r2-owner:
+    name: Pinned GmSSL 3.2 R2 MAC Owner lease
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build exact GmSSL source pinned by Salts vcpkg registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          source="$RUNNER_TEMP/gmssl-src"
+          build="$RUNNER_TEMP/gmssl-build"
+          prefix="$RUNNER_TEMP/gmssl-research-prefix"
+          pin=7c9f02904ef33e59c87b4f16621cc8fd434e7579
+          mkdir -p "$source"
+          git -C "$source" init --quiet
+          git -C "$source" remote add origin https://github.com/guanzhi/GmSSL.git
+          git -C "$source" fetch --quiet --depth=1 origin "$pin"
+          git -C "$source" checkout --quiet --detach FETCH_HEAD
+          test "$(git -C "$source" rev-parse HEAD)" = "$pin"
+          cmake -S "$source" -B "$build" -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF -DENABLE_TLS=OFF -DENABLE_SHA2=ON \
+            -DENABLE_SHA1=ON -DENABLE_AES=ON -DENABLE_SECP256R1=OFF \
+            -DENABLE_SM9=OFF -DENABLE_CMS=OFF -DENABLE_KYBER=OFF \
+            -DENABLE_LMS=OFF -DENABLE_XMSS=OFF -DENABLE_SPHINCS=OFF
+          cmake --build "$build" --target gmssl --parallel 4
+          library="$(find "$build" -maxdepth 3 -type f -name libgmssl.a -print -quit)"
+          test -n "$library"
+          mkdir -p "$prefix/lib" "$prefix/include" "$prefix/share/gmssl"
+          cp "$library" "$prefix/lib/libgmssl.a"
+          cp -a "$source/include/gmssl" "$prefix/include/"
+          # The pinned vcpkg port exports the same target and SHA2 definitions.
+          # This isolated CI config is a link adapter, NOT an installed Salts SDK.
+          cat > "$prefix/share/gmssl/GmSSLConfig.cmake" <<EOF
+          add_library(GmSSL::GmSSL STATIC IMPORTED)
+          set_target_properties(GmSSL::GmSSL PROPERTIES
+            IMPORTED_LOCATION "$prefix/lib/libgmssl.a"
+            INTERFACE_INCLUDE_DIRECTORIES "$prefix/include"
+            INTERFACE_COMPILE_DEFINITIONS "ENABLE_SHA2;ENABLE_SHA1;ENABLE_AES")
+          EOF
+          echo "GMSSL_RESEARCH_PREFIX=$prefix" >> "$GITHUB_ENV"
+      - name: Configure and execute GmSSL versus independent OpenSSL oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S experiments/cnet-packet-io -B build/cnet-packet-gmssl \
+            -DCMAKE_BUILD_TYPE=Release -DPACKET_IO_ENABLE_DPDK=OFF \
+            -DPACKET_IO_ENABLE_GMSSL=ON \
+            "-DGmSSL_DIR=$GMSSL_RESEARCH_PREFIX/share/gmssl"
+          cmake --build build/cnet-packet-gmssl --parallel 4
+          ctest --test-dir build/cnet-packet-gmssl --output-on-failure \
+            -R '^packet_(gmssl_mac_conformance|reliable_conformance|reliable_packet_io|io_fake_owner)$'
