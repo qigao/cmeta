@@ -1,0 +1,106 @@
+name: CNet RFC8998 fatal-alert sanitizer gate
+
+'on':
+  pull_request:
+    paths:
+      - 'cnet/src/cnet_owner.c'
+      - 'cnet/src/cnet_tls.c'
+      - 'cnet/tests/cnet_shangmi_tls13_fatal_owner_test.c'
+      - 'cnet/tests/cnet_shangmi_tls13_profile_test.c'
+      - 'cnet/tests/cnet_tls_handshake_framing_test.c'
+      - 'cnet/tests/verify_gmssl_shangmi_tls13.py'
+      - 'cnet/tests/CMakeLists.txt'
+      - '.github/workflows/cnet-rfc8998-fatal-alert-sanitizers.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cnet-rfc8998-fatal-san-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fatal-alert-san:
+    # Candidate-only while provider revision 3.2.0#11 remains in Draft.
+    # Do not publish a stable SDK or enable a fallback provider here.
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feature/cnet-tls-fatal-alert-drain'
+    name: NativeIO fatal alert / ${{ matrix.sanitizer }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sanitizer: asan-ubsan
+            address: ON
+            undefined: ON
+            thread: OFF
+          - sanitizer: tsan
+            address: OFF
+            undefined: OFF
+            thread: ON
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Restore shared re2c tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - name: Prepare shared vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Checkout exact Draft provider candidate
+        uses: actions/checkout@v7
+        with:
+          repository: qigao/vcpkg-cache
+          ref: 9fc853a8a3a779e0115040d30caab3c05d777f44
+          path: .ci-provider-overlay
+          persist-credentials: false
+      - name: Verify GmSSL 3.2.0 revision 11 source and registry tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .ci-provider-overlay rev-parse HEAD)" = "9fc853a8a3a779e0115040d30caab3c05d777f44"
+          test -f .ci-provider-overlay/ports/gmssl/tls13-fatal-alert.cmake
+          grep -Fq '"port-version": 11' .ci-provider-overlay/ports/gmssl/vcpkg.json
+          grep -Fq '96f60cef15c2d4bfe75353c5ff6d2ba603a81d8d' .ci-provider-overlay/versions/g-/gmssl.json
+      - name: Prepare native CNet build toolchain
+        uses: ./.github/actions/setup-build-host
+      - name: Restore compiler cache
+        uses: ./.github/actions/setup-compiler-cache
+        with:
+          profile: cnet-rfc8998-fatal-${{ matrix.sanitizer }}
+      - name: Configure and build exact-Provider sanitized CNet
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/build/cnet-rfc8998-fatal-${{ matrix.sanitizer }}"
+          cmake --preset linux-release-ci -B "$root" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DVCPKG_OVERLAY_PORTS="$GITHUB_WORKSPACE/.ci-provider-overlay/ports" \
+            -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
+            -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
+            -DCMETA_BUILD_BENCHMARKS=OFF \
+            -DNATIVE_IO_BUILD_BENCHMARKS=OFF \
+            -DCNET_BUILD_BENCHMARKS=OFF \
+            -DENABLE_SANITIZER_ADDRESS=${{ matrix.address }} \
+            -DENABLE_SANITIZER_UNDEFINED=${{ matrix.undefined }} \
+            -DENABLE_SANITIZER_THREAD=${{ matrix.thread }}
+          cmake --build "$root" --parallel 2 \
+            --target cnet_shangmi_tls13_fatal_owner_probe \
+                     cnet_shangmi_tls13_profile_probe \
+                     cnet_tls_handshake_framing_test
+      - name: Verify CNet Owner terminal, cancellations and handshake framing
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          TSAN_OPTIONS: halt_on_error=1
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/build/cnet-rfc8998-fatal-${{ matrix.sanitizer }}"
+          ctest --test-dir "$root" --no-tests=error --output-on-failure \
+            --timeout 150 --repeat until-fail:3 \
+            -R '^(cnet_shangmi_tls13_fatal_owner_(test|cancel_test|deadline_test)|cnet_shangmi_tls13_profile_test|cnet_tls_handshake_framing_test)$'
