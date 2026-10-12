@@ -47,9 +47,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Restore shared re2c tools
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
       - name: Prepare shared vcpkg cache
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
         with:
           mode: read
       - name: Verify exact GmSSL 3.2.0 revision 11 registry pin
