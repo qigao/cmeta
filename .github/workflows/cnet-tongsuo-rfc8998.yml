@@ -81,6 +81,19 @@ jobs:
         uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
         with:
           mode: read
+      - name: Checkout exact Draft GmSSL provider alert fix (test-only)
+        uses: actions/checkout@v7
+        with:
+          repository: qigao/vcpkg-cache
+          ref: 61aa0392629b6e5cadbdf80152cb2d6fb858942b
+          path: .ci-provider-overlay
+          persist-credentials: false
+      - name: Verify exact provider overlay source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .ci-provider-overlay rev-parse HEAD)" = "61aa0392629b6e5cadbdf80152cb2d6fb858942b"
+          test -f .ci-provider-overlay/ports/gmssl/tls13-fatal-alert.cmake
       - name: Prepare native CNet build toolchain
         uses: ./.github/actions/setup-build-host
       - name: Compile public CNet NativeIO strict-TLS client probe
@@ -88,6 +101,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake --preset linux-release-ci \
+            -DVCPKG_OVERLAY_PORTS="$GITHUB_WORKSPACE/.ci-provider-overlay/ports" \
             -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
             -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
             -DCMETA_BUILD_BENCHMARKS=OFF \
