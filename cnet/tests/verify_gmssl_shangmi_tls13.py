@@ -98,12 +98,21 @@ def handshake(gmssl, cwd, name, expected, ca="root-cert.pem",
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gmssl", required=True)
+    ap.add_argument("--cnet-probe")
     a = ap.parse_args()
     gmssl = str(Path(a.gmssl).resolve())
     if not Path(gmssl).is_file():
         raise RuntimeError("missing pinned GmSSL CLI; no fallback")
     with tempfile.TemporaryDirectory(prefix="salts-rfc8998-") as cwd:
         fixture(gmssl, cwd)
+        if a.cnet_probe:
+            probe = str(Path(a.cnet_probe).resolve())
+            if not Path(probe).is_file():
+                raise RuntimeError("missing CNet RFC8998 fixture executable")
+            call([probe, "root-cert.pem", "server-cert.pem",
+                  "server-key.pem", "untrusted-cert.pem"], cwd)
+            print("CNet RFC8998 native profile: PASS")
+            return
         handshake(gmssl, cwd, "verified-rfc8998", True)
         handshake(gmssl, cwd, "wrong-ca", False, ca="untrusted-cert.pem")
         handshake(gmssl, cwd, "wrong-san", False, hostname="wrong.example")
