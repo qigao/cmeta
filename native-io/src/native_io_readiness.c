@@ -3,6 +3,13 @@
 #endif
 
 #include "native_io_readiness.h"
+
+/* Built only by the separate first-party kernel dispatch conformance target.
+ * Installed NativeIO packages contain neither this hook nor its symbol. */
+#if defined(SALTS_NATIVE_IO_KERNEL_TEST_HOOK)
+extern void salts_native_io_test_before_ready_dispatch(
+    cmeta_io_impl *base, const cmeta_io_ready_event *events, size_t count);
+#endif
 #include "native_io_accept_escrow.h"
 
 #include <salts/clock.h>
@@ -1060,6 +1067,13 @@ static int readiness_observe(cmeta_io_impl *base, native_io_completion *events,
         impl->driver_ops->wait(impl->driver_state, impl->ready_events,
                                impl->completion_batch_capacity, wait_timeout, &ready_count);
     if (status != SALTS_OK) return status;
+#if defined(SALTS_NATIVE_IO_KERNEL_TEST_HOOK)
+    /* The real OS wait has returned its exact endpoint token. Test callback
+     * runs on the SAME Owner before a byte/readiness request is dispatched.
+     * It may request cancellation but cannot forge a kernel event. */
+    if (ready_count != 0u)
+      salts_native_io_test_before_ready_dispatch(base, impl->ready_events, ready_count);
+#endif
     for (size_t cursor = 0u; cursor < ready_count; ++cursor) {
       const cmeta_io_ready_event *ready = &impl->ready_events[cursor];
       if ((ready->interests & SALTS_IO_READY_WAKE) != 0u) {
