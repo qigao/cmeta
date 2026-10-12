@@ -186,7 +186,7 @@ int main(int argc, char **argv) {
     cnet_owner_test_request_snapshot write_request = {0};
     native_io_completion held_partial = {0};
     native_io_backend_stats before = {0}, after = {0};
-    native_io_coroutine_stats coroutine = {0};
+    native_io_coroutine_stats coroutine = NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
     bool write_admitted = false, partial_observed = false;
     const uint64_t admission_deadline = cmeta_monotonic_ms() + 5000u;
 
