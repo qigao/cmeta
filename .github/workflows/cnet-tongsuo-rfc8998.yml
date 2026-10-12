@@ -81,21 +81,19 @@ jobs:
         uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
         with:
           mode: read
-      - name: Checkout exact Draft GmSSL provider alert fix (test-only)
-        uses: actions/checkout@v7
-        with:
-          repository: qigao/vcpkg-cache
-          ref: 9fc853a8a3a779e0115040d30caab3c05d777f44
-          path: .ci-provider-overlay
-          persist-credentials: false
-      - name: Verify exact provider overlay source
+      - name: Verify exact GmSSL custom registry pin
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git -C .ci-provider-overlay rev-parse HEAD)" = "9fc853a8a3a779e0115040d30caab3c05d777f44"
-          test -f .ci-provider-overlay/ports/gmssl/tls13-fatal-alert.cmake
-          grep -Fq '"port-version": 11' .ci-provider-overlay/ports/gmssl/vcpkg.json
-          grep -Fq '96f60cef15c2d4bfe75353c5ff6d2ba603a81d8d' .ci-provider-overlay/versions/g-/gmssl.json
+          python3 - <<'PY'
+          import json
+          with open("vcpkg-configuration.json", encoding="utf-8") as f:
+              cfg = json.load(f)
+          found = [r for r in cfg.get("registries", []) if "gmssl" in r.get("packages", [])]
+          expected = "9fc853a8a3a779e0115040d30caab3c05d777f44"
+          assert len(found) == 1, "GmSSL must have exactly one custom registry"
+          assert found[0]["reference"] == found[0]["baseline"] == expected
+          PY
       - name: Prepare native CNet build toolchain
         uses: ./.github/actions/setup-build-host
       - name: Compile public CNet NativeIO strict-TLS client probe
@@ -103,7 +101,6 @@ jobs:
         run: |
           set -euo pipefail
           cmake --preset linux-release-ci \
-            -DVCPKG_OVERLAY_PORTS="$GITHUB_WORKSPACE/.ci-provider-overlay/ports" \
             -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
             -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
             -DCMETA_BUILD_BENCHMARKS=OFF \
