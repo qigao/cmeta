@@ -811,3 +811,19 @@ cmake_add_test(cnet_name_lookup_test SOURCES cnet_name_lookup_test.c
 
 cmake_add_test(cnet_name_lookup_dns_test SOURCES cnet_name_lookup_dns_test.c
   LIBS cnet Salts::IDNA Salts::Core Salts::TinyTest FOLDER "cnet/tests")
+
+# #1142: source-instrumented CNet + Platform first-use publication.
+# This links the ordinary CNet DSO, not a copied/bypassed mutex implementation.
+add_executable(cnet_module_once_concurrent_test
+  cnet_module_once_concurrent_test.c)
+target_include_directories(cnet_module_once_concurrent_test PRIVATE
+  "${CNET_TEST_PRIVATE_INCLUDE}")
+target_link_libraries(cnet_module_once_concurrent_test PRIVATE
+  Salts::CNet Salts::Platform Threads::Threads)
+set_target_properties(cnet_module_once_concurrent_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+  FOLDER "cnet/tests")
+add_test(NAME cnet_module_once_concurrent_test
+  COMMAND cnet_module_once_concurrent_test)
+set_tests_properties(cnet_module_once_concurrent_test PROPERTIES
+  TIMEOUT 45)
