@@ -61,6 +61,6 @@ cmake --build build/reliable --parallel 2
 ctest --test-dir build/reliable --output-on-failure
 ```
 
-The test fixture uses deterministic static keys and OpenSSL only for independent protocol conformance; **never deploy the fixture keys or test provider as a production key authority**. The intended production crypto implementation must use the existing GmSSL-backed Salts/CMeta capabilities, pinned to exact SDK ABI, with verified secret lifetime and known-answer/interoperability tests before public admission.
+The test fixture uses deterministic static keys and OpenSSL only for independent protocol conformance; **never deploy the fixture keys or test provider as a production key authority**. An opt-in research adapter now uses the **published Salts.Native 2.3.0-rc.14** exported CMeta `cmeta_hmac_sha256` ABI; [SDK_RC14_CONFORMANCE.md](SDK_RC14_CONFORMANCE.md) records the exact digest and installed C11/C++17 tests. This validates an ABI *consumer*, not secure key distribution, peer authentication, production DSO lease handling or public transport admission.
 
 Still open in #1147: GmSSL production provider, secure peer establishment and key rotation authority, rate/DoS controls, a real Ethernet encapsulation and packet demultiplexer, multiple sessions per Owner with bounded fairness, incast/ECN/RTT congestion behavior, fuzzing, and physical-NIC drain/cancel races. #1148 remains the separate equal-semantics comparison against NativeIO UDP/KCP and RDMA-capable hardware. **Do not merge Draft PR #1149 or claim production security on these unit tests.**
