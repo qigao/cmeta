@@ -48,6 +48,8 @@ $aceFullMatrixQualification = ($aceBranchPr -and $AceMatrix) -or $unified23Revie
 $aceSanitizerQualification = $aceBranchPr -and $AceSan
 $unifiedSanitizerQualification = $unified23Review -and ($UnifiedSan -or $release23Push -or $releaseTagPush)
 # Preserve the historical integration branch's complete Linux coverage.
+$componentRuntimeSdkIsolation = ($EventName -eq 'pull_request' -and
+  $HeadBranch -eq 'feature/component-runtime-sdk-isolation' -and -not $PrepareRelease)
 $componentIntegration = ($HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and
   -not $PrepareRelease) -or $aceBranchPr -or $unified23Review
 $changed = @()
@@ -225,6 +227,9 @@ foreach ($profile in $profiles) {
       'macos-clang-release', 'linux-ace-asan-ubsan', 'linux-ace-tsan')) {
     continue
   }
+  # Installed SDK isolation requires the three native hosts, not every cross build.
+  if ($componentRuntimeSdkIsolation -and $profile.id -notin @(
+      'linux-release', 'windows-release', 'macos-release')) { continue }
   # Keep regular ACE PRs on Linux only, but do not discard the explicit
   # ASan+UBSan/TSan Debug profiles supplied for an [ACE-SAN] qualification.
   if ($acePatternsDevelopment -and $profile.id -ne 'linux-release' -and
@@ -244,10 +249,10 @@ foreach ($profile in $profiles) {
   $entry.execution = $execution -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.armcontracts = $entry.id -eq 'linux-arm64-release' -and ($native -or $execution)
   $entry.projection = $projection -and $entry.id -in @('linux-release', 'linux-clang-release', 'macos-clang-release')
-  $entry.benchmarks = if ($entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
+  $entry.benchmarks = if ($componentRuntimeSdkIsolation) { 'OFF' } elseif ($entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
   $entry.package = ($PrepareRelease -or $release23Push -or $releaseTagPush) -and [bool]$entry.sdk
-  $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
-  $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
+  $entry.compare = (-not $componentRuntimeSdkIsolation) -and $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
+  $entry.artifact = if ($componentRuntimeSdkIsolation) { $false } elseif ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
   # Full host CTest for an explicit qualification; Linux arm64 runs the
   # portable tests, while Android/iOS are compile-only, not device runtime.
   $entry.full_tests = ($componentIntegration -and $entry.id -eq 'linux-release') -or
