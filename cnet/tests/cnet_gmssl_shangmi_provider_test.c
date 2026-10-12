@@ -207,6 +207,100 @@ done:
   return ok;
 }
 
+
+/* Fixed public-key and DER signature fixture created with independent
+ * OpenSSL 3.5.5 SM2/SM3 using distid=1234567812345678.
+ * The private key is NOT embedded. This is a verifier interoperability KAT,
+ * independent from the GmSSL-generated-key roundtrip smoke below.
+ */
+static int decode_hex(const char *hex, uint8_t *output, size_t capacity,
+                      size_t *out_size) {
+  size_t len;
+  size_t i;
+  if (hex == NULL || output == NULL || out_size == NULL) return 0;
+  len = strlen(hex);
+  if ((len & 1u) != 0u || len / 2u > capacity) return 0;
+  for (i = 0u; i < len / 2u; ++i) {
+    int hi = hex_digit(hex[2u * i]);
+    int lo = hex_digit(hex[2u * i + 1u]);
+    if (hi < 0 || lo < 0) return 0;
+    output[i] = (uint8_t)((hi << 4) | lo);
+  }
+  *out_size = len / 2u;
+  return 1;
+}
+
+static int probe_sm2_fixed_verify(void) {
+  static const char spki_hex[] =
+      "3059301306072a8648ce3d020106082a811ccf5501822d03420004"
+      "47d809769c27d8ceae286851d11d422463f02b8488edaab4cbe764f2b0f67ed4"
+      "fbc7ef9ad7292ccc256c583b228581a45e173417eea77a22bdb866b0b664ae19";
+  static const char signature_hex[] =
+      "3045022079c5cffc33a5d8346a9ab0d7e3dadbcb7964ee0e4d6dfdf6bc532a58b6a9d1b9"
+      "022100b4d528e48e3a5296d0b2e72fa9e1d1556f94c6f0d1ae7a5e422d28b61dfa6e79";
+  static const char id[] = "1234567812345678";
+  static const char wrong_id[] = "1234567812345679";
+  static const uint8_t message[] = "CNet-ShangMi-SM2-KAT-v1";
+  uint8_t spki[128] = {0};
+  uint8_t signature[80] = {0};
+  uint8_t altered_message[sizeof(message) - 1u];
+  size_t spki_len = 0u;
+  size_t sig_len = 0u;
+  size_t remaining;
+  const uint8_t *cursor;
+  SM2_KEY key;
+  SM2_VERIFY_CTX verify;
+  int ok = 0;
+
+  memset(&key, 0, sizeof(key));
+  memset(&verify, 0, sizeof(verify));
+  if (!decode_hex(spki_hex, spki, sizeof(spki), &spki_len) ||
+      !decode_hex(signature_hex, signature, sizeof(signature), &sig_len))
+    goto done;
+
+  cursor = spki;
+  remaining = spki_len;
+  if (sm2_public_key_info_from_der(&key, &cursor, &remaining) != 1 ||
+      remaining != 0u || cursor != spki + spki_len)
+    goto done;
+
+  if (sm2_verify_init(&verify, &key, id, sizeof(id) - 1u) != 1 ||
+      sm2_verify_update(&verify, message, sizeof(message) - 1u) != 1 ||
+      sm2_verify_finish(&verify, signature, sig_len) != 1)
+    goto done;
+
+  gmssl_secure_clear(&verify, sizeof(verify));
+  if (sm2_verify_init(&verify, &key, wrong_id, sizeof(wrong_id) - 1u) != 1 ||
+      sm2_verify_update(&verify, message, sizeof(message) - 1u) != 1 ||
+      sm2_verify_finish(&verify, signature, sig_len) == 1)
+    goto done;
+
+  memcpy(altered_message, message, sizeof(altered_message));
+  altered_message[0] ^= 1u;
+  gmssl_secure_clear(&verify, sizeof(verify));
+  if (sm2_verify_init(&verify, &key, id, sizeof(id) - 1u) != 1 ||
+      sm2_verify_update(&verify, altered_message, sizeof(altered_message)) != 1 ||
+      sm2_verify_finish(&verify, signature, sig_len) == 1)
+    goto done;
+
+  /* Mutation in the DER r integer must invalidate the signature. */
+  signature[8] ^= 1u;
+  gmssl_secure_clear(&verify, sizeof(verify));
+  if (sm2_verify_init(&verify, &key, id, sizeof(id) - 1u) != 1 ||
+      sm2_verify_update(&verify, message, sizeof(message) - 1u) != 1 ||
+      sm2_verify_finish(&verify, signature, sig_len) == 1)
+    goto done;
+  ok = 1;
+done:
+  gmssl_secure_clear(&verify, sizeof(verify));
+  gmssl_secure_clear(&key, sizeof(key));
+  gmssl_secure_clear(spki, sizeof(spki));
+  gmssl_secure_clear(signature, sizeof(signature));
+  gmssl_secure_clear(altered_message, sizeof(altered_message));
+  if (!ok) fprintf(stderr, "fixed OpenSSL SM2 verification probe failed\n");
+  return ok;
+}
+
 static int probe_sm2_identity(void) {
   static const char user_id[] = "1234567812345678";
   static const char wrong_id[] = "1234567812345679";
@@ -272,6 +366,7 @@ int main(void) {
   if (!probe_sm3_hmac_hkdf()) return 1;
   if (!probe_sm4_rfc8998_kat()) return 1;
   if (!probe_sm4_gcm()) return 1;
+  if (!probe_sm2_fixed_verify()) return 1;
   if (!probe_sm2_identity()) return 1;
   if (!probe_protocol_configuration(TLS_protocol_tls13,
                                     TLS_cipher_sm4_gcm_sm3))
