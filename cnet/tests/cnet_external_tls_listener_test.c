@@ -260,7 +260,8 @@ static void test_external_tls_listener_shared_progress(void) {
     } else if (strcmp(failure_case, "missing-client-cert") == 0) {
       check(require_mtls);
       reject_client_certificate = true;
-    } else if (strcmp(failure_case, "untrusted-client-ca") == 0) {
+    } else if (strcmp(failure_case, "untrusted-client-ca") == 0 ||
+               strcmp(failure_case, "wrong-client-eku") == 0) {
       check(require_mtls);
       reject_client_certificate = true;
     } else {
@@ -277,6 +278,10 @@ static void test_external_tls_listener_shared_progress(void) {
       if (expect_failure && strcmp(failure_case, "untrusted-client-ca") == 0) {
         client_tls_config.cert_file = getenv("SALTS_SHANGMI_UNTRUSTED_CLIENT_CERT");
         client_tls_config.key_file = getenv("SALTS_SHANGMI_UNTRUSTED_CLIENT_KEY");
+      } else if (expect_failure && strcmp(failure_case, "wrong-client-eku") == 0) {
+        /* Trusted issuing CA is insufficient without clientAuth EKU. */
+        client_tls_config.cert_file = getenv("SALTS_SHANGMI_WRONG_EKU_CLIENT_CERT");
+        client_tls_config.key_file = getenv("SALTS_SHANGMI_WRONG_EKU_CLIENT_KEY");
       }
       check(client_tls_config.cert_file != NULL);
       check(client_tls_config.key_file != NULL);

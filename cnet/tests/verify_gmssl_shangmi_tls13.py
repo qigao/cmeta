@@ -47,15 +47,17 @@ def fixture(gmssl, cwd):
 
     # Both roots are independent. Private-key files never enter the repo.
     for name, issuer in (("client", "root"),
-                         ("untrusted-client", "untrusted")):
+                         ("untrusted-client", "untrusted"),
+                         ("wrong-eku-client", "root")):
         call([gmssl, "sm2keygen", "-pass", PASS,
               "-out", name + "-key.pem"], cwd)
         call([gmssl, "reqgen", "-C", "CN", "-ST", "Beijing",
               "-L", "Haidian", "-O", "Salts", "-OU", "Test",
               "-CN", name, "-key", name + "-key.pem", "-pass", PASS,
               "-out", name + ".req"], cwd)
+        purpose = "serverAuth" if name == "wrong-eku-client" else "clientAuth"
         call([gmssl, "reqsign", "-in", name + ".req", "-days", "1",
-              "-key_usage", "digitalSignature", "-ext_key_usage", "clientAuth",
+              "-key_usage", "digitalSignature", "-ext_key_usage", purpose,
               "-cacert", issuer + "-cert.pem", "-key", issuer + "-key.pem",
               "-pass", PASS, "-out", name + "-cert.pem"], cwd)
 
@@ -129,7 +131,7 @@ def main():
             if not Path(probe).is_file():
                 raise RuntimeError("missing CNet NativeIO mTLS executable")
             for case in ("verified-mtls", "missing-client-cert",
-                         "untrusted-client-ca"):
+                         "untrusted-client-ca", "wrong-client-eku"):
                 env = dict(os.environ)
                 env.update({
                     "SALTS_SHANGMI_MTLS": "required",
@@ -141,7 +143,11 @@ def main():
                     "SALTS_SHANGMI_UNTRUSTED_CLIENT_CERT":
                         str(Path(cwd, "untrusted-client-cert.pem")),
                     "SALTS_SHANGMI_UNTRUSTED_CLIENT_KEY":
-                        str(Path(cwd, "untrusted-client-key.pem"))
+                        str(Path(cwd, "untrusted-client-key.pem")),
+                    "SALTS_SHANGMI_WRONG_EKU_CLIENT_CERT":
+                        str(Path(cwd, "wrong-eku-client-cert.pem")),
+                    "SALTS_SHANGMI_WRONG_EKU_CLIENT_KEY":
+                        str(Path(cwd, "wrong-eku-client-key.pem"))
                 })
                 if case != "verified-mtls":
                     env["SALTS_SHANGMI_FAILURE_CASE"] = case
