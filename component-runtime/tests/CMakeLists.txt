@@ -91,3 +91,24 @@ add_dependencies(cmeta_native_service_host_candidate_coexistence_dso_test
   salts_service_host_candidate_provider_fixture)
 set_target_properties(cmeta_native_service_host_candidate_coexistence_dso_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
+
+# Opt-in SDK isolation: install the existing SDK from the candidate-enabled
+# graph and execute original C11/C++17 consumers with no candidate exports.
+# Reuses the current formal installed-consumer CMake/CTest driver.
+add_test(
+  NAME component_candidate_installed_sdk_isolation_test
+  COMMAND "${CMAKE_COMMAND}"
+    "-DSALTS_BINARY_DIR=${CMAKE_BINARY_DIR}"
+    "-DSALTS_TEST_VERSION=${PROJECT_VERSION}"
+    "-DSALTS_TEST_CONFIG=$<CONFIG>"
+    "-DSALTS_GENERATOR=${CMAKE_GENERATOR}"
+    "-DSALTS_C_COMPILER=${CMAKE_C_COMPILER}"
+    "-DSALTS_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+    "-DSALTS_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+    "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_config/sdk-isolation"
+    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-sdk-isolation"
+    "-DCTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
+    -P "${PROJECT_SOURCE_DIR}/cmake/ci/verify-installed-consumer.cmake")
+set_tests_properties(component_candidate_installed_sdk_isolation_test
+  PROPERTIES RUN_SERIAL TRUE TIMEOUT 300)
