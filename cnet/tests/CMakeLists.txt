@@ -330,6 +330,19 @@ set_target_properties(cnet_shangmi_tls13_profile_probe PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "cnet/tests")
 add_dependencies(cnet_tls_test cnet_shangmi_tls13_profile_probe)
 
+# Exact CNet public client/listener + NativeIO TCP owner integration;
+# reuse the existing listener test behavior with temporary SM2 identities.
+add_executable(cnet_shangmi_tls13_nativeio_probe
+  cnet_external_tls_listener_test.c)
+target_compile_definitions(cnet_shangmi_tls13_nativeio_probe
+  PRIVATE CNET_SHANGMI_TLS13_TEST=1)
+target_link_libraries(cnet_shangmi_tls13_nativeio_probe
+  PRIVATE Salts::TinyTest cnet Salts::Core Salts::NativeIO)
+set_target_properties(cnet_shangmi_tls13_nativeio_probe PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "cnet/tests")
+add_dependencies(cnet_tls_test cnet_shangmi_tls13_nativeio_probe)
+
+
 # #1123: real TLS 1.3 / RFC 8998 SM2+SM4-GCM-SM3 loopback;
 # verified echo plus CA, hostname and cipher mismatch negative tests.
 # Initially native Linux, with no fallback to system GmSSL.
@@ -358,6 +371,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
       --gmssl "${CNET_GMSSL_SHANGMI_TOOL}"
       --cnet-probe "$<TARGET_FILE:cnet_shangmi_tls13_profile_probe>")
   set_tests_properties(cnet_shangmi_tls13_profile_test PROPERTIES
+    TIMEOUT 150 RUN_SERIAL TRUE)
+  add_test(NAME cnet_shangmi_tls13_nativeio_test
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verify_gmssl_shangmi_tls13.py"
+      --gmssl "${CNET_GMSSL_SHANGMI_TOOL}"
+      --cnet-nativeio "$<TARGET_FILE:cnet_shangmi_tls13_nativeio_probe>")
+  set_tests_properties(cnet_shangmi_tls13_nativeio_test PROPERTIES
     TIMEOUT 150 RUN_SERIAL TRUE)
 endif()
 
