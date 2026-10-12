@@ -95,6 +95,62 @@ done:
   return ok;
 }
 
+/* RFC 8998 Appendix A.1: independent on-wire SM4-GCM known-answer vector.
+ * These bytes are not derived from the provider under test.
+ */
+static int probe_sm4_rfc8998_kat(void) {
+  static const uint8_t raw_key[16] = {
+      0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+      0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10};
+  static const uint8_t iv[12] = {
+      0x00, 0x00, 0x12, 0x34, 0x56, 0x78,
+      0x00, 0x00, 0x00, 0x00, 0xab, 0xcd};
+  static const uint8_t aad[20] = {
+      0xfe, 0xed, 0xfa, 0xce, 0xde, 0xad, 0xbe, 0xef,
+      0xfe, 0xed, 0xfa, 0xce, 0xde, 0xad, 0xbe, 0xef,
+      0xab, 0xad, 0xda, 0xd2};
+  static const uint8_t plain[64] = {
+      0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+      0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb,
+      0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc,
+      0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd,
+      0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+      0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+      0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa};
+  uint8_t ciphertext[sizeof(plain)];
+  uint8_t decrypted[sizeof(plain)];
+  uint8_t tag[16];
+  SM4_KEY key;
+  int ok = 0;
+
+  sm4_set_encrypt_key(&key, raw_key);
+  if (sm4_gcm_encrypt(&key, iv, sizeof(iv), aad, sizeof(aad),
+                      plain, sizeof(plain), ciphertext, sizeof(tag), tag) != 1)
+    goto done;
+  if (!check_hex("RFC 8998 A.1 SM4-GCM ciphertext", ciphertext,
+                 sizeof(ciphertext),
+                 "17f399f08c67d5ee19d0dc9969c4bb7d"
+                 "5fd46fd3756489069157b282bb200735"
+                 "d82710ca5c22f0ccfa7cbf93d496ac15"
+                 "a56834cbcf98c397b4024a2691233b8d"))
+    goto done;
+  if (!check_hex("RFC 8998 A.1 SM4-GCM tag", tag, sizeof(tag),
+                 "83de3541e4c2b58177e065a9bf7b62ec"))
+    goto done;
+  if (sm4_gcm_decrypt(&key, iv, sizeof(iv), aad, sizeof(aad),
+                      ciphertext, sizeof(ciphertext), tag, sizeof(tag),
+                      decrypted) != 1 ||
+      memcmp(decrypted, plain, sizeof(plain)) != 0)
+    goto done;
+  ok = 1;
+done:
+  gmssl_secure_clear(&key, sizeof(key));
+  gmssl_secure_clear(decrypted, sizeof(decrypted));
+  if (!ok) fprintf(stderr, "RFC 8998 A.1 SM4-GCM provider vector failed\\n");
+  return ok;
+}
+
 static int probe_sm4_gcm(void) {
   static const uint8_t raw_key[16] = {
       0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
@@ -214,6 +270,7 @@ static int probe_protocol_configuration(int protocol, int cipher) {
 
 int main(void) {
   if (!probe_sm3_hmac_hkdf()) return 1;
+  if (!probe_sm4_rfc8998_kat()) return 1;
   if (!probe_sm4_gcm()) return 1;
   if (!probe_sm2_identity()) return 1;
   if (!probe_protocol_configuration(TLS_protocol_tls13,
