@@ -1,4 +1,5 @@
 #include "../reliable.h"
+#include "test_mac.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -89,6 +90,7 @@ static rl_config defaults(uint32_t local, uint32_t peer) {
   cfg.deadline_ms = 300;
   cfg.window = 3;
   cfg.max_retries = 5;
+  fixture_set_directional_keys(&cfg);
   return cfg;
 }
 static int initialize(pair *p, rl_config a, rl_config b) {
@@ -99,8 +101,8 @@ static int initialize(pair *p, rl_config a, rl_config b) {
   p->b.side = 1;
   p->a.link = &p->link;
   p->b.link = &p->link;
-  rl_callbacks ca = {emit, delivered, terminal, &p->a};
-  rl_callbacks cb = {emit, delivered, terminal, &p->b};
+  rl_callbacks ca = {emit, delivered, terminal, &p->a, fixture_hmac_sha256};
+  rl_callbacks cb = {emit, delivered, terminal, &p->b, fixture_hmac_sha256};
   CHECK(rl_start(&p->a.session, &a, ca, 1, &p->a.ticket) == RL_OK);
   CHECK(rl_start(&p->b.session, &b, cb, 1, &p->b.ticket) == RL_OK);
   return 0;
@@ -293,7 +295,7 @@ static int emit_failure_and_bad_capacity(void) {
 
 static uint32_t calc_crc(uint8_t *packet, size_t size) {
   uint32_t crc = UINT32_MAX;
-  for (size_t j = 0; j < size; ++j) {
+  for (size_t j = 0; j < size - RL_MAC_BYTES; ++j) {
     if (j >= 32 && j < 36) continue;
     crc ^= packet[j];
     for (unsigned i = 0; i < 8; ++i)
@@ -320,6 +322,12 @@ static int crc_valid_ack_rejected_if_not_sent(void) {
   CHECK(kind(&ack) == 2);
   ack.bytes[31] |= 0x07u; /* valid CRC but claims unsent fragments */
   rewrite_crc(&ack);
+  /* An on-path adversary without a key cannot forge an ACK with fresh CRC. */
+  CHECK(dispatch(&p, ack, 1) == RL_AUTH_FAILED);
+  /* Even a malicious credential holder cannot acknowledge unsent fragments. */
+  CHECK(fixture_hmac_sha256(NULL, p.b.session.config.tx_auth_key,
+                            ack.bytes, ack.size - RL_MAC_BYTES,
+                            ack.bytes + ack.size - RL_MAC_BYTES));
   CHECK(dispatch(&p, ack, 1) == RL_OK);
   CHECK(p.a.session.tx.acked_mask == 0 && p.a.terminals == 0);
   CHECK(rl_cancel(&p.a.session, p.a.ticket) == RL_OK);
@@ -365,7 +373,7 @@ static int stop_recycle_stale_and_reentrant(void) {
   CHECK(rl_stop(&p.a.session, p.a.ticket) == RL_OK);
   CHECK(rl_cancel(&p.a.session, p.a.ticket) == RL_STALE);
   rl_ticket again = {0};
-  rl_callbacks ca = {emit, delivered, terminal, &p.a};
+  rl_callbacks ca = {emit, delivered, terminal, &p.a, fixture_hmac_sha256};
   CHECK(rl_start(&p.a.session, &p.config_a, ca, 1, &again) == RL_STALE);
   p.config_a.epoch++;
   CHECK(rl_start(&p.a.session, &p.config_a, ca, 2, &again) == RL_OK);
@@ -451,7 +459,155 @@ static int seeded_loss_oracle(void) {
   return 0;
 }
 
+
+static bool failing_mac(void *user, const uint8_t key[RL_KEY_BYTES],
+                        const void *bytes, size_t size, uint8_t out[RL_MAC_BYTES]) {
+  (void)user; (void)key; (void)bytes; (void)size; (void)out;
+  return false;
+}
+
+static bool reenter_mac(void *user, const uint8_t key[RL_KEY_BYTES],
+                        const void *bytes, size_t size, uint8_t out[RL_MAC_BYTES]) {
+  node *n = (node *)user;
+  n->reenter_status = rl_cancel(&n->session, n->ticket);
+  return fixture_hmac_sha256(user, key, bytes, size, out);
+}
+
+static int authenticated_callback_is_not_reentrant(void) {
+  pair p;
+  CHECK(setup(&p) == 0);
+  uint8_t data[] = {1, 2};
+  CHECK(rl_send(&p.a.session, p.a.ticket, data, sizeof(data), 88, 0) == RL_OK);
+  CHECK(advance(&p.a, 0, 1) == 1);
+  p.b.session.callbacks.mac = reenter_mac;
+  CHECK(dispatch(&p, take(&p.link, 0), 1) == RL_OK);
+  CHECK(p.b.reenter_status == RL_BUSY && p.b.delivers == 1);
+  CHECK(advance(&p.b, 1, 1) == 1);
+  CHECK(dispatch(&p, take(&p.link, 0), 1) == RL_OK);
+  CHECK(p.a.terminals == 1 && p.a.last_terminal == RL_TERMINAL_ACKED);
+  return 0;
+}
+
+static int hmac_known_answer_and_fail_closed_admission(void) {
+  /* RFC 4231 test case 1: HMAC-SHA256 key 0x0b repeated 20 bytes, padded
+   * with zero bytes here to the provider's fixed 32-byte key interface. */
+  static const uint8_t expected[32] = {
+    0xb0,0x34,0x4c,0x61,0xd8,0xdb,0x38,0x53,
+    0x5c,0xa8,0xaf,0xce,0xaf,0x0b,0xf1,0x2b,
+    0x88,0x1d,0xc2,0x00,0xc9,0x83,0x3d,0xa7,
+    0x26,0xe9,0x37,0x6c,0x2e,0x32,0xcf,0xf7
+  };
+  uint8_t key[RL_KEY_BYTES] = {0}, digest[RL_MAC_BYTES] = {0};
+  for (unsigned i = 0; i < 20; ++i) key[i] = 0x0bu;
+  CHECK(fixture_hmac_sha256(NULL, key, "Hi There", 8, digest));
+  CHECK(memcmp(digest, expected, sizeof(expected)) == 0);
+
+  rl_session s = {0};
+  rl_ticket ticket = {0};
+  node n = {0};
+  rl_config cfg = defaults(17, 29);
+  rl_callbacks cb = {emit, delivered, terminal, &n, fixture_hmac_sha256};
+  n.session = s;
+  cb.mac = NULL;
+  CHECK(rl_start(&s, &cfg, cb, 1, &ticket) == RL_INVALID);
+  cb.mac = fixture_hmac_sha256;
+  memset(cfg.tx_auth_key, 0, sizeof(cfg.tx_auth_key));
+  CHECK(rl_start(&s, &cfg, cb, 1, &ticket) == RL_INVALID);
+  fixture_set_directional_keys(&cfg);
+  memcpy(cfg.rx_auth_key, cfg.tx_auth_key, sizeof(cfg.rx_auth_key));
+  CHECK(rl_start(&s, &cfg, cb, 1, &ticket) == RL_INVALID);
+  return 0;
+}
+
+static int wrong_key_cannot_deliver_or_settle(void) {
+  pair p;
+  CHECK(setup(&p) == 0);
+  uint8_t data[] = { 10, 11, 12 };
+  CHECK(rl_send(&p.a.session, p.a.ticket, data, sizeof(data), 707, 0) == RL_OK);
+  CHECK(advance(&p.a, 0, 1) == 1);
+  wire_item original = take(&p.link, 0);
+  p.b.session.config.rx_auth_key[0] ^= 0x40u;
+  CHECK(dispatch(&p, original, 1) == RL_AUTH_FAILED);
+  CHECK(p.b.delivers == 0 && p.b.session.stats.rx_auth_failed == 1);
+  p.b.session.config.rx_auth_key[0] ^= 0x40u;
+  CHECK(dispatch(&p, original, 1) == RL_OK);
+  CHECK(advance(&p.b, 1, 1) == 1);
+  wire_item genuine_ack = take(&p.link, 0);
+  wire_item forged_ack = genuine_ack;
+  forged_ack.bytes[RL_WIRE_HEADER_BYTES - 1] ^= 0x8u; /* CRC tampering */
+  CHECK(dispatch(&p, forged_ack, 1) == RL_PROTOCOL);
+  forged_ack = genuine_ack;
+  forged_ack.bytes[RL_WIRE_HEADER_BYTES] ^= 0x40u; /* tag tampering */
+  CHECK(dispatch(&p, forged_ack, 1) == RL_AUTH_FAILED);
+  CHECK(p.a.terminals == 0);
+  CHECK(dispatch(&p, genuine_ack, 1) == RL_OK);
+  CHECK(p.a.terminals == 1 && p.a.last_terminal == RL_TERMINAL_ACKED);
+  return 0;
+}
+
+static int crypto_provider_failure_never_emits_or_delivers(void) {
+  pair p;
+  CHECK(setup(&p) == 0);
+  uint8_t bytes[] = {1, 2, 3};
+  CHECK(rl_send(&p.a.session, p.a.ticket, bytes, sizeof(bytes), 901, 0) == RL_OK);
+  p.a.session.callbacks.mac = failing_mac;
+  size_t emitted = 8;
+  CHECK(rl_step(&p.a.session, p.a.ticket, 0, 4, &emitted) == RL_CRYPTO);
+  CHECK(emitted == 0 && p.link.count == 0 && p.a.terminals == 1 &&
+        p.a.last_terminal == RL_TERMINAL_EMIT_FAILED);
+  CHECK(p.a.session.stats.tx_crypto_failed == 1);
+  CHECK(rl_cancel(&p.a.session, p.a.ticket) == RL_OK && p.a.terminals == 1);
+
+  /* A real signed message must not reach receive callback when verifier fails. */
+  p.a.session.callbacks.mac = fixture_hmac_sha256;
+  CHECK(rl_send(&p.a.session, p.a.ticket, bytes, sizeof(bytes), 902, 1) == RL_OK);
+  CHECK(advance(&p.a, 1, 1) == 1);
+  p.b.session.callbacks.mac = failing_mac;
+  CHECK(dispatch(&p, take(&p.link, 0), 1) == RL_CRYPTO);
+  CHECK(p.b.delivers == 0 && p.b.session.stats.rx_auth_failed == 1);
+  CHECK(rl_cancel(&p.a.session, p.a.ticket) == RL_OK);
+  return 0;
+}
+
+static int stale_epoch_replay_and_key_erasure(void) {
+  pair p;
+  CHECK(setup(&p) == 0);
+  uint8_t bytes[] = {5,6,7};
+  CHECK(rl_send(&p.a.session, p.a.ticket, bytes, sizeof(bytes), 1, 0) == RL_OK);
+  CHECK(advance(&p.a, 0, 1) == 1);
+  wire_item old = take(&p.link, 0);
+  CHECK(rl_cancel(&p.a.session, p.a.ticket) == RL_OK);
+  CHECK(rl_seal(&p.a.session, p.a.ticket) == RL_OK);
+  CHECK(rl_stop(&p.a.session, p.a.ticket) == RL_OK);
+  CHECK(rl_seal(&p.b.session, p.b.ticket) == RL_OK);
+  CHECK(rl_stop(&p.b.session, p.b.ticket) == RL_OK);
+  for (size_t i = 0; i < RL_KEY_BYTES; ++i) {
+    CHECK(p.a.session.config.tx_auth_key[i] == 0);
+    CHECK(p.a.session.config.rx_auth_key[i] == 0);
+    CHECK(p.b.session.config.tx_auth_key[i] == 0);
+    CHECK(p.b.session.config.rx_auth_key[i] == 0);
+  }
+  CHECK(rl_input(&p.b.session, p.b.ticket, old.bytes, old.size, 1) == RL_STALE);
+  rl_config b = p.config_b;
+  b.epoch++;
+  b.tx_auth_key[0] ^= 0x20u;
+  b.rx_auth_key[0] ^= 0x10u;
+  rl_ticket t = {0};
+  rl_callbacks cb = {emit, delivered, terminal, &p.b, fixture_hmac_sha256};
+  CHECK(rl_start(&p.b.session, &b, cb, 2, &t) == RL_OK);
+  CHECK(rl_input(&p.b.session, t, old.bytes, old.size, 1) == RL_PROTOCOL);
+  CHECK(p.b.delivers == 0 && p.b.session.stats.rx_invalid == 1);
+  CHECK(rl_seal(&p.b.session, t) == RL_OK);
+  CHECK(rl_stop(&p.b.session, t) == RL_OK);
+  return 0;
+}
+
 int main(void) {
+  if (authenticated_callback_is_not_reentrant()) return 1;
+  if (hmac_known_answer_and_fail_closed_admission()) return 1;
+  if (wrong_key_cannot_deliver_or_settle()) return 1;
+  if (crypto_provider_failure_never_emits_or_delivers()) return 1;
+  if (stale_epoch_replay_and_key_erasure()) return 1;
   if (normal_delivery_and_duplicate()) return 1;
   if (reorder_selective_recovery()) return 1;
   if (ack_loss_and_delayed_ack()) return 1;

@@ -4,7 +4,7 @@
 #include <string.h>
 
 enum { RL_DATA = 1, RL_ACK = 2 };
-static const uint8_t wire_magic[4] = { 'S', 'R', 'E', '1' };
+static const uint8_t wire_magic[4] = { 'S', 'R', 'E', '2' };
 
 static uint16_t get16(const uint8_t *p) {
   return (uint16_t)((uint16_t)p[0] << 8 | p[1]);
@@ -36,6 +36,20 @@ static uint32_t checksum(const uint8_t *p, size_t n) {
   if (n > RL_WIRE_HEADER_BYTES)
     crc = crc_step(crc, p + RL_WIRE_HEADER_BYTES, n - RL_WIRE_HEADER_BYTES);
   return ~crc;
+}
+static bool key_present(const uint8_t key[RL_KEY_BYTES]) {
+  uint8_t nz = 0u;
+  for (size_t i = 0; i < RL_KEY_BYTES; ++i) nz |= key[i];
+  return nz != 0u;
+}
+static void secure_wipe(uint8_t *p, size_t count) {
+  volatile uint8_t *dest = (volatile uint8_t *)p;
+  while (count--) *dest++ = 0u;
+}
+static bool constant_time_equal(const uint8_t *a, const uint8_t *b, size_t size) {
+  uint8_t difference = 0u;
+  for (size_t i = 0; i < size; ++i) difference |= (uint8_t)(a[i] ^ b[i]);
+  return difference == 0u;
 }
 static uint64_t plus_ms(uint64_t t, uint32_t delay) {
   return UINT64_MAX - t < delay ? UINT64_MAX : t + delay;
@@ -74,7 +88,7 @@ static size_t serialize(const rl_session *s, uint8_t *packet, unsigned type,
   size_t packet_size = RL_WIRE_HEADER_BYTES + payload_size;
   memset(packet, 0, RL_WIRE_HEADER_BYTES);
   memcpy(packet, wire_magic, 4);
-  packet[4] = 1u;
+  packet[4] = 2u;
   packet[5] = (uint8_t)type;
   packet[6] = index;
   packet[7] = count;
@@ -87,19 +101,24 @@ static size_t serialize(const rl_session *s, uint8_t *packet, unsigned type,
   put32(packet + 28, mask);
   if (payload_size) memcpy(packet + RL_WIRE_HEADER_BYTES, payload, payload_size);
   put32(packet + 32, checksum(packet, packet_size));
-  return packet_size;
+  if (!s->callbacks.mac(s->callbacks.user, s->config.tx_auth_key,
+                        packet, packet_size, packet + packet_size)) return 0;
+  return packet_size + RL_MAC_BYTES;
 }
 
 rl_result rl_start(rl_session *s, const rl_config *config, rl_callbacks callbacks,
                    uint64_t generation, rl_ticket *out_ticket) {
   if (!s || !config || !out_ticket || !callbacks.emit || !callbacks.on_deliver ||
-      !callbacks.on_terminal || !generation ||
+      !callbacks.on_terminal || !callbacks.mac || !generation ||
       !config->local_id || !config->peer_id || config->local_id == config->peer_id ||
       !config->epoch || !config->first_message_id ||
       !config->window || config->window > RL_MAX_FRAGMENTS ||
       !config->max_retries || config->max_retries > 16u ||
       !config->rto_ms || config->deadline_ms < config->rto_ms ||
-      config->ack_delay_ms >= config->deadline_ms)
+      config->ack_delay_ms >= config->deadline_ms ||
+      !key_present(config->tx_auth_key) ||
+      !key_present(config->rx_auth_key) ||
+      constant_time_equal(config->tx_auth_key, config->rx_auth_key, RL_KEY_BYTES))
     return RL_INVALID;
   if (s->state != RL_EMPTY && s->state != RL_STOPPED) return RL_BUSY;
   if (generation <= s->generation ||
@@ -154,7 +173,7 @@ rl_result rl_input(rl_session *s, rl_ticket t, const void *wire, size_t size,
   rl_result st = validate(s, t);
   if (st != RL_OK) return st;
   if ((st = clock_advance(s, now_ms)) != RL_OK) return st;
-  if (!wire || size < RL_WIRE_HEADER_BYTES || size > RL_MAX_WIRE_BYTES) {
+  if (!wire || size < RL_WIRE_HEADER_BYTES + RL_MAC_BYTES || size > RL_MAX_WIRE_BYTES) {
     ++s->stats.rx_invalid;
     return RL_PROTOCOL;
   }
@@ -162,7 +181,7 @@ rl_result rl_input(rl_session *s, rl_ticket t, const void *wire, size_t size,
   uint8_t type = p[5], index = p[6], count = p[7];
   uint32_t msg = get32(p + 20), mask = get32(p + 28);
   uint16_t total = get16(p + 24), payload = get16(p + 26);
-  if (memcmp(p, wire_magic, 4) || p[4] != 1u ||
+  if (memcmp(p, wire_magic, 4) || p[4] != 2u ||
       (type != RL_DATA && type != RL_ACK) ||
       !count || count > RL_MAX_FRAGMENTS || !msg ||
       !total || total > RL_MAX_MESSAGE_BYTES ||
@@ -170,10 +189,28 @@ rl_result rl_input(rl_session *s, rl_ticket t, const void *wire, size_t size,
       get32(p + 8) != s->config.peer_id ||
       get32(p + 12) != s->config.local_id ||
       get32(p + 16) != s->config.epoch ||
-      size != (size_t)RL_WIRE_HEADER_BYTES + payload ||
-      checksum(p, size) != get32(p + 32)) {
+      size != (size_t)RL_WIRE_HEADER_BYTES + payload + RL_MAC_BYTES ||
+      checksum(p, size - RL_MAC_BYTES) != get32(p + 32)) {
     ++s->stats.rx_invalid;
     return RL_PROTOCOL;
+  }
+  uint8_t computed[RL_MAC_BYTES] = {0};
+  /* The external authenticator is a synchronous borrowed callback: fence
+   * nested session operations just as we do for emit and terminal hooks. */
+  s->in_call = true;
+  bool verified = s->callbacks.mac(s->callbacks.user, s->config.rx_auth_key,
+                                   p, size - RL_MAC_BYTES, computed);
+  s->in_call = false;
+  bool matches = constant_time_equal(computed, p + size - RL_MAC_BYTES,
+                                     RL_MAC_BYTES);
+  secure_wipe(computed, sizeof(computed));
+  if (!verified) {
+    ++s->stats.rx_auth_failed;
+    return RL_CRYPTO;
+  }
+  if (!matches) {
+    ++s->stats.rx_auth_failed;
+    return RL_AUTH_FAILED;
   }
   if (type == RL_ACK) {
     if (index || payload || !mask || (mask & ~(uint32_t)mask_for(count))) {
@@ -256,6 +293,7 @@ rl_result rl_step(rl_session *s, rl_ticket t, uint64_t now_ms,
     uint8_t packet[RL_MAX_WIRE_BYTES];
     size_t len = serialize(s, packet, RL_ACK, s->ack.message_id, 0u, s->ack.count,
                            s->ack.size, s->ack.mask, NULL, 0u);
+    if (!len) { ++s->stats.tx_crypto_failed; st = RL_CRYPTO; goto done; }
     int accepted = s->callbacks.emit(s->callbacks.user, packet, len);
     if (accepted != 0 && accepted != 1) { st = RL_EMIT_FAILED; goto done; }
     if (!accepted) goto done;
@@ -282,6 +320,12 @@ rl_result rl_step(rl_session *s, rl_ticket t, uint64_t now_ms,
     size_t packet_len = serialize(s, packet, RL_DATA, s->tx.message_id,
                                   (uint8_t)i, s->tx.count, s->tx.size, 0,
                                   s->tx.bytes + offset, len);
+    if (!packet_len) {
+      ++s->stats.tx_crypto_failed;
+      terminal(s, RL_TERMINAL_EMIT_FAILED);
+      st = RL_CRYPTO;
+      goto done;
+    }
     int accepted = s->callbacks.emit(s->callbacks.user, packet, packet_len);
     if (accepted != 0 && accepted != 1) {
       terminal(s, RL_TERMINAL_EMIT_FAILED);
@@ -330,6 +374,10 @@ rl_result rl_drain(rl_session *s, rl_ticket t) {
 rl_result rl_stop(rl_session *s, rl_ticket t) {
   rl_result st = rl_drain(s, t);
   if (st != RL_OK) return st;
+  secure_wipe(s->config.tx_auth_key, RL_KEY_BYTES);
+  secure_wipe(s->config.rx_auth_key, RL_KEY_BYTES);
+  secure_wipe(s->tx.bytes, sizeof(s->tx.bytes));
+  secure_wipe(s->rx.bytes, sizeof(s->rx.bytes));
   s->state = RL_STOPPED;
   return RL_OK;
 }

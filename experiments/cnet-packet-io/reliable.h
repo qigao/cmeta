@@ -1,7 +1,7 @@
 #ifndef CNET_RESEARCH_RELIABLE_H
 #define CNET_RESEARCH_RELIABLE_H
 
-/* Experimental research-only, unauthenticated message protocol. No public ABI. */
+/* Experimental research-only authenticated envelope: host owns key provision. No public ABI. */
 #include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -11,7 +11,9 @@
 #define RL_FRAGMENT_BYTES 64u
 #define RL_MAX_MESSAGE_BYTES (RL_MAX_FRAGMENTS * RL_FRAGMENT_BYTES)
 #define RL_WIRE_HEADER_BYTES 36u
-#define RL_MAX_WIRE_BYTES (RL_WIRE_HEADER_BYTES + RL_FRAGMENT_BYTES)
+#define RL_MAC_BYTES 32u
+#define RL_KEY_BYTES 32u
+#define RL_MAX_WIRE_BYTES (RL_WIRE_HEADER_BYTES + RL_FRAGMENT_BYTES + RL_MAC_BYTES)
 
 typedef enum rl_result {
   RL_OK = 0,
@@ -23,7 +25,9 @@ typedef enum rl_result {
   RL_BUSY,
   RL_PROTOCOL,
   RL_EMIT_FAILED,
-  RL_EXHAUSTED
+  RL_EXHAUSTED,
+  RL_AUTH_FAILED,
+  RL_CRYPTO
 } rl_result;
 
 typedef enum rl_terminal {
@@ -42,12 +46,20 @@ typedef int (*rl_emit_fn)(void *user, const void *bytes, size_t size);
 typedef void (*rl_deliver_fn)(void *user, uint32_t message_id,
                               const void *bytes, size_t size);
 typedef void (*rl_terminal_fn)(void *user, uint64_t tag, rl_terminal result);
+/* External, vetted MAC provider; test fixture uses HMAC-SHA256. The provider
+ * must compute a full 32-byte cryptographic MAC over exactly the supplied
+ * complete header+payload and return false on any error. Verification and
+ * constant-time comparison are performed by this protocol engine. */
+typedef bool (*rl_mac_fn)(void *user, const uint8_t key[RL_KEY_BYTES],
+                          const void *bytes, size_t size,
+                          uint8_t out_mac[RL_MAC_BYTES]);
 
 typedef struct rl_callbacks {
   rl_emit_fn emit;
   rl_deliver_fn on_deliver;
   rl_terminal_fn on_terminal;
   void *user;
+  rl_mac_fn mac; /* required; there is no unauthenticated fallback */
 } rl_callbacks;
 
 typedef struct rl_config {
@@ -60,6 +72,12 @@ typedef struct rl_config {
   uint32_t deadline_ms;
   uint8_t window;         /* 1..RL_MAX_FRAGMENTS, upper bound on cwnd */
   uint8_t max_retries;    /* extra transmissions per fragment, beyond first */
+  /* Provision these independent directional keys by an authenticated host
+   * authority and rotate for each fresh epoch. rl_start copies keys; caller
+   * retains responsibility for erasing its own config. All-zero and identical
+   * TX/RX keys are rejected. No key negotiation or derivation is implemented. */
+  uint8_t tx_auth_key[RL_KEY_BYTES];
+  uint8_t rx_auth_key[RL_KEY_BYTES];
 } rl_config;
 
 typedef struct rl_ticket { uint64_t generation; } rl_ticket;
@@ -77,6 +95,8 @@ typedef struct rl_stats {
   uint64_t tx_acks;
   uint64_t rx_duplicate;
   uint64_t rx_invalid;
+  uint64_t rx_auth_failed;
+  uint64_t tx_crypto_failed;
   uint64_t congestion_reduced;
   uint64_t terminal_acked;
   uint64_t terminal_failed;
@@ -142,8 +162,9 @@ rl_result rl_start(rl_session *s, const rl_config *config, rl_callbacks callback
 rl_result rl_send(rl_session *s, rl_ticket t, const void *data, size_t size,
                   uint64_t tag, uint64_t now_ms);
 
-/* Validated wire receive; CRC32 protects random corruption but NOT authenticity.
- * Invalid / wrong-epoch / spoofed-identity frames never authorize settlement. */
+/* Authenticated receive. CRC32 only detects random corruption; the mandatory
+ * full-length keyed MAC is the actual authenticity gate. Never claim a peer
+ * handshake, confidentiality or authenticated key provisioning here. */
 rl_result rl_input(rl_session *s, rl_ticket t, const void *wire, size_t size,
                    uint64_t now_ms);
 
@@ -154,6 +175,8 @@ rl_result rl_step(rl_session *s, rl_ticket t, uint64_t now_ms,
 rl_result rl_cancel(rl_session *s, rl_ticket t);
 rl_result rl_seal(rl_session *s, rl_ticket t);
 rl_result rl_drain(rl_session *s, rl_ticket t);
+/* On successful stop the owned TX/RX MAC keys are explicitly wiped. This
+ * does not release independent Packet I/O driver frame leases. */
 rl_result rl_stop(rl_session *s, rl_ticket t);
 
 #endif

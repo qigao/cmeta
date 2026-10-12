@@ -43,10 +43,12 @@ The smoke instantiates `rte_eth_from_rings()`, configures an actual Ethernet PMD
 
 No Tesla wire compatibility, native GPUDirect/RDMA support, authenticated transport, or physical-NIC performance measurements are claimed. The Salts 2.3.0 installed public ABI remains frozen.
 
-## Research-only bounded reliable-message engine (#1147)
+## Research-only authenticated reliable-message engine (#1147)
 
-The separate [R1 wire and lifecycle contract](RELIABLE_PROTOCOL.md) defines a 36-byte, unauthenticated experimental envelope with a 64-byte fragment payload, up to eight fragments per message, selective ACK bitmap, bounded retransmission and exact protocol-terminal callback. This protocol is **not** a production security profile, Tesla wire compatibility, RDMA or a replacement for KCP.
+The canonical [R2 protocol and key-lifetime contract](RELIABLE_PROTOCOL.md) describes **mandatory HMAC-SHA256 authentication** over the experimental 36-byte SRE2 header and DATA (32-byte tag). **CRC-only R1 is retired, without fallback**. The protocol is not an authenticated peer handshake, confidential channel, approved GmSSL runtime Provider, TTPoE interoperability or production service.
 
-The standalone CMake project includes `packet_reliable_conformance` (11 named deterministic scenarios plus 40 pseudorandom loss/reorder message trials) and `packet_reliable_packet_io` (two joined Packet I/O / protocol fake-driver lifetime scenarios). The independent CI matrix runs these under GCC/Clang ASan+UBSan and GCC TSan; the optional real DPDK `net_ring` smoke remains separate.
+The crypto library is **not linked into `packet_reliable_research`** or the installed Salts/CNet SDK. Only the isolated test targets link a real system `libcrypto` HMAC fixture. That fixture validates RFC 4231, forged/wrong-key ACK rejection, MAC-provider error paths, invalid key admission, callback reentrancy, replay across epochs and secure owner-key erasure; the original deterministic loss/reorder and Packet I/O lease tests remain active.
 
-To run all the standalone tests, configure the research project and invoke `ctest --test-dir <build-directory> --output-on-failure`. Neither the new protocol core nor the deterministic tests requires the DPDK SDK or a physical NIC.
+CTest targets: `packet_reliable_conformance`, `packet_reliable_packet_io`, and `packet_io_fake_owner`; optional standalone DPDK `net_ring` smoke is unchanged. Configure `experiments/cnet-packet-io` with `-DPACKET_IO_ENABLE_DPDK=OFF`, build and run `ctest --test-dir <build-directory> --output-on-failure`. The research test target requires a system OpenSSL development package for its HMAC fixture; this does not add a requirement to production Salts.
+
+**Still open:** production GmSSL provider, authenticated peer/key provision and renewal, real Ethernet demux, multi-peer scheduling and NIC hardware completion. Keep Draft PR #1149 unmerged.

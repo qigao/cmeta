@@ -1,57 +1,66 @@
-# Experimental reliable-message wire protocol R1
+# Experimental reliable-message wire protocol R2
 
-**Status: research-only, fixed-capacity conformance.** Tracked by [#1147](https://github.com/qigao/salts/issues/1147) under [#1145](https://github.com/qigao/salts/issues/1145) in [Draft PR #1149](https://github.com/qigao/salts/pull/1149). NOT a Tesla TTPoE-compatible or installed Salts protocol.
+**Status: research-only, fixed-capacity authenticated envelope; NOT production-ready.** Tracking [#1147](https://github.com/qigao/salts/issues/1147), [#1145](https://github.com/qigao/salts/issues/1145), [Draft PR #1149](https://github.com/qigao/salts/pull/1149). This is neither Tesla TTPoE-compatible nor a stable Salts/CNet ABI. **R1 is retired; there is no CRC-only fallback.**
 
-## Frozen R1 scope
+## Contract and trust boundary
 
-One caller-owned, address-stable session per Owner thread, with one active logical TX and one in-progress RX message per direction. The caller provides an out-of-band local participant ID, peer ID, a nonzero epoch and a first message ID. There is NO discovery, session handshake, dynamic routing, MTU negotiation or persistence. Restart requires a greater generation and a *different epoch*. Message-ID rollover is rejected; use a new epoch.
+One fixed Owner thread per address-stable session, one active TX logical message and one partial RX message. The host configures nonzero, distinct participant IDs, a nonzero session epoch, first message ID, and **independent directional 32-byte TX/RX MAC keys**. Session keys must be generated/provisioned by a trusted application authority, not learned from a received frame; the protocol has no key exchange or handshake. Keys must be rotated when starting a fresh epoch. Host-provided epoch uniqueness across process restarts is essential; no raw runtime state is persisted.
 
-- Each logical message has 1–512 payload bytes, fragmented into 1–8 pieces of at most 64 bytes. TX admission copies into a bounded internal buffer; RX reassembly has its own fixed 512-byte store. No zero-copy claim.
-- The send callback synchronously copies or independently retains the complete frame before returning success (1). Backpressure (0) transfers nothing; negative or unexpected return is a failure. The protocol never borrows caller bytes after admitted send returns.
-- Exactly one delivery callback occurs for each accepted inbound message ID in the configured live epoch. Delivery is a borrowed view and means callback invocation, NOT durable business commit.
-- Exactly one logical send terminal follows a complete peer ACK bitmap, cancellation, expiry, or fatal emit. Packet I/O TX acceptance is not peer ACK. Logical cancellation does NOT release accepted PMD/DMA frames.
-- The caller supplies monotonic millisecond time and a bounded per-call transmit budget. No hidden threads, timers, automatic transaction replay or raw runtime-state persistence.
+The `rl_start` call requires a non-null MAC provider callback and two nonzero, nonidentical directional keys. It copies the keys into owner-local state and `rl_stop` explicitly wipes those copies. The host owns its original key material and must clear it independently. Failed crypto operations reject frames/abort corresponding send admission without a permissive fallback. The protocol engine never links a crypto library; the **standalone tests** use a real HMAC-SHA256 fixture linked only to system `libcrypto`. The production GmSSL implementation, secure key injection/lease and peer establishment still need independent conformance.
 
-## Wire payload schema (network byte order)
+HMAC-SHA256 authenticates possession of the configured directional keys and covers the wire header, participant IDs, epoch, sequence/fragment metadata and payload. It **does not provide encryption**, verify key provenance, perform peer handshakes, rate-limit forged traffic, or guarantee business commit. Successful CRC or apparent participant IDs are not authentication. Message-ID monotonicity and epoch binding reject stale/incomplete/replayed messages within configured state; protecting against replay after process restart requires fresh independently provisioned epoch and keys.
 
-This 36-byte header is an **experimental payload envelope**, not a complete Ethernet frame. A future real Ethernet adapter must prepend Ethernet addressing/protocol metadata and demultiplex before parsing. All integer fields use network byte order.
+## Message limits and API boundary
 
-| Offset | Bytes | Meaning |
+- TX copies 1–512 bytes into an owned 512-byte bounded buffer on successful admission; RX reassembly owns another 512-byte bounded buffer. One message is 1–8 fragments, 64 payload bytes maximum each.
+- Emission callback consumes a borrowed complete packet only during invocation and returns **1 only after independent copy/retention**. Return 0 means bounded backpressure and no transfer; error never becomes peer ACK.
+- Received delivery is a borrowed view, published once per message ID within the live epoch, **not** an exactly-once durable business transaction. ACKed TX completes exactly once only on matching authenticated SACK bitmap.
+- No independent thread, worker, retrying application transactions, hidden allocations during progress, negotiation, discovery, routing, MTU adaptation, or automatic fallback. Caller advances monotonic millisecond time with a bounded emission budget.
+- Packet I/O retains authority for physical frame leases and DMA safety; a successful logical ACK or cancellation does **not** release its outstanding TX mbufs.
+
+## R2 packet envelope (network byte order)
+
+The R2 envelope consists of a 36-byte header + 0–64 bytes of DATA + **32-byte full HMAC-SHA256 tag**. Its payload range is 68–132 bytes. This is **not** an Ethernet frame: a real adapter must supply an Ethernet header, EtherType, peer routing and demultiplexing.
+
+| Offset | Width | Meaning |
 |---:|---:|---|
-| 0 | 4 | ASCII SRE1 magic |
-| 4 | 1 | Version 1 |
+| 0 | 4 | ASCII `SRE2` magic |
+| 4 | 1 | Version `2` (R1 refused) |
 | 5 | 1 | DATA=1, ACK=2 |
-| 6 | 1 | Fragment index; ACK must be zero |
+| 6 | 1 | DATA fragment index; ACK must be zero |
 | 7 | 1 | Fragment count 1–8 |
 | 8 | 4 | Source participant ID |
 | 12 | 4 | Destination participant ID |
 | 16 | 4 | Session epoch |
-| 20 | 4 | Message ID, nonzero |
-| 24 | 2 | Total logical message bytes 1–512 |
-| 26 | 2 | Frame payload bytes 0–64; ACK must be zero |
-| 28 | 4 | Selective ACK bitmap; DATA must be zero |
-| 32 | 4 | IEEE CRC32 of header bytes 0–31 concatenated with payload |
-| 36 | 0–64 | Fragment payload |
+| 20 | 4 | Nonzero logical message ID |
+| 24 | 2 | Original message length, 1–512 |
+| 26 | 2 | Fragment payload length, 0–64 (ACK=0) |
+| 28 | 4 | Selective ACK bitmap (DATA=0) |
+| 32 | 4 | CRC32 of header bytes 0–31 + DATA payload, for quick corruption detection only |
+| 36 | 0–64 | DATA payload; ACK has none |
+| 36 + payload length | 32 | HMAC-SHA256 over **exact bytes 0 through 35 + payload** using sender's directional TX key |
 
-Fragment count equals ceil(message length / 64). Nonfinal fragments carry exactly 64 bytes; final fragment carries exact remainder. An ACK repeats message ID, original fragment count and logical length, and sends a bitmap of received fragments. Corrupt, truncated, wrong participant/epoch and inconsistent frames are rejected; ACK bits for never-sent fragments are ignored. Duplicate data after completed delivery triggers a new ACK, not another delivery.
+On receipt, size/version/shape/source/target/epoch and CRC are checked before the full keyed MAC. The verifier computes the expected MAC using the local RX key and compares all 32 bytes with a branch-free accumulator; neither invalid MAC nor provider error mutates ACK/delivery state. Even a correctly authenticated ACK cannot acknowledge never-sent fragments. Corrupt, wrong-key, wrong-epoch, replayed or forged frames must never publish a successful logical terminal.
 
-**Security boundary:** CRC32 is a corruption detector, NOT authentication or encryption. An active adversary can forge a packet or successful ACK with a valid CRC. Participant IDs and epoch are only configured routing assertions, not cryptographic authority. Do not expose this R1 to untrusted networks. A separate authenticated handshake, AEAD/keys, anti-replay, peer admission and denial-of-service review are required.
+## Bounded reliability and congestion
 
-## Bounded reliability
+- One-bit-per-fragment SACK bitmap (up to eight fragments), bounded send window, explicit RTO per fragment, maximum retries, and an absolute message deadline. Retransmit only unacknowledged fragments.
+- The current experimental per-session congestion credit halves on retransmission and increases on new ACKs up to the configured window. This is **not** fair multi-peer congestion management and does not prove DCQCN, ECN, pacing, incast protection, rate limiting or loss-free properties.
+- Duplicate valid DATA after delivery triggers an ACK, never a second delivery. Duplicate/stale ACKs cannot re-settle an already-terminal logical send.
+- `seal` rejects new send admission; `step` can still drain previously admitted messages and ACKs; `drain` returns BUSY until protocol terminal and ACK staging are quiescent. Explicitly drain the **independent Packet I/O Owner** after protocol teardown before releasing driver buffers.
+- Successful `stop` wipes owner-copied authentication keys and message payload buffers; caller-owned input config and external crypto provider state remain under their own authority.
 
-- Sender emits only within a configured packet window (1–8); one selective ACK bitmap tracks acknowledged fragments, and only missing fragments are resent after RTO. Per-fragment retry count and a whole-message absolute deadline impose hard bounds.
-- One single-session AIMD-like credit decreases by half on retransmit (minimum one) and increases by one on newly acknowledged fragments (maximum configured window). This does NOT prove multi-session fairness, ECN behavior or safe incast handling.
-- ACK delay is configured in milliseconds. Duplicate packets do not indefinitely postpone an identical pending ACK. All resource counters/buffers remain bounded.
-- Failed admission makes no terminal callback. Successfully admitted send creates exactly one final callback: ACKED, CANCELLED, TIMEOUT or EMIT_FAILED. Seal prevents new send and permits existing ACK/TX progress; drain returns BUSY until logical TX and ACK staging settle. **Physical Packet I/O must be sealed and drained independently** before device or DMA resources are destroyed.
+## Executable evidence and remaining gates
 
-## Executable oracles
+Standalone tests are linked to real HMAC-SHA256 through system `libcrypto`, **only in the research test targets**. They cover RFC 4231 known-answer MAC, missing provider/empty or identical keys, tampered CRC or MAC, wrong directional key, valid-CRC forged ACK, credential-holding bogus ACK for unsent fragments, provider-error fail-closed, callback reentrancy, session epoch replay and key erasure after stop; existing 40-message seeded loss/reorder tests and the two Packet I/O ownership tests also run over R2 frames.
 
-`tests/reliable_test.c` has 11 named tests: correct full-message ACK, out-of-order selective ACK, dropped/delayed ACK, duplicate suppression, malformed/wrong ID/epoch frames, queue backpressure and absolute timeout, retry exhaustion/congestion credit, fatal emit, CRC-valid bogus ACK for unsent fragments, cancellation/Generation/Owner/reentrancy, and a 40-message deterministic pseudorandom loss/reordering replay.
+```sh
+cmake -S experiments/cnet-packet-io -B build/reliable \
+  -DCMAKE_BUILD_TYPE=Debug -DPACKET_IO_ENABLE_DPDK=OFF
+cmake --build build/reliable --parallel 2
+ctest --test-dir build/reliable --output-on-failure
+```
 
-`tests/reliable_packet_io_test.c` has two integration tests using the existing `packet_io_owner` fake-driver SPI. They prove that physical TX admission does not settle reliable TX, payload storage and DMA-style frame ownership have different terminal boundaries, cancel does not prematurely free an in-flight frame, and a late ACK does not publish a duplicate terminal. They are not NIC-DMA proofs.
+The test fixture uses deterministic static keys and OpenSSL only for independent protocol conformance; **never deploy the fixture keys or test provider as a production key authority**. The intended production crypto implementation must use the existing GmSSL-backed Salts/CMeta capabilities, pinned to exact SDK ABI, with verified secret lifetime and known-answer/interoperability tests before public admission.
 
-Use the independent CMake project with DPDK disabled for these oracles, then run CTest. This leaves production CNet and NativeIO entirely unchanged.
-
-## Remaining #1147 / #1148 gates
-
-Still open: actual Ethernet encapsulation/demux; authenticated peer handshake and replay keying; multi-session admission, incast/fairness, route/MTU discovery, richer congestion and RTT control, fuzz/negative fault matrices, real NIC teardown/driver quiescence, and equal-semantics comparison against CNet KCP (#1148). No public ABI or master merge from this R1 checkpoint.
+Still open in #1147: GmSSL production provider, secure peer establishment and key rotation authority, rate/DoS controls, a real Ethernet encapsulation and packet demultiplexer, multiple sessions per Owner with bounded fairness, incast/ECN/RTT congestion behavior, fuzzing, and physical-NIC drain/cancel races. #1148 remains the separate equal-semantics comparison against NativeIO UDP/KCP and RDMA-capable hardware. **Do not merge Draft PR #1149 or claim production security on these unit tests.**

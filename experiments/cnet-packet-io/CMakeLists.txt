@@ -17,15 +17,21 @@ target_include_directories(packet_reliable_research PUBLIC "${CMAKE_CURRENT_SOUR
 target_link_libraries(packet_reliable_research PUBLIC Threads::Threads)
 
 if(BUILD_TESTING)
+  # Testing-only real HMAC-SHA256 provider. Production Salts/CNet acquires NO
+  # OpenSSL dependency; the protocol engine accepts an explicit MAC provider.
+  find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+  add_library(packet_test_hmac STATIC tests/test_mac.c)
+  target_link_libraries(packet_test_hmac PUBLIC OpenSSL::Crypto)
+  target_compile_features(packet_test_hmac PUBLIC c_std_11)
   add_executable(packet_reliable_test tests/reliable_test.c)
-  target_link_libraries(packet_reliable_test PRIVATE packet_reliable_research)
+  target_link_libraries(packet_reliable_test PRIVATE packet_reliable_research packet_test_hmac)
   set_target_properties(packet_reliable_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   add_test(NAME packet_reliable_conformance COMMAND packet_reliable_test)
   set_tests_properties(packet_reliable_conformance PROPERTIES TIMEOUT 30)
 
   add_executable(packet_reliable_packet_io_test tests/reliable_packet_io_test.c)
   target_link_libraries(packet_reliable_packet_io_test PRIVATE
-    packet_reliable_research packet_io_research)
+    packet_reliable_research packet_io_research packet_test_hmac)
   set_target_properties(packet_reliable_packet_io_test
     PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   add_test(NAME packet_reliable_packet_io COMMAND packet_reliable_packet_io_test)

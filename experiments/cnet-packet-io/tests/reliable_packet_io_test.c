@@ -1,5 +1,6 @@
 #include "../packet_io.h"
 #include "../reliable.h"
+#include "test_mac.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -137,7 +138,8 @@ static int init(channel *c) {
     config.ack_delay_ms = 0;
     config.window = 3;
     config.max_retries = 3;
-    rl_callbacks cb = {emit, on_deliver, on_terminal, p};
+    fixture_set_directional_keys(&config);
+    rl_callbacks cb = {emit, on_deliver, on_terminal, p, fixture_hmac_sha256};
     CHECK(rl_start(&p->protocol, &config, cb, 1,
                    &p->protocol_ticket) == RL_OK);
   }
