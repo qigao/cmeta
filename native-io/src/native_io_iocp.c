@@ -1,6 +1,12 @@
 #include "native_io_internal.h"
 #include "native_io_accept_escrow.h"
 
+/* Compiled only into the independent Windows conformance executable. */
+#if defined(SALTS_NATIVE_IO_KERNEL_TEST_HOOK)
+extern void salts_native_io_test_before_iocp_dispatch(
+    cmeta_io_impl *base, native_io_request request);
+#endif
+
 #include <salts/error_codes.h>
 
 #if defined(interface)
@@ -979,6 +985,12 @@ static int iocp_observe(cmeta_io_impl *base, native_io_completion *events, size_
       *out_count = count;
       return SALTS_EPROTO;
     }
+#if defined(SALTS_NATIVE_IO_KERNEL_TEST_HOOK)
+    /* A real GQCS OVERLAPPED packet is dequeued, but its original slot
+     * still owns the outstanding completion. Same Owner attempts cancel
+     * here: a previously completed OS request must report EALREADY. */
+    salts_native_io_test_before_iocp_dispatch(base, request->request);
+#endif
     iocp_make_completion(impl, request, request_index, bytes, native_error, &events[count]);
     ++count;
   }
