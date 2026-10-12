@@ -379,6 +379,16 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
       --cnet-nativeio "$<TARGET_FILE:cnet_shangmi_tls13_nativeio_probe>")
   set_tests_properties(cnet_shangmi_tls13_nativeio_test PROPERTIES
     TIMEOUT 150 RUN_SERIAL TRUE)
+  # Fail-closed on the *public NativeIO socket* route, not only TLS_CTX/rings.
+  # The same accepted listener and SM2 certificate fixture is used for every
+  # rejected CA, DNS identity and STANDARD-to-ShangMi mismatch.
+  add_test(NAME cnet_shangmi_tls13_nativeio_negatives_test
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verify_gmssl_shangmi_tls13.py"
+      --gmssl "${CNET_GMSSL_SHANGMI_TOOL}"
+      --cnet-nativeio-negatives "$<TARGET_FILE:cnet_shangmi_tls13_nativeio_probe>")
+  set_tests_properties(cnet_shangmi_tls13_nativeio_negatives_test PROPERTIES
+    TIMEOUT 150 RUN_SERIAL TRUE)
 endif()
 
 
