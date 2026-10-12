@@ -119,6 +119,7 @@ def main():
     ap.add_argument("--cnet-probe")
     ap.add_argument("--cnet-owner-fatal")
     ap.add_argument("--cnet-owner-fatal-cancel")
+    ap.add_argument("--cnet-owner-fatal-deadline")
     ap.add_argument("--cnet-nativeio")
     ap.add_argument("--cnet-nativeio-negatives")
     ap.add_argument("--cnet-nativeio-mtls")
@@ -203,6 +204,16 @@ def main():
                     "CNet real NativeIO RFC8998 failed: "
                     + native.stdout[-1600:] + native.stderr[-1600:])
             print("CNet NativeIO RFC8998 owner/listener path: PASS")
+            return
+        if a.cnet_owner_fatal_deadline:
+            probe = str(Path(a.cnet_owner_fatal_deadline).resolve())
+            if not Path(probe).is_file():
+                raise RuntimeError("missing private CNet handshake-deadline executable")
+            run = call([probe, "root-cert.pem", "server-cert.pem",
+                        "server-key.pem", "deadline-after-partial"], cwd, timeout=25)
+            if "CNet TLS fatal-alert deadline-before-partial-completion: PASS" not in run.stdout:
+                raise RuntimeError("CNet Owner did not prove deadline/write ordering")
+            print("CNet NativeIO TLS fatal-alert deadline/completion: PASS")
             return
         if a.cnet_owner_fatal_cancel:
             probe = str(Path(a.cnet_owner_fatal_cancel).resolve())
