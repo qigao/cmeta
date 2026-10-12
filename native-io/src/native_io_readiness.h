@@ -34,4 +34,18 @@ int cmeta_io_readiness_backend_init(native_io_backend *backend,
                                     const cmeta_io_readiness_driver_ops *driver_ops,
                                     size_t driver_state_size);
 
+
+/* Private first-party test instrumentation: this callback is invoked only
+ * after a REAL kernel epoll/kevent readiness event has been dequeued, before
+ * NativeIO resolves pending request lanes. It runs on the SAME backend Owner.
+ * Production builds never compile this declaration or export this symbol.
+ * No synthetic completion is delivered by the hook. */
+#if defined(SALTS_NATIVE_IO_TEST_DISPATCH)
+typedef void (*cmeta_io_readiness_test_dispatch_hook)(
+    void *user, native_io_backend_kind kind, native_io_endpoint endpoint,
+    uint32_t observed_interests);
+void cmeta_io_readiness_test_set_dispatch_hook(
+    cmeta_io_readiness_test_dispatch_hook hook, void *user);
+#endif
+
 #endif /* SALTS_NATIVE_IO_READINESS_H */
