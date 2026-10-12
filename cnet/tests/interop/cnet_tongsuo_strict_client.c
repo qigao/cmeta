@@ -19,6 +19,7 @@ typedef struct witness {
   int connected;
   int terminal;
   int failed;
+  int handshake_failed;
   int sent;
 } witness;
 
@@ -45,7 +46,11 @@ static void on_state(void *user, cnet_connection connection,
   if (state == CNET_CONNECTION_FAILED) w->failed = 1;
   if (state == CNET_CONNECTION_FAILED ||
       state == CNET_CONNECTION_CLOSED) w->terminal = 1;
-  if (error != NULL) w->failed = 1;
+  if (error != NULL) {
+    w->failed = 1;
+    if (error->stage != NULL && strcmp(error->stage, "handshake") == 0)
+      w->handshake_failed = 1;
+  }
 }
 
 static void on_receive(void *user, cnet_connection connection,
@@ -99,12 +104,14 @@ int main(int argc, char **argv) {
   int client_initialized = 0, status, ok = 0, reject_peer = 0;
 
   if (argc != 3 && argc != 4) {
-    fputs("usage: cnet_tongsuo_client ca-cert.pem port [wrong-ca|wrong-san]\n", stderr);
+    fputs("usage: cnet_tongsuo_client ca-cert.pem port [wrong-ca|wrong-san|wrong-suite|wrong-version]\n", stderr);
     return 2;
   }
   if (argc == 4) {
     if (strcmp(argv[3], "wrong-ca") != 0 &&
-        strcmp(argv[3], "wrong-san") != 0) return 2;
+        strcmp(argv[3], "wrong-san") != 0 &&
+        strcmp(argv[3], "wrong-suite") != 0 &&
+        strcmp(argv[3], "wrong-version") != 0) return 2;
     reject_peer = 1;
   }
   if (snprintf(uri, sizeof(uri), "tls://127.0.0.1:%s", argv[2]) < 1)
@@ -155,6 +162,9 @@ int main(int argc, char **argv) {
      * the client must terminate without publishing CONNECTED or plaintext. */
     ok = !w.connected && w.failed && w.terminal &&
          w.received_size == 0u && w.sent == 0;
+    if (argc == 4 && (strcmp(argv[3], "wrong-suite") == 0 ||
+                      strcmp(argv[3], "wrong-version") == 0))
+      ok = ok && w.handshake_failed;
     goto done;
   }
   if (!w.connected || w.failed) goto done;
