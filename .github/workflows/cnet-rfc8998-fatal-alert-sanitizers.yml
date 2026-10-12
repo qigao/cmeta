@@ -26,7 +26,7 @@ jobs:
   fatal-alert-san:
     # Candidate-only while provider revision 3.2.0#11 remains in Draft.
     # Do not publish a stable SDK or enable a fallback provider here.
-    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feature/cnet-tls-fatal-alert-drain' || github.head_ref == 'feature/cnet-rfc8998-gmssl-r11-registry'
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feature/cnet-tls-fatal-alert-drain' || github.head_ref == 'feature/cnet-rfc8998-gmssl-r11-registry' || github.head_ref == 'feature/rfc8998-bootstrap-action-sha-pin'
     name: NativeIO fatal alert / ${{ matrix.sanitizer }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
