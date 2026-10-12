@@ -40,6 +40,7 @@ r2_dma_status r2_dma_gate_start(r2_dma_gate *g, r2_mux *mux,
     g->capacity = capacity;
     g->active = 0;
     g->posted = 0;
+    g->cursor = 0;
     g->polling = false;
     g->sealed = false;
     g->producers_fenced = false;
@@ -139,9 +140,17 @@ r2_dma_status r2_dma_gate_poll(r2_dma_gate *g, size_t budget,
   g->polling = true;
   while (*out_finalized < budget && g->posted) {
     size_t index = g->capacity;
-    for (size_t i = 0; i < g->capacity; ++i)
-      if (g->slots[i].state == R2_DMA_POSTED) { index = i; break; }
+    for (size_t offset = 0; offset < g->capacity; ++offset) {
+      size_t candidate = (g->cursor + offset) % g->capacity;
+      if (g->slots[candidate].state == R2_DMA_POSTED) {
+        index = candidate;
+        break;
+      }
+    }
     if (index == g->capacity) { st = R2_DMA_OWNER_ERROR; break; }
+    /* Sustained completions at low slot numbers may not starve a posted
+     * higher-numbered record. This is bounded Owner-local polling only. */
+    g->cursor = (index + 1u) % g->capacity;
     r2_dma_slot *slot = &g->slots[index];
     r2_mux_handle handle = slot->handle;
     packet_io_release_fn finalize = slot->finalizer;

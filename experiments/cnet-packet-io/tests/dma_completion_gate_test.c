@@ -35,6 +35,7 @@ struct test_host {
   size_t accepted_count;
   held_frame payload[2];
   unsigned live_frames, frames_finalized, direct_finalized;
+  uint64_t direct_tags[8];
   unsigned logical_terminals;
   rl_terminal last_terminal;
 };
@@ -61,6 +62,8 @@ static void final_direct(void *context, uint64_t tag) {
     fprintf(stderr, "direct finalizer violated Owner barrier\n");
     return;
   }
+  if (h->direct_finalized < 8u)
+    h->direct_tags[h->direct_finalized] = tag;
   ++h->direct_finalized;
 }
 
@@ -309,9 +312,43 @@ static int bounded_multi_producer_and_generation(void) {
   return 0;
 }
 
+static int posted_completion_round_robin_reuse(void) {
+  test_host h;
+  CHECK(setup(&h, 2) == 0);
+  r2_dma_ticket a = {0}, b = {0}, c = {0};
+  size_t done = 0;
+  CHECK(r2_dma_gate_arm(&h.gate, h.handle, final_direct, &h, 1, &a) == R2_DMA_OK);
+  CHECK(r2_dma_gate_arm(&h.gate, h.handle, final_direct, &h, 2, &b) == R2_DMA_OK);
+  CHECK(a.slot == 0 && b.slot == 1);
+  CHECK(r2_dma_gate_post(&h.gate, a) == R2_DMA_OK);
+  CHECK(r2_dma_gate_post(&h.gate, b) == R2_DMA_OK);
+  CHECK(r2_dma_gate_poll(&h.gate, 1, &done) == R2_DMA_OK && done == 1);
+  CHECK(h.direct_finalized == 1 && h.direct_tags[0] == 1);
+  CHECK(r2_dma_gate_arm(&h.gate, h.handle, final_direct, &h, 3, &c) == R2_DMA_OK);
+  CHECK(c.slot == a.slot && c.serial != a.serial);
+  CHECK(r2_dma_gate_post(&h.gate, c) == R2_DMA_OK);
+  /* Even though slot 0 was posted again, prior waiting slot 1 must be
+   * finalized first under a one-completion-per-poll budget. */
+  CHECK(r2_dma_gate_poll(&h.gate, 1, &done) == R2_DMA_OK && done == 1);
+  CHECK(h.direct_finalized == 2 && h.direct_tags[1] == 2);
+  CHECK(r2_dma_gate_poll(&h.gate, 1, &done) == R2_DMA_OK && done == 1);
+  CHECK(h.direct_finalized == 3 && h.direct_tags[2] == 3);
+  CHECK(r2_dma_gate_post(&h.gate, a) == R2_DMA_STALE);
+  CHECK(h.mux.slots[h.handle.slot].physical_refs == 0);
+  CHECK(r2_dma_gate_seal(&h.gate) == R2_DMA_OK);
+  CHECK(r2_dma_gate_fence_joined_producers(&h.gate) == R2_DMA_OK);
+  CHECK(r2_dma_gate_stop(&h.gate) == R2_DMA_OK);
+  CHECK(stop_protocol(&h) == 0);
+  CHECK(packet_io_seal(&h.io, h.io_ticket) == PACKET_IO_OK);
+  CHECK(packet_io_stop(&h.io, h.io_ticket) == PACKET_IO_OK);
+  CHECK(destroy_host(&h) == 0);
+  return 0;
+}
+
 int main(void) {
   if (cancel_before_offowner_completion()) return 1;
   if (bounded_multi_producer_and_generation()) return 1;
+  if (posted_completion_round_robin_reuse()) return 1;
   puts("DMA-like off-owner completion: bounded mailbox, token fencing and Owner finalizers PASS");
   return 0;
 }

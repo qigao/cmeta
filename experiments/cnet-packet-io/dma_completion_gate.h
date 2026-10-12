@@ -53,7 +53,7 @@ typedef struct r2_dma_gate {
   r2_mux *mux; /* borrowed: must outlive the gate and final frame drain */
   r2_dma_slot slots[R2_DMA_GATE_MAX_TICKETS];
   uint64_t generation, next_serial;
-  size_t capacity, active, posted;
+  size_t capacity, active, posted, cursor;
   bool initialized, running, sealed, producers_fenced, polling;
 } r2_dma_gate;
 
