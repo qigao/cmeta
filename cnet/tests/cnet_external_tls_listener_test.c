@@ -241,6 +241,25 @@ static void test_external_tls_listener_shared_progress(void) {
   uint64_t listener_receive_buffer = 0u;
   uint64_t listener_send_buffer = 0u;
   char uri[64];
+#if CNET_SHANGMI_TLS13_TEST
+  /* Each negative test must reach the same admitted TCP/TLS connection.
+   * Only peer trust, peer DNS identity, or client security profile differs.
+   */
+  const char *failure_case = getenv("SALTS_SHANGMI_FAILURE_CASE");
+  bool expect_failure = failure_case != NULL && failure_case[0] != '\0';
+  if (expect_failure) {
+    if (strcmp(failure_case, "wrong-ca") == 0) {
+      client_tls_config.ca_file = getenv("SALTS_SHANGMI_UNTRUSTED_CA");
+      check(client_tls_config.ca_file != NULL);
+    } else if (strcmp(failure_case, "wrong-san") == 0) {
+      client_tls_config.server_name = "wrong.example";
+    } else if (strcmp(failure_case, "standard-peer") == 0) {
+      client_tls_config.security_profile = CNET_TLS_SECURITY_PROFILE_STANDARD;
+    } else {
+      check(0); /* Unknown scenario is a failing test, never a skip. */
+    }
+  }
+#endif
 
   check(native_io_backend_init(&backend, &backend_config) == SALTS_OK);
   check(cnet_client_init_external(
@@ -337,6 +356,18 @@ static void test_external_tls_listener_shared_progress(void) {
 
   check(accept_completion_seen);
   check(accepted_started);
+#if CNET_SHANGMI_TLS13_TEST
+  if (expect_failure) {
+    /* Fail closed: TCP acceptance and TLS negotiation were attempted, but
+     * the untrusted / wrong-profile client must never report CONNECTED.
+     * Server-side completion may race the client's certificate rejection.
+     */
+    check(!client_probe.connected);
+    check(client_probe.failed);
+    check(client_probe.terminal);
+    return; /* after_each owns orderly bounded cleanup of both NativeIO owners. */
+  }
+#endif
   check(client_probe.connected);
   check(server_probe.connected);
   check(!client_probe.failed);
