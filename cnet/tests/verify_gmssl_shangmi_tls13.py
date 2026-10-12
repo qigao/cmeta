@@ -44,6 +44,21 @@ def fixture(gmssl, cwd):
           "-subject_dns_name", "localhost", "-cacert", "root-cert.pem",
           "-key", "root-key.pem", "-pass", PASS,
           "-out", "server-cert.pem"], cwd)
+
+    # Both roots are independent. Private-key files never enter the repo.
+    for name, issuer in (("client", "root"),
+                         ("untrusted-client", "untrusted")):
+        call([gmssl, "sm2keygen", "-pass", PASS,
+              "-out", name + "-key.pem"], cwd)
+        call([gmssl, "reqgen", "-C", "CN", "-ST", "Beijing",
+              "-L", "Haidian", "-O", "Salts", "-OU", "Test",
+              "-CN", name, "-key", name + "-key.pem", "-pass", PASS,
+              "-out", name + ".req"], cwd)
+        call([gmssl, "reqsign", "-in", name + ".req", "-days", "1",
+              "-key_usage", "digitalSignature", "-ext_key_usage", "clientAuth",
+              "-cacert", issuer + "-cert.pem", "-key", issuer + "-key.pem",
+              "-pass", PASS, "-out", name + "-cert.pem"], cwd)
+
     Path(cwd, "message.txt").write_text(MSG, encoding="utf-8")
 
 
@@ -102,12 +117,43 @@ def main():
     ap.add_argument("--cnet-probe")
     ap.add_argument("--cnet-nativeio")
     ap.add_argument("--cnet-nativeio-negatives")
+    ap.add_argument("--cnet-nativeio-mtls")
     a = ap.parse_args()
     gmssl = str(Path(a.gmssl).resolve())
     if not Path(gmssl).is_file():
         raise RuntimeError("missing pinned GmSSL CLI; no fallback")
     with tempfile.TemporaryDirectory(prefix="salts-rfc8998-") as cwd:
         fixture(gmssl, cwd)
+        if a.cnet_nativeio_mtls:
+            probe = str(Path(a.cnet_nativeio_mtls).resolve())
+            if not Path(probe).is_file():
+                raise RuntimeError("missing CNet NativeIO mTLS executable")
+            for case in ("verified-mtls", "missing-client-cert",
+                         "untrusted-client-ca"):
+                env = dict(os.environ)
+                env.update({
+                    "SALTS_SHANGMI_MTLS": "required",
+                    "SALTS_SHANGMI_CA": str(Path(cwd, "root-cert.pem")),
+                    "SALTS_SHANGMI_CERT": str(Path(cwd, "server-cert.pem")),
+                    "SALTS_SHANGMI_KEY": str(Path(cwd, "server-key.pem")),
+                    "SALTS_SHANGMI_CLIENT_CERT": str(Path(cwd, "client-cert.pem")),
+                    "SALTS_SHANGMI_CLIENT_KEY": str(Path(cwd, "client-key.pem")),
+                    "SALTS_SHANGMI_UNTRUSTED_CLIENT_CERT":
+                        str(Path(cwd, "untrusted-client-cert.pem")),
+                    "SALTS_SHANGMI_UNTRUSTED_CLIENT_KEY":
+                        str(Path(cwd, "untrusted-client-key.pem"))
+                })
+                if case != "verified-mtls":
+                    env["SALTS_SHANGMI_FAILURE_CASE"] = case
+                trial = subprocess.run([probe], cwd=cwd, env=env,
+                                       capture_output=True, text=True,
+                                       timeout=30, check=False)
+                if trial.returncode:
+                    raise RuntimeError(
+                        "CNet NativeIO SM2 mTLS scenario failed (" + case
+                        + "): " + trial.stdout[-2000:] + trial.stderr[-2000:])
+                print("CNet NativeIO SM2 " + case + ": PASS")
+            return
         if a.cnet_nativeio_negatives:
             probe = str(Path(a.cnet_nativeio_negatives).resolve())
             if not Path(probe).is_file():
