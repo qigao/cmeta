@@ -49,6 +49,9 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP/rfc8998/tongsuo"
           ./config no-shared no-tests no-ssl3 no-weak-ssl-ciphers
+          # Tongsuo's direct apps/openssl target omits generated symbol_prefix.h.
+          # Establish the repository-owned generated-header prerequisite first.
+          make generate_symbol_prefix
           make -j 2 apps/openssl
           test -x apps/openssl
           apps/openssl version
