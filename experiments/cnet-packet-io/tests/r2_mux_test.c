@@ -12,7 +12,7 @@
   fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #x); \
   return 1; \
 } } while (0)
-enum { LAB_FRAMES = 64 };
+enum { LAB_FRAMES = 128 };
 
 typedef struct lab lab;
 typedef struct lab_peer lab_peer;
@@ -519,6 +519,71 @@ static int cancel_with_physical_frame_and_slot_recycle(void) {
   return 0;
 }
 
+static int sustained_eight_peer_progress(void) {
+  /* Sixteen bounded logical rounds, each independently MAC-authenticated.
+   * No peer gets more than one frame before all eight have a grant. */
+  lab l;
+  CHECK(lab_init(&l, 8, 8) == 0);
+  size_t sent=0, tx=0, rx=0;
+  for (unsigned round = 0; round < 16; ++round) {
+    uint64_t now = (uint64_t)round * 4u;
+    for (unsigned i = 0; i < 8; ++i) {
+      lab_peer *p = &l.peers[i];
+      uint8_t bytes[2] = {(uint8_t)round, (uint8_t)i};
+      CHECK(rl_send(&p->local, p->local_ticket, bytes, sizeof(bytes),
+                    (uint64_t)(round * 8u + i), now) == RL_OK);
+    }
+    CHECK(r2_mux_step(&l.mux, now, 8, &sent) == R2_MUX_OK && sent == 8);
+    CHECK(l.trace_count == (size_t)(round + 1u) * 8u);
+    for (unsigned i = 0; i < 8; ++i)
+      CHECK(l.transmit_trace[round * 8u + i] == i);
+    CHECK(progress_io(&l, now + 1u, 8, 0, &tx, &rx) == 0 && tx == 8);
+    CHECK(deliver_wire(&l, now + 1u) == 0);
+    CHECK(emit_remote(&l, now + 1u) == 0 && l.rx_count == 8);
+    CHECK(progress_io(&l, now + 2u, 0, 8, &tx, &rx) == 0 && rx == 8);
+    for (unsigned i = 0; i < 8; ++i) {
+      lab_peer *p = &l.peers[i];
+      CHECK(p->local_terminals == round + 1u &&
+            p->local_terminal == RL_TERMINAL_ACKED &&
+            p->local_tag == (uint64_t)(round * 8u + i));
+      CHECK(p->remote_delivered == round + 1u);
+      CHECK(l.mux.slots[i].physical_refs == 0);
+    }
+  }
+  CHECK(l.frames_reclaimed == 128 && l.acks_reclaimed == 128);
+  CHECK(finish(&l) == 0);
+  return 0;
+}
+
+static int revoked_auth_provider_isolated_from_healthy_peers(void) {
+  lab l;
+  CHECK(lab_init(&l, 4, 8) == 0);
+  CHECK(hub_send(&l) == 0);
+  /* Inject a revoked/absent provider only on peer 1. There must be no
+   * unsigned-frame fallback and no global mux failure that blocks peers. */
+  l.peers[1].local.callbacks.mac_user = NULL;
+  size_t sent = 0, tx = 0, rx = 0;
+  CHECK(r2_mux_step(&l.mux, 0, 4, &sent) == R2_MUX_CHILD_ERROR && sent == 3);
+  CHECK(l.mux.slots[1].last_error == RL_CRYPTO);
+  CHECK(l.peers[1].local_terminals == 1 &&
+        l.peers[1].local_terminal == RL_TERMINAL_EMIT_FAILED);
+  CHECK(l.trace_count == 3 && l.transmit_trace[0] == 0 &&
+        l.transmit_trace[1] == 2 && l.transmit_trace[2] == 3);
+  CHECK(progress_io(&l, 1, 3, 0, &tx, &rx) == 0 && tx == 3);
+  CHECK(deliver_wire(&l, 1) == 0);
+  CHECK(emit_remote(&l, 1) == 0 && l.rx_count == 3);
+  CHECK(progress_io(&l, 2, 0, 3, &tx, &rx) == 0 && rx == 3);
+  for (unsigned i = 0; i < 4; ++i) {
+    CHECK(l.peers[i].local_terminals == 1);
+    if (i != 1u) CHECK(l.peers[i].local_terminal == RL_TERMINAL_ACKED);
+  }
+  /* Reestablish the original research fixture so host teardown can proceed;
+   * this does not retry the failed application message. */
+  l.peers[1].local.callbacks.mac_user = &l.peers[1].local_lease;
+  CHECK(finish(&l) == 0);
+  return 0;
+}
+
 int main(void) {
   const unsigned counts[] = {1,2,4,8};
   for(unsigned i=0;i<sizeof(counts)/sizeof(counts[0]);++i)
@@ -527,6 +592,8 @@ int main(void) {
   if(spoofed_ack_isolates_only_one_peer()) return 1;
   if(inbound_incast_and_owner_callback_fencing()) return 1;
   if(cancel_with_physical_frame_and_slot_recycle()) return 1;
-  puts("R2 mux: fixed Owner, 1/2/4/8 fair sessions, incast, backpressure, ACK and drain PASS");
+  if(sustained_eight_peer_progress()) return 1;
+  if(revoked_auth_provider_isolated_from_healthy_peers()) return 1;
+  puts("R2 mux: Owner 1/2/4/8, 128 sustained frames, isolated crypto failure PASS");
   return 0;
 }

@@ -44,6 +44,8 @@ This research harness runs all finalizers on the same thread. A real NIC DMA com
 `tests/r2_mux_test.c` exercises one shared `packet_io_owner` Fake PMD with multiple distinct HMAC-protected R2 sessions and independently leased crypto contexts:
 
 - 1, 2, 4, 8 active sessions, one-per-peer packet grant and same-order ACK settlements, with exact finalizer accounting.
+- **16 consecutive rounds with eight peers (128 authenticated frames and 128 ACKs)**, with every round proving each peer receives one grant before any next-round send, and no physical reference leaks.
+- Per-peer authentication-Provider failure on one of four peers: only the affected logical send settles with a fail-closed error while the other three continue and finish with authenticated ACKs; no application replay is attempted.
 - Global Packet I/O queue capacity two under four busy peers; the first two drain and the next two then obtain grants. A permanently blocked peer does not starve the other three.
 - One forged ACK fails HMAC while healthy peers succeed; only the affected peer requires its ordinary bounded R2 retransmission.
 - Eight simultaneous inbound DATA messages are demultiplexed correctly; local ACKs are scheduled fairly and remote logical TX settles only after those ACKs.
@@ -54,7 +56,7 @@ GCC/Clang ASan+UBSan, GCC TSan, the published Salts.Native 2.3.0-rc.14 SDK consu
 
 ## Open #1152 / #1148 gates
 
-- [ ] Multi-session adversarial stress under long-running incast, bursty ACK storms and independent peer backpressure; quantify a fairness lower bound and bounded queue telemetry.
+- [ ] Extended adversarial stress under long-running incast, bursty ACK storms, repeated key revocation and independent peer backpressure; quantify a fairness lower bound and bounded queue telemetry. The **16-round / 128-frame** deterministic test is a checkpoint, not a full statistical or real-NIC fairness proof.
 - [ ] True multi-NIC/DPDK physical Rx/Tx queue integration, off-owner completion routing and real DMA lifetime safety (see #1146).
 - [ ] Authenticated peer/key authority and secure rekey across process restart (#1151).
 - [ ] Hardware-accurate congestion/ECN/pacing, larger message fragmentation, MTU discovery, multi-hop routing, real interface hot-unload and exact KCP comparator (#1148).
