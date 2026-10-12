@@ -64,8 +64,10 @@ jobs:
             -DENABLE_SANITIZER_THREAD=ON \
             -DENABLE_SANITIZER_ADDRESS=OFF \
             -DENABLE_SANITIZER_UNDEFINED=OFF \
-            -DENABLE_SANITIZER_LEAK=OFF \
-            -DVCPKG_INSTALL_OPTIONS=--only-binarycaching
+            -DENABLE_SANITIZER_LEAK=OFF
+          # Use the exact pinned shared vcpkg port/baseline and NuGet cache.
+          # If its ABI package is absent, vcpkg builds the same canonical port
+          # from source; never substitute a different ABI or legacy provider.
 
       - name: Build genuine CNet DSO, Platform archive and independent tests
         shell: bash
@@ -140,4 +142,5 @@ jobs:
           path: |
             build/cnet-module-tsan/instrumentation.txt
             build/cnet-module-tsan/ldd.txt
+            build/cnet-module-tsan/vcpkg-manifest-install.log
             build/cnet-module-tsan/Testing/Temporary/LastTest.log
