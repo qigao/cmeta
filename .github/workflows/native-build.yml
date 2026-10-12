@@ -41,6 +41,24 @@ jobs:
         uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
         with:
           mode: read
+      # #1141: CI-only exact private GmSSL candidate, never a stable SDK pin.
+      # Main matrix must qualify the same provider fix as independent Tongsuo.
+      - name: Checkout exact Draft GmSSL fatal-alert provider
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/cnet-tls-fatal-alert-drain' }}
+        uses: actions/checkout@v7
+        with:
+          repository: qigao/vcpkg-cache
+          ref: 61aa0392629b6e5cadbdf80152cb2d6fb858942b
+          path: .ci-provider-overlay
+          persist-credentials: false
+      - name: Verify exact Draft GmSSL provider and activate port overlay
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/cnet-tls-fatal-alert-drain' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .ci-provider-overlay rev-parse HEAD)" = "61aa0392629b6e5cadbdf80152cb2d6fb858942b"
+          test -f .ci-provider-overlay/ports/gmssl/tls13-fatal-alert.cmake
+          printf 'VCPKG_OVERLAY_PORTS=%s\n' "$GITHUB_WORKSPACE/.ci-provider-overlay/ports" >> "$GITHUB_ENV"
       - name: Prepare build host
         uses: ./.github/actions/setup-build-host
       - name: Restore native compiler cache
@@ -109,6 +127,9 @@ jobs:
           elif [ "${{ matrix.sanitizer }}" = 'tsan' ]; then
             set -- -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_UNDEFINED=OFF -DENABLE_SANITIZER_THREAD=ON
           fi
+          if [ -n "${VCPKG_OVERLAY_PORTS:-}" ]; then
+            set -- -DVCPKG_OVERLAY_PORTS="$VCPKG_OVERLAY_PORTS" "$@"
+          fi
           cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }} "$@"
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
       - name: Configure and build all modules on Windows
@@ -120,7 +141,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
+          cmake --preset "${{ matrix.preset }}" -DVCPKG_OVERLAY_PORTS="%VCPKG_OVERLAY_PORTS%" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
           if errorlevel 1 exit /b 1
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
           if errorlevel 1 exit /b 1
@@ -129,7 +150,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON
+          cmake --preset "${{ matrix.preset }}" -DVCPKG_OVERLAY_PORTS="${VCPKG_OVERLAY_PORTS:-}" -DCMAKE_SUPPRESS_REGENERATION=ON
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
       - name: Run Actor, mailbox and ACE throughput benchmarks (Unix)
         id: actor_bench_unix
