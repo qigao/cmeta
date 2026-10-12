@@ -78,3 +78,11 @@ This **does not prove** physical NIC driver fairness, DPDK DMA reclamation, auth
 The experimental [DMA-like completion handoff](DMA_COMPLETION_HANDOFF.md) introduces a bounded 32-ticket mailbox. A producer thread can publish **only** an already-reserved completion token; it cannot touch `r2_mux`, R2 session keys, or the final frame. The original Owner polls, releases one physical mux reference and executes the finalizer exactly once. A successful logical ACK, cancellation, or Packet I/O TX burst acceptance remains independent of physical buffer completion.
 
 `packet_dma_owner_handoff` uses a real C11/POSIX worker and a fake retained Packet I/O TX backend to test cancel-before-completion, post-after-seal, duplicate/old Generation tickets, explicit joined-producer fence, no early stop/detach, two-record admission capacity and bounded poll progress. Run under GCC/Clang ASan+UBSan and GCC TSan. **This is not physical NIC DMA qualification**, and it adds no installed Salts ABI.
+
+## Manually approved real PCI NIC qualification (#1146 / #1148)
+
+A separate [hardware-only runbook](NIC_LAB.md) and workflow `.github/workflows/cnet-r2-hardware-nic.yml` are available for a **dedicated, offline, self-hosted PCI VFIO Ethernet lab**, triggered *only* when a maintainer manually applies `r2-hardware-nic-approved` to Draft PR #1149. The lab requires two explicitly configured cabled PCI Ethernet PFs, IOMMU and free hugepages. There is no automatic driver binding, privilege escalation, device provisioning, or fallback to `net_ring`.
+
+With `PACKET_IO_ENABLE_DPDK=ON`, the isolated CMake project **builds** `packet_io_dpdk_physical_test`, but ordinary GitHub-hosted CI **never runs** it. Actual execution requires both links UP, 16 real Ethernet frames per direction with exact nonce/sequence/payload, a supported `rte_eth_tx_done_cleanup()`, and observed driver TX mbuf-ref reclamation before caller frees its retained observer refs. Missing hardware or unsupported cleanup **FAIL**, never SKIP or PASS.
+
+The Python PCI/IOMMU/VFIO preflight also has a no-hardware negative contract test. Neither compiling the probe nor a passing `net_ring` test qualifies physical NIC DMA, driver reset/DSO unload safety, or R2-vs-KCP latency/throughput. Those remain distinct open gates.

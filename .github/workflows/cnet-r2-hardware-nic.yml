@@ -1,0 +1,90 @@
+name: CNet R2 Hardware NIC Qualification (explicit approval only)
+
+# This workflow MUST NOT run on public GitHub-hosted CI. It can only start
+# when a maintainer deliberately adds the hardware approval label to #1149.
+# NICs must already be dedicated/offline and bound to vfio-pci by the lab.
+'on':
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r2-nic-lab-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  physical-pci-nic:
+    name: Real two-port PCI DPDK TX/RX and driver-ref cleanup (not R2 benchmark)
+    if: >-
+      github.event.label.name == 'r2-hardware-nic-approved' &&
+      github.event.pull_request.number == 1149 &&
+      github.event.pull_request.head.repo.full_name == 'qigao/salts' &&
+      github.event.pull_request.head.ref == 'research/cnet-dpdk-packet-plane' &&
+      github.event.pull_request.draft
+    runs-on: [self-hosted, linux, x64, dpdk-nic-lab]
+    timeout-minutes: 20
+    env:
+      TX_BDF: ${{ vars.DPDK_NIC_LAB_TX_BDF }}
+      RX_BDF: ${{ vars.DPDK_NIC_LAB_RX_BDF }}
+      NIC_LCORE: ${{ vars.DPDK_NIC_LAB_LCORE }}
+      NIC_ACK: ${{ vars.DPDK_NIC_LAB_ACK }}
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Validate exact source and existing offline lab configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -n "$TX_BDF" && test -n "$RX_BDF" && test -n "$NIC_LCORE"
+          test "$NIC_ACK" = 'I_ACKNOWLEDGE_DEDICATED_OFFLINE_NICS'
+          pkg-config --modversion libdpdk
+          python3 experiments/cnet-packet-io/hardware/preflight.py \
+            --tx-bdf "$TX_BDF" --rx-bdf "$RX_BDF" \
+            --lcore "$NIC_LCORE" --ack "$NIC_ACK" \
+            --out evidence/r2-nic-precheck.json
+          mkdir -p evidence
+          {
+            echo "source_sha=$SOURCE_SHA"
+            echo "dpdk_version=$(pkg-config --modversion libdpdk)"
+            echo "uname=$(uname -srm)"
+            echo "compiler=$(cc --version | head -n 1)"
+            echo "runner_class=explicit-dedicated-offline-nic"
+          } > evidence/build-manifest.txt
+      - name: Compile optional PCI NIC probe; never link installed CNet
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S experiments/cnet-packet-io -B build/r2-physical-nic \
+            -DCMAKE_BUILD_TYPE=Release -DPACKET_IO_ENABLE_DPDK=ON \
+            -DPACKET_IO_ENABLE_GMSSL=OFF -DPACKET_IO_ENABLE_CMETA_SDK=OFF
+          cmake --build build/r2-physical-nic --target packet_io_dpdk_physical_test --parallel 2
+      - name: Require two real PCI ports, physical delivery and driver ref reclaim
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./build/r2-physical-nic/packet_io_dpdk_physical_test \
+            "$TX_BDF" "$RX_BDF" "$NIC_LCORE" "$NIC_ACK" \
+            | tee evidence/nic-driver-observations.log
+          grep -Fq 'HARDWARE_PMD_SMOKE_PASS' evidence/nic-driver-observations.log
+      - name: Save evidence checksums (never claim benchmark performance)
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p evidence
+          if [ -f evidence/r2-nic-precheck.json ]; then
+            (cd evidence && sha256sum r2-nic-precheck.json build-manifest.txt) \
+              > evidence/SHA256SUMS || true
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: r2-physical-nic-lab-${{ github.event.pull_request.head.sha }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 14

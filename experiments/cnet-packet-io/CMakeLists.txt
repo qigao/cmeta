@@ -2,6 +2,14 @@ cmake_minimum_required(VERSION 3.20)
 project(cnet_packet_io_research VERSION 0.1 LANGUAGES C)
 include(CTest)
 find_package(Threads REQUIRED)
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME packet_io_hardware_preflight_negative
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/hardware_preflight_test.py")
+    set_tests_properties(packet_io_hardware_preflight_negative PROPERTIES TIMEOUT 15)
+  endif()
+endif()
 
 add_library(packet_io_research STATIC packet_io.c)
 target_compile_features(packet_io_research PUBLIC c_std_11)
@@ -92,6 +100,12 @@ if(PACKET_IO_ENABLE_DPDK)
   endif()
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(DPDK REQUIRED IMPORTED_TARGET libdpdk)
+  # Compile the physical PCI two-port harness in the ordinary Linux DPDK CI
+  # but NEVER run it there. Execution requires a separately acknowledged,
+  # offline, dedicated self-hosted hardware runner (see NIC_LAB.md).
+  add_executable(packet_io_dpdk_physical_test tests/dpdk_physical_nic_test.c)
+  target_link_libraries(packet_io_dpdk_physical_test PRIVATE PkgConfig::DPDK)
+  target_compile_features(packet_io_dpdk_physical_test PRIVATE c_std_11)
   # libdpdk.pc describes core libraries; ring PMD helper symbols reside in the
   # separate rte_net_ring driver library on distro shared-DPDK packages.
   find_library(PACKET_IO_RING_PMD_LIBRARY NAMES rte_net_ring REQUIRED)
