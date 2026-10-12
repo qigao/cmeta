@@ -33,6 +33,10 @@ typedef struct r2_mux_slot {
   uint32_t local_id, peer_id, epoch;
   size_t physical_refs; /* credits held until actual physical frame release */
   rl_result last_error;
+  /* Saturating diagnostic counters; all are Owner-local and bounded. A grant
+   * means an R2 packet was actually accepted, NOT that a peer ACK arrived. */
+  uint64_t visits, grants, idle_visits, errors, denied_pins;
+  size_t peak_physical_refs;
   bool active;
 } r2_mux_slot;
 

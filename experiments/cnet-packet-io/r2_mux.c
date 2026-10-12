@@ -3,6 +3,10 @@
 #include <limits.h>
 #include <string.h>
 
+/* Never wrap observability counters in a long-running Owner. */
+static void count_one(uint64_t *value) {
+  if (*value != UINT64_MAX) ++*value;
+}
 static uint32_t read32(const uint8_t *p) {
   return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
          ((uint32_t)p[2] << 8) | (uint32_t)p[3];
@@ -92,6 +96,9 @@ r2_mux_status r2_mux_attach(r2_mux *m, rl_session *s, rl_ticket ticket,
     slot->epoch = s->config.epoch;
     slot->physical_refs = 0;
     slot->last_error = RL_OK;
+    slot->visits = slot->grants = slot->idle_visits = 0;
+    slot->errors = slot->denied_pins = 0;
+    slot->peak_physical_refs = 0;
     out->slot = (uint8_t)i;
     out->generation = slot->generation;
     ++m->active_count;
@@ -123,8 +130,13 @@ r2_mux_status r2_mux_frame_pin(r2_mux *m, r2_mux_handle handle) {
   if (st != R2_MUX_OK) return st;
   if (!slot->session || slot->session->state == RL_STOPPED)
     return R2_MUX_SEALED;
-  if (slot->physical_refs == m->frame_limit) return R2_MUX_FULL;
+  if (slot->physical_refs == m->frame_limit) {
+    count_one(&slot->denied_pins);
+    return R2_MUX_FULL;
+  }
   ++slot->physical_refs;
+  if (slot->physical_refs > slot->peak_physical_refs)
+    slot->peak_physical_refs = slot->physical_refs;
   return R2_MUX_OK;
 }
 
@@ -154,17 +166,21 @@ r2_mux_status r2_mux_step(r2_mux *m, uint64_t now_ms, size_t budget,
     m->cursor = (uint8_t)((i + 1u) % m->capacity);
     r2_mux_slot *slot = &m->slots[i];
     if (!slot->active) { ++idle_visits; continue; }
+    count_one(&slot->visits);
     size_t emitted = 0;
     rl_result child = rl_step(slot->session, slot->ticket, now_ms, 1u, &emitted);
     if (child != RL_OK) {
       slot->last_error = child;
-      ++m->child_errors;
+      count_one(&slot->errors);
+      count_one(&m->child_errors);
       child_error = true;
       ++idle_visits;
     } else if (emitted == 1u) {
+      count_one(&slot->grants);
       ++*out_emitted;
       idle_visits = 0;
     } else {
+      count_one(&slot->idle_visits);
       ++idle_visits;
     }
   }
@@ -183,7 +199,7 @@ r2_mux_status r2_mux_input(r2_mux *m, const void *wire, size_t size,
   m->now_ms = now_ms;
   const uint8_t *p = (const uint8_t *)wire;
   if (memcmp(p, "SRE2", 4) || p[4] != 2u) {
-    ++m->unroutable;
+    count_one(&m->unroutable);
     return R2_MUX_UNROUTABLE;
   }
   uint32_t src = read32(p + 8), dst = read32(p + 12), epoch = read32(p + 16);
@@ -196,11 +212,12 @@ r2_mux_status r2_mux_input(r2_mux *m, const void *wire, size_t size,
     m->in_call = false;
     if (*out_child != RL_OK) {
       slot->last_error = *out_child;
-      ++m->child_errors;
+      count_one(&slot->errors);
+      count_one(&m->child_errors);
     }
     return R2_MUX_OK; /* caller inspects authenticated child result */
   }
-  ++m->unroutable;
+  count_one(&m->unroutable);
   return R2_MUX_UNROUTABLE;
 }
 

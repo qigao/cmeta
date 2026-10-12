@@ -584,6 +584,167 @@ static int revoked_auth_provider_isolated_from_healthy_peers(void) {
   return 0;
 }
 
+
+/* The physical adapter releases even dropped packets. Authenticated delivery
+ * and logical ACK terminals must remain independent of that reclamation. */
+static int selective_loss_reordering_and_ack_storm(void) {
+  lab l;
+  CHECK(lab_init(&l, 8, 8) == 0);
+  CHECK(hub_send(&l) == 0);
+  size_t out = 0, tx = 0, rx = 0;
+  CHECK(r2_mux_step(&l.mux, 0, 8, &out) == R2_MUX_OK && out == 8);
+  CHECK(progress_io(&l, 1, 8, 0, &tx, &rx) == 0 && tx == 8);
+  CHECK(l.on_wire_count == 8);
+
+  packet_io_frame offered[8];
+  memcpy(offered, l.on_wire, sizeof(offered));
+  l.on_wire_count = 0;
+  /* Reverse eight peer arrivals. Peer 0 DATA is lost; peer 1 arrives twice. */
+  for (int i = 7; i >= 0; --i) {
+    packet_io_frame f = offered[i];
+    tx_storage *stored = (tx_storage *)f.release_context;
+    lab_peer *p = &l.peers[stored->peer_index];
+    if (i != 0) {
+      CHECK(rl_input(&p->remote, p->remote_ticket, f.data, f.size, 1) == RL_OK);
+      if (i == 1)
+        CHECK(rl_input(&p->remote, p->remote_ticket, f.data, f.size, 1) == RL_OK);
+    }
+    f.release(f.release_context, f.tag);
+  }
+  CHECK(l.frames_reclaimed == 8);
+  CHECK(l.peers[1].remote.stats.rx_duplicate == 1);
+  CHECK(l.peers[0].remote_delivered == 0);
+  CHECK(emit_remote(&l, 1) == 0 && l.rx_count == 7);
+
+  /* Retain one *copied* authenticated peer-3 ACK for a later ACK storm. */
+  rx_storage *sample = &l.rx_frames[l.rx_indices[2]];
+  uint8_t saved_ack[RL_MAX_WIRE_BYTES];
+  size_t saved_size = sample->size;
+  CHECK(saved_size <= sizeof(saved_ack));
+  memcpy(saved_ack, sample->bytes, saved_size);
+
+  /* Deliberately lose peer-2 ACK after the remote peer accepted DATA. */
+  unsigned dropped = l.rx_indices[1];
+  rx_storage *lost = &l.rx_frames[dropped];
+  CHECK(lost->busy);
+  rx_released(lost, (uint64_t)dropped);
+  memmove(&l.rx_indices[1], &l.rx_indices[2],
+          (l.rx_count - 2) * sizeof(l.rx_indices[0]));
+  --l.rx_count;
+  CHECK(progress_io(&l, 2, 0, 6, &tx, &rx) == 0 && rx == 6);
+  for (unsigned i = 0; i < 8; ++i) {
+    CHECK(l.peers[i].local_terminals == (i == 0 || i == 2 ? 0u : 1u));
+    CHECK(l.mux.slots[i].physical_refs == 0);
+  }
+  CHECK(r2_mux_step(&l.mux, 10, 8, &out) == R2_MUX_OK && out == 2);
+  CHECK(l.peers[0].local.stats.tx_retransmitted == 1);
+  CHECK(l.peers[2].local.stats.tx_retransmitted == 1);
+  CHECK(progress_io(&l, 11, 8, 0, &tx, &rx) == 0 && tx == 2);
+  CHECK(deliver_wire(&l, 11) == 0);
+  CHECK(l.peers[0].remote_delivered == 1);
+  CHECK(l.peers[2].remote_delivered == 1); /* no duplicate delivery */
+  CHECK(emit_remote(&l, 11) == 0 && l.rx_count == 2);
+  CHECK(progress_io(&l, 12, 0, 2, &tx, &rx) == 0 && rx == 2);
+  for (unsigned i = 0; i < 8; ++i) {
+    CHECK(l.peers[i].local_terminals == 1);
+    CHECK(l.peers[i].local_terminal == RL_TERMINAL_ACKED);
+    CHECK(l.peers[i].remote_delivered == 1);
+    CHECK(l.mux.slots[i].physical_refs == 0);
+  }
+  CHECK(l.frames_reclaimed == 10);
+
+  /* A burst of 128 old but correctly authenticated ACKs must never resettle
+   * a completed send; malformed tags cannot contaminate another peer. */
+  for (unsigned i = 0; i < 128; ++i) {
+    rl_result child = RL_INVALID;
+    CHECK(r2_mux_input(&l.mux, saved_ack, saved_size, 13, &child) ==
+          R2_MUX_OK && child == RL_OK);
+    if (i % 8u == 0u) {
+      uint8_t bad[RL_MAX_WIRE_BYTES];
+      memcpy(bad, saved_ack, saved_size);
+      bad[saved_size - 1u] ^= 0x80u;
+      CHECK(r2_mux_input(&l.mux, bad, saved_size, 13, &child) ==
+            R2_MUX_OK && child == RL_AUTH_FAILED);
+    }
+  }
+  CHECK(l.mux.slots[3].errors == 16);
+  CHECK(l.mux.child_errors == 16);
+  for (unsigned i = 0; i < 8; ++i)
+    CHECK(l.peers[i].local_terminals == 1);
+  CHECK(finish(&l) == 0);
+  return 0;
+}
+
+/* A two-descriptor Packet I/O device admits exactly two frames per burst;
+ * sixteen rounds of eight always-ready sessions prove a hard 4-wave liveness
+ * bound for this fake one-packet workload, without statistical assumptions. */
+static int sustained_tiny_queue_fairness_bound(void) {
+  lab l;
+  CHECK(lab_init(&l, 8, 2) == 0);
+  for (unsigned round = 0; round < 16; ++round) {
+    uint64_t base = (uint64_t)round * 40u;
+    size_t out = 0, tx = 0, rx = 0;
+    for (unsigned i = 0; i < 8; ++i) {
+      lab_peer *p = &l.peers[i];
+      uint8_t payload[3] = {(uint8_t)round, (uint8_t)i, 0xa1u};
+      CHECK(rl_send(&p->local, p->local_ticket, payload, sizeof(payload),
+                    (uint64_t)(round * 8u + i), base) == RL_OK);
+    }
+    for (unsigned wave = 0; wave < 4; ++wave) {
+      uint64_t now = base + wave * 3u;
+      CHECK(r2_mux_step(&l.mux, now, 8, &out) == R2_MUX_OK && out == 2);
+      unsigned want = round * 8u + wave * 2u;
+      CHECK(l.trace_count == (size_t)want + 2);
+      CHECK(l.transmit_trace[want] == wave * 2u);
+      CHECK(l.transmit_trace[want + 1u] == wave * 2u + 1u);
+      CHECK(l.io.pending == 2);
+      CHECK(progress_io(&l, now + 1u, 2, 0, &tx, &rx) == 0 && tx == 2);
+      CHECK(deliver_wire(&l, now + 1u) == 0);
+      CHECK(emit_remote(&l, now + 1u) == 0 && l.rx_count == 2);
+      CHECK(progress_io(&l, now + 2u, 0, 2, &tx, &rx) == 0 && rx == 2);
+      for (unsigned k = 0; k < 2; ++k) {
+        lab_peer *p = &l.peers[wave * 2u + k];
+        CHECK(p->local_terminals == round + 1u);
+        CHECK(p->local_terminal == RL_TERMINAL_ACKED);
+        CHECK(p->remote_delivered == round + 1u);
+        CHECK(l.mux.slots[wave * 2u + k].physical_refs == 0);
+      }
+    }
+    for (unsigned i = 0; i < 8; ++i) {
+      CHECK(l.mux.slots[i].grants == round + 1u);
+      CHECK(l.mux.slots[i].peak_physical_refs == 1);
+      CHECK(l.mux.slots[i].visits >= l.mux.slots[i].grants);
+    }
+  }
+  CHECK(l.trace_count == 128);
+  CHECK(l.frames_reclaimed == 128 && l.acks_reclaimed == 128);
+  for (unsigned i = 0; i < 8; ++i)
+    CHECK(l.mux.slots[i].grants == 16);
+  CHECK(finish(&l) == 0);
+  return 0;
+}
+
+
+static int per_peer_physical_credit_ceiling(void) {
+  lab l;
+  CHECK(lab_init(&l, 2, 2) == 0);
+  r2_mux_handle first = l.peers[0].handle;
+  r2_mux_handle second = l.peers[1].handle;
+  for (unsigned i = 0; i < 4; ++i)
+    CHECK(r2_mux_frame_pin(&l.mux, first) == R2_MUX_OK);
+  CHECK(r2_mux_frame_pin(&l.mux, first) == R2_MUX_FULL);
+  CHECK(l.mux.slots[first.slot].peak_physical_refs == 4);
+  CHECK(l.mux.slots[first.slot].denied_pins == 1);
+  CHECK(r2_mux_frame_pin(&l.mux, second) == R2_MUX_OK);
+  CHECK(l.mux.slots[second.slot].physical_refs == 1);
+  for (unsigned i = 0; i < 4; ++i)
+    CHECK(r2_mux_frame_unpin(&l.mux, first) == R2_MUX_OK);
+  CHECK(r2_mux_frame_unpin(&l.mux, first) == R2_MUX_INVALID);
+  CHECK(r2_mux_frame_unpin(&l.mux, second) == R2_MUX_OK);
+  CHECK(finish(&l) == 0);
+  return 0;
+}
+
 int main(void) {
   const unsigned counts[] = {1,2,4,8};
   for(unsigned i=0;i<sizeof(counts)/sizeof(counts[0]);++i)
@@ -594,6 +755,9 @@ int main(void) {
   if(cancel_with_physical_frame_and_slot_recycle()) return 1;
   if(sustained_eight_peer_progress()) return 1;
   if(revoked_auth_provider_isolated_from_healthy_peers()) return 1;
-  puts("R2 mux: Owner 1/2/4/8, 128 sustained frames, isolated crypto failure PASS");
+  if(selective_loss_reordering_and_ack_storm()) return 1;
+  if(sustained_tiny_queue_fairness_bound()) return 1;
+  if(per_peer_physical_credit_ceiling()) return 1;
+  puts("R2 mux: 8-peer/2-slot fairness 128 frames, ACK replay storm, selective loss and recovery PASS");
   return 0;
 }

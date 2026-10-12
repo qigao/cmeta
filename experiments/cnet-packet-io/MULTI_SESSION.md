@@ -54,9 +54,21 @@ This research harness runs all finalizers on the same thread. A real NIC DMA com
 
 GCC/Clang ASan+UBSan, GCC TSan, the published Salts.Native 2.3.0-rc.14 SDK consumer and GmSSL/DPDK software PMD remain **independent** checks in the scoped research workflow. A virtual/fake PMD is not evidence of real NIC DMA teardown, effective CPU utilization or throughput.
 
+## Bounded fairness telemetry and adversarial replay (next checkpoint)
+
+All counters are **Owner-local, saturating 64-bit diagnostics**, never coordination state: `visits`, `grants`, `idle_visits`, `errors`, `denied_pins` and `peak_physical_refs` per slot. A grant counts *Packet I/O staging acceptance*, not remote ACK, physical DMA completion or business commit. A denied pin preserves capacity and never releases a frame. The field `peak_physical_refs` is bounded by the configured per-slot limit (maximum 16); protocol/PMD counters do not form a second ownership registry.
+
+`r2_mux_test.c` now additionally verifies two deliberately different deterministic failure workloads:
+
+- **Selective loss + ACK replay storm:** eight peers emit DATA, the fake wire reverses arrivals, loses one DATA and duplicates another. The host loses one authenticated ACK and leaves two peers unsettled; RTO selectively retransmits only those two messages. After eight exactly-once ACK terminals, the test replays 128 valid old ACKs and sixteen invalid-HMAC ACKs. Neither path re-settles a completed message. Each bad MAC increments only the matching peer's error counter; no fallback occurs.
+- **Two-descriptor sustained fairness:** sixteen independent rounds with eight always-ready peers and a physical TX queue capacity of two. Each round requires exactly four two-peer waves, with no peer receiving a new grant before all eight obtain one. The total is 128 authenticated DATA and 128 ACKs; each slot reports exactly 16 accepted grants and one physical reference as its peak in this workload. No heap-growth, frame leaks, or invented delivery completion is permitted.
+- **Per-peer credit limit:** the hard limit is four physical pins in the fixture. A fifth pin returns FULL and increments only that slot's `denied_pins`; another slot can still pin; double unpin explicitly fails.
+
+These are reproducible **fake wire/fake PMD functional conformance bounds**, *not* physical NIC latency or statistically meaningful network fairness. Actual large-scale incast, off-Owner NIC completions and independent provider lease hot-unload remain the next gates.
+
 ## Open #1152 / #1148 gates
 
-- [ ] Extended adversarial stress under long-running incast, bursty ACK storms, repeated key revocation and independent peer backpressure; quantify a fairness lower bound and bounded queue telemetry. The **16-round / 128-frame** deterministic test is a checkpoint, not a full statistical or real-NIC fairness proof.
+- [ ] Extended adversarial stress under hardware incast, true independent loss sources, repeated key revocation and bounded scheduler/PMD telemetry. Deterministic ACK storms and a **16-round / 128-frame two-descriptor fairness bound** are research conformance checkpoints, not a real-NIC statistical proof.
 - [ ] True multi-NIC/DPDK physical Rx/Tx queue integration, off-owner completion routing and real DMA lifetime safety (see #1146).
 - [ ] Authenticated peer/key authority and secure rekey across process restart (#1151).
 - [ ] Hardware-accurate congestion/ECN/pacing, larger message fragmentation, MTU discovery, multi-hop routing, real interface hot-unload and exact KCP comparator (#1148).
