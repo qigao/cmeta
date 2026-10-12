@@ -41,6 +41,14 @@
   } \
 } while (0)
 
+typedef struct fatal_owner_clock {
+  uint64_t now_ms;
+} fatal_owner_clock;
+
+static uint64_t fatal_owner_now(void *context) {
+  return ((fatal_owner_clock *)context)->now_ms;
+}
+
 static int make_connected_tcp(int *out_listener, int *out_client, int *out_accepted) {
   struct sockaddr_in address = {0};
   socklen_t addrlen = (socklen_t)sizeof(address);
@@ -90,6 +98,7 @@ int main(int argc, char **argv) {
   cnet_command_queue commands = {0};
   cnet_event_queue events = {0};
   cnet_owner owner = {0};
+  fatal_owner_clock clock = {.now_ms = 100u};
   const cnet_command_queue_config command_cfg = {
       16u, sizeof(cnet_owner_connect_payload)};
   const cnet_event_queue_config event_cfg = {16u, 2u, 64u};
@@ -104,7 +113,9 @@ int main(int argc, char **argv) {
       .max_write_bytes = 4096u,
       .sessions = &sessions,
       .commands = &commands,
-      .events = &events};
+      .events = &events,
+      .now_ms = fatal_owner_now,
+      .clock_context = &clock};
   cnet_owner_connect_payload payload = {0};
   cnet_command command = {0};
   cnet_session_handle handle = {0};
@@ -117,10 +128,12 @@ int main(int argc, char **argv) {
   unsigned int connected_events = 0u, plaintext_events = 0u;
   bool complete = false, terminal_seen = false;
   const bool cancel_race = argc == 5 && strcmp(argv[4], "cancel-after-partial") == 0;
+  const bool deadline_race = argc == 5 && strcmp(argv[4], "deadline-after-partial") == 0;
+  const bool held_partial_race = cancel_race || deadline_race;
   uint64_t deadline;
 
-  if (argc != 4 && !cancel_race) {
-    fprintf(stderr, "usage: fatal_owner_probe root.pem server.pem server-key.pem [cancel-after-partial]\n");
+  if (argc != 4 && !held_partial_race) {
+    fprintf(stderr, "usage: fatal_owner_probe root.pem server.pem server-key.pem [cancel-after-partial|deadline-after-partial]\n");
     return 2;
   }
 
@@ -169,9 +182,11 @@ int main(int argc, char **argv) {
 
   CHECK_OK(send_all(peer, client_hello, hello_size));
 
-  if (cancel_race) {
+  if (held_partial_race) {
     cnet_owner_test_request_snapshot write_request = {0};
     native_io_completion held_partial = {0};
+    native_io_backend_stats before = {0}, after = {0};
+    native_io_coroutine_stats coroutine = {0};
     bool write_admitted = false, partial_observed = false;
     const uint64_t admission_deadline = cmeta_monotonic_ms() + 5000u;
 
@@ -210,14 +225,22 @@ int main(int argc, char **argv) {
     }
     CHECK(partial_observed);
 
-    /* Cancellation is admitted BEFORE CNet routes the already observed
-     * successful partial write. Exercise the EALREADY NativeIO race without
-     * discarding its authoritative CNet request slot or generation. */
+    /* The already-observed kernel success is deliberately withheld from
+     * CNet. A close or expired handshake deadline wins admission first.
+     * Neither case may resubmit the remaining alert after it was aborted. */
+    CHECK(cnet_owner_test_backend_stats(&owner, &before, &coroutine));
     CHECK_OK(cnet_owner_test_force_cancel_ealready_once(&owner));
-    command = (cnet_command){CNET_COMMAND_CLOSE, handle, NULL, 0u, 0u};
-    CHECK_OK(cnet_command_queue_publish(&commands, &command));
-    CHECK_OK(cnet_owner_drive(&owner, 0u));
+    if (deadline_race) {
+      clock.now_ms += 6000u;
+      CHECK_OK(cnet_owner_test_process_deadlines(&owner));
+    } else {
+      command = (cnet_command){CNET_COMMAND_CLOSE, handle, NULL, 0u, 0u};
+      CHECK_OK(cnet_command_queue_publish(&commands, &command));
+      CHECK_OK(cnet_owner_drive(&owner, 0u));
+    }
     CHECK_OK(cnet_owner_test_process_completion_batch(&owner, &held_partial, 1u));
+    CHECK(cnet_owner_test_backend_stats(&owner, &after, &coroutine));
+    CHECK(after.submitted == before.submitted);
   }
 
   deadline = cmeta_monotonic_ms() + 5000u;
@@ -253,7 +276,7 @@ int main(int argc, char **argv) {
     CHECK_OK(cnet_session_table_state(&sessions, handle, &state));
     terminal_seen = state == CNET_SESSION_TERMINAL;
     if (terminal_seen && failure_events == 1u &&
-        (cancel_race ? alert_size >= 1u : alert_size == 7u)) break;
+        (held_partial_race ? alert_size >= 1u : alert_size == 7u)) break;
   }
 
   CHECK(terminal_seen);
@@ -266,7 +289,7 @@ int main(int argc, char **argv) {
   /* Explicit close may abort a fatal-alert drain, but may never produce
    * plaintext or settle the failed handshake twice. */
   CHECK(alert_size >= 1u && alert[0] == 21u);
-  if (!cancel_race || alert_size == 7u) {
+  if (!held_partial_race || alert_size == 7u) {
     CHECK(alert_size == 7u && alert[1] == 3u && alert[2] == 3u &&
           alert[3] == 0u && alert[4] == 2u &&
           alert[5] == 2u && alert[6] != 0u);
@@ -295,8 +318,10 @@ int main(int argc, char **argv) {
   CHECK_OK(cnet_command_queue_destroy(&commands));
   CHECK_OK(cnet_session_table_destroy(&sessions));
   CHECK_OK(cnet_module_shutdown());
-  puts(cancel_race
-           ? "CNet TLS fatal-alert cancel-before-partial-completion: PASS"
-           : "CNet TLS fatal-alert partial NativeIO owner: PASS");
+  puts(deadline_race
+           ? "CNet TLS fatal-alert deadline-before-partial-completion: PASS"
+           : cancel_race
+             ? "CNet TLS fatal-alert cancel-before-partial-completion: PASS"
+             : "CNet TLS fatal-alert partial NativeIO owner: PASS");
   return 0;
 }
