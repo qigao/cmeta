@@ -36,8 +36,8 @@ https://github.com/qigao/vcpkg-cache/tree/1f9d46f66436e3ce74677f393c25e72c008e0f
 | HMAC-SM3 | `gmssl/sm3.h`: `sm3_hmac_*` | independent vector | Not exposed | N/A |
 | HKDF-SM3 | `gmssl/hkdf.h`: `sm3_hkdf_extract/expand` | independently computed PRK/OKM vectors | Not exposed | N/A |
 | SM4-GCM | `gmssl/sm4.h`: `sm4_gcm_encrypt/decrypt` | RFC 8998 Appendix A.1 KAT, roundtrip, wrong tag and wrong AAD preserve caller output | Not exposed | N/A |
-| SM2 sign and verify | `gmssl/sm2.h`: `sm2_sign_*`, `sm2_verify_*` | generated-key sign/verify + wrong user ID | Not exposed | N/A |
-| TLS 1.3 ShangMi | `gmssl/tls.h`: cipher `0x00c6`, curve `41`, signature `0x0708` | `TLS_CTX` configure-only | **Not exposed** | **NOT TESTED** |
+| SM2 sign and verify | `gmssl/sm2.h`: `sm2_sign_*`, `sm2_verify_*` | fixed independent OpenSSL DER SPKI/signature verify + wrong ID/message/signature; generated-key signing smoke | Not exposed | N/A |
+| TLS 1.3 ShangMi | `gmssl/tls.h`: cipher `0x00c6`, curve `41`, signature `0x0708` | `TLS_CTX` strict version, suite, group, signature and wrong-suite reject (configure-only) | **Not exposed** | **NOT TESTED** |
 | TLCP 1.1 | `gmssl/tls.h`: `TLS_protocol_tlcp`, TLCP ECC/SM4 suites, TLCP cert/key setup | `TLS_CTX` configure-only | **Not exposed** | **NOT TESTED** |
 
 Provider-only tests compile and link directly against `GmSSL::GmSSL`. This is
@@ -90,8 +90,11 @@ KAT provenance:
   independently derived with RFC 5869 extract/expand operations using SM3 HMAC.
 - SM4-GCM: **RFC 8998 Appendix A.1** ciphertext + tag known-answer vector,
   plus separate provider roundtrip/auth-failure smoke.
-- SM2 is a generated-key/ID semantic smoke, **not** yet a fixed-key signature
-  KAT.
+- SM2 has a fixed **independent OpenSSL 3.5.5** SPKI/DER signature
+  verification vector for message `CNet-ShangMi-SM2-KAT-v1` and ID
+  `1234567812345678`. The fixture contains a public key and signature only;
+  a generated-key signing smoke separately tests provider signing. Fixed
+  deterministic signing with controlled `k` is **not** claimed.
 
 ## Open qualification before marking #1123 complete
 
@@ -99,8 +102,10 @@ KAT provenance:
       capture SHA, triplet, provider pin, CI run URL and CTest results.
 - [x] Add independent RFC 8998 A.1 SM4-GCM ciphertext/tag vector as a CTest
       assertion (runtime success still awaits CI).
-- [ ] Add fixed-key SM2 signing / verification tests (including DER
-      lengths/canonicality).
+- [x] Add fixed-key external-OpenSSL SM2 signature verification with wrong-ID,
+      wrong-message and corrupted-signature negatives (runtime evidence awaits CI).
+- [ ] Add SM2 DER boundary/noncanonical signatures, invalid curve/key and
+      fixed private-key signing contract qualification.
 - [ ] Compare SM4 decrypt no-output-on-failure and alias/size contracts under
       sanitizers, including AES-GCM/TLS regressions.
 - [ ] RFC 8998 end-to-end ClientHello/ServerHello cipher, SM2 curve, signature,
@@ -122,3 +127,41 @@ TLS/NativeIO ownership stay unchanged by this provider-only qualification.
 Tracking umbrella: https://github.com/qigao/salts/issues/1122
 P0 provider test: https://github.com/qigao/salts/issues/1123
 Public ABI: https://github.com/qigao/salts/issues/1124
+
+## Strict RFC 8998 identity and version observation
+
+RFC 8998 §3.2.1 distinguishes:
+- SM2 CertificateVerify/key-exchange signing identity:
+  **`TLSv1.3+GM+Cipher+Suite`**.
+- SM2 certificate signature verification identity: the RFC's
+  **`1234567812345678`** requirement, with an interoperability caveat that
+  CAs may have issued signatures with a different configured identity.
+  CNet must not guess/try multiple identities as a hidden fallback; explicit
+  trust policy and concrete CA provenance belong in #1128.
+
+The pinned provider exports `TLS13_SM2_ID` and uses it in TLS 1.3
+CertificateVerify sign/verify. The provider-only CTest asserts the exact
+identifier plus RFC 8998 cipher `0x00c6`, signature `0x0708` and curve
+`41`. Its strict context smoke calls
+`tls_ctx_set_supported_versions(..., 1)` with only TLS 1.3 (or only TLCP),
+and rejects cross-profile cipher suites while retaining the selected one.
+These are **configuration gates only**, not wire-level negotiation evidence.
+
+Independent SM2 fixture provenance (test-only, public data):
+```sh
+openssl genpkey -algorithm SM2 -out sm2-private.pem
+openssl pkey -in sm2-private.pem -pubout -outform DER -out sm2-public.der
+printf 'CNet-ShangMi-SM2-KAT-v1' > message.bin
+openssl pkeyutl -sign -rawin -inkey sm2-private.pem \
+  -in message.bin -out sm2.sig -digest sm3 \
+  -pkeyopt distid:1234567812345678
+openssl pkeyutl -verify -rawin -pubin -inkey sm2-public.pem \
+  -in message.bin -sigfile sm2.sig -digest sm3 \
+  -pkeyopt distid:1234567812345678
+```
+`sm2-public.pem` in the verification command is the PEM public key
+exported from the same fixture private key. **The private key is deliberately
+not committed**. The test embeds fixed, independently signed public SPKI
+and DER signature bytes.
+
+RFC: https://www.rfc-editor.org/rfc/rfc8998#section-3.2.1
