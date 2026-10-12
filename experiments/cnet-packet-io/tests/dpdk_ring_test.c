@@ -98,7 +98,7 @@ static void receive_frame(void *context, const packet_io_frame *frame) {
 
 int main(void) {
   char *eal_argv[] = {(char *)"packet_io_ring", (char *)"-l", (char *)"0",
-                      (char *)"--no-huge", (char *)"--in-memory", (char *)"--no-pci",
+                      (char *)"--no-huge", (char *)"--no-pci", (char *)"--no-telemetry",
                       (char *)"--file-prefix=cnet_packet_ring"};
   int eal_argc = (int)(sizeof(eal_argv) / sizeof(*eal_argv));
   if (rte_eal_init(eal_argc, eal_argv) < 0) {
@@ -110,7 +110,7 @@ int main(void) {
                                           RING_F_SP_ENQ | RING_F_SC_DEQ);
   if (!ring) goto cleanup_eal;
   struct rte_ring *queues[1] = {ring};
-  int port = rte_eth_from_rings("cnet_packet_ring_dev", queues, 1, queues, 1, 0);
+  int port = rte_eth_from_rings("net_ring0", queues, 1, queues, 1, 0);
   if (port < 0) goto cleanup_ring;
   struct rte_mempool *pool = rte_pktmbuf_pool_create("cnet_packet_pool", 256, 32, 0,
                                                       RTE_MBUF_DEFAULT_BUF_SIZE, 0);
