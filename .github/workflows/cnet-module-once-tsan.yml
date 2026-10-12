@@ -71,7 +71,7 @@ jobs:
             tail -n 180 build/cnet-once-tsan/vcpkg-manifest-install.log
           fi
           if [[ -f build/cnet-once-tsan/CMakeCache.txt ]]; then
-            grep -E '^(VCPKG_|CMAKE_MAKE_PROGRAM:|ENABLE_SANITIZER_THREAD:)' \\
+            grep -E '^(VCPKG_|CMAKE_MAKE_PROGRAM:|ENABLE_SANITIZER_THREAD:)' \
               build/cnet-once-tsan/CMakeCache.txt | head -n 60 || true
           fi
       - name: Build cold-init standalone test and first-party source graph
