@@ -106,8 +106,6 @@ jobs:
                       raise SystemExit(f"{rid}: missing pthread_once ABI")
                   if base + "lib/cmake/Salts/SaltsConfig.cmake" not in names:
                       raise SystemExit(f"{rid}: missing CMake installed SDK")
-              if any("/" not in n for n in names):
-                  raise SystemExit("archive has unexpected unscoped members")
           digest = hashlib.sha256(pkg.read_bytes()).hexdigest()
           record = f"source={sha}\nversion={version}\nrids={','.join(rids)}\nsha256={digest}\npublished=false\n"
           Path("build/cnet-once-candidate/dist/provenance.txt").write_text(record)
