@@ -203,12 +203,105 @@ def test_public_cnet_client(tongsuo, cnet_client, cwd):
                 if pipe:
                     pipe.close()
 
+
+def test_public_cnet_server(tongsuo, cnet_server, cwd):
+    """Tongsuo strictly verifies and exchanges encrypted data with CNet server."""
+    server_log = Path(cwd, "cnet-nativeio-server.log")
+    with server_log.open("wb") as log:
+        server = launch([cnet_server, "server-cert.pem", "server-key.pem"],
+                        cwd, log)
+        try:
+            if server.stdout is None:
+                raise RuntimeError("Public CNet server port channel missing")
+            selector = selectors.DefaultSelector()
+            selector.register(server.stdout, selectors.EVENT_READ)
+            if not selector.select(timeout=6):
+                raise RuntimeError("Public CNet server failed to publish port")
+            port_line = server.stdout.readline()
+            selector.close()
+            try:
+                port = int(port_line.strip())
+            except ValueError as exc:
+                raise RuntimeError("CNet server published invalid port") from exc
+            if not 0 < port < 65536 or server.poll() is not None:
+                raise RuntimeError("CNet server exited before TLS admission")
+            ssl_log = Path(cwd, "tongsuo-to-cnet-client.log")
+            with ssl_log.open("wb") as errors:
+                cmd = [tongsuo, "s_client", "-connect", "127.0.0.1:" + str(port),
+                       "-servername", "localhost", "-CAfile", "root-cert.pem",
+                       "-verify_return_error", "-verify_hostname", "localhost",
+                       "-tls1_3", "-ciphersuites", SUITE, "-groups", "SM2",
+                       "-enable_sm_tls13_strict", "-brief"]
+                client = launch(cmd, cwd, errors)
+                try:
+                    if client.stdin is None or client.stdout is None:
+                        raise RuntimeError("Tongsuo strict client stdio unavailable")
+                    proof = b"tongsuo-cnet-rfc8998-proof\n"
+                    client.stdin.write(proof)
+                    client.stdin.flush()
+                    selector = selectors.DefaultSelector()
+                    selector.register(client.stdout, selectors.EVENT_READ)
+                    result = b""
+                    deadline = time.monotonic() + 12
+                    while time.monotonic() < deadline and proof not in result:
+                        if client.poll() is not None:
+                            break
+                        for key, _ in selector.select(timeout=0.2):
+                            result += key.fileobj.read(4096)
+                    selector.close()
+                    log_text = ssl_log.read_text(errors="replace")
+                    if proof not in result:
+                        raise RuntimeError(
+                            "Tongsuo strict peer did not receive CNet NativeIO echo: "
+                            + log_text[-1900:] + " | output=" + repr(result[-200:]))
+                    if not ("TLSv1.3" in log_text and SUITE in log_text
+                            and "Verification: OK" in log_text):
+                        raise RuntimeError(
+                            "Independent Tongsuo client did not verify exact "
+                            "RFC8998 server protocol/peer: " + log_text[-2400:])
+                finally:
+                    if client.poll() is None:
+                        client.terminate()
+                    try:
+                        client.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        client.kill()
+                        client.wait(timeout=3)
+                    if client.stdin:
+                        client.stdin.close()
+                    if client.stdout:
+                        client.stdout.close()
+
+            # The server must have completed its own bounded authenticated
+            # receive+echo and drained its CNet owner, not merely started TLS.
+            try:
+                result = server.wait(timeout=6)
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("CNet NativeIO server did not complete echo/close") from exc
+            if result != 0:
+                raise RuntimeError(
+                    "CNet NativeIO server returned nonzero: "
+                    + server_log.read_text(errors="replace")[-2200:])
+            print("Independent Tongsuo strict client -> public CNet server: PASS")
+        finally:
+            if server.poll() is None:
+                server.terminate()
+            try:
+                server.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=3)
+            for pipe in (server.stdin, server.stdout):
+                if pipe:
+                    pipe.close()
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tongsuo", required=True)
     parser.add_argument("--gmssl", required=True)
     parser.add_argument("--fixture-key-converter", required=True)
     parser.add_argument("--cnet-client")
+    parser.add_argument("--cnet-server")
     args = parser.parse_args()
     tong = require_file(args.tongsuo)
     gmssl = require_file(args.gmssl)
@@ -227,6 +320,8 @@ def main():
         test_tongsuo_strict_client(tong, gmssl, cwd)
         if args.cnet_client:
             test_public_cnet_client(tong, require_file(args.cnet_client), cwd)
+        if args.cnet_server:
+            test_public_cnet_server(tong, require_file(args.cnet_server), cwd)
     print("Independent strict RFC8998 provider interop preflight: PASS")
 
 
