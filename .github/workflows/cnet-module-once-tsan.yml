@@ -59,8 +59,7 @@ jobs:
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTING=ON -DBUILD_TESTS=ON \
             -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
-            -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_THREAD=ON \
-            # Let canonical vcpkg restore cached packages or build missing ABI entries.\n            -DVCPKG_INSTALL_OPTIONS=
+            -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_THREAD=ON
       - name: Diagnose canonical vcpkg admission failure
         if: failure()
         shell: bash
