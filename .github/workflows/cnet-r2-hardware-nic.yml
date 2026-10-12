@@ -1,7 +1,9 @@
 name: CNet R2 Hardware NIC Qualification (explicit approval only)
 
-# This workflow MUST NOT run on public GitHub-hosted CI. It can only start
-# when a maintainer deliberately adds the hardware approval label to #1149.
+# PARKED / DISABLED per 2026-10-12 user decision: physical NIC tests later.
+# Even an approval label CANNOT run this job while the explicit false gate
+# remains in place. A future task must explicitly authorize and remove the
+# false guard after NIC lab and safety review; ordinary CI never uses hardware.
 # NICs must already be dedicated/offline and bound to vfio-pci by the lab.
 'on':
   pull_request:
@@ -17,7 +19,9 @@ concurrency:
 jobs:
   physical-pci-nic:
     name: Real two-port PCI DPDK TX/RX and driver-ref cleanup (not R2 benchmark)
+    # Hard pause: do not consume self-hosted NIC resources from any label.
     if: >-
+      false &&
       github.event.label.name == 'r2-hardware-nic-approved' &&
       github.event.pull_request.number == 1149 &&
       github.event.pull_request.head.repo.full_name == 'qigao/salts' &&

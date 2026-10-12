@@ -1,5 +1,7 @@
 # Physical NIC qualification: gated self-hosted lab only
 
+**DEFERRED / NOT AUTHORIZED TO RUN (2026-10-12):** the software-only closeout has explicitly paused physical NIC tests. The hardware workflow contains a literal `false &&` job guard; applying any label, even `r2-hardware-nic-approved`, **cannot start the NIC job**. Do not remove the guard unless the user explicitly asks to resume hardware qualification and a qualified offline runner has been approved. See [SOFTWARE_CLOSEOUT.md](SOFTWARE_CLOSEOUT.md).
+
 **Tracking:** [#1146](https://github.com/qigao/salts/issues/1146), [#1152](https://github.com/qigao/salts/issues/1152), [#1148](https://github.com/qigao/salts/issues/1148). This is explicitly **not** part of default Salts CI or its installed ABI. [Research PR #1149](https://github.com/qigao/salts/pull/1149) remains Draft / DO NOT MERGE.
 
 ## Evidence tiers that must not be conflated
@@ -18,7 +20,7 @@ CI must never mark tier C successful merely because the *hardware probe executab
 
 A dedicated, **offline** Linux x64 NIC lab with two different, directly cabled physical **PCI Ethernet PFs** is required. They must have already been bound to `vfio-pci` under separate or documented IOMMU group assignment. No active kernel interfaces, normal production traffic, packet capture secrets, shared hypervisor NIC, `net_ring`/vdev shortcut or unqualified SR-IOV VF is allowed.
 
-The isolated workflow `.github/workflows/cnet-r2-hardware-nic.yml` has ONLY the `pull_request.labeled` trigger; it runs exclusively for **Draft PR #1149**, head branch `research/cnet-dpdk-packet-plane`, and when a maintainer *deliberately adds* `r2-hardware-nic-approved`. It needs a dedicated self-hosted runner carrying all labels: `self-hosted`, `linux`, `x64`, `dpdk-nic-lab`.
+The isolated workflow `.github/workflows/cnet-r2-hardware-nic.yml` has ONLY the `pull_request.labeled` trigger, but its physical job is **hard-disabled** for this software-only closeout. In the *future*, after separate explicit reauthorization and removal of the `false` guard, it must still require Draft PR #1149, head branch `research/cnet-dpdk-packet-plane` and a deliberate `r2-hardware-nic-approved` label. It needs a dedicated self-hosted runner carrying all labels: `self-hosted`, `linux`, `x64`, `dpdk-nic-lab`.
 
 Before manually approving, configure repository Actions **variables** with:
 - `DPDK_NIC_LAB_TX_BDF`: exact canonical PCI BDF of the first **offline** PF, e.g. `0000:81:00.0`.

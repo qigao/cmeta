@@ -2,6 +2,8 @@
 
 Tracking: [#1145](https://github.com/qigao/salts/issues/1145), [#1146](https://github.com/qigao/salts/issues/1146), [Draft PR #1149](https://github.com/qigao/salts/pull/1149).
 
+**SOFTWARE RESEARCH CHECKPOINT: ACCEPTED / FROZEN (2026-10-12).** The physical NIC/DMA lab and R2-vs-UDP/KCP benchmark are explicitly **deferred**. The manually gated NIC job is also disabled pending explicit reauthorization. See [SOFTWARE_CLOSEOUT.md](SOFTWARE_CLOSEOUT.md) for the exact source commit, 6/6 Linux research CI, test coverage, hard non-goals and tracked follow-ups. **Draft PR #1149 remains DO NOT MERGE**; software conformance is NOT a stable ABI, authenticated peer-key authority, or real-hardware result.
+
 This standalone **Linux-only C11** experiment is intentionally outside `cnet/` and the top-level CMake graph. It neither links into `Salts::CNet` nor enables DPDK for production code. The normal Salts NativeIO/SDK and mobile CI paths remain unchanged. The independent workflow `cnet-packet-io-research.yml` owns these checks.
 
 ## Fake PMD conformance (requires no DPDK)
@@ -41,7 +43,7 @@ The smoke instantiates `rte_eth_from_rings()`, configures an actual Ethernet PMD
 - Sealing rejects new TX admission; abort releases only staged frames. Stop returns busy until staged frames are gone and the driver explicitly confirms quiescence.
 - The SPI is internal, not stable, not an alternative to NativeIO, and not a substitute for a reliable message protocol. The latter is separately tracked in #1147 with ACK, retransmission and bounded-congestion semantics.
 
-No Tesla wire compatibility, native GPUDirect/RDMA support, authenticated transport, or physical-NIC performance measurements are claimed. The Salts 2.3.0 installed public ABI remains frozen.
+No Tesla wire compatibility, native GPUDirect/RDMA support, **fully authenticated peer establishment** or physical-NIC performance measurements are claimed. R2 HMAC authenticates configured test keys only. The Salts 2.3.0 installed public ABI remains frozen.
 
 ## Research-only authenticated reliable-message engine (#1147)
 
@@ -51,7 +53,7 @@ The crypto library is **not linked into `packet_reliable_research`** or the inst
 
 CTest targets: `packet_reliable_conformance`, `packet_reliable_packet_io`, and `packet_io_fake_owner`; optional standalone DPDK `net_ring` smoke is unchanged. Configure `experiments/cnet-packet-io` with `-DPACKET_IO_ENABLE_DPDK=OFF`, build and run `ctest --test-dir <build-directory> --output-on-failure`. The research test target requires a system OpenSSL development package for its HMAC fixture; this does not add a requirement to production Salts.
 
-**Still open:** production GmSSL provider, authenticated peer/key provision and renewal, real Ethernet demux, multi-peer scheduling and NIC hardware completion. Keep Draft PR #1149 unmerged.
+**Software checkpoint:** explicit source-pinned GmSSL and published Salts.Native rc.14 CMeta MAC ABI adapters, plus a bounded eight-session mux and Owner-local cross-thread finalizer handoff model, have passed dedicated research CI. **Still open:** trusted peer/key provisioning and rekey, real NIC/DMA teardown, statistical hardware fairness/benchmark and public product admission. Keep Draft PR #1149 unmerged.
 
 ## Pinned GmSSL R2 MAC experiment (#1151)
 
@@ -71,7 +73,7 @@ The research-only [multi-session contract](MULTI_SESSION.md) adds `r2_mux.{h,c}`
 
 `packet_r2_mux_conformance` runs 1/2/4/8-session ACK/terminal tests, two-slot physical queue backpressure, a slow-peer starvation check, forged ACK isolation, eight-peer inbound incast, callback reentrancy, cancellation with pending physical frame and late Generation/epoch rejection. Each test uses **one actual `packet_io_owner` over a Fake PMD**, with separate HMAC fixtures and crypto leases per peer. The test is enabled in the existing standalone CTest matrix and requires no DPDK device.
 
-This **does not prove** physical NIC driver fairness, DPDK DMA reclamation, authenticated peer establishment or a quantitative Mpps/p99 benchmark. PR #1149 remains unmerged and is not a public CNet ABI.
+This **does not prove** physical NIC driver fairness, hardware DPDK DMA reclamation, trusted peer establishment or a quantitative Mpps/p99 benchmark. The experiment is now software-frozen; PR #1149 remains unmerged and is not a public CNet ABI.
 
 ## Off-Owner physical completion ingress (#1146 / #1152)
 
@@ -81,7 +83,7 @@ The experimental [DMA-like completion handoff](DMA_COMPLETION_HANDOFF.md) introd
 
 ## Manually approved real PCI NIC qualification (#1146 / #1148)
 
-A separate [hardware-only runbook](NIC_LAB.md) and workflow `.github/workflows/cnet-r2-hardware-nic.yml` are available for a **dedicated, offline, self-hosted PCI VFIO Ethernet lab**, triggered *only* when a maintainer manually applies `r2-hardware-nic-approved` to Draft PR #1149. The lab requires two explicitly configured cabled PCI Ethernet PFs, IOMMU and free hugepages. There is no automatic driver binding, privilege escalation, device provisioning, or fallback to `net_ring`.
+A separate [hardware-only runbook](NIC_LAB.md) and workflow `.github/workflows/cnet-r2-hardware-nic.yml` remain parked for a **dedicated, offline, self-hosted PCI VFIO Ethernet lab**. **Hardware job execution is explicitly disabled** at software closeout; even the `r2-hardware-nic-approved` label cannot start a NIC job until the user explicitly reauthorizes the phase and the job gate is reviewed/re-enabled. The lab requires two explicitly configured cabled PCI Ethernet PFs, IOMMU and free hugepages. There is no automatic driver binding, privilege escalation, device provisioning, or fallback to `net_ring`.
 
 With `PACKET_IO_ENABLE_DPDK=ON`, the isolated CMake project **builds** `packet_io_dpdk_physical_test`, but ordinary GitHub-hosted CI **never runs** it. Actual execution requires both links UP, 16 real Ethernet frames per direction with exact nonce/sequence/payload, a supported `rte_eth_tx_done_cleanup()`, and observed driver TX mbuf-ref reclamation before caller frees its retained observer refs. Missing hardware or unsupported cleanup **FAIL**, never SKIP or PASS.
 
