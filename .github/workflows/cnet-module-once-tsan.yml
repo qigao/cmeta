@@ -61,6 +61,19 @@ jobs:
             -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
             -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_THREAD=ON \
             -DVCPKG_INSTALL_OPTIONS=--only-binarycaching
+      - name: Diagnose canonical vcpkg admission failure
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          if [[ -f build/cnet-once-tsan/vcpkg-manifest-install.log ]]; then
+            echo '=== Canonical vcpkg dependency restoration ==='
+            tail -n 180 build/cnet-once-tsan/vcpkg-manifest-install.log
+          fi
+          if [[ -f build/cnet-once-tsan/CMakeCache.txt ]]; then
+            grep -E '^(VCPKG_|CMAKE_MAKE_PROGRAM:|ENABLE_SANITIZER_THREAD:)' \\
+              build/cnet-once-tsan/CMakeCache.txt | head -n 60 || true
+          fi
       - name: Build cold-init standalone test and first-party source graph
         shell: bash
         run: |
