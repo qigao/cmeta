@@ -248,13 +248,15 @@ static int provider_fatal_alert_record(const char *ca, const char *cert,
   }
 
   status = cnet_tls_take_cipher(&pair.server, record, sizeof(record), &size);
-  /* TLS 1.3 hello rejection precedes handshake traffic keys: plaintext
-   * fatal Alert (type 21, level 2) on an otherwise TLS 1.2 wire record.
-   * Never print the raw TLS record or any key material in CI logs. */
-  if (status != SALTS_OK || size < 7u || record[0] != 21u ||
-      record[5] != 2u) {
+  /* At this pre-key ClientHello rejection, the fatal alert must be a
+   * complete plaintext TLS Alert record. Validate framing and description,
+   * not just a single byte; never print raw records or key material. */
+  if (status != SALTS_OK || size != 7u || record[0] != 21u ||
+      record[1] != 3u || record[2] != 3u ||
+      record[3] != 0u || record[4] != 2u ||
+      record[5] != 2u || record[6] == 0u) {
     fprintf(stderr,
-            "RFC8998 diagnostic: provider emitted no fatal TLS alert "
+            "RFC8998 diagnostic: invalid or missing provider fatal TLS alert "
             "(status=%d size=%zu type=%u)\n", status, size,
             size != 0u ? (unsigned)record[0] : 0u);
     pair_destroy(&pair);
