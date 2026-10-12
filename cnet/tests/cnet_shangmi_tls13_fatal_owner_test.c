@@ -203,7 +203,10 @@ int main(int argc, char **argv) {
   }
 
   CHECK(terminal_seen);
-  CHECK(handshaking_events == 1u);
+  /* Adopted TLS sockets enter handshake without publishing a duplicate
+   * TLS_HANDSHAKING event: cnet_owner_start_tls(..., false).
+   * The visible FAILED terminal and its HANDSHAKE stage remain mandatory. */
+  CHECK(handshaking_events == 0u);
   CHECK(failure_events == 1u);
   CHECK(connected_events == 0u && plaintext_events == 0u);
   CHECK(alert_size == 7u && alert[0] == 21u && alert[1] == 3u &&
