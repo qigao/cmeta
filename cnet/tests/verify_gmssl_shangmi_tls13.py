@@ -117,6 +117,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gmssl", required=True)
     ap.add_argument("--cnet-probe")
+    ap.add_argument("--cnet-owner-fatal")
     ap.add_argument("--cnet-nativeio")
     ap.add_argument("--cnet-nativeio-negatives")
     ap.add_argument("--cnet-nativeio-mtls")
@@ -201,6 +202,16 @@ def main():
                     "CNet real NativeIO RFC8998 failed: "
                     + native.stdout[-1600:] + native.stderr[-1600:])
             print("CNet NativeIO RFC8998 owner/listener path: PASS")
+            return
+        if a.cnet_owner_fatal:
+            probe = str(Path(a.cnet_owner_fatal).resolve())
+            if not Path(probe).is_file():
+                raise RuntimeError("missing private CNet fatal-alert Owner executable")
+            run = call([probe, "root-cert.pem", "server-cert.pem",
+                        "server-key.pem"], cwd, timeout=25)
+            if "CNet TLS fatal-alert partial NativeIO owner: PASS" not in run.stdout:
+                raise RuntimeError("CNet Owner did not prove one-byte alert drain")
+            print("CNet NativeIO partial fatal-alert write/terminal: PASS")
             return
         if a.cnet_probe:
             probe = str(Path(a.cnet_probe).resolve())
