@@ -2281,8 +2281,13 @@ static int cnet_owner_route_completion(cnet_owner_impl *impl,
     }
 #endif
     /* Cancellation may lose to a partial success already queued by the OS. */
-    if (session->pending_status != SALTS_OK)
+    if (session->pending_status != SALTS_OK &&
+        !(session->tls_fatal_alert_draining &&
+          request->role == CNET_OWNER_REQUEST_TLS_WRITE))
       return cnet_owner_finish_direct_completion(impl, request, completion);
+    /* The fatal-alert write still owns its entire logical ciphertext record.
+     * Partial NativeIO success must resubmit its remainder before the
+     * final failed-session callback can retire this Owner generation. */
     if (completion->bytes == 0u || completion->bytes > request->submitted_size)
       return cnet_owner_fail_direct_request(impl, request, SALTS_EIO);
     if (cnet_write_handle_valid(request->write.handle)) {
