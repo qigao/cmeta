@@ -116,10 +116,11 @@ int main(int argc, char **argv) {
   unsigned int handshaking_events = 0u, failure_events = 0u;
   unsigned int connected_events = 0u, plaintext_events = 0u;
   bool complete = false, terminal_seen = false;
+  const bool cancel_race = argc == 5 && strcmp(argv[4], "cancel-after-partial") == 0;
   uint64_t deadline;
 
-  if (argc != 4) {
-    fprintf(stderr, "usage: fatal_owner_probe root.pem server.pem server-key.pem\n");
+  if (argc != 4 && !cancel_race) {
+    fprintf(stderr, "usage: fatal_owner_probe root.pem server.pem server-key.pem [cancel-after-partial]\n");
     return 2;
   }
 
@@ -167,6 +168,58 @@ int main(int argc, char **argv) {
   accepted = -1; /* The queued Owner CONNECT command owns this descriptor. */
 
   CHECK_OK(send_all(peer, client_hello, hello_size));
+
+  if (cancel_race) {
+    cnet_owner_test_request_snapshot write_request = {0};
+    native_io_completion held_partial = {0};
+    bool write_admitted = false, partial_observed = false;
+    const uint64_t admission_deadline = cmeta_monotonic_ms() + 5000u;
+
+    /* CNet owns a request slot while the kernel owns its NativeIO I/O.
+     * Find the *real* outgoing TLS Alert request, not an ordinary recv,
+     * before observing exactly its first one-byte completion. */
+    while (cmeta_monotonic_ms() < admission_deadline && !write_admitted) {
+      for (size_t index = 0u; index < owner_cfg.request_capacity; ++index) {
+        cnet_owner_test_request_snapshot snapshot = {0};
+        CHECK(cnet_owner_test_get_request_snapshot(&owner, index, &snapshot));
+        if (snapshot.active && snapshot.tls_write) {
+          write_request = snapshot;
+          write_admitted = true;
+          break;
+        }
+      }
+      if (!write_admitted) CHECK_OK(cnet_owner_drive(&owner, 0u));
+    }
+    CHECK(write_admitted);
+
+    while (cmeta_monotonic_ms() < admission_deadline && !partial_observed) {
+      native_io_completion observed = {0};
+      size_t count = 0u;
+      int status = cnet_owner_test_observe_raw(&owner, &observed, 1u, 100u, &count);
+      if (status == SALTS_ETIMEDOUT) continue;
+      CHECK(status == SALTS_OK);
+      if (count != 1u) continue;
+      if (observed.user_data == write_request.token) {
+        CHECK(observed.kind == NATIVE_IO_COMPLETION_OK && observed.bytes == 1u);
+        held_partial = observed;
+        partial_observed = true;
+      } else {
+        /* Settle unrelated canceled reads before the held TLS write. */
+        CHECK_OK(cnet_owner_test_process_completion_batch(&owner, &observed, 1u));
+      }
+    }
+    CHECK(partial_observed);
+
+    /* Cancellation is admitted BEFORE CNet routes the already observed
+     * successful partial write. Exercise the EALREADY NativeIO race without
+     * discarding its authoritative CNet request slot or generation. */
+    CHECK_OK(cnet_owner_test_force_cancel_ealready_once(&owner));
+    command = (cnet_command){CNET_COMMAND_CLOSE, handle, NULL, 0u, 0u};
+    CHECK_OK(cnet_command_queue_publish(&commands, &command));
+    CHECK_OK(cnet_owner_drive(&owner, 0u));
+    CHECK_OK(cnet_owner_test_process_completion_batch(&owner, &held_partial, 1u));
+  }
+
   deadline = cmeta_monotonic_ms() + 5000u;
   while (cmeta_monotonic_ms() < deadline) {
     cnet_event_view event = {0};
@@ -199,7 +252,8 @@ int main(int argc, char **argv) {
     CHECK(alert_size <= 7u);
     CHECK_OK(cnet_session_table_state(&sessions, handle, &state));
     terminal_seen = state == CNET_SESSION_TERMINAL;
-    if (terminal_seen && failure_events == 1u && alert_size == 7u) break;
+    if (terminal_seen && failure_events == 1u &&
+        (cancel_race ? alert_size >= 1u : alert_size == 7u)) break;
   }
 
   CHECK(terminal_seen);
@@ -209,9 +263,14 @@ int main(int argc, char **argv) {
   CHECK(handshaking_events == 0u);
   CHECK(failure_events == 1u);
   CHECK(connected_events == 0u && plaintext_events == 0u);
-  CHECK(alert_size == 7u && alert[0] == 21u && alert[1] == 3u &&
-        alert[2] == 3u && alert[3] == 0u && alert[4] == 2u &&
-        alert[5] == 2u && alert[6] != 0u);
+  /* Explicit close may abort a fatal-alert drain, but may never produce
+   * plaintext or settle the failed handshake twice. */
+  CHECK(alert_size >= 1u && alert[0] == 21u);
+  if (!cancel_race || alert_size == 7u) {
+    CHECK(alert_size == 7u && alert[1] == 3u && alert[2] == 3u &&
+          alert[3] == 0u && alert[4] == 2u &&
+          alert[5] == 2u && alert[6] != 0u);
+  }
   CHECK_OK(cnet_session_table_take_terminal(&sessions, handle, &terminal));
   CHECK(terminal.kind == CNET_SESSION_TERMINAL_FAILED);
   CHECK(terminal.stage == CNET_SESSION_STAGE_HANDSHAKE);
@@ -236,6 +295,8 @@ int main(int argc, char **argv) {
   CHECK_OK(cnet_command_queue_destroy(&commands));
   CHECK_OK(cnet_session_table_destroy(&sessions));
   CHECK_OK(cnet_module_shutdown());
-  puts("CNet TLS fatal-alert partial NativeIO owner: PASS");
+  puts(cancel_race
+           ? "CNet TLS fatal-alert cancel-before-partial-completion: PASS"
+           : "CNet TLS fatal-alert partial NativeIO owner: PASS");
   return 0;
 }
