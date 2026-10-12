@@ -142,10 +142,15 @@ RFC 8998 §3.2.1 distinguishes:
 The pinned provider exports `TLS13_SM2_ID` and uses it in TLS 1.3
 CertificateVerify sign/verify. The provider-only CTest asserts the exact
 identifier plus RFC 8998 cipher `0x00c6`, signature `0x0708` and curve
-`41`. Its strict context smoke calls
-`tls_ctx_set_supported_versions(..., 1)` with only TLS 1.3 (or only TLCP),
-and rejects cross-profile cipher suites while retaining the selected one.
-These are **configuration gates only**, not wire-level negotiation evidence.
+`41`. It tests the exported `tls_ctx_init` protocol/min/max values,
+configured suite/group/signature and cross-profile cipher rejection. **The
+pinned GmSSL header does NOT expose `tls_ctx_set_supported_versions`.**
+The provider initializes `supported_versions` with several versions even for
+single-protocol contexts; an API to make the advertised/accepted version list
+strict must be qualified (or added in the pinned provider overlay) before
+RFC 8998 may be advertised as fail-closed. No direct `TLS_CTX` field mutation
+is permitted in production CNet; avoid assuming `min/max` alone enforce
+on-wire downgrade rejection. These remain configuration gates only.
 
 Independent SM2 fixture provenance (test-only, public data):
 ```sh
@@ -165,3 +170,22 @@ not committed**. The test embeds fixed, independently signed public SPKI
 and DER signature bytes.
 
 RFC: https://www.rfc-editor.org/rfc/rfc8998#section-3.2.1
+
+## Actual compiler failure and corrected boundary (2026-10-12)
+
+[CI #38194332832](https://github.com/qigao/salts/actions/runs/38194332832)
+showed macOS and macOS-Clang build failure in the new probe:
+`tls_ctx_set_supported_versions` was undeclared by the pinned public GmSSL
+header. Although its implementation exists in the fetched upstream source,
+it is not a supported exported provider API. Fixed on the feature branch at
+[`f5d081d`](https://github.com/qigao/salts/commit/f5d081d638190970562da08e9eccc6df6265be76)
+by removing this call, verifying only the actual exported provider protocol
+configuration, and retaining the strict version setter/on-wire proof as an
+**open blocker** for #1128. The previous CI did not prove runtime success.
+
+The fixed independent SM2 public SPKI + DER signature fixture was additionally
+rechecked with OpenSSL 3.5.5: `pkeyutl -verify -rawin -digest sm3` with the
+specified `distid` returned Signature Verified Successfully. The SM3/HMAC-SM3
+and HKDF-SM3 KAT outputs were independently recalculated using OpenSSL-backed
+Python `hashlib`/`hmac`. These are *reference-vector* checks, not evidence
+that the pinned GmSSL installed CTest has passed.
