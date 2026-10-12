@@ -44,8 +44,7 @@ def require_file(path):
 def test_tongsuo_strict_server(tongsuo, gmssl, cwd):
     port = free_port()
     args = [tongsuo, "s_server", "-accept", "127.0.0.1:" + str(port),
-            "-cert", "server-cert.pem", "-key", "server-key.pem",
-            "-pass", "pass:" + PASS,
+            "-cert", "server-cert.pem", "-key", "server-key-tongsuo.pem",
             "-tls1_3", "-ciphersuites", SUITE,
             "-groups", "SM2", "-enable_sm_tls13_strict",
             "-rev", "-naccept", "1"]
@@ -171,11 +170,21 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tongsuo", required=True)
     parser.add_argument("--gmssl", required=True)
+    parser.add_argument("--fixture-key-converter", required=True)
     args = parser.parse_args()
     tong = require_file(args.tongsuo)
     gmssl = require_file(args.gmssl)
     with tempfile.TemporaryDirectory(prefix="tongsuo-rfc8998-") as cwd:
         fixture(gmssl, cwd)
+        converter = require_file(args.fixture_key_converter)
+        unwrap = subprocess.run(
+            [converter, "server-key.pem", PASS, "server-key-tongsuo.pem"],
+            cwd=cwd, capture_output=True, timeout=10, check=False)
+        if unwrap.returncode:
+            raise RuntimeError(
+                "ephemeral GmSSL PKCS8 fixture conversion failed: "
+                + unwrap.stderr.decode(errors="replace")[-1500:])
+        Path(cwd, "server-key-tongsuo.pem").chmod(0o600)
         test_tongsuo_strict_server(tong, gmssl, cwd)
         test_tongsuo_strict_client(tong, gmssl, cwd)
     print("Independent strict RFC8998 provider interop preflight: PASS")
