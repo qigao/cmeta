@@ -176,6 +176,7 @@ def main() -> None:
 
     core = prefix / "lib/libsalts.so.2.3"
     provider = consumer / "libcstl_probe_provider.so"
+    other_provider = consumer / "libcstl_probe_provider_other.so"
     loader = consumer / "cstl_probe_loader"
     if not loader.is_file():
         raise RuntimeError(f"missing independent host loader {loader}")
@@ -183,6 +184,7 @@ def main() -> None:
     images = {
         "core": recorded_symbols(core),
         "provider": recorded_symbols(provider),
+        "provider_other": recorded_symbols(other_provider),
     }
     if not all(data["asan_symbols"] for data in images.values()):
         raise RuntimeError("one of the two real DSOs lacks ASan code")
@@ -201,11 +203,11 @@ def main() -> None:
         if not images["cstl"]["defined_descriptor"]:
             raise RuntimeError("shared CSTL does not own descriptor")
         if not all(data["needs_shared_cstl"] for data in (
-            images["core"], images["provider"]
+            images["core"], images["provider"], images["provider_other"]
         )):
             raise RuntimeError("both DSOs must depend on one shared CSTL SONAME")
         if any(data["defined_descriptor"] for data in (
-            images["core"], images["provider"]
+            images["core"], images["provider"], images["provider_other"]
         )):
             raise RuntimeError("shared topology still embeds duplicate local descriptors")
 
@@ -221,13 +223,28 @@ def main() -> None:
         "detect_odr_violation=2:detect_leaks=1:halt_on_error=1:abort_on_error=1"
     )
     env["UBSAN_OPTIONS"] = "halt_on_error=1:print_stacktrace=1"
-    result = run([str(loader), str(core), str(provider)], env=env,
+    result = run([str(loader), str(core), str(provider), str(other_provider)], env=env,
                  allow_failure=True)
     log = evidence / "asan-loader.log"
     log.write_text(result.stdout, encoding="utf-8")
     odr_failure = (result.returncode != 0 and
                    EXPECTED_ODR in result.stdout and
                    SYMBOL in result.stdout)
+    if result.returncode == 0:
+        if ("CSTL_GENERIC_SEMANTIC_EQUAL=1" not in result.stdout or
+                "CSTL_LIVE_PROVIDER_SURVIVED_OTHER_UNLOAD" not in result.stdout):
+            raise RuntimeError(
+                "two independent Providers did not prove stable generic IDs "
+                "and retained one live metadata owner after sibling unload"
+            )
+        required_alias = ("CSTL_GENERIC_POINTER_EQUAL=1"
+                          if mode == "shared-single"
+                          else "CSTL_GENERIC_POINTER_EQUAL=0")
+        if required_alias not in result.stdout:
+            raise RuntimeError(
+                "wrong descriptor identity alias topology: "
+                f"expected {required_alias}; got:\n{result.stdout[-5000:]}"
+            )
     if mode == "static-default":
         if not odr_failure:
             raise RuntimeError(
@@ -276,6 +293,7 @@ def main() -> None:
     )
     for source_path, name in [
         (consumer / "provider.map", "provider.map"),
+        (consumer / "provider_other.map", "provider_other.map"),
         (consumer / "loader.map", "loader.map"),
         (build / "compile_commands.json", "salts-compile_commands.json"),
         (consumer / "compile_commands.json", "consumer-compile_commands.json"),
