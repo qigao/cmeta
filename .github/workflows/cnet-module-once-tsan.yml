@@ -60,7 +60,7 @@ jobs:
             -DBUILD_TESTING=ON -DBUILD_TESTS=ON \
             -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
             -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_THREAD=ON \
-            -DVCPKG_INSTALL_OPTIONS=--only-binarycaching
+            # Let canonical vcpkg restore cached packages or build missing ABI entries.\n            -DVCPKG_INSTALL_OPTIONS=
       - name: Diagnose canonical vcpkg admission failure
         if: failure()
         shell: bash
