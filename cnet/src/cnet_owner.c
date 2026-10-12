@@ -1183,7 +1183,13 @@ static int cnet_owner_tls_background_progress(cnet_owner_impl *impl,
     return SALTS_OK;
 
   status = cnet_tls_probe_peer_close(&session->tls, &peer_closed, &plaintext_pending);
-  if (status != SALTS_OK) return status;
+  if (status != SALTS_OK) {
+    /* A post-handshake TLS alert or invalid authenticated record is a
+     * per-session READ failure, not an Owner/control-loop failure. A borrowed
+     * NativeIO host must remain able to route other completions and drain the
+     * failed session's request generation to exactly one terminal event. */
+    return cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_READ);
+  }
   status = cnet_owner_tls_start_write(impl, session, &started);
   if (status != SALTS_OK) return status;
   if (peer_closed) return cnet_owner_tls_begin_peer_close(impl, session);
