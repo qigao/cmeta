@@ -6,6 +6,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* The POSIX once primitive is an OS synchronization event even when Salts
+ * itself was built without TSan. This is an intentional current-ABI change;
+ * every dependent SDK must be rebuilt against this same header. */
+#if !defined(_WIN32)
+#include <pthread.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -30,9 +37,17 @@ typedef void *cmeta_thread_t;
 typedef void *cmeta_rwlock_t;
 
 typedef struct cmeta_once_s {
+#if defined(_WIN32)
   volatile int state;
+#else
+  pthread_once_t native;
+#endif
 } cmeta_once_t;
+#if defined(_WIN32)
 #define SALTS_ONCE_INIT {0}
+#else
+#define SALTS_ONCE_INIT {PTHREAD_ONCE_INIT}
+#endif
 
 typedef void (*cmeta_thread_cb)(void *arg);
 
