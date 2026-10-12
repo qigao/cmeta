@@ -48,6 +48,10 @@ $aceFullMatrixQualification = ($aceBranchPr -and $AceMatrix) -or $unified23Revie
 $aceSanitizerQualification = $aceBranchPr -and $AceSan
 $unifiedSanitizerQualification = $unified23Review -and ($UnifiedSan -or $release23Push -or $releaseTagPush)
 # Preserve the historical integration branch's complete Linux coverage.
+$componentRuntimeSanitizer = $HeadBranch -eq 'feature/component-runtime-sanitizer' -and
+  $EventName -eq 'pull_request' -and -not $PrepareRelease
+# This stacked validation PR is Linux-only; it does not restart the long
+# Windows/MSVC run on its parent draft PR #1155.
 $componentIntegration = ($HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and
   -not $PrepareRelease) -or $aceBranchPr -or $unified23Review
 $changed = @()
@@ -201,7 +205,8 @@ $profiles = @(
   @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
   @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' }
 )
-if ($aceSanitizerQualification -or $unifiedSanitizerQualification -or $concurrencyQualification -or $cnetProgressQualification -or $cnetHandoffQualification -or $nativeReadinessQualification) {
+if ($aceSanitizerQualification -or $unifiedSanitizerQualification -or $concurrencyQualification -or $cnetProgressQualification -or $cnetHandoffQualification -or $nativeReadinessQualification -or
+    $componentRuntimeSanitizer) {
   # Reuse existing Debug ASan and independent TSan CMake presets; the ASan
   # profile adds UBSan via the canonical Sanitizers.cmake flag. Do not combine
   # TSan with ASan, or reuse release binaries for sanitizer checks.
@@ -225,6 +230,10 @@ foreach ($profile in $profiles) {
       'macos-clang-release', 'linux-ace-asan-ubsan', 'linux-ace-tsan')) {
     continue
   }
+  # Only the parent PR validates Windows; this stacked sanitizer slice
+  # runs one native Linux baseline and the existing two sanitized Linux presets.
+  if ($componentRuntimeSanitizer -and $profile.id -notin @(
+      'linux-release', 'linux-ace-asan-ubsan', 'linux-ace-tsan')) { continue }
   # Keep regular ACE PRs on Linux only, but do not discard the explicit
   # ASan+UBSan/TSan Debug profiles supplied for an [ACE-SAN] qualification.
   if ($acePatternsDevelopment -and $profile.id -ne 'linux-release' -and
