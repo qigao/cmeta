@@ -135,6 +135,13 @@ jobs:
           python3 cnet/tests/verify_gmssl_shangmi_tls13.py \
             --gmssl "$RUNNER_TEMP/rfc8998/gmssl-build/bin/gmssl" \
             --cnet-owner-fatal-cancel "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_shangmi_tls13_fatal_owner_probe"
+      - name: Expire handshake before held partial fatal-alert completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 cnet/tests/verify_gmssl_shangmi_tls13.py \
+            --gmssl "$RUNNER_TEMP/rfc8998/gmssl-build/bin/gmssl" \
+            --cnet-owner-fatal-deadline "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_shangmi_tls13_fatal_owner_probe"
       - name: Exercise both RFC8998 wire directions with strict SM2 policy
         shell: bash
         run: |
