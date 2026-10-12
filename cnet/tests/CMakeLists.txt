@@ -1,3 +1,13 @@
+# Independent executable gives cnet_module_once a cold, first-use gate.
+# CNet itself must be source-TSan instrumented to qualify cross-DSO publication.
+cmake_add_test(cnet_module_once_concurrency_test
+  SOURCES cnet_module_once_concurrency_test.c
+  LIBS Salts::CNet Salts::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  FOLDER "cnet/tests")
+set_target_properties(cnet_module_once_concurrency_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
 # Admission-time pure Owner placement strategy; no Actor/SG backend dependency.
 cmake_add_test(cnet_owner_placement_test
   SOURCES cnet_owner_placement_test.c
