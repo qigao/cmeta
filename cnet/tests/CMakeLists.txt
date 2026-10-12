@@ -346,11 +346,12 @@ add_dependencies(cnet_tls_test cnet_shangmi_tls13_nativeio_probe)
 # #1123: real TLS 1.3 / RFC 8998 SM2+SM4-GCM-SM3 loopback;
 # verified echo plus CA, hostname and cipher mismatch negative tests.
 # Initially native Linux, with no fallback to system GmSSL.
-# RFC8998 ephemeral-provider and true NativeIO tests run on native epoll
-# and Kqueue hosts. Mobile remains compile-only; Windows tool discovery and
-# secure process launch require a separate Windows execution qualification.
+# RFC8998 pinned-provider and real NativeIO tests run on native epoll,
+# Kqueue and IOCP hosts. No cross-compiled mobile execution. vcpkg-installed
+# gmssl is required; never silently fall back to the host's PATH.
 if((CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
-    CMAKE_SYSTEM_NAME STREQUAL "Darwin") AND NOT CMAKE_CROSSCOMPILING)
+    CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR
+    CMAKE_SYSTEM_NAME STREQUAL "Windows") AND NOT CMAKE_CROSSCOMPILING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   find_program(CNET_GMSSL_SHANGMI_TOOL
     NAMES gmssl
