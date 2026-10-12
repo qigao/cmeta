@@ -116,6 +116,56 @@ static int receive_message(cnet_tls_state *source, cnet_tls_state *target,
   return SALTS_ETIMEDOUT;
 }
 
+/*
+ * Authenticated TLS application data must never be exposed after a corrupted
+ * SM4-GCM record. Exercise the real CNet private-GmSSL state and bounded ring
+ * as a separate negative after the successful bidirectional exchange.
+ * This test deliberately corrupts an encrypted record, not the plaintext.
+ */
+static int tampered_record_rejected(shangmi_pair *pair) {
+  static const char payload[] = "CNet-RFC8998-authenticated-record";
+  unsigned char ciphertext[4096];
+  unsigned char plaintext[sizeof(payload)];
+  size_t captured = 0u;
+  size_t read_size = 123u;
+  bool complete = false;
+  bool peer_closed = true;
+  int status;
+  size_t i;
+
+  status = cnet_tls_write(&pair->client, payload, sizeof(payload) - 1u,
+                          &complete);
+  if (status != SALTS_OK || !complete) return SALTS_EPROTO;
+
+  for (;;) {
+    size_t chunk = 0u;
+    status = cnet_tls_take_cipher(&pair->client, ciphertext + captured,
+                                  sizeof(ciphertext) - captured, &chunk);
+    if (status == SALTS_ENOENT) break;
+    if (status != SALTS_OK || chunk == 0u ||
+        chunk > sizeof(ciphertext) - captured) return SALTS_EPROTO;
+    captured += chunk;
+    if (captured == sizeof(ciphertext)) return SALTS_EPROTO;
+  }
+
+  /* A TLS 1.3 record header is 5 bytes. The final byte of a complete
+   * encrypted application record is authenticated by its GCM tag. */
+  if (captured <= 5u) return SALTS_EPROTO;
+  ciphertext[captured - 1u] ^= 0x01u;
+  status = cnet_tls_feed_cipher(&pair->server, ciphertext, captured);
+  if (status != SALTS_OK) return status;
+
+  memset(plaintext, 0xa5, sizeof(plaintext));
+  status = cnet_tls_read(&pair->server, plaintext, sizeof(plaintext),
+                         &read_size, &peer_closed);
+  if (status != SALTS_EPROTO || read_size != 0u || peer_closed)
+    return SALTS_EPROTO;
+  for (i = 0u; i < sizeof(plaintext); ++i)
+    if (plaintext[i] != 0xa5u) return SALTS_EPROTO;
+
+  return SALTS_OK;
+}
+
 static int good(const char *ca, const char *cert, const char *key) {
   shangmi_pair pair = {0};
   char version[32] = {0};
@@ -149,6 +199,8 @@ static int good(const char *ca, const char *cert, const char *key) {
   if (status != SALTS_OK) goto done;
   status = receive_message(&pair.server, &pair.client,
                            "CNet-SM2-SM4-GCM-server-record");
+  if (status != SALTS_OK) goto done;
+  status = tampered_record_rejected(&pair);
 done:
   pair_destroy(&pair);
   if (status != SALTS_OK)
