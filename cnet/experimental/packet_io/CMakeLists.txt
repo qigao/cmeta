@@ -24,9 +24,13 @@ if(PACKET_IO_ENABLE_DPDK)
   endif()
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(DPDK REQUIRED IMPORTED_TARGET libdpdk)
-  message(STATUS "Experimental DPDK ${DPDK_VERSION} detected; no default CNet linkage")
+  # libdpdk.pc describes core libraries; ring PMD helper symbols reside in the
+  # separate rte_net_ring driver library on distro shared-DPDK packages.
+  find_library(PACKET_IO_RING_PMD_LIBRARY NAMES rte_net_ring REQUIRED)
+  message(STATUS "Experimental DPDK ${DPDK_VERSION}, ring PMD ${PACKET_IO_RING_PMD_LIBRARY}")
   add_executable(packet_io_dpdk_ring_test tests/dpdk_ring_test.c)
-  target_link_libraries(packet_io_dpdk_ring_test PRIVATE packet_io_research PkgConfig::DPDK)
+  target_link_libraries(packet_io_dpdk_ring_test PRIVATE packet_io_research
+    PkgConfig::DPDK "${PACKET_IO_RING_PMD_LIBRARY}")
   target_compile_features(packet_io_dpdk_ring_test PRIVATE c_std_11)
   if(BUILD_TESTING)
     add_test(NAME packet_io_dpdk_ring COMMAND packet_io_dpdk_ring_test)
