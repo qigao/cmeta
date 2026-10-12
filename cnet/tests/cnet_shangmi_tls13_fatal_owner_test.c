@@ -100,8 +100,9 @@ int main(int argc, char **argv) {
   cnet_owner owner = {0};
   fatal_owner_clock clock = {.now_ms = 100u};
   const cnet_command_queue_config command_cfg = {
-      16u, sizeof(cnet_owner_connect_payload)};
-  const cnet_event_queue_config event_cfg = {16u, 2u, 64u};
+      .capacity = 16u, .max_payload_bytes = sizeof(cnet_owner_connect_payload)};
+  const cnet_event_queue_config event_cfg = {
+      .capacity = 16u, .data_capacity = 2u, .max_payload_bytes = 64u};
   const cnet_owner_config owner_cfg = {
       .backend_kind = NATIVE_IO_BACKEND_EPOLL,
       .connection_capacity = 1u,
@@ -232,7 +233,12 @@ int main(int argc, char **argv) {
     CHECK_OK(cnet_owner_test_force_cancel_ealready_once(&owner));
     if (deadline_race) {
       clock.now_ms += 6000u;
-      CHECK_OK(cnet_owner_test_process_deadlines(&owner));
+      /* NativeIO has already retired the observed write handle. Its
+       * cancellation reports ENOENT to the Owner until the held completion
+       * is routed, just as in the existing expired-partial-send test.
+       * The deadline has already recorded the terminal failure; ENOENT
+       * does not license a new write or release the CNet request early. */
+      CHECK(cnet_owner_test_process_deadlines(&owner) == SALTS_ENOENT);
     } else {
       command = (cnet_command){CNET_COMMAND_CLOSE, handle, NULL, 0u, 0u};
       CHECK_OK(cnet_command_queue_publish(&commands, &command));
