@@ -28,7 +28,7 @@ jobs:
     env:
       EXPECTED_SALTS: ${{ github.event.pull_request.head.sha || github.sha }}
       EXPECTED_UTILS: 234c4a73bcefc455d48b3550ec2142d7ff1c3f5a
-      EXPECTED_CHTTP: 248d6b6b89c98e09e43a56a23c577563c7d48408
+      EXPECTED_CHTTP: 21b9ac6dd65592bcb2a11e69aab09a558029e560
       TSAN_OPTIONS: halt_on_error=1:exitcode=66
       CCACHE_DIR: ${{ github.workspace }}/build/cnet-source-consumer/ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
@@ -54,7 +54,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: qigao/chttp
-          ref: 248d6b6b89c98e09e43a56a23c577563c7d48408
+          ref: 21b9ac6dd65592bcb2a11e69aab09a558029e560
           path: build/cnet-source-consumer/sources/chttp
           persist-credentials: false
       - name: Use pinned shared vcpkg dependency graph
