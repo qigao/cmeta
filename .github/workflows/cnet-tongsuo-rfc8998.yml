@@ -69,13 +69,19 @@ jobs:
                 -DENABLE_KYBER=OFF -DENABLE_ZUC=OFF
           cmake --build "$RUNNER_TEMP/rfc8998/gmssl-build" --parallel 2
           test -x "$RUNNER_TEMP/rfc8998/gmssl-build/bin/gmssl"
+          # The private GmSSL fixture uses SM3-PBKDF2 PKCS8 encryption, not
+          # supported by independent Tongsuo. Decode only an ephemeral key
+          # and emit standard unencrypted PKCS8 with the same SM2 identity.
+          cc -std=c11 -O2 -Wall -Wextra             -I "$RUNNER_TEMP/rfc8998/gmssl/include"             cnet/tests/interop/gmssl_fixture_pkcs8_convert.c             -L "$RUNNER_TEMP/rfc8998/gmssl-build/bin" -lgmssl             -Wl,-rpath,"$RUNNER_TEMP/rfc8998/gmssl-build/bin"             -o "$RUNNER_TEMP/rfc8998/gmssl-key-convert"
+          test -x "$RUNNER_TEMP/rfc8998/gmssl-key-convert"
       - name: Exercise both RFC8998 wire directions with strict SM2 policy
         shell: bash
         run: |
           set -euo pipefail
           python3 cnet/tests/interop/verify_tongsuo_rfc8998.py \
             --tongsuo "$RUNNER_TEMP/rfc8998/tongsuo/apps/openssl" \
-            --gmssl "$RUNNER_TEMP/rfc8998/gmssl-build/bin/gmssl"
+            --gmssl "$RUNNER_TEMP/rfc8998/gmssl-build/bin/gmssl" \
+            --fixture-key-converter "$RUNNER_TEMP/rfc8998/gmssl-key-convert"
       - name: Record explicit qualification limit
         if: always()
         shell: bash
