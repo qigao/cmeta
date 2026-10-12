@@ -2,7 +2,7 @@ name: CNet Packet IO Research
 'on':
   pull_request:
     paths:
-      - 'cnet/experimental/packet_io/**'
+      - 'experiments/cnet-packet-io/**'
       - '.github/workflows/cnet-packet-io-research.yml'
   workflow_dispatch:
     inputs:
@@ -30,7 +30,7 @@ jobs:
       - name: Configure standalone C11 research target
         shell: bash
         run: |
-          cmake -S cnet/experimental/packet_io -B build/cnet-packet-${{ matrix.compiler }} \
+          cmake -S experiments/cnet-packet-io -B build/cnet-packet-${{ matrix.compiler }} \
             -DCMAKE_C_COMPILER=${{ matrix.compiler }} \
             -DCMAKE_BUILD_TYPE=Debug \
             '-DCMAKE_C_FLAGS=-Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -fno-omit-frame-pointer' \
@@ -60,7 +60,7 @@ jobs:
       - name: Configure optional DPDK ring integration
         shell: bash
         run: |
-          cmake -S cnet/experimental/packet_io -B build/cnet-packet-dpdk \
+          cmake -S experiments/cnet-packet-io -B build/cnet-packet-dpdk \
             -DCMAKE_BUILD_TYPE=Release \
             -DPACKET_IO_ENABLE_DPDK=ON
           cmake --build build/cnet-packet-dpdk --parallel 2
