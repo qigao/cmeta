@@ -173,3 +173,28 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
   set_tests_properties(native_io_kernel_dispatch_test PROPERTIES TIMEOUT 30)
 endif()
 
+
+# #1168: Windows-only PRIVATE IOCP source clone. Unlike readiness, a
+# GQCS-dequeued OVERLAPPED request has already completed in the kernel;
+# Owner cancellation at that exact dispatch window must return EALREADY.
+if(WIN32)
+  add_executable(native_io_iocp_dispatch_test
+    native_io_iocp_dispatch_test.c
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_io.c"
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_io_accept_escrow.c"
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_io_iocp.c")
+  target_include_directories(native_io_iocp_dispatch_test PRIVATE
+    "${PROJECT_SOURCE_DIR}/native-io/include"
+    "${PROJECT_SOURCE_DIR}/native-io/src")
+  target_compile_definitions(native_io_iocp_dispatch_test PRIVATE
+    SALTS_NATIVE_IO_KERNEL_TEST_HOOK=1
+    WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0600)
+  target_link_libraries(native_io_iocp_dispatch_test PRIVATE
+    Salts::Platform Salts::Coroutine ws2_32)
+  set_target_properties(native_io_iocp_dispatch_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+    FOLDER "native-io/tests")
+  add_test(NAME native_io_iocp_dispatch_test
+    COMMAND native_io_iocp_dispatch_test)
+  set_tests_properties(native_io_iocp_dispatch_test PROPERTIES TIMEOUT 30)
+endif()
