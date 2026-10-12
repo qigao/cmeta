@@ -131,9 +131,24 @@ def main():
                 "Ephemeral test-only SM2 key wrapper conversion failed: "
                 + ret.stderr.decode(errors="replace")[-1000:])
         Path(cwd, "server-key-tongsuo.pem").chmod(0o600)
+        failures = []
+        # All four independent cases must run even if one fails; preserve
+        # the exact observed stage and report each failed direction. Never
+        # turn a generic TLS EOF into accepted protocol-alert evidence.
         for mode in ("wrong-suite", "wrong-version"):
-            reject_cnet_peer(tong, cnet_client, cwd, mode)
-            reject_tongsuo_peer(tong, cnet_server, cwd, mode)
+            for peer, test in (("cnet-client", reject_cnet_peer),
+                               ("tongsuo-client", reject_tongsuo_peer)):
+                try:
+                    test(tong, cnet_client if peer == "cnet-client"
+                         else cnet_server, cwd, mode)
+                except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+                    failures.append(f"{peer}/{mode}: {exc}")
+                    print("Independent downgrade case NOT QUALIFIED: "
+                          + failures[-1], file=sys.stderr)
+        if failures:
+            raise RuntimeError(
+                str(len(failures)) + "/4 downgrade cases not qualified; "
+                + "see per-direction diagnostics above")
     print("Independent RFC8998 CNet/Tongsuo TLS downgrade rejection: PASS")
 
 
