@@ -9,6 +9,29 @@ set_target_properties(packet_io_research PROPERTIES C_STANDARD_REQUIRED ON C_EXT
 target_include_directories(packet_io_research PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(packet_io_research PUBLIC Threads::Threads)
 
+# Independent, bounded, experimental reliable-message engine: no public ABI.
+add_library(packet_reliable_research STATIC reliable.c)
+target_compile_features(packet_reliable_research PUBLIC c_std_11)
+set_target_properties(packet_reliable_research PROPERTIES C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+target_include_directories(packet_reliable_research PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(packet_reliable_research PUBLIC Threads::Threads)
+
+if(BUILD_TESTING)
+  add_executable(packet_reliable_test tests/reliable_test.c)
+  target_link_libraries(packet_reliable_test PRIVATE packet_reliable_research)
+  set_target_properties(packet_reliable_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  add_test(NAME packet_reliable_conformance COMMAND packet_reliable_test)
+  set_tests_properties(packet_reliable_conformance PROPERTIES TIMEOUT 30)
+
+  add_executable(packet_reliable_packet_io_test tests/reliable_packet_io_test.c)
+  target_link_libraries(packet_reliable_packet_io_test PRIVATE
+    packet_reliable_research packet_io_research)
+  set_target_properties(packet_reliable_packet_io_test
+    PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  add_test(NAME packet_reliable_packet_io COMMAND packet_reliable_packet_io_test)
+  set_tests_properties(packet_reliable_packet_io PROPERTIES TIMEOUT 30)
+endif()
+
 if(BUILD_TESTING)
   add_executable(packet_io_fake_test tests/fake_packet_io_test.c)
   target_link_libraries(packet_io_fake_test PRIVATE packet_io_research)

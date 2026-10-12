@@ -42,3 +42,11 @@ The smoke instantiates `rte_eth_from_rings()`, configures an actual Ethernet PMD
 - The SPI is internal, not stable, not an alternative to NativeIO, and not a substitute for a reliable message protocol. The latter is separately tracked in #1147 with ACK, retransmission and bounded-congestion semantics.
 
 No Tesla wire compatibility, native GPUDirect/RDMA support, authenticated transport, or physical-NIC performance measurements are claimed. The Salts 2.3.0 installed public ABI remains frozen.
+
+## Research-only bounded reliable-message engine (#1147)
+
+The separate [R1 wire and lifecycle contract](RELIABLE_PROTOCOL.md) defines a 36-byte, unauthenticated experimental envelope with a 64-byte fragment payload, up to eight fragments per message, selective ACK bitmap, bounded retransmission and exact protocol-terminal callback. This protocol is **not** a production security profile, Tesla wire compatibility, RDMA or a replacement for KCP.
+
+The standalone CMake project includes `packet_reliable_conformance` (11 named deterministic scenarios plus 40 pseudorandom loss/reorder message trials) and `packet_reliable_packet_io` (two joined Packet I/O / protocol fake-driver lifetime scenarios). The independent CI matrix runs these under GCC/Clang ASan+UBSan and GCC TSan; the optional real DPDK `net_ring` smoke remains separate.
+
+To run all the standalone tests, configure the research project and invoke `ctest --test-dir <build-directory> --output-on-failure`. Neither the new protocol core nor the deterministic tests requires the DPDK SDK or a physical NIC.
