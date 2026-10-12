@@ -360,22 +360,29 @@ static int probe_protocol_configuration(int protocol, int cipher) {
     fprintf(stderr, "GmSSL protocol context init failed: 0x%x\n", protocol);
     return 0;
   }
-  /* The native GmSSL default allows several versions. Pin exactly one
-   * version per future strict CNet policy, with no downgrade or TLCP crossover.
+  /* Pinned GmSSL 3.2.0#4 does NOT export a supported_versions setter.
+   * tls_ctx_init selects the protocol and pins min/max for this context,
+   * but the provider-internal supported_versions array is still initialized
+   * broadly. Do not conflate this configure-only smoke with a strict
+   * on-the-wire downgrade check. #1128 must qualify or add a bounded,
+   * exported provider setter before it advertises a strict RFC8998 profile.
    */
-  if (tls_ctx_set_supported_versions(&ctx, &protocol, 1u) == 1 &&
+  if (ctx.protocol == protocol &&
+      ctx.min_protocol == protocol && ctx.max_protocol == protocol &&
       tls_ctx_set_cipher_suites(&ctx, &cipher, 1u) == 1 &&
       tls_ctx_set_supported_groups(&ctx, groups, 1u) == 1 &&
       tls_ctx_set_signature_algorithms(&ctx, sigs, 1u) == 1 &&
-      ctx.supported_versions_cnt == 1u &&
-      ctx.supported_versions[0] == protocol &&
       tls_ctx_set_cipher_suites(&ctx, &wrong_cipher, 1u) != 1 &&
       ctx.cipher_suites_cnt == 1u &&
-      ctx.cipher_suites[0] == cipher)
+      ctx.cipher_suites[0] == cipher &&
+      ctx.supported_groups_cnt == 1u &&
+      ctx.supported_groups[0] == groups[0] &&
+      ctx.signature_algorithms_cnt == 1u &&
+      ctx.signature_algorithms[0] == sigs[0])
     ok = 1;
   tls_ctx_cleanup(&ctx);
   if (!ok)
-    fprintf(stderr, "GmSSL cannot strictly configure ShangMi protocol 0x%x\n",
+    fprintf(stderr, "GmSSL cannot configure ShangMi protocol 0x%x\n",
             protocol);
   return ok;
 }
