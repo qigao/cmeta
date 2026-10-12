@@ -435,6 +435,33 @@ if((CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
       --cnet-nativeio-mtls "$<TARGET_FILE:cnet_shangmi_tls13_nativeio_probe>")
   set_tests_properties(cnet_shangmi_tls13_nativeio_mtls_test PROPERTIES
     TIMEOUT 150 RUN_SERIAL TRUE)
+
+  # #1140: three independent, fixture-generated, private-Owner tests:
+  # full one-byte alert drain, explicit CLOSE before observed partial completion,
+  # and handshake deadline before that same held completion. Linux epoll only.
+  if(TARGET cnet_shangmi_tls13_fatal_owner_probe)
+    add_test(NAME cnet_shangmi_tls13_fatal_owner_test
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/verify_gmssl_shangmi_tls13.py"
+        --gmssl "${CNET_GMSSL_SHANGMI_TOOL}"
+        --cnet-owner-fatal "$<TARGET_FILE:cnet_shangmi_tls13_fatal_owner_probe>")
+    set_tests_properties(cnet_shangmi_tls13_fatal_owner_test PROPERTIES
+      TIMEOUT 150 RUN_SERIAL TRUE)
+    add_test(NAME cnet_shangmi_tls13_fatal_owner_cancel_test
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/verify_gmssl_shangmi_tls13.py"
+        --gmssl "${CNET_GMSSL_SHANGMI_TOOL}"
+        --cnet-owner-fatal-cancel "$<TARGET_FILE:cnet_shangmi_tls13_fatal_owner_probe>")
+    set_tests_properties(cnet_shangmi_tls13_fatal_owner_cancel_test PROPERTIES
+      TIMEOUT 150 RUN_SERIAL TRUE)
+    add_test(NAME cnet_shangmi_tls13_fatal_owner_deadline_test
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/verify_gmssl_shangmi_tls13.py"
+        --gmssl "${CNET_GMSSL_SHANGMI_TOOL}"
+        --cnet-owner-fatal-deadline "$<TARGET_FILE:cnet_shangmi_tls13_fatal_owner_probe>")
+    set_tests_properties(cnet_shangmi_tls13_fatal_owner_deadline_test PROPERTIES
+      TIMEOUT 150 RUN_SERIAL TRUE)
+  endif()
 endif()
 
 
