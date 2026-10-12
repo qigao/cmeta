@@ -86,8 +86,11 @@ def reject_tongsuo_client(tongsuo, cnet_server, cwd, mode):
             port = port_from_server(server)
             trust = "untrusted-cert.pem" if mode == "wrong-ca" else "root-cert.pem"
             name = "wrong.example" if mode == "wrong-san" else "localhost"
+            # Fix SNI to the valid server identity: vary ONLY the local
+            # verification target, otherwise a server's SNI rejection can
+            # terminate TLS before any SAN certificate check is attempted.
             cmd = [tongsuo, "s_client", "-connect", f"127.0.0.1:{port}",
-                   "-servername", name, "-CAfile", trust,
+                   "-servername", "localhost", "-CAfile", trust,
                    "-verify_return_error", "-verify_hostname", name,
                    "-tls1_3", "-ciphersuites", SUITE, "-groups", "SM2",
                    "-enable_sm_tls13_strict", "-brief"]
