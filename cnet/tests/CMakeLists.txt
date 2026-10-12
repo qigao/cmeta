@@ -318,6 +318,31 @@ add_test(NAME cnet_gmssl_shangmi_provider_test
 # The existing CNet release test-build closure explicitly includes cnet_tls_test.
 add_dependencies(cnet_tls_test cnet_gmssl_shangmi_provider_test)
 
+# #1123: real TLS 1.3 / RFC 8998 SM2+SM4-GCM-SM3 loopback;
+# verified echo plus CA, hostname and cipher mismatch negative tests.
+# Initially native Linux, with no fallback to system GmSSL.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  find_program(CNET_GMSSL_SHANGMI_TOOL
+    NAMES gmssl
+    HINTS
+      "${GmSSL_DIR}/../../tools/gmssl"
+      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/gmssl"
+      "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}/tools/gmssl"
+    NO_DEFAULT_PATH)
+  if(NOT CNET_GMSSL_SHANGMI_TOOL)
+    message(FATAL_ERROR
+      "RFC8998 provider wire test needs exact pinned vcpkg gmssl executable")
+  endif()
+  add_test(NAME cnet_gmssl_shangmi_tls13_wire_test
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/verify_gmssl_shangmi_tls13.py"
+      --gmssl "${CNET_GMSSL_SHANGMI_TOOL}")
+  set_tests_properties(cnet_gmssl_shangmi_tls13_wire_test PROPERTIES
+    TIMEOUT 150 RUN_SERIAL TRUE)
+endif()
+
+
 cmake_add_test(
   cnet_transport_test
   SOURCES
