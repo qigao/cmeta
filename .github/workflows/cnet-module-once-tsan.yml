@@ -1,0 +1,101 @@
+name: CNet cold module-once source TSan (#1143)
+
+'on':
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/cnet-module-once-tsan.yml"
+      - "cnet/tests/cnet_module_once_concurrency_test.c"
+      - "cnet/tests/CMakeLists.txt"
+      - "cnet/src/cnet_module.c"
+      - "platform/src/thread_posix.c"
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cnet-module-once-tsan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-tsan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      TSAN_OPTIONS: halt_on_error=1:exitcode=66
+      CCACHE_DIR: ${{ github.workspace }}/.cnet-once-ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Restore shared vcpkg binary cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Restore re2c tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Prepare C11 source TSan toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache
+          ccache --zero-stats
+      - name: Configure CNet and Core with full source TSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-tsan-ci -S . -B build/cnet-once-tsan \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTING=ON -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_THREAD=ON \
+            -DVCPKG_INSTALL_OPTIONS=--only-binarycaching
+      - name: Build cold-init standalone test and first-party source graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/cnet-once-tsan --parallel 2 \
+            --target cnet_module_once_concurrency_test
+          ccache --show-stats
+      - name: Assert source instrumentation covers CNet and platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          commands=json.loads(Path("build/cnet-once-tsan/compile_commands.json").read_text())
+          wanted=("cnet/src/", "platform/src/", "cnet/tests/cnet_module_once_concurrency_test.c")
+          matched=[v for v in commands if any(t in v["file"] for t in wanted)]
+          assert matched, "No CNet/Platform source compile units"
+          missing=[v["file"] for v in matched if "-fsanitize=thread" not in v.get("command", " ".join(v.get("arguments", [])))]
+          print(f"matched_source_units={len(matched)} uninstrumented={len(missing)}")
+          assert not missing, "\n".join(missing)
+          PY
+      - name: Repeat cold first-CNet-initialization in a fresh process
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/cnet-once-tsan \
+            -R '^cnet_module_once_concurrency_test$' \
+            --repeat until-fail:30 --timeout 30 --output-on-failure \
+            --no-tests=error
+      - name: Upload TSan failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnet-module-once-tsan-${{ github.sha }}
+          path: build/cnet-once-tsan/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
