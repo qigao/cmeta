@@ -1,5 +1,29 @@
 # GmSSL ShangMi private-provider qualification — #1123
 
+## Current integration candidate (not released)
+
+As of the latest Draft #1131 implementation branch, the **GmSSL-only custom
+registry pin** in `vcpkg-configuration.json` has been advanced from the
+original `3.2.0#4` (shown in the historical baseline below) to **candidate
+`3.2.0#10`**, exact registry commit
+`8de71e653c378f948b7616185f71605a15ee1b98`.
+This is the head of [qigao/vcpkg-cache Draft PR #193](https://github.com/qigao/vcpkg-cache/pull/193),
+not a published stable dependency or a merged provider overlay.
+
+The new private GmSSL function `tls_ctx_set_strict_protocol` was added by
+[qigao/vcpkg-cache#192](https://github.com/qigao/vcpkg-cache/issues/192).
+The Salts provider-only probe now requires it, checks wrong-protocol rejection
+without mutating the old offer, requires one supported version on success,
+and rejects re-application after configuring cipher/group/signature choices.
+The test does NOT modify GmSSL `TLS_CTX` members directly.
+
+Candidate provider validation: [registry](https://github.com/qigao/vcpkg-cache/actions/runs/38195084665),
+[port](https://github.com/qigao/vcpkg-cache/actions/runs/38195084765), and
+[cache contract](https://github.com/qigao/vcpkg-cache/actions/runs/38195084874)
+are SUCCESS. **Salts's exact `3.2.0#10` runtime/CTest CI remains an
+independent open gate.** Neither RFC 8998 nor TLCP has passed real CNet
+on-wire interop, and no new production transport profile is enabled.
+
 ## Evidence scope
 
 This document records a **source-level inventory** for the exact GmSSL vcpkg
@@ -139,12 +163,12 @@ RFC 8998 §3.2.1 distinguishes:
   CNet must not guess/try multiple identities as a hidden fallback; explicit
   trust policy and concrete CA provenance belong in #1128.
 
-The pinned provider exports `TLS13_SM2_ID` and uses it in TLS 1.3
+The upstream provider exports `TLS13_SM2_ID` and uses it in TLS 1.3
 CertificateVerify sign/verify. The provider-only CTest asserts the exact
 identifier plus RFC 8998 cipher `0x00c6`, signature `0x0708` and curve
 `41`. It tests the exported `tls_ctx_init` protocol/min/max values,
 configured suite/group/signature and cross-profile cipher rejection. **The
-pinned GmSSL header does NOT expose `tls_ctx_set_supported_versions`.**
+previous 3.2.0#4 GmSSL header does NOT expose `tls_ctx_set_supported_versions`.**
 The provider initializes `supported_versions` with several versions even for
 single-protocol contexts; an API to make the advertised/accepted version list
 strict must be qualified (or added in the pinned provider overlay) before
