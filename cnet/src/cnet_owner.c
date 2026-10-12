@@ -3110,7 +3110,8 @@ bool cnet_owner_test_get_request_snapshot(const cnet_owner *owner, size_t reques
       .token = (uintptr_t)(request_index + 1u),
       .native_request = request->native_request,
       .endpoint = request->operation.endpoint,
-      .active = request->active};
+      .active = request->active,
+      .tls_write = request->active && request->role == CNET_OWNER_REQUEST_TLS_WRITE};
   return true;
 }
 
