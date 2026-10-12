@@ -32,6 +32,18 @@ target_link_options(cstl_probe_provider PRIVATE -fsanitize=address,undefined
 set_target_properties(cstl_probe_provider PROPERTIES
   BUILD_RPATH "${_prefix}/lib")
 
+# A second, distinct DSO image borrowing the same generic provider:
+# hidden-static means independent semantic-equal metadata objects; shared
+# means the same physical descriptor owner. It is deliberately NOT a copy
+# of the first image on disk with the same SONAME.
+add_library(cstl_probe_provider_other SHARED provider.c)
+target_link_libraries(cstl_probe_provider_other PRIVATE Salts::CSTL)
+target_compile_options(cstl_probe_provider_other PRIVATE ${_sanitizer})
+target_link_options(cstl_probe_provider_other PRIVATE -fsanitize=address,undefined
+  "-Wl,-Map,${CMAKE_CURRENT_BINARY_DIR}/provider_other.map")
+set_target_properties(cstl_probe_provider_other PROPERTIES
+  BUILD_RPATH "${_prefix}/lib")
+
 add_executable(cstl_probe_loader loader.c)
 target_link_libraries(cstl_probe_loader PRIVATE ${CMAKE_DL_LIBS})
 target_compile_options(cstl_probe_loader PRIVATE ${_sanitizer})
