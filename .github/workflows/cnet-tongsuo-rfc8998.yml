@@ -110,7 +110,8 @@ jobs:
           cmake --build --preset linux-release-ci \
             --target cnet_tongsuo_strict_client_probe \
                      cnet_tongsuo_strict_server_probe \
-                     cnet_shangmi_tls13_profile_probe --parallel 2
+                     cnet_shangmi_tls13_profile_probe \
+                     cnet_shangmi_tls13_fatal_owner_probe --parallel 2
           test -x "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_tongsuo_strict_client_probe"
           test -x "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_tongsuo_strict_server_probe"
       - name: Prove provider fatal alert in CNet ring before NativeIO teardown
@@ -120,6 +121,13 @@ jobs:
           python3 cnet/tests/verify_gmssl_shangmi_tls13.py \
             --gmssl "$RUNNER_TEMP/rfc8998/gmssl-build/bin/gmssl" \
             --cnet-probe "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_shangmi_tls13_profile_probe"
+      - name: Force one-byte NativeIO fatal alert writes and exactly-one terminal
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 cnet/tests/verify_gmssl_shangmi_tls13.py \
+            --gmssl "$RUNNER_TEMP/rfc8998/gmssl-build/bin/gmssl" \
+            --cnet-owner-fatal "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_shangmi_tls13_fatal_owner_probe"
       - name: Exercise both RFC8998 wire directions with strict SM2 policy
         shell: bash
         run: |
