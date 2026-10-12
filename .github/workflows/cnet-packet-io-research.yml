@@ -17,12 +17,15 @@ concurrency:
   cancel-in-progress: true
 jobs:
   fake-owner:
-    name: Fake PMD C11 ${{ matrix.compiler }}
+    name: Fake PMD C11 ${{ matrix.compiler }} (${{ matrix.sanitizer }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        compiler: [gcc, clang]
+        include:
+          - { compiler: gcc, sanitizer: asan-ubsan, sanitizer_flags: '-fsanitize=address,undefined' }
+          - { compiler: clang, sanitizer: asan-ubsan, sanitizer_flags: '-fsanitize=address,undefined' }
+          - { compiler: gcc, sanitizer: tsan, sanitizer_flags: '-fsanitize=thread' }
     steps:
       - uses: actions/checkout@v7
         with:
@@ -30,17 +33,17 @@ jobs:
       - name: Configure standalone C11 research target
         shell: bash
         run: |
-          cmake -S experiments/cnet-packet-io -B build/cnet-packet-${{ matrix.compiler }} \
+          cmake -S experiments/cnet-packet-io -B build/cnet-packet-${{ matrix.compiler }}-${{ matrix.sanitizer }} \
             -DCMAKE_C_COMPILER=${{ matrix.compiler }} \
             -DCMAKE_BUILD_TYPE=Debug \
-            '-DCMAKE_C_FLAGS=-Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -fno-omit-frame-pointer' \
-            '-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined' \
+            '-DCMAKE_C_FLAGS=-Wall -Wextra -Werror -pedantic ${{ matrix.sanitizer_flags }} -fno-omit-frame-pointer' \
+            '-DCMAKE_EXE_LINKER_FLAGS=${{ matrix.sanitizer_flags }}' \
             -DPACKET_IO_ENABLE_DPDK=OFF
       - name: Build and run deterministic fake-PMD tests
         shell: bash
         run: |
-          cmake --build build/cnet-packet-${{ matrix.compiler }} --parallel 2
-          ctest --test-dir build/cnet-packet-${{ matrix.compiler }} --output-on-failure
+          cmake --build build/cnet-packet-${{ matrix.compiler }}-${{ matrix.sanitizer }} --parallel 2
+          ctest --test-dir build/cnet-packet-${{ matrix.compiler }}-${{ matrix.sanitizer }} --output-on-failure
 
   dpdk-net-ring:
     name: Real DPDK net_ring ethdev
