@@ -29,6 +29,16 @@ jobs:
           # CNet comparisons create a worktree at the PR base commit.
           fetch-depth: ${{ matrix.compare && '0' || '1' }}
           persist-credentials: false
+      - name: Verify exact checkout provenance for release manifests
+        shell: pwsh
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $env:EXPECTED_SOURCE_SHA) {
+            throw "Native SDK source mismatch: $actual vs $env:EXPECTED_SOURCE_SHA"
+          }
       - name: Select iOS cache namespace
         if: matrix.family == 'ios'
         shell: bash
@@ -383,7 +393,7 @@ jobs:
           # Installed C11/C++ tests already ran through the parent CTest preset.
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
-          commit=${{ github.sha }}
+          commit=$(git rev-parse HEAD)
           os=linux
           arch=x64
           profile=release
@@ -455,9 +465,10 @@ jobs:
             throw "missing Salts::Unicode export in $targets"
           }
           # Installed C11/C++ tests already ran through the parent CTest preset.
+          $sourceCommit = (git rev-parse HEAD).Trim()
           $manifest = @(
             "version=${{ inputs.version }}"
-            "commit=${{ github.sha }}"
+            "commit=$sourceCommit"
             "os=windows"
             "arch=x64"
             "profile=release"
@@ -515,7 +526,7 @@ jobs:
           # Installed C11/C++ tests already ran through the parent CTest preset.
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
-          commit=${{ github.sha }}
+          commit=$(git rev-parse HEAD)
           os=macos
           arch=$RUNNER_ARCH
           profile=release
@@ -581,7 +592,7 @@ jobs:
           grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
-          commit=${{ github.sha }}
+          commit=$(git rev-parse HEAD)
           os=linux
           arch=arm64
           rid=linux-arm64
