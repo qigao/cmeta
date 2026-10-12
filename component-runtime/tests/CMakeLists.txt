@@ -68,3 +68,26 @@ endforeach()
 set_target_properties(cmeta_native_service_host_candidate_scope_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 set_tests_properties(cmeta_native_service_host_candidate_concurrency_test PROPERTIES TIMEOUT 60)
+
+# Salts #1154: true coexistence proof, original + copied runtime in the same process.
+cmake_add_test(cmeta_native_component_candidate_coexistence_test
+  SOURCES component_coexistence_test.c
+  LIBS Salts::Component Salts::ConfiguratorCandidate Salts::TinyTest
+  FOLDER "component-runtime/tests")
+set_target_properties(cmeta_native_component_candidate_coexistence_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+cmake_add_test(cmeta_native_component_candidate_coexistence_cpp_test
+  SOURCES component_coexistence_cpp_test.cpp
+  LIBS Salts::Component Salts::ConfiguratorCandidate Salts::ComponentPlugin Salts::ServiceHostCandidate
+  FOLDER "component-runtime/tests")
+set_target_properties(cmeta_native_component_candidate_coexistence_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+cmake_add_test(cmeta_native_service_host_candidate_coexistence_dso_test
+  SOURCES service_host_coexistence_dso_test.c
+  LIBS Salts::ComponentPlugin Salts::ServiceHostCandidate Salts::TinyTest
+  DEFS "COMPONENT_PROVIDER_PLUGIN_PATH=\\\"$<TARGET_FILE:salts_service_host_candidate_provider_fixture>\\\""
+  FOLDER "component-runtime/tests")
+add_dependencies(cmeta_native_service_host_candidate_coexistence_dso_test
+  salts_service_host_candidate_provider_fixture)
+set_target_properties(cmeta_native_service_host_candidate_coexistence_dso_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
