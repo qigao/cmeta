@@ -304,6 +304,20 @@ add_test(NAME cnet_gmssl_contract_test COMMAND cnet_gmssl_contract_test)
 # so a registered test can never become "Not Run" due to a missing executable.
 add_dependencies(cnet_tls_test cnet_gmssl_contract_test)
 
+# #1123: isolated pinned-private-provider capability qualification.
+# This target does not exercise public CNet security profiles or claim interop.
+add_executable(cnet_gmssl_shangmi_provider_test
+  cnet_gmssl_shangmi_provider_test.c)
+target_link_libraries(cnet_gmssl_shangmi_provider_test
+  PRIVATE GmSSL::GmSSL)
+set_target_properties(cnet_gmssl_shangmi_provider_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+  FOLDER "cnet/tests")
+add_test(NAME cnet_gmssl_shangmi_provider_test
+  COMMAND cnet_gmssl_shangmi_provider_test)
+# The existing CNet release test-build closure explicitly includes cnet_tls_test.
+add_dependencies(cnet_tls_test cnet_gmssl_shangmi_provider_test)
+
 cmake_add_test(
   cnet_transport_test
   SOURCES
