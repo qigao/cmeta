@@ -107,6 +107,60 @@ if(NOT WIN32)
   add_dependencies(native_io_test native_io_readiness_accept_test)
 endif()
 
+
+# #1168: a SEPARATE first-party static backend built from the actual NativeIO
+# sources, with a private post-kernel-dispatch hook. It is never installed,
+# never linked into Salts::NativeIO and cannot change production ABI/behavior.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
+  set(_native_io_dispatch_sources
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_io.c"
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_io_accept_escrow.c"
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_io_sharded.c"
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_ipc.c"
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_io_readiness.c"
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_ipc_posix.c")
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND _native_io_dispatch_sources
+      "${PROJECT_SOURCE_DIR}/native-io/src/native_io_linux.c"
+      "${PROJECT_SOURCE_DIR}/native-io/src/native_io_epoll.c"
+      "${PROJECT_SOURCE_DIR}/native-io/src/native_io_io_uring.c")
+  else()
+    list(APPEND _native_io_dispatch_sources
+      "${PROJECT_SOURCE_DIR}/native-io/src/native_io_bsd.c"
+      "${PROJECT_SOURCE_DIR}/native-io/src/native_io_kqueue.c")
+  endif()
+  add_library(native_io_test_dispatch_impl STATIC
+    ${_native_io_dispatch_sources})
+  target_compile_features(native_io_test_dispatch_impl PUBLIC c_std_11)
+  target_compile_definitions(native_io_test_dispatch_impl
+    PRIVATE SALTS_NATIVE_IO_TEST_DISPATCH=1)
+  if(APPLE)
+    target_compile_definitions(native_io_test_dispatch_impl
+      PRIVATE _DARWIN_C_SOURCE=1)
+  endif()
+  target_include_directories(native_io_test_dispatch_impl
+    PUBLIC "${PROJECT_SOURCE_DIR}/native-io/include"
+    PRIVATE "${PROJECT_SOURCE_DIR}/native-io/src")
+  target_link_libraries(native_io_test_dispatch_impl
+    PUBLIC Salts::Platform
+    PRIVATE Salts::Coroutine)
+  set_target_properties(native_io_test_dispatch_impl
+    PROPERTIES FOLDER "native-io/tests")
+
+  cmake_add_test(native_io_dispatch_cancel_test
+    SOURCES native_io_dispatch_cancel_test.c
+    LIBS native_io_test_dispatch_impl Salts::TinyTest
+         Salts::Coroutine Salts::Concurrency
+    FOLDER "native-io/tests")
+  target_include_directories(native_io_dispatch_cancel_test PRIVATE
+    "${PROJECT_SOURCE_DIR}/native-io/src")
+  target_compile_definitions(native_io_dispatch_cancel_test
+    PRIVATE SALTS_NATIVE_IO_TEST_DISPATCH=1)
+  set_target_properties(native_io_dispatch_cancel_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  add_dependencies(native_io_test native_io_dispatch_cancel_test)
+endif()
+
 cmake_add_test(native_io_header_cpp_test
   SOURCES native_io_header_cpp_test.cpp
   LIBS Salts::TinyTest Salts::NativeIO
