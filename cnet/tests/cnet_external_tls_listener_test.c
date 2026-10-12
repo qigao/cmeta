@@ -45,6 +45,7 @@ typedef struct state_probe {
   bool connected;
   bool terminal;
   bool failed;
+  unsigned int terminal_events;
 } state_probe;
 
 static native_io_backend_kind test_backend_kind(void) {
@@ -117,8 +118,10 @@ static void on_state(void *user, cnet_connection connection,
     probe->connected = true;
   }
   if (state == CNET_CONNECTION_CLOSED ||
-      state == CNET_CONNECTION_FAILED)
+      state == CNET_CONNECTION_FAILED) {
+    ++probe->terminal_events;
     probe->terminal = true;
+  }
   if (state == CNET_CONNECTION_FAILED || error != NULL)
     probe->failed = true;
 }
@@ -457,6 +460,18 @@ static void test_external_tls_listener_shared_progress(void) {
       check(!server_probe.connected);
       check(server_probe.failed);
       check(server_probe.terminal);
+      /* The TLS 1.3 client can finish locally before the server rejects its
+       * certificate. Even then, borrowed NativeIO must deliver the peer's
+       * fatal response and retire both generations instead of leaking an
+       * active client after the server has failed. */
+      deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
+      while (!client_probe.terminal && cmeta_monotonic_ms() < deadline) {
+        check(drive_shared_once(
+                  &listener, &server, &client, &backend, 25u, NULL) == SALTS_OK);
+      }
+      check(client_probe.terminal);
+      check(server_probe.terminal_events == 1u);
+      check(client_probe.terminal_events == 1u);
     } else {
       check(!client_probe.connected);
       check(client_probe.failed);
