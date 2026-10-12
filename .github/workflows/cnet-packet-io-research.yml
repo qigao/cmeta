@@ -162,7 +162,7 @@ jobs:
               manifest = 'sdk/linux-x64/salts-sdk-manifest.txt'
               assert manifest in names, 'No attested Linux x64 SDK manifest'
               meta = dict(line.split('=',1) for line in pkg.read(manifest).decode('utf-8-sig').splitlines() if '=' in line)
-              for key,expected in [('version','2.3.0-rc.14'),('commit','c8a1a3d5e259a89ad42e75f1e4c3142e6b106ee1'),('rid','linux-x64'),('profile','release')]:
+              for key,expected in [('version','2.3.0-rc.14'),('commit','c8a1a3d5e259a89ad42e75f1e4c3142e6b106ee1'),('os','linux'),('arch','x64'),('profile','release')]:
                   assert meta.get(key) == expected, (key,meta.get(key),expected)
               required = ('sdk/linux-x64/lib/cmake/Salts/SaltsConfig.cmake',
                           'sdk/linux-x64/lib/cmake/Salts/SaltsConfigVersion.cmake',
