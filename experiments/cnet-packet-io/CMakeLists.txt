@@ -28,6 +28,14 @@ target_compile_features(packet_r2_mux_research PUBLIC c_std_11)
 target_link_libraries(packet_r2_mux_research PUBLIC packet_reliable_research)
 set_target_properties(packet_r2_mux_research PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+# Fixed-size off-Owner completion-ticket ingress. Only its tiny post() path
+# is thread-safe; physical finalizers always run on the authoritative Owner.
+add_library(packet_dma_completion_research STATIC dma_completion_gate.c)
+target_compile_features(packet_dma_completion_research PUBLIC c_std_11)
+target_link_libraries(packet_dma_completion_research PUBLIC
+  packet_r2_mux_research packet_io_research Threads::Threads)
+set_target_properties(packet_dma_completion_research PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 
 
 if(BUILD_TESTING)
@@ -38,6 +46,14 @@ if(BUILD_TESTING)
   target_link_libraries(packet_test_hmac PUBLIC OpenSSL::Crypto)
   target_compile_features(packet_test_hmac PUBLIC c_std_11)
   # Real R2 HMAC fixture and one authoritative fake Packet I/O Owner.
+  add_executable(packet_dma_completion_test tests/dma_completion_gate_test.c)
+  target_link_libraries(packet_dma_completion_test PRIVATE
+    packet_dma_completion_research packet_test_hmac)
+  set_target_properties(packet_dma_completion_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  add_test(NAME packet_dma_owner_handoff COMMAND packet_dma_completion_test)
+  set_tests_properties(packet_dma_owner_handoff PROPERTIES TIMEOUT 35)
+
   add_executable(packet_r2_mux_test tests/r2_mux_test.c)
   target_link_libraries(packet_r2_mux_test PRIVATE
     packet_r2_mux_research packet_mac_lease packet_io_research packet_test_hmac)

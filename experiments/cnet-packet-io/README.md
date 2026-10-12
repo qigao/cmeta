@@ -72,3 +72,9 @@ The research-only [multi-session contract](MULTI_SESSION.md) adds `r2_mux.{h,c}`
 `packet_r2_mux_conformance` runs 1/2/4/8-session ACK/terminal tests, two-slot physical queue backpressure, a slow-peer starvation check, forged ACK isolation, eight-peer inbound incast, callback reentrancy, cancellation with pending physical frame and late Generation/epoch rejection. Each test uses **one actual `packet_io_owner` over a Fake PMD**, with separate HMAC fixtures and crypto leases per peer. The test is enabled in the existing standalone CTest matrix and requires no DPDK device.
 
 This **does not prove** physical NIC driver fairness, DPDK DMA reclamation, authenticated peer establishment or a quantitative Mpps/p99 benchmark. PR #1149 remains unmerged and is not a public CNet ABI.
+
+## Off-Owner physical completion ingress (#1146 / #1152)
+
+The experimental [DMA-like completion handoff](DMA_COMPLETION_HANDOFF.md) introduces a bounded 32-ticket mailbox. A producer thread can publish **only** an already-reserved completion token; it cannot touch `r2_mux`, R2 session keys, or the final frame. The original Owner polls, releases one physical mux reference and executes the finalizer exactly once. A successful logical ACK, cancellation, or Packet I/O TX burst acceptance remains independent of physical buffer completion.
+
+`packet_dma_owner_handoff` uses a real C11/POSIX worker and a fake retained Packet I/O TX backend to test cancel-before-completion, post-after-seal, duplicate/old Generation tickets, explicit joined-producer fence, no early stop/detach, two-record admission capacity and bounded poll progress. Run under GCC/Clang ASan+UBSan and GCC TSan. **This is not physical NIC DMA qualification**, and it adds no installed Salts ABI.

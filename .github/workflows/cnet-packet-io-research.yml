@@ -131,7 +131,7 @@ jobs:
             "-DGmSSL_DIR=$GMSSL_RESEARCH_PREFIX/share/gmssl"
           cmake --build build/cnet-packet-gmssl --parallel 4
           ctest --test-dir build/cnet-packet-gmssl --output-on-failure \
-            -R '^packet_(gmssl_mac_conformance|r2_mux_conformance|reliable_conformance|reliable_packet_io|io_fake_owner)$'
+            -R '^packet_(gmssl_mac_conformance|dma_owner_handoff|r2_mux_conformance|reliable_conformance|reliable_packet_io|io_fake_owner)$'
 
   installed-cmeta-sdk:
     name: Salts.Native 2.3.0-rc.14 installed C11 C++17 MAC consumer
