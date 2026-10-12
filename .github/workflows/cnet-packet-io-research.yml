@@ -1,0 +1,72 @@
+name: CNet Packet IO Research
+'on':
+  pull_request:
+    paths:
+      - 'cnet/experimental/packet_io/**'
+      - '.github/workflows/cnet-packet-io-research.yml'
+  workflow_dispatch:
+    inputs:
+      qualify_dpdk:
+        description: 'Run additional system-DPDK net_ring qualification'
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: cnet-packet-io-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  fake-owner:
+    name: Fake PMD C11 ${{ matrix.compiler }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configure standalone C11 research target
+        shell: bash
+        run: |
+          cmake -S cnet/experimental/packet_io -B build/cnet-packet-${{ matrix.compiler }} \
+            -DCMAKE_C_COMPILER=${{ matrix.compiler }} \
+            -DCMAKE_BUILD_TYPE=Debug \
+            '-DCMAKE_C_FLAGS=-Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -fno-omit-frame-pointer' \
+            '-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined' \
+            -DPACKET_IO_ENABLE_DPDK=OFF
+      - name: Build and run deterministic fake-PMD tests
+        shell: bash
+        run: |
+          cmake --build build/cnet-packet-${{ matrix.compiler }} --parallel 2
+          ctest --test-dir build/cnet-packet-${{ matrix.compiler }} --output-on-failure
+
+  dpdk-net-ring:
+    name: Real DPDK net_ring ethdev
+    if: github.event_name == 'pull_request' || inputs.qualify_dpdk == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install system DPDK (not vcpkg or package cache)
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libdpdk-dev pkg-config
+          pkg-config --modversion libdpdk
+      - name: Configure optional DPDK ring integration
+        shell: bash
+        run: |
+          cmake -S cnet/experimental/packet_io -B build/cnet-packet-dpdk \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPACKET_IO_ENABLE_DPDK=ON
+          cmake --build build/cnet-packet-dpdk --parallel 2
+      - name: Require real rte_ethdev TX/RX and stop-drain qualification
+        shell: bash
+        run: |
+          # Execute the program, not merely ctest's SKIP_RETURN_CODE 77:
+          # unavailable EAL must NOT be misrepresented as a passing PMD run.
+          ./build/cnet-packet-dpdk/packet_io_dpdk_ring_test
