@@ -253,17 +253,12 @@ void cmeta_thread_destroy(cmeta_thread_t *thread) {
 }
 
 void cmeta_once(cmeta_once_t *guard, void (*callback)(void)) {
-  int expected;
   if (guard == NULL || callback == NULL) return;
-  expected = 0;
-  if (__atomic_compare_exchange_n(&guard->state, &expected, 1, 0,
-                                  __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-    callback();
-    __atomic_store_n(&guard->state, 2, __ATOMIC_RELEASE);
-    return;
-  }
-  while (__atomic_load_n(&guard->state, __ATOMIC_ACQUIRE) != 2)
-    (void)sched_yield();
+  /* pthread_once publishes all callback writes with OS-level synchronization.
+   * Unlike a private atomic spin guard, the interceptable acquire/release
+   * boundary remains visible when this library was not TSan-instrumented but
+   * its first consumer was. No duplicate runtime or fallback path. */
+  (void)pthread_once(&guard->native, callback);
 }
 
 void cmeta_sleep_ms(uint32_t ms) {
