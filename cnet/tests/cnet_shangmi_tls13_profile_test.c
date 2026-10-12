@@ -271,6 +271,15 @@ static int provider_fatal_alert_record(const char *ca, const char *cert,
     return 0;
   }
 
+  {
+    size_t calls = 0u, requested = 0u, accepted = 0u, queued = 0u;
+    int diagnostic_status = cnet_tls_diagnostic_send_stats(
+        &pair.server, &calls, &requested, &accepted, &queued);
+    fprintf(stderr,
+            "RFC8998 diagnostic: server TLS send path "
+            "status=%d calls=%zu requested=%zu accepted=%zu queued=%zu\n",
+            diagnostic_status, calls, requested, accepted, queued);
+  }
   status = cnet_tls_take_cipher(&pair.server, record, sizeof(record), &size);
   /* At this pre-key ClientHello rejection, the fatal alert must be a
    * complete plaintext TLS Alert record. Validate framing and description,
