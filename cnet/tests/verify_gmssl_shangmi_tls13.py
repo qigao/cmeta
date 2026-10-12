@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Private GmSSL provider's real RFC 8998 loopback: handshake, echo, negatives."""
 import argparse
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -99,12 +100,32 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gmssl", required=True)
     ap.add_argument("--cnet-probe")
+    ap.add_argument("--cnet-nativeio")
     a = ap.parse_args()
     gmssl = str(Path(a.gmssl).resolve())
     if not Path(gmssl).is_file():
         raise RuntimeError("missing pinned GmSSL CLI; no fallback")
     with tempfile.TemporaryDirectory(prefix="salts-rfc8998-") as cwd:
         fixture(gmssl, cwd)
+        if a.cnet_nativeio:
+            probe = str(Path(a.cnet_nativeio).resolve())
+            if not Path(probe).is_file():
+                raise RuntimeError("missing CNet NativeIO RFC8998 executable")
+            env = dict(os.environ)
+            env.update({
+                "SALTS_SHANGMI_CA": str(Path(cwd, "root-cert.pem")),
+                "SALTS_SHANGMI_CERT": str(Path(cwd, "server-cert.pem")),
+                "SALTS_SHANGMI_KEY": str(Path(cwd, "server-key.pem"))
+            })
+            native = subprocess.run([probe], cwd=cwd, env=env,
+                                    capture_output=True, text=True,
+                                    timeout=30, check=False)
+            if native.returncode:
+                raise RuntimeError(
+                    "CNet real NativeIO RFC8998 failed: "
+                    + native.stdout[-1600:] + native.stderr[-1600:])
+            print("CNet NativeIO RFC8998 owner/listener path: PASS")
+            return
         if a.cnet_probe:
             probe = str(Path(a.cnet_probe).resolve())
             if not Path(probe).is_file():
