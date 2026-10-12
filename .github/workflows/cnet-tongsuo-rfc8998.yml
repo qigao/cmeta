@@ -94,8 +94,10 @@ jobs:
             -DNATIVE_IO_BUILD_BENCHMARKS=OFF \
             -DCNET_BUILD_BENCHMARKS=OFF
           cmake --build --preset linux-release-ci \
-            --target cnet_tongsuo_strict_client_probe --parallel 2
+            --target cnet_tongsuo_strict_client_probe \
+                     cnet_tongsuo_strict_server_probe --parallel 2
           test -x "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_tongsuo_strict_client_probe"
+          test -x "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_tongsuo_strict_server_probe"
       - name: Exercise both RFC8998 wire directions with strict SM2 policy
         shell: bash
         run: |
@@ -104,12 +106,14 @@ jobs:
             --tongsuo "$RUNNER_TEMP/rfc8998/tongsuo/apps/openssl" \
             --gmssl "$RUNNER_TEMP/rfc8998/gmssl-build/bin/gmssl" \
             --fixture-key-converter "$RUNNER_TEMP/rfc8998/gmssl-key-convert" \
-            --cnet-client "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_tongsuo_strict_client_probe"
+            --cnet-client "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_tongsuo_strict_client_probe" \
+            --cnet-server "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_tongsuo_strict_server_probe"
       - name: Record explicit qualification limit
         if: always()
         shell: bash
         run: |
           echo "Independent Tongsuo-vs-GmSSL provider CLI wire preflight only."
           echo "Public CNet client -> Tongsuo gate is reported by the exact-head interop script."
-          echo "Tongsuo strict client -> public CNet server remains unfulfilled #1134 gate."
+          echo "Public CNet NativeIO client and server strict peer directions are"
+          echo "qualified only if this run's exact-head interoperability step PASS."
           echo "No provider fallback, SDK release, or TLCP claim."
