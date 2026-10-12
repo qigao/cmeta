@@ -98,7 +98,7 @@ int main(int argc, char **argv) {
       .connection_capacity = 1u,
       .request_capacity = 8u,
       .completion_batch_capacity = 8u,
-      .receive_buffer_bytes = 512u,
+      .receive_buffer_bytes = 64u,
       .receive_buffer_count = 1u,
       .write_capacity = 8u,
       .max_write_bytes = 4096u,
