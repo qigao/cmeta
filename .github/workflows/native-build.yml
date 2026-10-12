@@ -224,7 +224,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R '^cmeta_native_(configurator_candidate|service_host_candidate)_'
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R '^cmeta_native_(configurator_candidate|service_host_candidate|component_candidate)_'
       - name: Qualify isolated Component runtime (Windows)
         if: ${{ !cancelled() && github.head_ref == 'feature/component-runtime-isolated' && steps.build_windows.outcome == 'success' && matrix.execution && matrix.family == 'windows' }}
         timeout-minutes: 15
@@ -234,7 +234,7 @@ jobs:
           call "%VSINSTALL%\\Common7\\Tools\\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R "^cmeta_native_(configurator_candidate|service_host_candidate)_"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R "^cmeta_native_(configurator_candidate|service_host_candidate|component_candidate)_"
           if errorlevel 1 exit /b 1
       # PR 1085 isolated SG runtime gate.
       - name: Qualify SG Owner tests (Unix)

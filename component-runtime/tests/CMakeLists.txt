@@ -85,7 +85,7 @@ set_target_properties(cmeta_native_component_candidate_coexistence_cpp_test PROP
 cmake_add_test(cmeta_native_service_host_candidate_coexistence_dso_test
   SOURCES service_host_coexistence_dso_test.c
   LIBS Salts::ComponentPlugin Salts::ServiceHostCandidate Salts::TinyTest
-  DEFS "COMPONENT_PROVIDER_PLUGIN_PATH=\\\"$<TARGET_FILE:salts_service_host_candidate_provider_fixture>\\\""
+  DEFS "COMPONENT_PROVIDER_PLUGIN_PATH=\"$<TARGET_FILE:salts_service_host_candidate_provider_fixture>\""
   FOLDER "component-runtime/tests")
 add_dependencies(cmeta_native_service_host_candidate_coexistence_dso_test
   salts_service_host_candidate_provider_fixture)
