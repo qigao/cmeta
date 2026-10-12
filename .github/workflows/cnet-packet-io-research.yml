@@ -10,6 +10,10 @@ name: CNet Packet IO Research
         description: 'Run additional system-DPDK net_ring qualification'
         type: boolean
         default: true
+      qualify_sdk:
+        description: 'Run exact Salts.Native 2.3 candidate SDK ABI consumer'
+        type: boolean
+        default: true
 permissions:
   contents: read
 concurrency:
@@ -128,3 +132,78 @@ jobs:
           cmake --build build/cnet-packet-gmssl --parallel 4
           ctest --test-dir build/cnet-packet-gmssl --output-on-failure \
             -R '^packet_(gmssl_mac_conformance|reliable_conformance|reliable_packet_io|io_fake_owner)$'
+
+  installed-cmeta-sdk:
+    name: Salts.Native 2.3.0-rc.14 installed C11 C++17 MAC consumer
+    if: github.event_name == 'pull_request' || inputs.qualify_sdk == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download exact published release and attest immutable SDK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download v2.3.0-rc.14 --repo qigao/salts \
+            --pattern 'Salts.Native.2.3.0-rc.14.nupkg' \
+            --pattern SHA256SUMS --dir dist
+          sha256sum --check dist/SHA256SUMS
+          echo 'fe8f5915adc0c7a0f5c52af75fa8cd188d6364dabda483013d842de242eb7a35  dist/Salts.Native.2.3.0-rc.14.nupkg' | sha256sum --check
+          python3 - <<'PY'
+          import os, zipfile
+          path = 'dist/Salts.Native.2.3.0-rc.14.nupkg'
+          with zipfile.ZipFile(path) as pkg:
+              names = set(pkg.namelist())
+              manifest = 'sdk/linux-x64/salts-sdk-manifest.txt'
+              assert manifest in names, 'No attested Linux x64 SDK manifest'
+              meta = dict(line.split('=',1) for line in pkg.read(manifest).decode('utf-8-sig').splitlines() if '=' in line)
+              for key,expected in [('version','2.3.0-rc.14'),('commit','c8a1a3d5e259a89ad42e75f1e4c3142e6b106ee1'),('rid','linux-x64'),('profile','release')]:
+                  assert meta.get(key) == expected, (key,meta.get(key),expected)
+              required = ('sdk/linux-x64/lib/cmake/Salts/SaltsConfig.cmake',
+                          'sdk/linux-x64/lib/cmake/Salts/SaltsConfigVersion.cmake',
+                          'sdk/linux-x64/lib/cmake/Salts/SaltsTargets.cmake',
+                          'sdk/linux-x64/include/cmeta_crypto.h')
+              for file in required:
+                  assert file in names, 'Missing installed SDK entry: '+file
+              pkg.extractall('_sdk')
+          PY
+          echo "SDK_ROOT=$GITHUB_WORKSPACE/_sdk/sdk/linux-x64" >> "$GITHUB_ENV"
+      - name: Configure and compile real exported Salts Core ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S experiments/cnet-packet-io -B build/cnet-packet-sdk \
+            -DCMAKE_BUILD_TYPE=Release -DPACKET_IO_ENABLE_CMETA_SDK=ON \
+            -DPACKET_IO_ENABLE_DPDK=OFF -DPACKET_IO_ENABLE_GMSSL=OFF \
+            "-DCMAKE_PREFIX_PATH=$SDK_ROOT" \
+            -DCMAKE_FIND_USE_PACKAGE_REGISTRY=FALSE \
+            -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=FALSE
+          cmake --build build/cnet-packet-sdk --parallel 2
+          LD_LIBRARY_PATH="$SDK_ROOT/lib:$SDK_ROOT/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            ctest --test-dir build/cnet-packet-sdk --output-on-failure
+      - name: Reject prior 2.2 SDK admission without fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/salts-sdk-negative"
+          printf '%s\n' 'cmake_minimum_required(VERSION 3.20)' \
+            'project(salts_sdk_negative C)' \
+            'find_package(Salts 2.2 CONFIG REQUIRED)' \
+            > "$RUNNER_TEMP/salts-sdk-negative/CMakeLists.txt"
+          if cmake -S "$RUNNER_TEMP/salts-sdk-negative" \
+            -B "$RUNNER_TEMP/salts-sdk-negative/build" \
+            "-DCMAKE_PREFIX_PATH=$SDK_ROOT" \
+            -DCMAKE_FIND_USE_PACKAGE_REGISTRY=FALSE \
+            -DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=FALSE \
+            > "$RUNNER_TEMP/sdk-negative.log" 2>&1; then
+            echo 'Invalid: Salts 2.3 installed SDK accepted 2.2 consumer' >&2
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/sdk-negative.log"
+          grep -Fq '2.3.0' "$RUNNER_TEMP/sdk-negative.log"
+          grep -Eq 'not compatible|incompatible|Could not find' "$RUNNER_TEMP/sdk-negative.log"

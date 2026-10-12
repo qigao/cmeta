@@ -16,6 +16,12 @@ set_target_properties(packet_reliable_research PROPERTIES C_STANDARD_REQUIRED ON
 target_include_directories(packet_reliable_research PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(packet_reliable_research PUBLIC Threads::Threads)
 
+# Shared bounded Owner/Generation lease: the only MAC lifecycle authority for
+# the GmSSL source baseline and installed Salts::Core ABI adapter.
+add_library(packet_mac_lease STATIC mac_lease.c)
+target_compile_features(packet_mac_lease PUBLIC c_std_11)
+target_link_libraries(packet_mac_lease PUBLIC packet_reliable_research)
+
 if(BUILD_TESTING)
   # Testing-only real HMAC-SHA256 provider. Production Salts/CNet acquires NO
   # OpenSSL dependency; the protocol engine accepts an explicit MAC provider.
@@ -85,12 +91,12 @@ if(PACKET_IO_ENABLE_GMSSL)
 
   add_library(packet_gmssl_mac_research STATIC gmssl_mac.c)
   target_compile_features(packet_gmssl_mac_research PRIVATE c_std_11)
-  target_link_libraries(packet_gmssl_mac_research PUBLIC packet_reliable_research
+  target_link_libraries(packet_gmssl_mac_research PUBLIC packet_mac_lease
     PRIVATE GmSSL::GmSSL)
   set_target_properties(packet_gmssl_mac_research PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 
-  add_executable(packet_gmssl_mac_test tests/gmssl_mac_test.c)
+  add_executable(packet_gmssl_mac_test tests/mac_provider_test.c)
   target_compile_features(packet_gmssl_mac_test PRIVATE c_std_11)
   target_link_libraries(packet_gmssl_mac_test PRIVATE
     packet_gmssl_mac_research GmSSL::GmSSL packet_test_hmac)
@@ -98,4 +104,39 @@ if(PACKET_IO_ENABLE_GMSSL)
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   add_test(NAME packet_gmssl_mac_conformance COMMAND packet_gmssl_mac_test)
   set_tests_properties(packet_gmssl_mac_conformance PROPERTIES TIMEOUT 30)
+endif()
+
+# Explicit exact-SDK consumer. This target uses Salts::Core (GmSSL stays
+# private inside the released SDK) and never reuses the direct-GmSSL target.
+option(PACKET_IO_ENABLE_CMETA_SDK "Build opt-in exact Salts.Native 2.3 SDK MAC consumer" OFF)
+if(PACKET_IO_ENABLE_CMETA_SDK)
+  if(NOT BUILD_TESTING)
+    message(FATAL_ERROR "Exact Salts.Native SDK consumer requires BUILD_TESTING=ON")
+  endif()
+  find_package(Salts 2.3.0 EXACT CONFIG REQUIRED)
+  if(NOT TARGET Salts::Core)
+    message(FATAL_ERROR "Exact Salts 2.3 SDK does not export Salts::Core")
+  endif()
+  add_library(packet_cmeta_mac_research STATIC cmeta_mac.c)
+  target_compile_features(packet_cmeta_mac_research PUBLIC c_std_11)
+  target_link_libraries(packet_cmeta_mac_research PUBLIC packet_mac_lease
+    PRIVATE Salts::Core)
+  set_target_properties(packet_cmeta_mac_research PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  add_executable(packet_cmeta_sdk_test tests/mac_provider_test.c)
+  target_compile_definitions(packet_cmeta_sdk_test PRIVATE RL_TEST_CMETA_SDK=1)
+  target_link_libraries(packet_cmeta_sdk_test PRIVATE
+    packet_cmeta_mac_research Salts::Core packet_test_hmac)
+  set_target_properties(packet_cmeta_sdk_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  add_test(NAME packet_cmeta_sdk_conformance COMMAND packet_cmeta_sdk_test)
+  set_tests_properties(packet_cmeta_sdk_conformance PROPERTIES TIMEOUT 30)
+  # The exact same exported C API must also be consumable by C++17.
+  enable_language(CXX)
+  add_executable(packet_cmeta_sdk_cpp_test tests/cmeta_sdk_cpp.cpp)
+  target_link_libraries(packet_cmeta_sdk_cpp_test PRIVATE Salts::Core)
+  set_target_properties(packet_cmeta_sdk_cpp_test PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+  add_test(NAME packet_cmeta_sdk_cpp COMMAND packet_cmeta_sdk_cpp_test)
+  set_tests_properties(packet_cmeta_sdk_cpp PROPERTIES TIMEOUT 30)
 endif()

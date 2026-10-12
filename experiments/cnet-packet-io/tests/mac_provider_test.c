@@ -1,4 +1,10 @@
+#if defined(RL_TEST_CMETA_SDK)
+#include "../cmeta_mac.h"
+#define mac_under_test rl_cmeta_mac
+#else
 #include "../gmssl_mac.h"
+#define mac_under_test rl_gmssl_mac
+#endif
 #include "test_mac.h"
 
 #include <pthread.h>
@@ -18,7 +24,7 @@ typedef struct pair pair;
 typedef struct node {
   pair *p;
   unsigned index;
-  rl_gmssl_lease lease;
+  rl_mac_lease lease;
   rl_session protocol;
   rl_ticket ticket;
   unsigned delivered;
@@ -68,9 +74,9 @@ static rl_config new_config(unsigned index, uint32_t epoch) {
 }
 static int begin(node *n,uint64_t generation,uint32_t epoch) {
   rl_config cfg=new_config(n->index,epoch);
-  rl_callbacks cb={emit,on_deliver,on_terminal,n,rl_gmssl_mac,&n->lease};
+  rl_callbacks cb={emit,on_deliver,on_terminal,n,mac_under_test,&n->lease};
   CHECK(rl_start(&n->protocol,&cfg,cb,generation,&n->ticket)==RL_OK);
-  CHECK(rl_gmssl_lease_bind(&n->lease,&n->protocol,n->ticket)==RL_GMSSL_OK);
+  CHECK(rl_mac_lease_bind(&n->lease,&n->protocol,n->ticket)==RL_MAC_OK);
   return 0;
 }
 static int setup(pair *p) {
@@ -100,10 +106,10 @@ static int advance(node *n,uint64_t now,size_t budget) {
 }
 static int close_node(node *n) {
   CHECK(rl_seal(&n->protocol,n->ticket)==RL_OK);
-  CHECK(rl_gmssl_lease_seal(&n->lease,n->ticket)==RL_GMSSL_OK);
+  CHECK(rl_mac_lease_seal(&n->lease,n->ticket)==RL_MAC_OK);
   CHECK(rl_abort(&n->protocol,n->ticket)==RL_OK);
   CHECK(rl_stop(&n->protocol,n->ticket)==RL_OK);
-  CHECK(rl_gmssl_lease_release(&n->lease,n->ticket)==RL_GMSSL_OK);
+  CHECK(rl_mac_lease_release(&n->lease,n->ticket)==RL_MAC_OK);
   for(size_t i=0;i<RL_KEY_BYTES;i++) {
     CHECK(n->protocol.config.tx_auth_key[i]==0);
     CHECK(n->protocol.config.rx_auth_key[i]==0);
@@ -117,13 +123,13 @@ static int gmssl_hmac_matches_independent_provider(void) {
   uint8_t message[RL_WIRE_HEADER_BYTES+12]={0};
   uint8_t calculated[RL_MAC_BYTES]={0},expected[RL_MAC_BYTES]={0};
   for(size_t i=0;i<sizeof(message);i++) message[i]=(uint8_t)(i*7u);
-  CHECK(rl_gmssl_mac(&n->lease,n->protocol.config.tx_auth_key,message,sizeof(message),calculated));
+  CHECK(mac_under_test(&n->lease,n->protocol.config.tx_auth_key,message,sizeof(message),calculated));
   CHECK(fixture_hmac_sha256(NULL,n->protocol.config.tx_auth_key,message,sizeof(message),expected));
   CHECK(memcmp(calculated,expected,RL_MAC_BYTES)==0);
-  CHECK(rl_gmssl_lease_release(&n->lease,n->ticket)==RL_GMSSL_BUSY);
+  CHECK(rl_mac_lease_release(&n->lease,n->ticket)==RL_MAC_BUSY);
   CHECK(close_node(n)==0);
   CHECK(close_node(&p.peers[1])==0);
-  CHECK(!rl_gmssl_mac(&n->lease,expected,message,sizeof(message),calculated));
+  CHECK(!mac_under_test(&n->lease,expected,message,sizeof(message),calculated));
   return 0;
 }
 static int authenticated_roundtrip_and_wrong_mac(void) {
@@ -153,35 +159,35 @@ static int authenticated_roundtrip_and_wrong_mac(void) {
 typedef struct worker_arg {
   node *n;
   bool mac_result;
-  rl_gmssl_status seal_result;
+  rl_mac_status seal_result;
 } worker_arg;
 static void *worker(void *context) {
   worker_arg *w=(worker_arg*)context;
   uint8_t data[RL_WIRE_HEADER_BYTES]={0};
   uint8_t out[RL_MAC_BYTES]={0};
-  w->mac_result=rl_gmssl_mac(&w->n->lease,w->n->protocol.config.tx_auth_key,
+  w->mac_result=mac_under_test(&w->n->lease,w->n->protocol.config.tx_auth_key,
                               data,sizeof(data),out);
-  w->seal_result=rl_gmssl_lease_seal(&w->n->lease,w->n->ticket);
+  w->seal_result=rl_mac_lease_seal(&w->n->lease,w->n->ticket);
   return NULL;
 }
 static int cross_owner_lifecycle_and_generation_fence(void) {
   pair p;CHECK(setup(&p)==0);
   node *n=&p.peers[0];
-  worker_arg arg={n,true,RL_GMSSL_OK};
+  worker_arg arg={n,true,RL_MAC_OK};
   pthread_t tid;
   CHECK(pthread_create(&tid,NULL,worker,&arg)==0);
   CHECK(pthread_join(tid,NULL)==0);
-  CHECK(!arg.mac_result && arg.seal_result==RL_GMSSL_WRONG_OWNER);
+  CHECK(!arg.mac_result && arg.seal_result==RL_MAC_WRONG_OWNER);
   rl_ticket old=n->ticket;
-  CHECK(rl_gmssl_lease_bind(&n->lease,&n->protocol,old)==RL_GMSSL_BUSY);
+  CHECK(rl_mac_lease_bind(&n->lease,&n->protocol,old)==RL_MAC_BUSY);
   CHECK(rl_seal(&n->protocol,old)==RL_OK);
-  CHECK(rl_gmssl_lease_seal(&n->lease,old)==RL_GMSSL_OK);
-  CHECK(rl_gmssl_lease_release(&n->lease,old)==RL_GMSSL_BUSY); /* protocol still owns keys */
+  CHECK(rl_mac_lease_seal(&n->lease,old)==RL_MAC_OK);
+  CHECK(rl_mac_lease_release(&n->lease,old)==RL_MAC_BUSY); /* protocol still owns keys */
   CHECK(rl_stop(&n->protocol,old)==RL_OK);
-  CHECK(rl_gmssl_lease_release(&n->lease,old)==RL_GMSSL_OK);
-  CHECK(rl_gmssl_lease_release(&n->lease,old)==RL_GMSSL_INVALID);
+  CHECK(rl_mac_lease_release(&n->lease,old)==RL_MAC_OK);
+  CHECK(rl_mac_lease_release(&n->lease,old)==RL_MAC_INVALID);
   CHECK(begin(n,2,0xabc11235u)==0);
-  CHECK(rl_gmssl_lease_seal(&n->lease,old)==RL_GMSSL_STALE);
+  CHECK(rl_mac_lease_seal(&n->lease,old)==RL_MAC_STALE);
   uint8_t payload[2]={0x31,0x41};
   CHECK(rl_send(&n->protocol,old,payload,sizeof(payload),50,0)==RL_STALE);
   CHECK(rl_send(&n->protocol,n->ticket,payload,sizeof(payload),51,0)==RL_OK);
@@ -199,6 +205,6 @@ int main(void) {
   if(gmssl_hmac_matches_independent_provider()) return 1;
   if(authenticated_roundtrip_and_wrong_mac()) return 1;
   if(cross_owner_lifecycle_and_generation_fence()) return 1;
-  puts("GmSSL R2 MAC provider and scoped Generation lease: PASS");
+  puts("R2 MAC via chosen Provider and scoped Generation lease: PASS");
   return 0;
 }
