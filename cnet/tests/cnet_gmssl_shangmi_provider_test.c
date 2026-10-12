@@ -147,7 +147,7 @@ static int probe_sm4_rfc8998_kat(void) {
 done:
   gmssl_secure_clear(&key, sizeof(key));
   gmssl_secure_clear(decrypted, sizeof(decrypted));
-  if (!ok) fprintf(stderr, "RFC 8998 A.1 SM4-GCM provider vector failed\\n");
+  if (!ok) fprintf(stderr, "RFC 8998 A.1 SM4-GCM provider vector failed\n");
   return ok;
 }
 
