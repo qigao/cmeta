@@ -1895,6 +1895,10 @@ static int cnet_owner_discard_queued_writes(cnet_owner_impl *impl, cnet_owner_se
 static int cnet_owner_progress_close(cnet_owner_impl *impl, cnet_owner_session *session) {
   int status;
   if (impl == NULL || session == NULL || !session->close_requested) return SALTS_EPROTO;
+  /* User close preempts a failed handshake's bounded alert drain. The
+   * in-flight NativeIO request and its generation remain owned until the
+   * terminal completion/cancellation is routed; no partial resubmission. */
+  session->tls_fatal_alert_draining = false;
   session->receive_demand = 0u;
   status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
   if (status != SALTS_OK) return status;
@@ -2372,6 +2376,10 @@ static int cnet_owner_process_deadlines(cnet_owner_impl *impl) {
         status = cnet_resolver_cancel(&impl->resolver, session->resolve_query);
         if (status != SALTS_OK) return status;
       }
+      /* A handshake deadline must stop further fatal-alert sends even if
+       * NativeIO has already completed a partial write which CNet has yet to
+       * consume. Preserve its outstanding request lease until completion. */
+      session->tls_fatal_alert_draining = false;
       status = cnet_owner_cancel_session_requests(impl, session->handle);
       if (status != SALTS_OK) return status;
       status = cnet_owner_finalize_session(impl, session);
