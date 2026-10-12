@@ -351,39 +351,60 @@ done:
 static int probe_protocol_configuration(int protocol, int cipher) {
   static const int groups[] = {TLS_curve_sm2p256v1};
   static const int sigs[] = {TLS_sig_sm2sig_sm3};
-  int wrong_cipher = protocol == TLS_protocol_tls13
-                         ? TLS_cipher_ecc_sm4_gcm_sm3
-                         : TLS_cipher_sm4_gcm_sm3;
+  const int other_protocol =
+      protocol == TLS_protocol_tls13 ? TLS_protocol_tlcp : TLS_protocol_tls13;
+  const int wrong_cipher =
+      protocol == TLS_protocol_tls13 ? TLS_cipher_ecc_sm4_gcm_sm3
+                                     : TLS_cipher_sm4_gcm_sm3;
   TLS_CTX ctx;
+  size_t original_versions;
+  int original_first;
   int ok = 0;
+
   if (tls_ctx_init(&ctx, protocol, TLS_client_mode) != 1) {
     fprintf(stderr, "GmSSL protocol context init failed: 0x%x\n", protocol);
     return 0;
   }
-  /* Pinned GmSSL 3.2.0#4 does NOT export a supported_versions setter.
-   * tls_ctx_init selects the protocol and pins min/max for this context,
-   * but the provider-internal supported_versions array is still initialized
-   * broadly. Do not conflate this configure-only smoke with a strict
-   * on-the-wire downgrade check. #1128 must qualify or add a bounded,
-   * exported provider setter before it advertises a strict RFC8998 profile.
-   */
-  if (ctx.protocol == protocol &&
-      ctx.min_protocol == protocol && ctx.max_protocol == protocol &&
-      tls_ctx_set_cipher_suites(&ctx, &cipher, 1u) == 1 &&
-      tls_ctx_set_supported_groups(&ctx, groups, 1u) == 1 &&
-      tls_ctx_set_signature_algorithms(&ctx, sigs, 1u) == 1 &&
-      tls_ctx_set_cipher_suites(&ctx, &wrong_cipher, 1u) != 1 &&
-      ctx.cipher_suites_cnt == 1u &&
-      ctx.cipher_suites[0] == cipher &&
-      ctx.supported_groups_cnt == 1u &&
-      ctx.supported_groups[0] == groups[0] &&
-      ctx.signature_algorithms_cnt == 1u &&
-      ctx.signature_algorithms[0] == sigs[0])
-    ok = 1;
+  original_versions = ctx.supported_versions_cnt;
+  original_first = ctx.supported_versions[0];
+
+  /* The new pinned provider 3.2.0#10 exposes a validated strict-version
+   * setter; production CNet must not mutate TLS_CTX fields directly.
+   * Reject the wrong profile without changing the existing version offer. */
+  if (tls_ctx_set_strict_protocol(&ctx, other_protocol) == 1 ||
+      ctx.supported_versions_cnt != original_versions ||
+      ctx.supported_versions[0] != original_first)
+    goto done;
+  if (tls_ctx_set_strict_protocol(&ctx, protocol) != 1 ||
+      ctx.protocol != protocol ||
+      ctx.min_protocol != protocol ||
+      ctx.max_protocol != protocol ||
+      ctx.supported_versions_cnt != 1u ||
+      ctx.supported_versions[0] != protocol)
+    goto done;
+  if (tls_ctx_set_cipher_suites(&ctx, &cipher, 1u) != 1 ||
+      tls_ctx_set_supported_groups(&ctx, groups, 1u) != 1 ||
+      tls_ctx_set_signature_algorithms(&ctx, sigs, 1u) != 1)
+    goto done;
+
+  /* A mismatched cipher must not replace the accepted suite; after policy
+   * configuration has started, reapplying the setter is forbidden. */
+  if (tls_ctx_set_cipher_suites(&ctx, &wrong_cipher, 1u) == 1 ||
+      tls_ctx_set_strict_protocol(&ctx, protocol) == 1 ||
+      ctx.protocol != protocol ||
+      ctx.supported_versions_cnt != 1u ||
+      ctx.supported_versions[0] != protocol ||
+      ctx.cipher_suites_cnt != 1u || ctx.cipher_suites[0] != cipher ||
+      ctx.supported_groups_cnt != 1u || ctx.supported_groups[0] != groups[0] ||
+      ctx.signature_algorithms_cnt != 1u ||
+      ctx.signature_algorithms[0] != sigs[0])
+    goto done;
+
+  ok = 1;
+done:
   tls_ctx_cleanup(&ctx);
   if (!ok)
-    fprintf(stderr, "GmSSL cannot configure ShangMi protocol 0x%x\n",
-            protocol);
+    fprintf(stderr, "GmSSL strict ShangMi protocol 0x%x check failed\n", protocol);
   return ok;
 }
 
