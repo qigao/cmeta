@@ -35,7 +35,7 @@ https://github.com/qigao/vcpkg-cache/tree/1f9d46f66436e3ce74677f393c25e72c008e0f
 | SM3 one-shot and streaming | `gmssl/sm3.h`: `sm3_init/update/finish` | `abc` independent digest KAT | Not exposed | N/A |
 | HMAC-SM3 | `gmssl/sm3.h`: `sm3_hmac_*` | independent vector | Not exposed | N/A |
 | HKDF-SM3 | `gmssl/hkdf.h`: `sm3_hkdf_extract/expand` | independently computed PRK/OKM vectors | Not exposed | N/A |
-| SM4-GCM | `gmssl/sm4.h`: `sm4_gcm_encrypt/decrypt` | roundtrip, wrong tag and wrong AAD preserve caller output | Not exposed | N/A |
+| SM4-GCM | `gmssl/sm4.h`: `sm4_gcm_encrypt/decrypt` | RFC 8998 Appendix A.1 KAT, roundtrip, wrong tag and wrong AAD preserve caller output | Not exposed | N/A |
 | SM2 sign and verify | `gmssl/sm2.h`: `sm2_sign_*`, `sm2_verify_*` | generated-key sign/verify + wrong user ID | Not exposed | N/A |
 | TLS 1.3 ShangMi | `gmssl/tls.h`: cipher `0x00c6`, curve `41`, signature `0x0708` | `TLS_CTX` configure-only | **Not exposed** | **NOT TESTED** |
 | TLCP 1.1 | `gmssl/tls.h`: `TLS_protocol_tlcp`, TLCP ECC/SM4 suites, TLCP cert/key setup | `TLS_CTX` configure-only | **Not exposed** | **NOT TESTED** |
@@ -88,8 +88,8 @@ KAT provenance:
   with Python/OpenSSL SM3-backed HMAC.
 - HKDF-SM3(salt=`salt`, ikm=`input key material`, info=`context`):
   independently derived with RFC 5869 extract/expand operations using SM3 HMAC.
-- SM4-GCM is a **roundtrip/auth-failure smoke**, **not** yet an independently
-  qualified SM4-GCM known-answer vector.
+- SM4-GCM: **RFC 8998 Appendix A.1** ciphertext + tag known-answer vector,
+  plus separate provider roundtrip/auth-failure smoke.
 - SM2 is a generated-key/ID semantic smoke, **not** yet a fixed-key signature
   KAT.
 
@@ -97,8 +97,10 @@ KAT provenance:
 
 - [ ] Exact-head CTest compile/link/runtime on Linux, Windows and macOS;
       capture SHA, triplet, provider pin, CI run URL and CTest results.
-- [ ] Add independent SM4-GCM known-answer test and fixed-key SM2 signing /
-      verification test (including DER lengths/canonicality).
+- [x] Add independent RFC 8998 A.1 SM4-GCM ciphertext/tag vector as a CTest
+      assertion (runtime success still awaits CI).
+- [ ] Add fixed-key SM2 signing / verification tests (including DER
+      lengths/canonicality).
 - [ ] Compare SM4 decrypt no-output-on-failure and alias/size contracts under
       sanitizers, including AES-GCM/TLS regressions.
 - [ ] RFC 8998 end-to-end ClientHello/ServerHello cipher, SM2 curve, signature,
