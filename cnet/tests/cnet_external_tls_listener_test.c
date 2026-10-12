@@ -173,7 +173,13 @@ static int drive_shared_once(cnet_listener *listener,
             __LINE__, status);
     return status;
   }
-    return advance_client(client);
+    status = advance_client(client);
+    if (status != SALTS_OK) {
+      fprintf(stderr,
+              "CNet shared TLS NativeIO client advance after observe timeout: status=%d\n",
+              status);
+    }
+    return status;
   }
   if (status != SALTS_OK) {
     fprintf(stderr, "CNet shared TLS NativeIO failure at line %d: status=%d\n",
@@ -228,7 +234,13 @@ static int drive_shared_once(cnet_listener *listener,
             __LINE__, status);
     return status;
   }
-  return advance_client(client);
+  status = advance_client(client);
+  if (status != SALTS_OK) {
+    fprintf(stderr,
+            "CNet shared TLS NativeIO client advance after completion batch: status=%d\n",
+            status);
+  }
+  return status;
 }
 
 static native_io_backend backend;
