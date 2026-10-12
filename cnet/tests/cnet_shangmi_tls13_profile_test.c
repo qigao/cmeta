@@ -233,6 +233,7 @@ static int provider_fatal_alert_record(const char *ca, const char *cert,
   shangmi_pair pair = {0};
   unsigned char record[1024] = {0};
   size_t size = 0u;
+  int first_server_status = SALTS_OK;
   int status = pair_create(&pair, ca, cert, key, "localhost",
                            CNET_TLS_SECURITY_PROFILE_STANDARD);
   if (status != SALTS_OK) {
@@ -252,6 +253,7 @@ static int provider_fatal_alert_record(const char *ca, const char *cert,
     int server_status = transfer_status == SALTS_OK
                             ? cnet_tls_handshake(&pair.server, &server_done)
                             : SALTS_EINVAL;
+    first_server_status = server_status;
     fprintf(stderr,
             "RFC8998 diagnostic: mixed-profile first flight "
             "client=%d transfer=%d server=%d\n",
@@ -264,7 +266,11 @@ static int provider_fatal_alert_record(const char *ca, const char *cert,
       return 0;
     }
   }
-  status = handshake(&pair);
+  /* Never reenter a terminal failed provider handshake. Re-entry changes the
+   * provider state and can turn an initial cipher/version refusal into a
+   * later decryption error, obscuring the genuine missing-alert reason. */
+  status = first_server_status;
+  if (status == SALTS_OK) status = handshake(&pair);
   if (status == SALTS_OK) {
     fprintf(stderr, "RFC8998 diagnostic: mixed cipher profiles unexpectedly accepted\n");
     pair_destroy(&pair);
