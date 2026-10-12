@@ -64,3 +64,11 @@ The provider's MAC context is supplied as the **required** `rl_callbacks.mac_use
 An opt-in `PACKET_IO_ENABLE_CMETA_SDK=ON` target uses the **published** `Salts.Native.2.3.0-rc.14.nupkg` installed `Salts::Core`, NOT a private GmSSL symbol or a source-build substitute. The research workflow checks the exact package SHA-256, manifest, source commit, `find_package(Salts 2.3.0 EXACT CONFIG)`, 2.2-version rejection, and executable C11/C++17 crypto consumers. The GmSSL reference and CMeta export adapters share **one** Owner/Generation-scoped `rl_mac_lease`. See [reproducible SDK attestation](SDK_RC14_CONFORMANCE.md).
 
 [Exact-head SDK CI #38232436205](https://github.com/qigao/salts/actions/runs/38232436205) completed successfully: 6/6 independent jobs, 5/5 installed-SDK CTests, and the 2.2 rejection. The SDK remains a **prerelease**; the experimental transport is not installed or public, and no trusted peer-key establishment, actual NIC teardown, production DSO hot replacement, or multi-peer fairness is implied.
+
+## Bounded multi-session R2 scheduling (#1152)
+
+The research-only [multi-session contract](MULTI_SESSION.md) adds `r2_mux.{h,c}`: one fixed Owner, at most eight **independently authenticated** R2 sessions, immutable peer/epoch lookup, one grant per peer per round-robin visit, and exact physical-frame reference counts. Failed peers and full queues cannot create a second terminal authority or implicit fallback.
+
+`packet_r2_mux_conformance` runs 1/2/4/8-session ACK/terminal tests, two-slot physical queue backpressure, a slow-peer starvation check, forged ACK isolation, eight-peer inbound incast, callback reentrancy, cancellation with pending physical frame and late Generation/epoch rejection. Each test uses **one actual `packet_io_owner` over a Fake PMD**, with separate HMAC fixtures and crypto leases per peer. The test is enabled in the existing standalone CTest matrix and requires no DPDK device.
+
+This **does not prove** physical NIC driver fairness, DPDK DMA reclamation, authenticated peer establishment or a quantitative Mpps/p99 benchmark. PR #1149 remains unmerged and is not a public CNet ABI.

@@ -21,6 +21,14 @@ target_link_libraries(packet_reliable_research PUBLIC Threads::Threads)
 add_library(packet_mac_lease STATIC mac_lease.c)
 target_compile_features(packet_mac_lease PUBLIC c_std_11)
 target_link_libraries(packet_mac_lease PUBLIC packet_reliable_research)
+# Research-only, one-Owner round-robin scheduler for up to eight existing R2
+# sessions. It owns no sockets, DPDK queue, crypto library, or global executor.
+add_library(packet_r2_mux_research STATIC r2_mux.c)
+target_compile_features(packet_r2_mux_research PUBLIC c_std_11)
+target_link_libraries(packet_r2_mux_research PUBLIC packet_reliable_research)
+set_target_properties(packet_r2_mux_research PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
 
 if(BUILD_TESTING)
   # Testing-only real HMAC-SHA256 provider. Production Salts/CNet acquires NO
@@ -29,6 +37,15 @@ if(BUILD_TESTING)
   add_library(packet_test_hmac STATIC tests/test_mac.c)
   target_link_libraries(packet_test_hmac PUBLIC OpenSSL::Crypto)
   target_compile_features(packet_test_hmac PUBLIC c_std_11)
+  # Real R2 HMAC fixture and one authoritative fake Packet I/O Owner.
+  add_executable(packet_r2_mux_test tests/r2_mux_test.c)
+  target_link_libraries(packet_r2_mux_test PRIVATE
+    packet_r2_mux_research packet_mac_lease packet_io_research packet_test_hmac)
+  set_target_properties(packet_r2_mux_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  add_test(NAME packet_r2_mux_conformance COMMAND packet_r2_mux_test)
+  set_tests_properties(packet_r2_mux_conformance PROPERTIES TIMEOUT 45)
+
   add_executable(packet_reliable_test tests/reliable_test.c)
   target_link_libraries(packet_reliable_test PRIVATE packet_reliable_research packet_test_hmac)
   set_target_properties(packet_reliable_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
