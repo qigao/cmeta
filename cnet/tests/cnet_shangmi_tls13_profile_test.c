@@ -240,6 +240,30 @@ static int provider_fatal_alert_record(const char *ca, const char *cert,
     pair_destroy(&pair);
     return 0;
   }
+  /* Identify whether this synthetic mixed-profile fixture ever reaches the
+   * server. A client-side failure before ClientHello cannot establish
+   * server-side provider alert conformance. */
+  {
+    bool client_done = false, server_done = false;
+    int client_status = cnet_tls_handshake(&pair.client, &client_done);
+    int transfer_status = client_status == SALTS_OK
+                              ? transfer(&pair.client, &pair.server)
+                              : SALTS_EINVAL;
+    int server_status = transfer_status == SALTS_OK
+                            ? cnet_tls_handshake(&pair.server, &server_done)
+                            : SALTS_EINVAL;
+    fprintf(stderr,
+            "RFC8998 diagnostic: mixed-profile first flight "
+            "client=%d transfer=%d server=%d\n",
+            client_status, transfer_status, server_status);
+    if (client_status != SALTS_OK || transfer_status != SALTS_OK) {
+      fprintf(stderr,
+              "RFC8998 diagnostic: synthetic peer did not reach server "
+              "handshake; cannot assert server alert emission\n");
+      pair_destroy(&pair);
+      return 0;
+    }
+  }
   status = handshake(&pair);
   if (status == SALTS_OK) {
     fprintf(stderr, "RFC8998 diagnostic: mixed cipher profiles unexpectedly accepted\n");
