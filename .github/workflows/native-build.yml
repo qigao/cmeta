@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: qigao/vcpkg-cache
-          ref: 61aa0392629b6e5cadbdf80152cb2d6fb858942b
+          ref: 9fc853a8a3a779e0115040d30caab3c05d777f44
           path: .ci-provider-overlay
           persist-credentials: false
       - name: Verify exact Draft GmSSL provider and activate port overlay
@@ -56,8 +56,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git -C .ci-provider-overlay rev-parse HEAD)" = "61aa0392629b6e5cadbdf80152cb2d6fb858942b"
+          test "$(git -C .ci-provider-overlay rev-parse HEAD)" = "9fc853a8a3a779e0115040d30caab3c05d777f44"
           test -f .ci-provider-overlay/ports/gmssl/tls13-fatal-alert.cmake
+          grep -Fq '"port-version": 11' .ci-provider-overlay/ports/gmssl/vcpkg.json
+          grep -Fq '96f60cef15c2d4bfe75353c5ff6d2ba603a81d8d' .ci-provider-overlay/versions/g-/gmssl.json
           printf 'VCPKG_OVERLAY_PORTS=%s\n' "$GITHUB_WORKSPACE/.ci-provider-overlay/ports" >> "$GITHUB_ENV"
       - name: Prepare build host
         uses: ./.github/actions/setup-build-host
