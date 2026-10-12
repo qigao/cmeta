@@ -1,0 +1,216 @@
+name: CNet full-source downstream CHttp RPC TSan
+
+'on':
+  pull_request:
+    paths:
+      - ".github/workflows/cnet-module-downstream-source-tsan.yml"
+      - "cnet/**"
+      - "platform/**"
+      - "cflow/**"
+      - "cmake/**"
+      - "presets/**"
+      - "CMakeLists.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cnet-1142-downstream-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-source:
+    name: Pinned Salts + SaltsUtils + CHttp source TSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      EXPECTED_SALTS: ${{ github.event.pull_request.head.sha || github.sha }}
+      EXPECTED_UTILS: 234c4a73bcefc455d48b3550ec2142d7ff1c3f5a
+      EXPECTED_CHTTP: 16fe91a36ea5dbdc0642dcf8bc11f959c44bdf22
+      TSAN_OPTIONS: halt_on_error=1:exitcode=66
+      CCACHE_DIR: ${{ github.workspace }}/build/cnet-source-consumer/ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      ASAN_OPTIONS: detect_leaks=0
+
+    steps:
+      - name: Checkout exact unpublished Salts source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SALTS }}
+          persist-credentials: false
+      - name: Checkout immutable SaltsUtils 4.3.0-rc.9 source
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/salts-utils
+          ref: 234c4a73bcefc455d48b3550ec2142d7ff1c3f5a
+          path: build/cnet-source-consumer/sources/salts-utils
+          persist-credentials: false
+      - name: Checkout original CHttp RPC Owner consumer
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/chttp
+          ref: 16fe91a36ea5dbdc0642dcf8bc11f959c44bdf22
+          path: build/cnet-source-consumer/sources/chttp
+          persist-credentials: false
+      - name: Use pinned shared vcpkg dependency graph
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Restore re2c host generator
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - name: Prepare native host tools
+        uses: ./.github/actions/setup-build-host
+      - name: Prepare exact source dependency identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends ccache
+          mkdir -p build/cnet-source-consumer
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SALTS"
+          test "$(git -C build/cnet-source-consumer/sources/salts-utils rev-parse HEAD)" = "$EXPECTED_UTILS"
+          test "$(git -C build/cnet-source-consumer/sources/chttp rev-parse HEAD)" = "$EXPECTED_CHTTP"
+          {
+            printf 'salts_source=%s\n' "$EXPECTED_SALTS"
+            printf 'saltsutils_source=%s\n' "$EXPECTED_UTILS"
+            printf 'chttp_source=%s\n' "$EXPECTED_CHTTP"
+            printf 'qualification=original-source-full-graph-tsan\n'
+            printf 'sdk_published=false\n'
+            printf 'prebuilt_firstparty_salts=false\n'
+          } | tee build/cnet-source-consumer/provenance.txt
+
+      - name: Build and install source-instrumented Salts
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/cnet-1142-source/salts"
+          cmake --preset linux-tsan-ci -S "$GITHUB_WORKSPACE" \
+            -B build/cnet-source-consumer/build-salts \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX="$root" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_THREAD=ON -DENABLE_SANITIZER_ADDRESS=OFF
+          cmake --build build/cnet-source-consumer/build-salts --parallel 2
+          cmake --install build/cnet-source-consumer/build-salts
+          test -f "$root/lib/cmake/Salts/SaltsConfig.cmake"
+
+      - name: Build and install source-instrumented SaltsUtils
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SALTS_ROOT="$RUNNER_TEMP/cnet-1142-source/salts"
+          export LD_LIBRARY_PATH="$SALTS_ROOT/lib:$SALTS_ROOT/bin:${LD_LIBRARY_PATH:-}"
+          src="$GITHUB_WORKSPACE/build/cnet-source-consumer/sources/salts-utils"
+          root="$RUNNER_TEMP/cnet-1142-source/salts-utils"
+          cmake --preset ci-linux-release-user -S "$src" \
+            -B build/cnet-source-consumer/build-utils \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX="$root" \
+            -DCMAKE_PREFIX_PATH="$SALTS_ROOT" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_THREAD=ON \
+            -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_UNDEFINED=OFF \
+            -DCMAKE_C_FLAGS="-fsanitize=thread -g -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -fno-omit-frame-pointer" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread"
+          cmake --build build/cnet-source-consumer/build-utils --parallel 2
+          cmake --install build/cnet-source-consumer/build-utils
+          test -f "$root/lib/cmake/SaltsUtils/SaltsUtilsConfig.cmake"
+          grep -F "Salts_DIR:PATH=$SALTS_ROOT" build/cnet-source-consumer/build-utils/CMakeCache.txt
+
+      - name: Build exact CHttp original RPC Owner tests from source
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SALTS_ROOT="$RUNNER_TEMP/cnet-1142-source/salts"
+          export SALTS_UTILS_ROOT="$RUNNER_TEMP/cnet-1142-source/salts-utils"
+          export DATABIND_ROOT="$SALTS_UTILS_ROOT"
+          export LD_LIBRARY_PATH="$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:${LD_LIBRARY_PATH:-}"
+          src="$GITHUB_WORKSPACE/build/cnet-source-consumer/sources/chttp"
+          cmake --preset ci-linux-release-user -S "$src" \
+            -B build/cnet-source-consumer/build-chttp \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_PREFIX_PATH="$SALTS_ROOT;$SALTS_UTILS_ROOT" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTING=ON -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_THREAD=ON \
+            -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_UNDEFINED=OFF \
+            -DCMAKE_C_FLAGS="-fsanitize=thread -g -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -fno-omit-frame-pointer" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+          cmake --build build/cnet-source-consumer/build-chttp --parallel 2 \
+            --target crpc_transport_test crpc_server_test chttp_rpc_service_test \
+                     chttp_server_test
+          grep -F "Salts_DIR:PATH=$SALTS_ROOT" build/cnet-source-consumer/build-chttp/CMakeCache.txt
+          grep -F "SaltsUtils_DIR:PATH=$SALTS_UTILS_ROOT" build/cnet-source-consumer/build-chttp/CMakeCache.txt
+
+      - name: Require TSan on all original first-party compilation units
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee build/cnet-source-consumer/instrumentation.txt
+          import json
+          from pathlib import Path
+          root=Path("build/cnet-source-consumer")
+          required=[
+            ("Salts", "build-salts", "cnet/src/cnet_module.c"),
+            ("Salts", "build-salts", "platform/src/thread_posix.c"),
+            ("SaltsUtils", "build-utils", "databind/runtime/data_bind_binding_plan.c"),
+            ("CHttp", "build-chttp", "http_client/src/chttp_client.c"),
+            ("CHttp", "build-chttp", "http_server/src/chttp_server.c"),
+            ("CHttp", "build-chttp", "http_server/rpc/chttp_server_rpc_service.c"),
+          ]
+          for label, directory in [
+              ("Salts", "build-salts"), ("SaltsUtils", "build-utils"),
+              ("CHttp", "build-chttp"),
+          ]:
+              commands=json.loads((root / directory / "compile_commands.json").read_text())
+              missing=[c["file"] for c in commands
+                       if "-fsanitize=thread" not in (
+                           c.get("command") or " ".join(c.get("arguments", [])))]
+              print(f"{label}: first_party_commands={len(commands)} missing_tsan={len(missing)}")
+              if not commands or missing:
+                  raise SystemExit(f"missing original-source TSan: {missing[:5]}")
+              for name, folder, suffix in required:
+                  if name!=label: continue
+                  if not any(c["file"].endswith(suffix) for c in commands):
+                      raise SystemExit(f"{label} missing expected source: {suffix}")
+          PY
+          ldd build/cnet-source-consumer/build-chttp/bin/crpc_transport_test \
+            | tee build/cnet-source-consumer/consumer-ldd.txt
+          grep -F "$RUNNER_TEMP/cnet-1142-source/salts/lib" \
+            build/cnet-source-consumer/consumer-ldd.txt
+          grep -q libtsan build/cnet-source-consumer/consumer-ldd.txt
+
+      - name: Repeat original CHttp RPC/Owner TSan conformance unsuppressed
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SALTS_ROOT="$RUNNER_TEMP/cnet-1142-source/salts"
+          export SALTS_UTILS_ROOT="$RUNNER_TEMP/cnet-1142-source/salts-utils"
+          export LD_LIBRARY_PATH="$SALTS_UTILS_ROOT/lib:$SALTS_UTILS_ROOT/bin:$SALTS_ROOT/lib:$SALTS_ROOT/bin:${LD_LIBRARY_PATH:-}"
+          timeout --signal=TERM --kill-after=10s 480s \
+            ctest --test-dir build/cnet-source-consumer/build-chttp \
+            -R '^(crpc_transport_test|crpc_server_test|chttp_rpc_service_test|chttp_server_test)$' \
+            --repeat until-fail:5 --timeout 90 --no-tests=error --output-on-failure
+
+      - name: Preserve exact source-graph qualifications
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnet-1142-chttp-original-consumer-tsan
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/cnet-source-consumer/provenance.txt
+            build/cnet-source-consumer/instrumentation.txt
+            build/cnet-source-consumer/consumer-ldd.txt
+            build/cnet-source-consumer/build-chttp/Testing/Temporary/LastTest.log
