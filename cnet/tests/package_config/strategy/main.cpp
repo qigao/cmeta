@@ -4,6 +4,10 @@
 #include <cnet/managed_dial.h>
 #include <cnet/client_pool.h>
 #include <salts/native_io_sharded.h>
+static_assert(std::is_standard_layout<cnet_tls_client_config>::value,
+              "RFC8998 installed client TLS policy must be stable C ABI data");
+static_assert(std::is_standard_layout<cnet_tls_server_config>::value,
+              "RFC8998 installed server TLS policy must be stable C ABI data");
 static_assert(std::is_standard_layout<cnet_name_query>::value,
               "installed name lookup query identity must be C ABI data");
 static_assert(std::is_standard_layout<cnet_ip_address>::value,

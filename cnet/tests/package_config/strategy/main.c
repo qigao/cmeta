@@ -40,6 +40,8 @@ static int defer_admission(void *user) { (void)user; return SALTS_EBUSY; }
 
 int main(void) {
   cnet_client client = {0};
+  cnet_tls_client tls_client = {0};
+  cnet_tls_client_config tls_profile_config = {0};
   cnet_connection invalid_connection = {0};
   cnet_name_lookup lookup = {0};
   cnet_name_lookup_config lookup_config = {0};
@@ -67,6 +69,17 @@ int main(void) {
   native_io_sharded_completion ignored_completion = {0};
   size_t accepts = 42u, sg_owned = 42u, events = 0u;
   uint64_t wait_ms = 99u;
+
+  /* Installed strict C11/C++17 consumer: security-profile enum and config
+   * ABI must be available with only Salts::CNet (no GmSSL headers or link).
+   * Validate unknown profile is rejected before loading trust or opening I/O.
+   */
+  CHECK(CNET_TLS_SECURITY_PROFILE_STANDARD == 0);
+  CHECK(CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 == 1);
+  tls_profile_config.size = sizeof(tls_profile_config);
+  tls_profile_config.security_profile = (cnet_tls_security_profile)99;
+  CHECK(cnet_tls_client_init(&tls_client, &tls_profile_config) == SALTS_EINVAL);
+  CHECK(tls_client.impl == NULL);
 
   client_config.backend = backend_kind();
   client_config.connection_capacity = 2u;
