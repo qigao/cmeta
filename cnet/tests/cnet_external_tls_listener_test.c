@@ -19,12 +19,14 @@ enum { TEST_BATCH = 16, TEST_TIMEOUT_MS = 5000 };
 #if CNET_SHANGMI_TLS13_TEST
 #define CNET_TLS_TEST_SECURITY_PROFILE CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13
 #define CNET_TLS_TEST_IDENTITY "localhost"
+#define CNET_TLS_TEST_SERVER_PASSWORD "fixture-only-password"
 #define CNET_EXTERNAL_TLS_CA getenv("SALTS_SHANGMI_CA")
 #define CNET_EXTERNAL_TLS_CERT getenv("SALTS_SHANGMI_CERT")
 #define CNET_EXTERNAL_TLS_KEY getenv("SALTS_SHANGMI_KEY")
 #else
 #define CNET_TLS_TEST_SECURITY_PROFILE CNET_TLS_SECURITY_PROFILE_STANDARD
 #define CNET_TLS_TEST_IDENTITY "127.0.0.1"
+#define CNET_TLS_TEST_SERVER_PASSWORD NULL
 #endif
 
 #ifndef CNET_EXTERNAL_TLS_CA
@@ -206,6 +208,7 @@ static void test_external_tls_listener_shared_progress(void) {
       .size = sizeof(server_tls_config),
       .cert_file = CNET_EXTERNAL_TLS_CERT,
       .key_file = CNET_EXTERNAL_TLS_KEY,
+      .key_password = CNET_TLS_TEST_SERVER_PASSWORD,
       .client_auth = CNET_TLS_CLIENT_AUTH_NONE,
       .alpn_protocols = alpn,
       .alpn_protocol_count = 1u,
