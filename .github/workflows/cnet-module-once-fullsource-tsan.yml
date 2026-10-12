@@ -57,7 +57,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           ccache --zero-stats
-          cmake --preset release-linux-ninja -B build/cnet-module-tsan \
+          cmake --preset linux-tsan-ci -B build/cnet-module-tsan \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
