@@ -357,7 +357,9 @@ static void test_external_tls_listener_shared_progress(void) {
   while (
 #if CNET_SHANGMI_TLS13_TEST
          (expect_failure
-              ? (reject_client_certificate ? !server_probe.failed : !client_probe.failed)
+              ? (reject_client_certificate
+                     ? (!server_probe.failed && !server_probe.connected)
+                     : (!client_probe.failed && !client_probe.connected))
               : ((!client_probe.connected || !server_probe.connected) &&
                  !client_probe.failed && !server_probe.failed)) &&
 #else
