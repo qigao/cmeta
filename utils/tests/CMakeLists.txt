@@ -34,6 +34,20 @@ foreach(test_source ${TEST_SOURCES} ${CXX_TEST_SOURCES})
     LIBS ${COMMON_LIBS})
 endforeach()
 
+# Salts #1170: execute the ORIGINAL shared pool and source-instrumented
+# CMeta synchronization under TSan. Keep this one Linux-only so it uses the
+# real pthread barrier, not a mock allocator or Windows test-only ABI.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(cmeta_global_buffer_tsan_test
+    cmeta_global_buffer_concurrent_tsan.c)
+  target_compile_features(cmeta_global_buffer_tsan_test PRIVATE c_std_11)
+  target_link_libraries(cmeta_global_buffer_tsan_test PRIVATE
+    Salts::Core Threads::Threads)
+  add_test(NAME cmeta_global_buffer_tsan
+    COMMAND cmeta_global_buffer_tsan_test)
+  set_tests_properties(cmeta_global_buffer_tsan PROPERTIES TIMEOUT 60)
+endif()
+
 # Seed a parent-only variable so the process clean-environment contract can be
 # tested without relying on PATH, which command interpreters may synthesize.
 if(TARGET test_cmeta_process)

@@ -1,0 +1,101 @@
+name: Salts global buffer original-source TSan #1170
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/cmeta-global-buffer-tsan.yml'
+      - 'utils/src/cmeta_buffer.c'
+      - 'utils/src/cmeta_thread.c'
+      - 'utils/tests/cmeta_global_buffer_concurrent_tsan.c'
+      - 'utils/tests/CMakeLists.txt'
+      - 'utils/include/cmeta_buffer.h'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cmeta-global-buffer-tsan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  original-pool:
+    name: mem_global original allocator two owners (TSan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      TSAN_OPTIONS: halt_on_error=1:exitcode=66
+      CCACHE_DIR: ${{ github.workspace }}/.ccache-global-buffer
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+
+      - name: Prepare C11 source TSan build
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache python3
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+
+      - name: Build original full-source Salts Core under TSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-tsan-ci -S . \
+            -B "$GITHUB_WORKSPACE/build/cmeta-global-buffer-tsan" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_THREAD=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build/cmeta-global-buffer-tsan \
+            --target cmeta_global_buffer_tsan_test --parallel 2
+
+      - name: Verify real buffer, thread and test source TSan instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('build/cmeta-global-buffer-tsan/compile_commands.json')
+          commands = json.loads(path.read_text(encoding='utf-8'))
+          for required in (
+              '/utils/src/cmeta_buffer.c',
+              '/utils/src/cmeta_thread.c',
+              '/utils/tests/cmeta_global_buffer_concurrent_tsan.c',
+          ):
+              matches = [c for c in commands if c['file'].replace('\\','/').endswith(required)]
+              if not matches or any('-fsanitize=thread' not in
+                  c.get('command', ' '.join(c.get('arguments', []))) for c in matches):
+                  raise SystemExit(f'NOT fully source TSan instrumented: {required}')
+              print(f'Source TSan: {required}, units={len(matches)}')
+          PY
+
+      - name: Repeat real two-owner allocator handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/cmeta-global-buffer-tsan \
+            -R '^cmeta_global_buffer_tsan$' \
+            --repeat until-fail:10 --no-tests=error --output-on-failure \
+            --output-junit "$GITHUB_WORKSPACE/build/cmeta-global-buffer-tsan/results.xml"
+
+      - name: Preserve TSan proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: salts-1170-source-tsan
+          path: |
+            build/cmeta-global-buffer-tsan/results.xml
+            build/cmeta-global-buffer-tsan/Testing/Temporary/LastTest.log
+            build/cmeta-global-buffer-tsan/compile_commands.json
+          retention-days: 14
