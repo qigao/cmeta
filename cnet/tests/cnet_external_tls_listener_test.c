@@ -247,6 +247,8 @@ static void test_external_tls_listener_shared_progress(void) {
    */
   const char *failure_case = getenv("SALTS_SHANGMI_FAILURE_CASE");
   bool expect_failure = failure_case != NULL && failure_case[0] != '\0';
+  bool require_mtls = getenv("SALTS_SHANGMI_MTLS") != NULL;
+  bool reject_client_certificate = false;
   if (expect_failure) {
     if (strcmp(failure_case, "wrong-ca") == 0) {
       client_tls_config.ca_file = getenv("SALTS_SHANGMI_UNTRUSTED_CA");
@@ -255,8 +257,29 @@ static void test_external_tls_listener_shared_progress(void) {
       client_tls_config.server_name = "wrong.example";
     } else if (strcmp(failure_case, "standard-peer") == 0) {
       client_tls_config.security_profile = CNET_TLS_SECURITY_PROFILE_STANDARD;
+    } else if (strcmp(failure_case, "missing-client-cert") == 0) {
+      check(require_mtls);
+      reject_client_certificate = true;
+    } else if (strcmp(failure_case, "untrusted-client-ca") == 0) {
+      check(require_mtls);
+      reject_client_certificate = true;
     } else {
       check(0); /* Unknown scenario is a failing test, never a skip. */
+    }
+  }
+  if (require_mtls) {
+    server_tls_config.client_auth = CNET_TLS_CLIENT_AUTH_REQUIRED;
+    server_tls_config.ca_file = CNET_EXTERNAL_TLS_CA;
+    if (!expect_failure || strcmp(failure_case, "missing-client-cert") != 0) {
+      client_tls_config.cert_file = getenv("SALTS_SHANGMI_CLIENT_CERT");
+      client_tls_config.key_file = getenv("SALTS_SHANGMI_CLIENT_KEY");
+      client_tls_config.key_password = CNET_TLS_TEST_SERVER_PASSWORD;
+      if (expect_failure && strcmp(failure_case, "untrusted-client-ca") == 0) {
+        client_tls_config.cert_file = getenv("SALTS_SHANGMI_UNTRUSTED_CLIENT_CERT");
+        client_tls_config.key_file = getenv("SALTS_SHANGMI_UNTRUSTED_CLIENT_KEY");
+      }
+      check(client_tls_config.cert_file != NULL);
+      check(client_tls_config.key_file != NULL);
     }
   }
 #endif
@@ -331,8 +354,16 @@ static void test_external_tls_listener_shared_progress(void) {
   server_observer.user = &server_probe;
 
   deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
-  while ((!client_probe.connected || !server_probe.connected) &&
-         !client_probe.failed && !server_probe.failed &&
+  while (
+#if CNET_SHANGMI_TLS13_TEST
+         (expect_failure
+              ? (reject_client_certificate ? !server_probe.failed : !client_probe.failed)
+              : ((!client_probe.connected || !server_probe.connected) &&
+                 !client_probe.failed && !server_probe.failed)) &&
+#else
+         ((!client_probe.connected || !server_probe.connected) &&
+          !client_probe.failed && !server_probe.failed) &&
+#endif
          cmeta_monotonic_ms() < deadline) {
     check(drive_shared_once(
                &listener, &server, &client, &backend,
@@ -362,9 +393,18 @@ static void test_external_tls_listener_shared_progress(void) {
      * the untrusted / wrong-profile client must never report CONNECTED.
      * Server-side completion may race the client's certificate rejection.
      */
-    check(!client_probe.connected);
-    check(client_probe.failed);
-    check(client_probe.terminal);
+    if (reject_client_certificate) {
+      /* A TLS 1.3 client may send its Finished before the server rejects
+       * a missing/untrusted client identity. The server must NEVER become
+       * CONNECTED; require its terminal verification failure. */
+      check(!server_probe.connected);
+      check(server_probe.failed);
+      check(server_probe.terminal);
+    } else {
+      check(!client_probe.connected);
+      check(client_probe.failed);
+      check(client_probe.terminal);
+    }
     return; /* after_each owns orderly bounded cleanup of both NativeIO owners. */
   }
 #endif
