@@ -5,6 +5,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CHECK(x) do { if (!(x)) { \
@@ -77,7 +78,10 @@ static void tx_released(void *context, uint64_t tag) {
   tx_storage *store = (tx_storage *)context;
   lab *l = store->owner;
   assert(store->busy && (size_t)tag == (size_t)(store - l->tx_frames));
-  assert(r2_mux_frame_unpin(&l->mux, store->handle) == R2_MUX_OK);
+  /* Always settle the physical frame even in NDEBUG/Release builds: never
+   * bury ownership-changing calls inside an assert() expression. */
+  r2_mux_status released = r2_mux_frame_unpin(&l->mux, store->handle);
+  if (released != R2_MUX_OK) abort();
   store->busy = false;
   ++l->frames_reclaimed;
 }
@@ -111,7 +115,8 @@ static int local_emit(void *user, const void *bytes, size_t size) {
   };
   packet_io_result accepted = packet_io_submit(&l->io, l->io_ticket, &frame);
   if (accepted != PACKET_IO_OK) {
-    assert(r2_mux_frame_unpin(&l->mux, p->handle) == R2_MUX_OK);
+    r2_mux_status rollback = r2_mux_frame_unpin(&l->mux, p->handle);
+    if (rollback != R2_MUX_OK) abort();
     store->busy = false;
     return accepted == PACKET_IO_FULL ? 0 : -1;
   }
