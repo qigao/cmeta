@@ -1,0 +1,82 @@
+name: CNet independent RFC8998 interop
+
+'on':
+  pull_request:
+    paths:
+      - 'cnet/tests/interop/**'
+      - '.github/workflows/cnet-tongsuo-rfc8998.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cnet-rfc8998-tongsuo-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tongsuo-strict-preflight:
+    name: Strict Tongsuo/GmSSL cross-provider wire preflight (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      TONGSUO_REF: 80cfbe3eb194a4d30da90742273c305ad4d096be
+      GMSSL_SOURCE_REF: 7c9f02904ef33e59c87b4f16621cc8fd434e7579
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Fetch exact independent implementations
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/rfc8998"
+          cd "$RUNNER_TEMP/rfc8998"
+          git init -q tongsuo
+          git -C tongsuo remote add origin https://github.com/Tongsuo-Project/Tongsuo.git
+          git -C tongsuo -c protocol.version=2 fetch -q --depth 1 origin "$TONGSUO_REF"
+          git -C tongsuo checkout -q --detach FETCH_HEAD
+          test "$(git -C tongsuo rev-parse HEAD)" = "$TONGSUO_REF"
+          git init -q gmssl
+          git -C gmssl remote add origin https://github.com/guanzhi/GmSSL.git
+          git -C gmssl -c protocol.version=2 fetch -q --depth 1 origin "$GMSSL_SOURCE_REF"
+          git -C gmssl checkout -q --detach FETCH_HEAD
+          test "$(git -C gmssl rev-parse HEAD)" = "$GMSSL_SOURCE_REF"
+          printf 'Tongsuo SHA: %s\nGmSSL source SHA: %s\n' "$TONGSUO_REF" "$GMSSL_SOURCE_REF"
+      - name: Build independent Tongsuo test-only binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/rfc8998/tongsuo"
+          ./config no-shared no-tests no-ssl3 no-weak-ssl-ciphers
+          make -j 2 apps/openssl
+          test -x apps/openssl
+          apps/openssl version
+          apps/openssl s_server -help 2>&1 | grep -Fq -- '-enable_sm_tls13_strict'
+          apps/openssl s_client -help 2>&1 | grep -Fq -- '-enable_sm_tls13_strict'
+      - name: Build pinned GmSSL upstream protocol reference CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S "$RUNNER_TEMP/rfc8998/gmssl" \
+                -B "$RUNNER_TEMP/rfc8998/gmssl-build" \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DENABLE_TLS=ON -DENABLE_SM9=OFF -DENABLE_CMS=OFF \
+                -DENABLE_LMS=OFF -DENABLE_XMSS=OFF -DENABLE_SPHINCS=OFF \
+                -DENABLE_KYBER=OFF -DENABLE_ZUC=OFF
+          cmake --build "$RUNNER_TEMP/rfc8998/gmssl-build" --parallel 2
+          test -x "$RUNNER_TEMP/rfc8998/gmssl-build/bin/gmssl"
+      - name: Exercise both RFC8998 wire directions with strict SM2 policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 cnet/tests/interop/verify_tongsuo_rfc8998.py \
+            --tongsuo "$RUNNER_TEMP/rfc8998/tongsuo/apps/openssl" \
+            --gmssl "$RUNNER_TEMP/rfc8998/gmssl-build/bin/gmssl"
+      - name: Record explicit qualification limit
+        if: always()
+        shell: bash
+        run: |
+          echo "Independent Tongsuo-vs-GmSSL provider CLI wire preflight only."
+          echo "CNet NativeIO-to-Tongsuo interop remains an unfulfilled #1134 gate."
+          echo "No provider fallback, SDK release, or TLCP claim."
