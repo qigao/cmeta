@@ -101,12 +101,36 @@ def main():
     ap.add_argument("--gmssl", required=True)
     ap.add_argument("--cnet-probe")
     ap.add_argument("--cnet-nativeio")
+    ap.add_argument("--cnet-nativeio-negatives")
     a = ap.parse_args()
     gmssl = str(Path(a.gmssl).resolve())
     if not Path(gmssl).is_file():
         raise RuntimeError("missing pinned GmSSL CLI; no fallback")
     with tempfile.TemporaryDirectory(prefix="salts-rfc8998-") as cwd:
         fixture(gmssl, cwd)
+        if a.cnet_nativeio_negatives:
+            probe = str(Path(a.cnet_nativeio_negatives).resolve())
+            if not Path(probe).is_file():
+                raise RuntimeError("missing CNet NativeIO negative probe executable")
+            for case in ("wrong-ca", "wrong-san", "standard-peer"):
+                env = dict(os.environ)
+                env.update({
+                    "SALTS_SHANGMI_CA": str(Path(cwd, "root-cert.pem")),
+                    "SALTS_SHANGMI_UNTRUSTED_CA":
+                        str(Path(cwd, "untrusted-cert.pem")),
+                    "SALTS_SHANGMI_CERT": str(Path(cwd, "server-cert.pem")),
+                    "SALTS_SHANGMI_KEY": str(Path(cwd, "server-key.pem")),
+                    "SALTS_SHANGMI_FAILURE_CASE": case
+                })
+                trial = subprocess.run([probe], cwd=cwd, env=env,
+                                       capture_output=True, text=True,
+                                       timeout=30, check=False)
+                if trial.returncode:
+                    raise RuntimeError(
+                        "CNet NativeIO security negative failed (" + case
+                        + "): " + trial.stdout[-1600:] + trial.stderr[-1600:])
+                print("CNet NativeIO rejected " + case + ": PASS")
+            return
         if a.cnet_nativeio:
             probe = str(Path(a.cnet_nativeio).resolve())
             if not Path(probe).is_file():
