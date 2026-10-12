@@ -111,6 +111,19 @@ typedef struct cmeta_io_sigpipe_guard {
   bool had_pending;
 } cmeta_io_sigpipe_guard;
 
+#if defined(SALTS_NATIVE_IO_TEST_DISPATCH)
+static cmeta_io_readiness_test_dispatch_hook g_dispatch_test_hook;
+static void *g_dispatch_test_user;
+
+void cmeta_io_readiness_test_set_dispatch_hook(
+    cmeta_io_readiness_test_dispatch_hook hook, void *user) {
+  /* Registration and invocation are Owner-only; tests register before
+   * observing and clear the hook before backend destruction. */
+  g_dispatch_test_hook = hook;
+  g_dispatch_test_user = user;
+}
+#endif
+
 static void readiness_counter_increment(uint64_t *counter) {
   if (*counter != UINT64_MAX) ++*counter;
 }
@@ -1072,6 +1085,14 @@ static int readiness_observe(cmeta_io_impl *base, native_io_completion *events,
       native_io_endpoint handle = {slot, generation};
       cmeta_io_readiness_endpoint *endpoint = readiness_endpoint(impl, handle);
       if (endpoint == NULL) continue;
+#if defined(SALTS_NATIVE_IO_TEST_DISPATCH)
+      /* The event just came from the real OS wait. Test owners may now
+       * cancel the matching pending NativeIO request BEFORE it is tried;
+       * the normal backend still publishes the authoritative terminal. */
+      if (g_dispatch_test_hook != NULL)
+        g_dispatch_test_hook(g_dispatch_test_user, impl->base.kind, handle,
+                             ready->interests);
+#endif
       if ((ready->interests & (SALTS_IO_READY_READ | SALTS_IO_READY_ERROR)) != 0u) {
         status = readiness_drive_lane(impl, handle, endpoint, false);
         if (status != SALTS_OK) return status;
