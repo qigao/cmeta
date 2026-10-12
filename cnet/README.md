@@ -983,6 +983,14 @@ hostname or IP-address SAN verification without transferring socket ownership
 to the provider. ALPN wire behavior follows
 [RFC 7301](https://www.rfc-editor.org/rfc/rfc7301).
 
+The stacked, **unreleased** RFC 8998 ShangMi TLS 1.3 profile is explicitly
+opt-in. It requires SM2 identity/curve, SM3, SM4-GCM, a separately verified
+trust store, and fail-closed version/cipher policy. It does **not** replace
+standard TLS or permit an opportunistic downgrade to standard TLS, TLCP or
+plaintext. For its C11 API, mTLS examples, native Windows/Linux/macOS
+qualification and outstanding independent-interoperability release gates,
+see [RFC 8998 ShangMi profile](RFC8998_SHANGMI_PROFILE.md).
+
 ## Ownership and progress
 
 `cnet_managed_dial_seal` seals recovery immediately and closes only its own
