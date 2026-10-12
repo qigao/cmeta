@@ -1174,6 +1174,11 @@ static int cnet_owner_tls_background_progress(cnet_owner_impl *impl,
 
   if (impl == NULL || session == NULL || session->peer.scheme != CNET_URI_TLS)
     return SALTS_EINVAL;
+  /* A failed TLS owner must never probe plaintext or re-enter GmSSL while
+   * a fatal-alert ciphertext write is outstanding. Its pending status is
+   * already owned by exactly one final terminal completion. */
+  if (session->pending_status != SALTS_OK)
+    return cnet_owner_finalize_session(impl, session);
   if (session->close_requested || session->read_active || session->receive_demand != 0u)
     return SALTS_OK;
 
@@ -1288,6 +1293,10 @@ static int cnet_owner_tls_drain_fatal_alert(cnet_owner_impl *impl,
 static int cnet_owner_tls_pump_impl(cnet_owner_impl *impl, cnet_owner_session *session) {
   bool started = false;
   int status;
+
+  /* No second handshake attempt after recording a fatal alert. */
+  if (session->tls_fatal_alert_draining)
+    return cnet_owner_tls_drain_fatal_alert(impl, session);
 
   if (!cnet_tls_state_handshake_complete(&session->tls)) {
     bool complete = false;
