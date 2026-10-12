@@ -1,0 +1,147 @@
+name: CNet mixed instrumentation native DSO TSan (#1143)
+
+'on':
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/cnet-module-once-mixed-sdk-tsan.yml"
+      - "cnet/tests/cnet_module_once_mixed_tsan_driver.c"
+      - "platform/include/salts/thread.h"
+      - "platform/src/thread_posix.c"
+      - "cnet/src/cnet_module.c"
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cnet-1143-mixed-dso-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mixed-consumer:
+    name: Uninstrumented native Salts DSO + exact TSan consumer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      EXPECTED_SALTS: ${{ github.event.pull_request.head.sha || github.sha }}
+      TSAN_OPTIONS: halt_on_error=1:exitcode=66
+      CCACHE_DIR: ${{ github.workspace }}/build/cnet-mixed-uninstrumented/ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - name: Checkout exact unpublished Salts candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SALTS }}
+          persist-credentials: false
+      - name: Restore canonical vcpkg graph
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Restore re2c host tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - name: Prepare Linux build host
+        uses: ./.github/actions/setup-build-host
+      - name: Set up toolchain and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends ccache
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SALTS"
+          mkdir -p build/cnet-mixed-uninstrumented
+          ccache --zero-stats
+          {
+            printf 'salts_source=%s\n' "$EXPECTED_SALTS"
+            printf 'native_sdk_instrumented=false\n'
+            printf 'consumer_instrumented=true\n'
+            printf 'published_sdk=false\n'
+            printf 'candidate_build=source_no_suppressions\n'
+          } | tee build/cnet-mixed-uninstrumented/provenance.txt
+      - name: Build ordinary candidate Salts native SDK without TSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/cnet-1143-mixed/salts"
+          cmake --preset linux-release-ci -S . -B build/cnet-mixed-uninstrumented/build-salts \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$root" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTING=OFF -DBUILD_TESTS=OFF \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_THREAD=OFF -DENABLE_SANITIZER_ADDRESS=OFF
+          cmake --build build/cnet-mixed-uninstrumented/build-salts --parallel 2
+          cmake --install build/cnet-mixed-uninstrumented/build-salts
+          test -f "$root/lib/libcnet.so"
+          ccache --show-stats
+      - name: Assert CNet and Platform are genuinely uninstrumented
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee build/cnet-mixed-uninstrumented/instrumentation.txt
+          from pathlib import Path
+          import json
+          path=Path("build/cnet-mixed-uninstrumented/build-salts/compile_commands.json")
+          commands=json.loads(path.read_text())
+          required=("cnet/src/cnet_module.c","platform/src/thread_posix.c")
+          matched=[c for c in commands if any(c["file"].endswith(s) for s in required)]
+          instrumented=[c["file"] for c in commands if "-fsanitize=thread" in
+                        (c.get("command") or " ".join(c.get("arguments", [])))]
+          print(f"first_party_units={len(commands)} critical_units={len(matched)} unexpectedly_tsan={len(instrumented)}")
+          if len(matched)!=len(required) or not commands or instrumented:
+              raise SystemExit(f"invalid SDK instrumentation: {instrumented[:5]}")
+          PY
+          root="$RUNNER_TEMP/cnet-1143-mixed/salts"
+          if readelf -d "$root/lib/libcnet.so" | grep -q libtsan; then
+            echo "test SDK must not link libtsan" >&2
+            exit 1
+          fi
+      - name: Build separately instrumented cold-client test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O1 -g -Wall -Wextra -fno-omit-frame-pointer \
+            -fsanitize=thread -pthread \
+            cnet/tests/cnet_module_once_mixed_tsan_driver.c \
+            -o build/cnet-mixed-uninstrumented/mixed-client -ldl
+          ldd build/cnet-mixed-uninstrumented/mixed-client \
+            | tee build/cnet-mixed-uninstrumented/consumer-ldd.txt
+          grep -q libtsan build/cnet-mixed-uninstrumented/consumer-ldd.txt
+      - name: Repeat mixed SDK first-use/last-drain unsuppressed
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/cnet-1143-mixed/salts"
+          export LD_LIBRARY_PATH="$root/lib:$root/bin:$GITHUB_WORKSPACE/vcpkg_installed/x64-linux/lib:${LD_LIBRARY_PATH:-}"
+          ldd "$root/lib/libcnet.so" | tee build/cnet-mixed-uninstrumented/sdk-ldd.txt
+          if grep -q "not found" build/cnet-mixed-uninstrumented/sdk-ldd.txt; then
+            echo "unresolved candidate CNet SDK dependency" >&2
+            exit 1
+          fi
+          for attempt in $(seq 1 30); do
+            echo "mixed-dso-tsan round $attempt/30"
+            timeout --signal=TERM --kill-after=5s 20s \
+              build/cnet-mixed-uninstrumented/mixed-client "$root/lib/libcnet.so"
+          done | tee build/cnet-mixed-uninstrumented/mixed-results.txt
+      - name: Preserve source and loader evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnet-1143-mixed-dso-evidence
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/cnet-mixed-uninstrumented/provenance.txt
+            build/cnet-mixed-uninstrumented/instrumentation.txt
+            build/cnet-mixed-uninstrumented/consumer-ldd.txt
+            build/cnet-mixed-uninstrumented/sdk-ldd.txt
+            build/cnet-mixed-uninstrumented/mixed-results.txt
+      - name: Verify exact source untouched
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SALTS"
+          test -z "$(git status --porcelain --untracked-files=no)"
