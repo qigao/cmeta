@@ -1,0 +1,143 @@
+name: CNet module once full-source TSan
+
+'on':
+  pull_request:
+    paths:
+      - ".github/workflows/cnet-module-once-fullsource-tsan.yml"
+      - ".github/actions/setup-compiler-cache/**"
+      - "cnet/**"
+      - "platform/**"
+      - "cmake/**"
+      - "presets/**"
+      - "CMakeLists.txt"
+      - "CMakeOptions.cmake"
+      - "vcpkg.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cnet-module-once-tsan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  module-once:
+    name: CNet/Platform original-source TSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      TSAN_OPTIONS: halt_on_error=1:exitcode=66:second_deadlock_stack=1
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - name: Checkout exact unpublished Salts source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          persist-credentials: false
+
+      - name: Restore shared re2c tool
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - name: Use pinned vcpkg binary dependency cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Prepare Linux host
+        uses: ./.github/actions/setup-build-host
+      - name: Restore compiler object cache
+        uses: ./.github/actions/setup-compiler-cache
+        with:
+          profile: cnet-module-once-fullsource-tsan
+
+      - name: Configure all first-party sources with TSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          ccache --zero-stats
+          cmake --preset release-linux-ninja -B build/cnet-module-tsan \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
+            -DENABLE_SANITIZER_THREAD=ON \
+            -DENABLE_SANITIZER_ADDRESS=OFF \
+            -DENABLE_SANITIZER_UNDEFINED=OFF \
+            -DENABLE_SANITIZER_LEAK=OFF \
+            -DVCPKG_INSTALL_OPTIONS=--only-binarycaching
+
+      - name: Build genuine CNet DSO, Platform archive and independent tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/cnet-module-tsan --parallel 2 \
+            --target cnet_module_once_concurrent_test platform_thread_test cnet_resolver_test
+          ccache --show-stats
+
+      - name: Reject uninstrumented first-party CNet and once objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee build/cnet-module-tsan/instrumentation.txt
+          import json
+          from pathlib import Path
+          commands=json.loads(Path("build/cnet-module-tsan/compile_commands.json").read_text())
+          required={
+            "cnet/src/cnet_module.c",
+            "platform/src/thread_posix.c",
+            "cnet/tests/cnet_module_once_concurrent_test.c",
+          }
+          root=Path.cwd().resolve()
+          observed=set()
+          for command in commands:
+            file=Path(command["file"]).resolve()
+            try:
+              rel=file.relative_to(root).as_posix()
+            except ValueError:
+              continue
+            flags=command.get("command") or " ".join(command.get("arguments", []))
+            if "-fsanitize=thread" not in flags:
+              raise SystemExit(f"UNINSTRUMENTED first-party compilation: {rel}")
+            if rel in required:
+              observed.add(rel)
+          print(f"first_party_commands={len(commands)}")
+          print(f"required_instrumented={len(observed)}/{len(required)}")
+          if observed != required:
+            raise SystemExit(f"missing original-source instrumentation: {required-observed}")
+          PY
+          executable=build/cnet-module-tsan/bin/cnet_module_once_concurrent_test
+          test -x "$executable"
+          ldd "$executable" | tee build/cnet-module-tsan/ldd.txt
+          grep -q libtsan build/cnet-module-tsan/ldd.txt
+          grep -q libcnet build/cnet-module-tsan/ldd.txt
+          if grep libcnet build/cnet-module-tsan/ldd.txt | grep -q "$RUNNER_TEMP"; then
+            echo "Refusing prebuilt CNet SDK in source-instrumented test" >&2
+            exit 1
+          fi
+
+      - name: Repeat first-use and refcount/teardown tests unsuppressed
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=10s 360s \
+            ctest --test-dir build/cnet-module-tsan \
+              -R '^cnet_module_once_concurrent_test$' \
+              --repeat until-fail:20 --timeout 45 \
+              --no-tests=error --output-on-failure
+          ctest --test-dir build/cnet-module-tsan \
+            -R '^platform_thread_test$' --no-tests=error \
+            --output-on-failure --timeout 45
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Upload full-source provenance and race diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnet-module-once-original-source-tsan
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/cnet-module-tsan/instrumentation.txt
+            build/cnet-module-tsan/ldd.txt
+            build/cnet-module-tsan/Testing/Temporary/LastTest.log
