@@ -8,9 +8,21 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum { TEST_BATCH = 16, TEST_TIMEOUT_MS = 5000 };
+
+#ifndef CNET_SHANGMI_TLS13_TEST
+#define CNET_SHANGMI_TLS13_TEST 0
+#endif
+#if CNET_SHANGMI_TLS13_TEST
+#define CNET_TLS_TEST_SECURITY_PROFILE CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13
+#define CNET_TLS_TEST_IDENTITY "localhost"
+#else
+#define CNET_TLS_TEST_SECURITY_PROFILE CNET_TLS_SECURITY_PROFILE_STANDARD
+#define CNET_TLS_TEST_IDENTITY "127.0.0.1"
+#endif
 
 #ifndef CNET_EXTERNAL_TLS_CA
 #error CNET_EXTERNAL_TLS_CA is required
@@ -75,6 +87,18 @@ static void on_state(void *user, cnet_connection connection,
       probe->failed = true;
       return;
     }
+#if CNET_SHANGMI_TLS13_TEST
+    {
+      char cipher[64] = {0};
+      size_t cipher_size = 0u;
+      status = cnet_tls_negotiated_cipher(
+          probe->client, connection, cipher, sizeof(cipher), &cipher_size);
+      if (status != SALTS_OK || strcmp(cipher, "TLS_SM4_GCM_SM3") != 0) {
+        probe->failed = true;
+        return;
+      }
+    }
+#endif
     probe->connected = true;
   }
   if (state == CNET_CONNECTION_CLOSED ||
@@ -181,13 +205,15 @@ static void test_external_tls_listener_shared_progress(void) {
       .key_file = CNET_EXTERNAL_TLS_KEY,
       .client_auth = CNET_TLS_CLIENT_AUTH_NONE,
       .alpn_protocols = alpn,
-      .alpn_protocol_count = 1u};
+      .alpn_protocol_count = 1u,
+      .security_profile = CNET_TLS_TEST_SECURITY_PROFILE};
   cnet_tls_client_config client_tls_config = {
       .size = sizeof(client_tls_config),
       .ca_file = CNET_EXTERNAL_TLS_CA,
-      .server_name = "127.0.0.1",
+      .server_name = CNET_TLS_TEST_IDENTITY,
       .alpn_protocols = alpn,
-      .alpn_protocol_count = 1u};
+      .alpn_protocol_count = 1u,
+      .security_profile = CNET_TLS_TEST_SECURITY_PROFILE};
   cnet_connect_options connect_options;
   cnet_observer server_observer = {0};
   native_io_request first = {0};
