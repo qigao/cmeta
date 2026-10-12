@@ -102,6 +102,16 @@ static void on_state(void *user, cnet_connection connection,
         probe->failed = true;
         return;
       }
+      {
+        char alpn[32] = {0};
+        size_t alpn_size = 0u;
+        status = cnet_tls_negotiated_alpn(
+            probe->client, connection, alpn, sizeof(alpn), &alpn_size);
+        if (status != SALTS_OK || strcmp(alpn, "http/1.1") != 0) {
+          probe->failed = true;
+          return;
+        }
+      }
     }
 #endif
     probe->connected = true;
