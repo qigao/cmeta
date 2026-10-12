@@ -365,6 +365,18 @@ rl_result rl_seal(rl_session *s, rl_ticket t) {
   memset(&s->rx, 0, sizeof(s->rx)); /* incomplete RX is not an accepted send */
   return RL_OK;
 }
+rl_result rl_abort(rl_session *s, rl_ticket t) {
+  rl_result st = validate(s, t);
+  if (st != RL_OK) return st;
+  if (s->state != RL_DRAINING) return RL_INVALID;
+  s->in_call = true;
+  /* ACK is only a local obligation, not an application-accepted TX. Explicit
+   * shutdown abandonment must never publish an ACK success terminal. */
+  s->ack.pending = false;
+  if (s->tx.active) terminal(s, RL_TERMINAL_CANCELLED);
+  s->in_call = false;
+  return RL_OK;
+}
 rl_result rl_drain(rl_session *s, rl_ticket t) {
   rl_result st = validate(s, t);
   if (st != RL_OK) return st;

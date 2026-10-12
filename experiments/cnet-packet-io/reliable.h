@@ -174,6 +174,10 @@ rl_result rl_step(rl_session *s, rl_ticket t, uint64_t now_ms,
                   size_t budget, size_t *out_emitted);
 rl_result rl_cancel(rl_session *s, rl_ticket t);
 rl_result rl_seal(rl_session *s, rl_ticket t);
+/* Explicit fail-closed shutdown escape: after sealing, discard locally pending
+ * ACKs and terminally cancel active logical TX. Physical Packet I/O leases are
+ * NOT reclaimed here; the host must separately drain their real DMA owner. */
+rl_result rl_abort(rl_session *s, rl_ticket t);
 rl_result rl_drain(rl_session *s, rl_ticket t);
 /* On successful stop the owned TX/RX MAC keys are explicitly wiped. This
  * does not release independent Packet I/O driver frame leases. */

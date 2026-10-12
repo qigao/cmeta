@@ -488,6 +488,36 @@ static int authenticated_callback_is_not_reentrant(void) {
   return 0;
 }
 
+static int abort_after_crypto_failure_has_bounded_drain(void) {
+  pair p;
+  CHECK(setup(&p) == 0);
+  uint8_t data[] = {4,5};
+  CHECK(rl_send(&p.a.session, p.a.ticket, data, sizeof(data), 31, 0) == RL_OK);
+  CHECK(advance(&p.a, 0, 1) == 1);
+  CHECK(dispatch(&p, take(&p.link, 0), 1) == RL_OK);
+  CHECK(p.b.delivers == 1 && p.b.session.ack.pending);
+  /* Provider failure must never downgrade ACK into unauthenticated output. */
+  p.b.session.callbacks.mac = failing_mac;
+  size_t emitted = 3;
+  CHECK(rl_step(&p.b.session, p.b.ticket, 1, 1, &emitted) == RL_CRYPTO);
+  CHECK(emitted == 0 && p.b.session.ack.pending && p.link.count == 0);
+  CHECK(rl_abort(&p.b.session, p.b.ticket) == RL_INVALID); /* seal required */
+  CHECK(rl_seal(&p.b.session, p.b.ticket) == RL_OK);
+  CHECK(rl_drain(&p.b.session, p.b.ticket) == RL_BUSY);
+  CHECK(rl_abort(&p.b.session, p.b.ticket) == RL_OK);
+  CHECK(rl_stop(&p.b.session, p.b.ticket) == RL_OK);
+  CHECK(p.b.session.stats.tx_acks == 0);
+  /* Remote TX remains unsettled, never silently converted to a success. */
+  CHECK(p.a.terminals == 0);
+  CHECK(rl_seal(&p.a.session, p.a.ticket) == RL_OK);
+  CHECK(rl_abort(&p.a.session, p.a.ticket) == RL_OK);
+  CHECK(p.a.terminals == 1 && p.a.last_terminal == RL_TERMINAL_CANCELLED);
+  CHECK(rl_abort(&p.a.session, p.a.ticket) == RL_OK);
+  CHECK(p.a.terminals == 1);
+  CHECK(rl_stop(&p.a.session, p.a.ticket) == RL_OK);
+  return 0;
+}
+
 static int hmac_known_answer_and_fail_closed_admission(void) {
   /* RFC 4231 test case 1: HMAC-SHA256 key 0x0b repeated 20 bytes, padded
    * with zero bytes here to the provider's fixed 32-byte key interface. */
@@ -603,6 +633,7 @@ static int stale_epoch_replay_and_key_erasure(void) {
 }
 
 int main(void) {
+  if (abort_after_crypto_failure_has_bounded_drain()) return 1;
   if (authenticated_callback_is_not_reentrant()) return 1;
   if (hmac_known_answer_and_fail_closed_admission()) return 1;
   if (wrong_key_cannot_deliver_or_settle()) return 1;
