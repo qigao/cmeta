@@ -222,12 +222,44 @@ static int test_thread_affinity(void) {
   return 0;
 }
 
+static int test_fifo_wrap_and_zero_budget(void) {
+  packet_io_owner owner = {0};
+  packet_io_frame slots[2];
+  packet_io_ticket ticket = {0};
+  fake_driver driver = {.tx_limit = 1};
+  release_probe probe = {0};
+  CHECK(packet_io_start(&owner, slots, 2, fake_ops(), &driver, 27, &ticket) == PACKET_IO_OK);
+  packet_io_frame a = frame(&probe, 30), b = frame(&probe, 31), c = frame(&probe, 32);
+  CHECK(packet_io_submit(&owner, ticket, &a) == PACKET_IO_OK);
+  CHECK(packet_io_submit(&owner, ticket, &b) == PACKET_IO_OK);
+  size_t tx = 99, rx = 99;
+  CHECK(packet_io_progress(&owner, ticket, 0, 0, NULL, NULL, &tx, &rx) == PACKET_IO_OK);
+  CHECK(tx == 0 && rx == 0 && owner.pending == 2 && driver.tx_count == 0);
+  CHECK(packet_io_progress(&owner, ticket, 1, 0, NULL, NULL, &tx, &rx) == PACKET_IO_OK);
+  CHECK(tx == 1 && owner.pending == 1);
+  CHECK(packet_io_submit(&owner, ticket, &c) == PACKET_IO_OK); /* wrap to slot 0 */
+  CHECK(packet_io_progress(&owner, ticket, 2, 0, NULL, NULL, &tx, &rx) == PACKET_IO_OK);
+  CHECK(tx == 1 && owner.pending == 1);
+  CHECK(packet_io_progress(&owner, ticket, 2, 0, NULL, NULL, &tx, &rx) == PACKET_IO_OK);
+  CHECK(tx == 1 && owner.pending == 0);
+  CHECK(driver.tx_count == 3 && driver.tx_held[0].tag == 30 &&
+        driver.tx_held[1].tag == 31 && driver.tx_held[2].tag == 32);
+  CHECK(packet_io_seal(&owner, ticket) == PACKET_IO_OK);
+  CHECK(packet_io_drain(&owner, ticket) == PACKET_IO_BUSY);
+  complete_tx(&driver);
+  CHECK(packet_io_stop(&owner, ticket) == PACKET_IO_OK);
+  CHECK(probe.released[30] == 1 && probe.released[31] == 1 &&
+        probe.released[32] == 1);
+  return 0;
+}
+
 int main(void) {
   if (test_partial_capacity_and_drain()) return 1;
   if (test_abort_and_generation()) return 1;
   if (test_receive_borrow_and_reentrancy()) return 1;
   if (test_driver_violation_leaves_staging()) return 1;
   if (test_thread_affinity()) return 1;
+  if (test_fifo_wrap_and_zero_budget()) return 1;
   puts("packet_io fake Owner conformance: PASS");
   return 0;
 }
