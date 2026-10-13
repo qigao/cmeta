@@ -332,6 +332,14 @@ add_dependencies(cnet_tls_test cnet_gmssl_shangmi_provider_test)
 # NativeIO client API; this executable links NO Tongsuo/GmSSL symbols.
 # A separate pinned-tool workflow supplies the Tongsuo strict server.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+  # Reverse peer direction: Tongsuo strict client authenticates the public
+  # CNet NativeIO server and receives encrypted application-data echo.
+  add_executable(cnet_tongsuo_strict_server_probe
+    interop/cnet_tongsuo_strict_server.c)
+  target_link_libraries(cnet_tongsuo_strict_server_probe
+    PRIVATE Salts::CNet Salts::Core)
+  set_target_properties(cnet_tongsuo_strict_server_probe PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "cnet/tests")
   add_executable(cnet_tongsuo_strict_client_probe
     interop/cnet_tongsuo_strict_client.c)
   target_link_libraries(cnet_tongsuo_strict_client_probe
