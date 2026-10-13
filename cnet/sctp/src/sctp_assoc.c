@@ -296,25 +296,43 @@ static cnet_sctp_assoc_status verify_cookie(cnet_sctp_assoc *s,
 static cnet_sctp_assoc_status handle_init(cnet_sctp_assoc *s, uint64_t now,
     const cnet_sctp_wire_header *header, const cnet_sctp_wire_chunk *chunk,
     uint8_t *output, size_t cap, size_t *written) {
-  uint8_t value[16u + 4u + CNET_SCTP_ASSOC_COOKIE_BYTES];
+  enum { INIT_ACK_BASE = 16u + 4u + CNET_SCTP_ASSOC_COOKIE_BYTES };
+  uint8_t value[INIT_ACK_BASE + CNET_SCTP_INIT_REPORT_BYTES +
+                4u * CNET_SCTP_INIT_REPORT_MAX];
   uint8_t scratch[CNET_SCTP_ASSOC_MAX_PACKET];
   cnet_sctp_init_param_view params;
+  cnet_sctp_init_param_status parsed;
+  size_t value_size = INIT_ACK_BASE;
+  size_t extra;
   size_t size = 0u;
   cnet_sctp_assoc_status status;
   if (s->state != CNET_SCTP_ASSOC_CLOSED || header->verification_tag != 0u ||
-      !good_init_fields(chunk->value, chunk->value_size) ||
-      cnet_sctp_init_params_preflight(chunk->value, chunk->value_size, 0, &params) !=
-          CNET_SCTP_INIT_PARAMS_OK)
+      !good_init_fields(chunk->value, chunk->value_size))
     return CNET_SCTP_ASSOC_PROTOCOL;
+  parsed = cnet_sctp_init_params_preflight(chunk->value, chunk->value_size, 0, &params);
+  if (parsed == CNET_SCTP_INIT_PARAMS_ABORT_REQUIRED)
+    return respond_abort(s, rd32(chunk->value), 0, output, cap, written);
+  if (parsed != CNET_SCTP_INIT_PARAMS_OK) return CNET_SCTP_ASSOC_PROTOCOL;
+  extra = params.report_wire_size + 4u * params.report_count;
+  if (extra > sizeof(value) - INIT_ACK_BASE ||
+      INIT_ACK_BASE + extra > CNET_SCTP_ASSOC_MAX_PACKET - 16u ||
+      INIT_ACK_BASE + extra > cap ||
+      16u > cap - (INIT_ACK_BASE + extra))
+    return CNET_SCTP_ASSOC_CAPACITY;
+  memset(value, 0, sizeof(value));
   prepare_init(s, value);
   wr16(value + 16u, SCTP_PARAM_COOKIE);
   wr16(value + 18u, (uint16_t)(4u + CNET_SCTP_ASSOC_COOKIE_BYTES));
+  value_size += append_unknown_reports(value + INIT_ACK_BASE,
+      sizeof(value) - INIT_ACK_BASE, chunk->value, chunk->value_size, &params, 1);
+  if (value_size != INIT_ACK_BASE + extra) return CNET_SCTP_ASSOC_PROTOCOL;
+  /* If output cannot fit the full required response, do not even call
+   * the signing provider; no incomplete signed INIT ACK may escape. */
   status = make_cookie(s, now, chunk->value, value + 20u);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   status = encode_one(s, rd32(chunk->value), SCTP_TYPE_INIT_ACK,
-      value, sizeof(value), scratch, sizeof(scratch), &size);
+      value, value_size, scratch, sizeof(scratch), &size);
   if (status != CNET_SCTP_ASSOC_OK) return status;
-  /* Stateless responder: CLOSED remains unchanged until valid COOKIE ECHO. */
   status = publish_packet(output, cap, written, scratch, size);
   if (status == CNET_SCTP_ASSOC_OK) s->last_time_ms = now;
   return status;
