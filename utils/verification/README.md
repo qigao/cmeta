@@ -141,6 +141,16 @@ byte_buffer_errors:
 
 `-a` 启用 acceptance-cycle 检查，`-f` 启用 weak fairness；正常验证保留 partial-order reduction。只有诊断或交叉检查时才使用 `-DNOREDUCE` 重新生成验证器。
 
+## 发布版分配器 TSan 门禁（#1170）
+
+[Salts 2.3.0-rc.15 源码 / 发布二进制并发验收对照](global_buffer_release_tsan_qualification.md)
+记录了原始发布标签源码完整 TSan、发布包双活租约与跨 Owner 同一
+buffer 复用测试，以及混合插桩产生的独立 TSan 诊断。
+
+**重要：** 发布版 `libsalts.so` 未插桩时，外部程序的 TSan 结果不能等同于
+整个分配器的完整源码 TSan；现有混合插桩报告保留为未通过的诊断，
+不使用 suppressions，也不据此宣称所有生产并发路径均已证明安全。
+
 ## 验证边界
 
 Promela 验证的是有限容量和有限消息数下的协议交错，不能单独证明：
