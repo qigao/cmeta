@@ -536,6 +536,7 @@ cnet_sctp_data_status cnet_sctp_data_stop(cnet_sctp_data *d) {
   if (status != CNET_SCTP_DATA_OK) return status;
   memset(d->tx, 0, sizeof(d->tx));
   memset(d->rx, 0, sizeof(d->rx));
+  memset(&d->pending, 0, sizeof(d->pending));
   d->in_flight = 0u;
   d->buffered_rx = 0u;
   d->rx_gaps = 0u;
