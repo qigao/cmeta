@@ -436,6 +436,17 @@ static size_t append_parameter_to_sctp_packet(const uint8_t *input, size_t n,
   return written;
 }
 
+static void reseal_sctp_checksum(uint8_t *packet, size_t size) {
+  uint32_t crc;
+  assert(packet != NULL && size >= 16u);
+  memset(packet + 8u, 0, 4u);
+  crc = cnet_sctp_wire_crc32c(packet, size);
+  packet[8] = (uint8_t)crc;
+  packet[9] = (uint8_t)(crc >> 8);
+  packet[10] = (uint8_t)(crc >> 16);
+  packet[11] = (uint8_t)(crc >> 24);
+}
+
 static void init_tlv_wire_gate(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -504,6 +515,14 @@ static void init_tlv_wire_gate(void) {
   assert(chunk.value[0] == 0u && chunk.value[1] == 8u);
   assert(chunk.value[2] == 0u && chunk.value[3] == 8u);
   assert(chunk.value[4] == 0xc0u && chunk.value[5] == 2u);
+  /* A syntactically broken advisory ERROR MUST NOT admit the accompanying
+   * COOKIE ECHO, even when the outer packet checksum has been recomputed. */
+  memcpy(scratch, echo, echo_n);
+  scratch[111u] ^= 1u; /* ERROR cause length 8 -> 9 */
+  reseal_sctp_checksum(scratch, echo_n);
+  assert(cnet_sctp_assoc_input(&b, 4u, scratch, echo_n, confirm,
+                               sizeof(confirm), &confirm_n) == CNET_SCTP_ASSOC_PROTOCOL);
+  assert(confirm_n == 0u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
   assert(cnet_sctp_assoc_advance(&a, 103u, scratch,
                                  sizeof(scratch), &encoded_n) == CNET_SCTP_ASSOC_OK);
   assert(encoded_n == echo_n && memcmp(echo, scratch, echo_n) == 0);
