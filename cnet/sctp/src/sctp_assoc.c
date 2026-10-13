@@ -1,4 +1,5 @@
 #include "sctp_assoc_internal.h"
+#include "sctp_init_params_internal.h"
 
 #include <limits.h>
 #include <string.h>
@@ -223,10 +224,13 @@ static cnet_sctp_assoc_status handle_init(cnet_sctp_assoc *s, uint64_t now,
     uint8_t *output, size_t cap, size_t *written) {
   uint8_t value[16u + 4u + CNET_SCTP_ASSOC_COOKIE_BYTES];
   uint8_t scratch[CNET_SCTP_ASSOC_MAX_PACKET];
+  cnet_sctp_init_param_view params;
   size_t size = 0u;
   cnet_sctp_assoc_status status;
   if (s->state != CNET_SCTP_ASSOC_CLOSED || header->verification_tag != 0u ||
-      chunk->value_size != 16u || !good_init_fields(chunk->value, chunk->value_size))
+      !good_init_fields(chunk->value, chunk->value_size) ||
+      cnet_sctp_init_params_preflight(chunk->value, chunk->value_size, 0, &params) !=
+          CNET_SCTP_INIT_PARAMS_OK)
     return CNET_SCTP_ASSOC_PROTOCOL;
   prepare_init(s, value);
   wr16(value + 16u, SCTP_PARAM_COOKIE);
@@ -242,41 +246,11 @@ static cnet_sctp_assoc_status handle_init(cnet_sctp_assoc *s, uint64_t now,
   return status;
 }
 
-/* A received INIT ACK can include several optional TLVs; cookie is mandatory. */
-static cnet_sctp_assoc_status find_cookie_parameter(
-    const cnet_sctp_wire_chunk *chunk, const uint8_t **cookie, size_t *len) {
-  size_t position = 16u;
-  const uint8_t *value = chunk->value;
-  *cookie = NULL;
-  *len = 0u;
-  if (!good_init_fields(value, chunk->value_size)) return CNET_SCTP_ASSOC_PROTOCOL;
-  while (position < chunk->value_size) {
-    size_t available = chunk->value_size - position;
-    size_t parameter_size;
-    size_t padded;
-    uint16_t type;
-    if (available < 4u) return CNET_SCTP_ASSOC_PROTOCOL;
-    type = rd16(value + position);
-    parameter_size = rd16(value + position + 2u);
-    if (parameter_size < 4u || parameter_size > available) return CNET_SCTP_ASSOC_PROTOCOL;
-    padded = (parameter_size + 3u) & ~(size_t)3u;
-    if (padded > available) {
-      if (parameter_size != available) return CNET_SCTP_ASSOC_PROTOCOL;
-      padded = available;
-    }
-    if (type == SCTP_PARAM_COOKIE) {
-      if (*cookie || parameter_size == 4u) return CNET_SCTP_ASSOC_PROTOCOL;
-      *cookie = value + position + 4u;
-      *len = parameter_size - 4u;
-    }
-    position += padded;
-  }
-  return *cookie ? CNET_SCTP_ASSOC_OK : CNET_SCTP_ASSOC_PROTOCOL;
-}
 static cnet_sctp_assoc_status handle_init_ack(cnet_sctp_assoc *s,
     uint64_t now, const cnet_sctp_wire_header *header,
     const cnet_sctp_wire_chunk *chunk,
     uint8_t *output, size_t cap, size_t *written) {
+  cnet_sctp_init_param_view params;
   const uint8_t *cookie = NULL;
   size_t cookie_size = 0u;
   uint8_t scratch[CNET_SCTP_ASSOC_MAX_PACKET];
@@ -285,8 +259,12 @@ static cnet_sctp_assoc_status handle_init_ack(cnet_sctp_assoc *s,
   cnet_sctp_assoc_status status;
   if (s->state != CNET_SCTP_ASSOC_COOKIE_WAIT ||
       header->verification_tag != s->local_tag) return CNET_SCTP_ASSOC_PROTOCOL;
-  status = find_cookie_parameter(chunk, &cookie, &cookie_size);
-  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (!good_init_fields(chunk->value, chunk->value_size) ||
+      cnet_sctp_init_params_preflight(chunk->value, chunk->value_size, 1, &params) !=
+          CNET_SCTP_INIT_PARAMS_OK)
+    return CNET_SCTP_ASSOC_PROTOCOL;
+  cookie = params.cookie;
+  cookie_size = params.cookie_size;
   if (cookie_size > CNET_SCTP_ASSOC_MAX_PACKET - 16u)
     return CNET_SCTP_ASSOC_CAPACITY;
   peer_tag = rd32(chunk->value);
