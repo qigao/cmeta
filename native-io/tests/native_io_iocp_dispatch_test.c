@@ -150,8 +150,8 @@ int main(void) {
 
     if (mode == IOCP_CANCEL_FIRST) {
       REQUIRE_STATUS(native_io_backend_cancel(&backend, request), SALTS_OK);
-      /* Cancellation is asynchronous on IOCP. Wait for the REAL aborted
-       * OVERLAPPED terminal before the peer is permitted to send. */
+      /* Cancellation is asynchronous on IOCP. Observe its REAL terminal
+       * before releasing the endpoint. This old socket is never reused. */
     } else {
       REQUIRE(send(sender, (const char *)&sent, 1, 0) == 1);
     }
@@ -169,9 +169,9 @@ int main(void) {
       REQUIRE(completion.status == SALTS_ECANCELED);
       REQUIRE(received == 0xe5u);
       REQUIRE(gate.seen == 0u);
-      /* This late real TCP byte cannot generate a second terminal for the
-       * retired request. The socket is closed before slot reuse. */
-      REQUIRE(send(sender, (const char *)&sent, 1, 0) == 1);
+      /* Winsock forbids continued I/O on a socket after CancelIoEx of an
+       * outstanding OVERLAPPED operation. Do not send late bytes on the
+       * cancelled endpoint: retire it and qualify only a fresh Generation. */
     } else {
       REQUIRE(completion.kind == NATIVE_IO_COMPLETION_OK);
       REQUIRE(completion.status == SALTS_OK);
