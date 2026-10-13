@@ -126,6 +126,7 @@ cnet_sctp_dcep_status cnet_sctp_dcep_open(cnet_sctp_dcep *d,
   if (label_len) memcpy(channel->label, label, label_len);
   if (proto_len) memcpy(channel->protocol, protocol, proto_len);
   channel->state = 1u;
+  channel->locally_initiated = 1u;
   *written = n;
   return CNET_SCTP_DCEP_OK;
 }
@@ -143,7 +144,8 @@ cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
   *written = 0u;
   channel = &d->channels[sid];
   if (bytes[0] == DCEP_ACK) {
-    if (n != 1u || (channel->state != 1u && channel->state != 2u))
+    if (n != 1u || !channel->locally_initiated ||
+        (channel->state != 1u && channel->state != 2u))
       return CNET_SCTP_DCEP_PROTOCOL;
     channel->state = 2u;
     return CNET_SCTP_DCEP_OK;
@@ -179,6 +181,7 @@ cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
   if (label_len) memcpy(channel->label, bytes + 12u, label_len);
   if (proto_len) memcpy(channel->protocol, bytes + 12u + label_len, proto_len);
   channel->state = 2u;
+  channel->locally_initiated = 0u;
   return CNET_SCTP_DCEP_OK;
 }
 
