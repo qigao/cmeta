@@ -74,7 +74,7 @@ if(BUILD_TESTING)
     target_compile_options(cnet_sctp_assoc_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
   add_test(NAME cnet_sctp_assoc_test COMMAND cnet_sctp_assoc_test)
-  
+
   add_executable(cnet_sctp_init_params_test tests/init_params_test.c)
   target_link_libraries(cnet_sctp_init_params_test PRIVATE cnet_sctp_assoc_proto)
   target_include_directories(cnet_sctp_init_params_test PRIVATE src)
