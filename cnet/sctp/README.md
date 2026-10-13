@@ -57,4 +57,6 @@ lifetime under concurrent cancellation.
 
 The prototype handles a basic handshake with either one chunk or the narrowly validated COOKIE ECHO + ERROR bundle. It does **not** provide complete RFC 9260 parameter/unknown-chunk action support, simultaneous open, restart/tie-tag behavior, production cookie-key lifetime/rotation admission gates, AUTH/ASCONF, DATA, flow/congestion control, TSN/SACK, PR-SCTP, interleaving, stream reset, shutdown or browser compatibility. All gaps are tracked in [RFC_MATRIX.md](RFC_MATRIX.md). A successful self-to-self handshake with a test-only MAC is **not** independent interoperability and is not a security pass.
 
+**Release status: NO-GO.** See [RELEASE_READINESS.md](RELEASE_READINESS.md) for exact 2.3.0/rc.15 ancestry, M0–M6 gaps, installed-SDK qualifications and the separation between Salts.Native stable release and this non-production prototype.
+
 **Draft / DO NOT MERGE:** [PR #1182](https://github.com/qigao/salts/pull/1182). Preserve current production CNet, TurboMedia/usrsctp and published SDK unchanged.
