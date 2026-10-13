@@ -46,6 +46,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_test(NAME cmeta_global_buffer_tsan
     COMMAND cmeta_global_buffer_tsan_test)
   set_tests_properties(cmeta_global_buffer_tsan PROPERTIES TIMEOUT 60)
+
+  # Same original global cache shell must cross 1024 alternating pthread
+  # Owners. Relaxed turn atomics add NO independent payload happens-before:
+  # only Salts cache release/acquire can establish ownership visibility.
+  add_executable(cmeta_global_buffer_handoff_tsan_test
+    cmeta_global_buffer_handoff_tsan.c)
+  target_compile_features(cmeta_global_buffer_handoff_tsan_test PRIVATE c_std_11)
+  target_link_libraries(cmeta_global_buffer_handoff_tsan_test PRIVATE
+    Salts::Core Threads::Threads)
+  add_test(NAME cmeta_global_buffer_handoff_tsan
+    COMMAND cmeta_global_buffer_handoff_tsan_test)
+  set_tests_properties(cmeta_global_buffer_handoff_tsan PROPERTIES TIMEOUT 60)
 endif()
 
 # Seed a parent-only variable so the process clean-environment contract can be
