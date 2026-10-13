@@ -163,6 +163,164 @@ def audit_versions(path: Path, clean: bool) -> dict[str, Any]:
     return report
 
 
+
+def audit_floating_resolution(assets_path: Path, packages_root: Path) -> dict[str, Any]:
+    """Accept only the REAL NuGet-resolved, official complete six-RID SDK.
+
+    No override, synthetic version selection, downloaded Release package
+    substitution, or false source path is permitted in the runtime workflow.
+    This is intentionally RED while old rc.sha versions outrank numeric RCs.
+    """
+    data = json.loads(assets_path.read_text(encoding="utf-8"))
+    libraries = data.get("libraries")
+    targets = data.get("targets")
+    ensure(isinstance(libraries, dict) and isinstance(targets, dict),
+           "incomplete NuGet project.assets.json (no libraries/targets)")
+    matches = []
+    for key, metadata in libraries.items():
+        if not isinstance(key, str) or not key.lower().startswith("salts.native/"):
+            continue
+        ensure(isinstance(metadata, dict) and metadata.get("type") == "package",
+               f"Salts.Native resolution was not an actual package: {key}")
+        matches.append(key.split("/", 1)[1])
+    ensure(len(matches) == 1,
+           f"expected exactly one actual Salts.Native package resolution: {matches}")
+    resolved = matches[0]
+    included_targets = [
+        key for framework in targets.values() if isinstance(framework, dict)
+        for key in framework if isinstance(key, str)
+        and key.lower() == ("salts.native/" + resolved).lower()
+    ]
+    ensure(len(included_targets) == 1,
+           "resolved Salts.Native package is absent or duplicated in NuGet targets")
+    ensure(not RC_SHA.fullmatch(resolved),
+           f"RC_SHA_POLLUTION_PRESENT: NuGet floating 2.3.0-* resolved unsafe {resolved}")
+    ensure(OFFICIAL.fullmatch(resolved) is not None,
+           f"not an official numeric RC/stable 2.3.0 version: {resolved}")
+
+    root = packages_root / "salts.native" / resolved.lower()
+    ensure(root.is_dir(), f"actual restored global package is missing: {root}")
+    sdk = root / "sdk"
+    ensure(sdk.is_dir(), f"resolved package lacks sdk/: {root}")
+    found = {p.name for p in sdk.iterdir() if p.is_dir()}
+    ensure(found == RIDS,
+           f"RESOLVED_SDK_INCOMPLETE: version={resolved}, missing={sorted(RIDS - found)}, "
+           f"unexpected={sorted(found - RIDS)}")
+
+    sha_set = set()
+    for rid in sorted(RIDS):
+        prefix = sdk / rid
+        required = (
+            "salts-sdk-manifest.txt",
+            "lib/cmake/Salts/SaltsConfig.cmake",
+            "lib/cmake/Salts/SaltsTargets.cmake",
+            "include/cmeta/function.h",
+            "include/cnet/cnet.h",
+            "include/unicode/salts_unicode.h",
+        )
+        for name in required:
+            ensure((prefix / name).is_file(),
+                   f"RESOLVED_SDK_INCOMPLETE: {resolved}, {rid}, missing {name}")
+        fields = dict(line.split("=", 1) for line in
+                      (prefix / "salts-sdk-manifest.txt").read_text(
+                          encoding="utf-8-sig").splitlines() if "=" in line)
+        ensure(fields.get("version") == resolved,
+               f"{rid}: SDK manifest version disagrees with NuGet resolution")
+        ensure(fields.get("profile") == "release",
+               f"{rid}: candidate-only SDK not an official release")
+        sha = fields.get("commit", "")
+        ensure(re.fullmatch(r"[0-9a-f]{40}", sha) is not None,
+               f"{rid}: expected 40-character immutable source SHA")
+        sha_set.add(sha)
+    ensure(len(sha_set) == 1,
+           f"resolved package has inconsistent source commits across six RIDs: {sha_set}")
+    source = next(iter(sha_set))
+    return {
+        "status": "PASS",
+        "floating_requirement": "2.3.0-*",
+        "actual_resolved_version": resolved,
+        "actual_source_commit": source,
+        "source_is_immutable_tag_required": True,
+        "sdk_rids": sorted(RIDS),
+        "package_root": str(root),
+        "no_synthetic_override": True,
+    }
+
+
+def floating_self_test() -> dict[str, Any]:
+    """Keep the floating admission gate deterministic and offline in PR CI."""
+    sha = "21bdb1145fbb2b39ee3fa644173ec037adba7b87"
+    release = "2.3.0-rc.15"
+    with tempfile.TemporaryDirectory(prefix="salts-floating-restore-") as temp:
+        root = Path(temp)
+        assets = root / "project.assets.json"
+        cache = root / "packages"
+        prefix = cache / "salts.native" / release / "sdk"
+
+        def write_assets(version: str) -> None:
+            key = "Salts.Native/" + version
+            assets.write_text(json.dumps({
+                "libraries": {key: {"type": "package", "path": "salts.native/" + version}},
+                "targets": {"net8.0": {key: {"type": "package"}}},
+            }))
+        for rid in RIDS:
+            target = prefix / rid
+            for file in (
+                "lib/cmake/Salts/SaltsConfig.cmake",
+                "lib/cmake/Salts/SaltsTargets.cmake",
+                "include/cmeta/function.h",
+                "include/cnet/cnet.h",
+                "include/unicode/salts_unicode.h",
+            ):
+                dest = target / file
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text("installed\n")
+            (target / "salts-sdk-manifest.txt").write_text(
+                f"version={release}\ncommit={sha}\nprofile=release\n")
+        write_assets(release)
+        passed = audit_floating_resolution(assets, cache)
+        ensure(passed["status"] == "PASS" and len(passed["sdk_rids"]) == 6,
+               "official six-RID fixture did not pass")
+        poisoned = "2.3.0-rc.sha" + "b31598521b23f7833a999eb05733e846b6174644"
+        write_assets(poisoned)
+        try:
+            audit_floating_resolution(assets, cache)
+        except FeedPolicyError as exc:
+            ensure("RC_SHA_POLLUTION_PRESENT" in str(exc),
+                   "poisoned floating resolver rejected for wrong reason")
+        else:
+            raise FeedPolicyError("SHA prerelease improperly admitted as official")
+        write_assets(release)
+        missing = prefix / "windows-x64" / "lib/cmake/Salts/SaltsConfig.cmake"
+        missing.unlink()
+        try:
+            audit_floating_resolution(assets, cache)
+        except FeedPolicyError as exc:
+            ensure("RESOLVED_SDK_INCOMPLETE" in str(exc),
+                   "incomplete resolved package rejected for wrong reason")
+        else:
+            raise FeedPolicyError("incomplete six-RID official package accepted")
+        missing.write_text("installed\n")
+        manifest = prefix / "macos-arm64" / "salts-sdk-manifest.txt"
+        manifest.write_text(f"version={release}\ncommit={'f'*40}\nprofile=release\n")
+        try:
+            audit_floating_resolution(assets, cache)
+        except FeedPolicyError as exc:
+            ensure("inconsistent source commits" in str(exc),
+                   "mixed-SHA package rejected for wrong reason")
+        else:
+            raise FeedPolicyError("cross-RID source provenance violation accepted")
+    return {
+        "status": "PASS",
+        "scenarios": [
+            "real project.assets.json numeric RC + six-RID admitted",
+            "semver rc.sha floating selection rejected",
+            "missing installed SDK configuration rejected",
+            "cross-RID SHA mismatch rejected",
+        ],
+    }
+
+
 def self_test(root: Path) -> dict[str, Any]:
     check_policy(root)
     sha = "b31598521b23f7833a999eb05733e846b6174644"
@@ -216,6 +374,10 @@ def main() -> int:
     i = commands.add_parser("inspect-dir")
     i.add_argument("version")
     i.add_argument("package_directory", type=Path)
+    fr = commands.add_parser("floating-restore")
+    fr.add_argument("project_assets_json", type=Path)
+    fr.add_argument("nuget_packages_root", type=Path)
+    commands.add_parser("floating-self-test")
     v = commands.add_parser("versions")
     v.add_argument("versions_json", type=Path)
     v.add_argument("--expect-clean", action="store_true")
@@ -227,6 +389,10 @@ def main() -> int:
             output = self_test(args.repo_root)
         elif args.command == "inspect-dir":
             output = inspect_extracted(args.version, args.package_directory)
+        elif args.command == "floating-restore":
+            output = audit_floating_resolution(args.project_assets_json, args.nuget_packages_root)
+        elif args.command == "floating-self-test":
+            output = floating_self_test()
         else:
             output = audit_versions(args.versions_json, args.expect_clean)
     except (FeedPolicyError, OSError, json.JSONDecodeError) as e:

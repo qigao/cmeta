@@ -6,6 +6,7 @@ name: Salts.Native public NuGet feed publishing policy (#1089)
       - '.github/workflows/ace-candidate-native-sdk.yml'
       - '.github/workflows/native-sdk-rc-release.yml'
       - '.github/workflows/nuget-rcsha-feed-cleanup.yml'
+      - '.github/workflows/nuget-floating-six-rid-audit.yml'
       - '.github/workflows/nuget-feed-policy.yml'
       - 'packaging/nuget/feed_hygiene.py'
   workflow_dispatch:
@@ -29,3 +30,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 packaging/nuget/feed_hygiene.py self-test .
+      - name: Guard real project.assets.json floating version and six-RID admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 packaging/nuget/feed_hygiene.py floating-self-test

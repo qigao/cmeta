@@ -1,0 +1,131 @@
+name: Salts.Native actual NuGet 2.3.0-* floating six-RID admission
+
+# Deliberately MANUAL and read-only until #1089 historic rc.sha cleanup
+# succeeds. It is expected to fail while incomplete higher-ranked packages
+# remain in GitHub Packages; it must not block unrelated PR source CI.
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  real-floating-feed:
+    if: github.repository == 'qigao/salts' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NUGET_PACKAGES: ${{ runner.temp }}/salts-floating-packages
+    steps:
+      - name: Checkout exactly the audited Salts feed policy
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Prove no candidate workflow still pushes to shared feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 packaging/nuget/feed_hygiene.py policy .
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore an UNOVERRIDDEN literal 2.3.0-* from GitHub Packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe="$RUNNER_TEMP/salts-literal-floating"
+          mkdir -p "$probe"
+          cat > "$probe/probe.csproj" <<'EOF'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <TargetFramework>net8.0</TargetFramework>
+              <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+            </PropertyGroup>
+            <ItemGroup>
+              <PackageReference Include="Salts.Native" Version="2.3.0-*" />
+            </ItemGroup>
+          </Project>
+          EOF
+          # A throwaway project outside this checkout does not inherit
+          # repo Directory.Packages.props or pinning/overrides.
+          cat > "$probe/nuget.config" <<'EOF'
+          <configuration>
+            <packageSources>
+              <clear />
+            </packageSources>
+          </configuration>
+          EOF
+          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
+            --name github --username qigao --password "$GH_TOKEN" \
+            --store-password-in-clear-text --configfile "$probe/nuget.config"
+          dotnet restore "$probe/probe.csproj" \
+            --configfile "$probe/nuget.config" --packages "$NUGET_PACKAGES" \
+            --no-cache --force --verbosity minimal
+          test -s "$probe/obj/project.assets.json"
+          cp "$probe/obj/project.assets.json" "$RUNNER_TEMP/salts-floating-assets.json"
+          sha256sum "$RUNNER_TEMP/salts-floating-assets.json" \
+            > "$RUNNER_TEMP/salts-floating-assets.sha256"
+          echo 'Restore used literal PackageReference Version="2.3.0-*"; no override.' \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Require actual resolved official six-RID source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 packaging/nuget/feed_hygiene.py floating-restore \
+            "$RUNNER_TEMP/salts-floating-assets.json" "$NUGET_PACKAGES" \
+            2>&1 | tee "$RUNNER_TEMP/salts-floating-inspection.txt"
+          python3 packaging/nuget/feed_hygiene.py floating-restore \
+            "$RUNNER_TEMP/salts-floating-assets.json" "$NUGET_PACKAGES" \
+            > "$RUNNER_TEMP/salts-floating-inspection.json"
+
+      - name: Confirm resolved version is an immutable official Git tag/Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          readarray -t details < <(python3 - "$RUNNER_TEMP/salts-floating-inspection.json" <<'PY'
+          import json, sys
+          x = json.load(open(sys.argv[1]))
+          if x.get("status") != "PASS" or len(x.get("sdk_rids", [])) != 6:
+              raise SystemExit("Only an admitted full six-RID resolution is acceptable")
+          print(x["actual_resolved_version"])
+          print(x["actual_source_commit"])
+          PY
+          )
+          version="${details[0]}"
+          source_sha="${details[1]}"
+          [[ "$version" =~ ^2[.]3[.]0(-rc[.][1-9][0-9]*)?$ ]]
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          tag="v$version"
+          actual="$(gh api "repos/qigao/salts/commits/$tag" --jq '.sha')"
+          test "$actual" = "$source_sha" || {
+            echo "Official git tag commit $actual differs from extracted SDK $source_sha" >&2
+            exit 1
+          }
+          gh release view "$tag" --repo qigao/salts --json assets \
+            --jq '.assets[].name' | grep -Fx "Salts.Native.$version.nupkg"
+          {
+            echo "Restored, genuinely floated official NuGet: Salts.Native $version"
+            echo "Confirmed tag: $tag"
+            echo "Confirmed exact six-RID source SHA: $source_sha"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve exact floating resolution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: salts-literal-floating-six-rid-feed-verification
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/salts-floating-assets.json
+            ${{ runner.temp }}/salts-floating-assets.sha256
+            ${{ runner.temp }}/salts-floating-inspection.txt
+            ${{ runner.temp }}/salts-floating-inspection.json
