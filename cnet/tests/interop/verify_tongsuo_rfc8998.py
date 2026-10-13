@@ -166,11 +166,49 @@ def test_tongsuo_strict_client(tongsuo, gmssl, cwd):
                     pipe.close()
 
 
+
+def test_public_cnet_client(tongsuo, cnet_client, cwd):
+    """Actual public CNet NativeIO endpoint connects to strict Tongsuo."""
+    port = free_port()
+    args = [tongsuo, "s_server", "-accept", "127.0.0.1:" + str(port),
+            "-cert", "server-cert.pem", "-key", "server-key-tongsuo.pem",
+            "-tls1_3", "-ciphersuites", SUITE,
+            "-groups", "SM2", "-enable_sm_tls13_strict",
+            "-rev", "-naccept", "1"]
+    log = Path(cwd, "tongsuo-cnet-server.log")
+    with log.open("wb") as out:
+        server = launch(args, cwd, out)
+        try:
+            time.sleep(1)
+            if server.poll() is not None:
+                raise RuntimeError("Strict Tongsuo server exited before CNet admission")
+            client = subprocess.run([
+                cnet_client, "root-cert.pem", str(port)
+            ], cwd=cwd, capture_output=True, timeout=20, check=False)
+            if client.returncode or b"public NativeIO client" not in client.stdout:
+                raise RuntimeError(
+                    "Public CNet NativeIO client did not interoperate with "
+                    "Tongsuo strict RFC8998: "
+                    + client.stderr.decode(errors="replace")[-2400:])
+            print("Public CNet NativeIO client -> Tongsuo strict TLS1.3: PASS")
+        finally:
+            if server.poll() is None:
+                server.terminate()
+            try:
+                server.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=3)
+            for pipe in (server.stdin, server.stdout):
+                if pipe:
+                    pipe.close()
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tongsuo", required=True)
     parser.add_argument("--gmssl", required=True)
     parser.add_argument("--fixture-key-converter", required=True)
+    parser.add_argument("--cnet-client")
     args = parser.parse_args()
     tong = require_file(args.tongsuo)
     gmssl = require_file(args.gmssl)
@@ -187,6 +225,8 @@ def main():
         Path(cwd, "server-key-tongsuo.pem").chmod(0o600)
         test_tongsuo_strict_server(tong, gmssl, cwd)
         test_tongsuo_strict_client(tong, gmssl, cwd)
+        if args.cnet_client:
+            test_public_cnet_client(tong, require_file(args.cnet_client), cwd)
     print("Independent strict RFC8998 provider interop preflight: PASS")
 
 
