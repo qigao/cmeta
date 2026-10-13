@@ -10,6 +10,8 @@ typedef struct framing_fixture {
   uint8_t wire[4096];
   size_t size, available, offset;
   uint8_t write_sequence[8];
+  uint8_t sent_record[256];
+  size_t sent_size, send_calls;
 } framing_fixture;
 
 static const uint8_t extensions[] = {8, 0, 0, 2, 0, 0};
@@ -26,7 +28,17 @@ static tls_ret_t framing_recv(void *user, void *data, size_t size, int flags) {
 }
 
 static tls_ret_t framing_send(void *user, const void *data, size_t size, int flags) {
-  (void)user; (void)data; (void)flags;
+  framing_fixture *f = (framing_fixture *)user;
+  (void)flags;
+  /* Test-only capture: the provider must actually emit a bounded fatal alert
+   * when it rejects a corrupt encrypted handshake record. */
+  if (f == NULL || data == NULL || size == 0u ||
+      f->sent_size > sizeof(f->sent_record) ||
+      size > sizeof(f->sent_record) - f->sent_size)
+    return TLS_ERROR_SYSCALL;
+  memcpy(f->sent_record + f->sent_size, data, size);
+  f->sent_size += size;
+  ++f->send_calls;
   return (tls_ret_t)size;
 }
 
@@ -172,12 +184,28 @@ spec("TLS 1.3 provider handshake framing") {
     check(framing_digest_matches(f, extensions, 0));
   }
 
-  it("rejects corrupt authentication tags without accepting handshake bytes") {
+  it("rejects corrupt authentication tags and emits an authenticated fatal alert") {
+    uint8_t decoded[TLS_MAX_RECORD_SIZE] = {0};
+    uint8_t alert_sequence[8] = {0};
+    size_t decoded_size = 0u;
     check_equal(framing_append(f, TLS_record_handshake, extensions, sizeof(extensions)), 1);
     f->wire[f->size - 1] ^= 1;
     f->available = f->size;
     check_equal(tls13_recv_encrypted_extensions(&f->conn), -1);
-    check_equal(f->conn.server_seq_num[7], 0);
+    /* The input AEAD failure does not advance the transcript, but the new
+     * provider-owned outbound encrypted Alert consumes its own sequence. */
     check(framing_digest_matches(f, extensions, 0));
+    check_equal(f->send_calls, 1u);
+    check(f->sent_size >= 7u && f->sent_size <= sizeof(f->sent_record));
+    check_equal(f->sent_record[0], TLS_record_application_data);
+    check_equal(tls13_record_decrypt(
+        f->conn.cipher_suite, &f->conn.server_write_key, f->conn.server_write_iv,
+        alert_sequence, f->sent_record, f->sent_size,
+        decoded, &decoded_size), 1);
+    check_equal(decoded_size, 7u);
+    check_equal(decoded[0], TLS_record_alert);
+    check_equal(decoded[5], TLS_alert_level_fatal);
+    check_equal(decoded[6], TLS_alert_bad_record_mac);
+    check_equal(f->conn.server_seq_num[7], 1);
   }
 }

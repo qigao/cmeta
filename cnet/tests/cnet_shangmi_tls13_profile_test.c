@@ -222,6 +222,90 @@ static int rejected(const char *ca, const char *cert, const char *key,
   return 1;
 }
 
+/*
+ * Fatal protocol mismatch must produce a real provider-owned TLS alert in
+ * CNet's bounded ciphertext ring. A lone transport EOF is NOT alert proof.
+ * Observe this *before* the NativeIO Owner can drain the record, so provider
+ * failure and Owner-dispatch failures are independently diagnosable.
+ */
+static int provider_fatal_alert_record(const char *ca, const char *cert,
+                                       const char *key) {
+  shangmi_pair pair = {0};
+  unsigned char record[1024] = {0};
+  size_t size = 0u;
+  int first_server_status = SALTS_OK;
+  int status = pair_create(&pair, ca, cert, key, "localhost",
+                           CNET_TLS_SECURITY_PROFILE_STANDARD);
+  if (status != SALTS_OK) {
+    fprintf(stderr, "RFC8998 diagnostic: STANDARD fixture admission failed: %d\n", status);
+    pair_destroy(&pair);
+    return 0;
+  }
+  /* Identify whether this synthetic mixed-profile fixture ever reaches the
+   * server. A client-side failure before ClientHello cannot establish
+   * server-side provider alert conformance. */
+  {
+    bool client_done = false, server_done = false;
+    int client_status = cnet_tls_handshake(&pair.client, &client_done);
+    int transfer_status = client_status == SALTS_OK
+                              ? transfer(&pair.client, &pair.server)
+                              : SALTS_EINVAL;
+    int server_status = transfer_status == SALTS_OK
+                            ? cnet_tls_handshake(&pair.server, &server_done)
+                            : SALTS_EINVAL;
+    first_server_status = server_status;
+    fprintf(stderr,
+            "RFC8998 diagnostic: mixed-profile first flight "
+            "client=%d transfer=%d server=%d\n",
+            client_status, transfer_status, server_status);
+    if (client_status != SALTS_OK || transfer_status != SALTS_OK) {
+      fprintf(stderr,
+              "RFC8998 diagnostic: synthetic peer did not reach server "
+              "handshake; cannot assert server alert emission\n");
+      pair_destroy(&pair);
+      return 0;
+    }
+  }
+  /* Never reenter a terminal failed provider handshake. Re-entry changes the
+   * provider state and can turn an initial cipher/version refusal into a
+   * later decryption error, obscuring the genuine missing-alert reason. */
+  status = first_server_status;
+  if (status == SALTS_OK) status = handshake(&pair);
+  if (status == SALTS_OK) {
+    fprintf(stderr, "RFC8998 diagnostic: mixed cipher profiles unexpectedly accepted\n");
+    pair_destroy(&pair);
+    return 0;
+  }
+
+  {
+    size_t calls = 0u, requested = 0u, accepted = 0u, queued = 0u;
+    int diagnostic_status = cnet_tls_diagnostic_send_stats(
+        &pair.server, &calls, &requested, &accepted, &queued);
+    fprintf(stderr,
+            "RFC8998 diagnostic: server TLS send path "
+            "status=%d calls=%zu requested=%zu accepted=%zu queued=%zu\n",
+            diagnostic_status, calls, requested, accepted, queued);
+  }
+  status = cnet_tls_take_cipher(&pair.server, record, sizeof(record), &size);
+  /* At this pre-key ClientHello rejection, the fatal alert must be a
+   * complete plaintext TLS Alert record. Validate framing and description,
+   * not just a single byte; never print raw records or key material. */
+  if (status != SALTS_OK || size != 7u || record[0] != 21u ||
+      record[1] != 3u || record[2] != 3u ||
+      record[3] != 0u || record[4] != 2u ||
+      record[5] != 2u || record[6] == 0u) {
+    fprintf(stderr,
+            "RFC8998 diagnostic: invalid or missing provider fatal TLS alert "
+            "(status=%d size=%zu type=%u)\n", status, size,
+            size != 0u ? (unsigned)record[0] : 0u);
+    pair_destroy(&pair);
+    return 0;
+  }
+  fprintf(stdout, "RFC8998 GmSSL provider fatal TLS alert: PASS\n");
+  pair_destroy(&pair);
+  return 1;
+}
+
 int main(int argc, char **argv) {
   cnet_tls_client_config bad = {0};
   cnet_tls_context *ctx = NULL;
@@ -235,6 +319,7 @@ int main(int argc, char **argv) {
   status = cnet_tls_client_context_create(&bad, &ctx);
   if (status != SALTS_EINVAL || ctx != NULL) return 1;
   if (!good(argv[1], argv[2], argv[3]) ||
+      !provider_fatal_alert_record(argv[1], argv[2], argv[3]) ||
       !rejected(argv[4], argv[2], argv[3], "localhost",
                 CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13) ||
       !rejected(argv[1], argv[2], argv[3], "wrong.example",

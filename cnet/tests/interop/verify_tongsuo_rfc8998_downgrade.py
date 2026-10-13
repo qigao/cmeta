@@ -81,11 +81,18 @@ def reject_tongsuo_peer(tongsuo, probe, cwd, mode):
             # A real TLS protocol rejection is essential; generic TCP
             # connection refusal, missing binary, or early process death
             # must not count. The CNet server separately proves accept.
+            # Only a peer-reported TLS alert qualifies. Local OpenSSL
+            # diagnostics such as "unsupported protocol", "wrong version"
+            # or "no shared cipher" do not prove that the server sent one.
             tls_rejection = any(word in transcript for word in (
-                "alert", "protocol version", "handshake failure",
-                "no shared cipher", "unsupported protocol",
-                "wrong version", "no suitable signature algorithm"))
-            if (trial.returncode == 0 or not tls_rejection or
+                "tlsv1 alert ", "sslv3 alert ", "alert number ",
+                "received alert ", "fatal alert "))
+            # Explicitly distinguish a protocol-level TLS alert from the
+            # previous CNet bug: teardown discarded the provider's alert and
+            # the independent peer observed only an unclean EOF.
+            unexpected_eof = ("unexpected eof" in transcript or
+                              "unexpected_eof" in transcript)
+            if (trial.returncode == 0 or not tls_rejection or unexpected_eof or
                     "tls_sm4_gcm_sm3" in transcript or
                     b"tongsuo-cnet-rfc8998-proof" in trial.stdout):
                 raise RuntimeError(
