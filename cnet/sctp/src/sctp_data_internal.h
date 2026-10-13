@@ -14,6 +14,7 @@
  */
 #define CNET_SCTP_DATA_MTU 1200u
 #define CNET_SCTP_DATA_PAYLOAD_MAX 1024u
+#define CNET_SCTP_DATA_MESSAGE_MAX 24576u /* 24 KiB, >16 KiB WebRTC gate */
 #define CNET_SCTP_DATA_TX_SLOTS 16u
 #define CNET_SCTP_DATA_RX_SLOTS 32u
 #define CNET_SCTP_DATA_STREAMS 16u
@@ -61,8 +62,18 @@ typedef struct cnet_sctp_data_rx {
   uint32_t tsn, ppid;
   uint16_t stream_id, ssn;
   uint8_t unordered;
+  uint8_t flags; /* RFC 9260 DATA U/B/E for bounded reassembly */
   uint8_t used;
 } cnet_sctp_data_rx;
+
+typedef struct cnet_sctp_data_pending {
+  uint8_t bytes[CNET_SCTP_DATA_MESSAGE_MAX];
+  size_t size, offset;
+  uint16_t stream_id, ssn;
+  uint32_t ppid;
+  uint8_t unordered;
+  uint8_t active;
+} cnet_sctp_data_pending;
 
 typedef struct cnet_sctp_data_message {
   uint16_t stream_id, stream_sequence;
@@ -75,6 +86,7 @@ typedef struct cnet_sctp_data {
   cnet_sctp_data_config config;
   cnet_sctp_data_tx tx[CNET_SCTP_DATA_TX_SLOTS];
   cnet_sctp_data_rx rx[CNET_SCTP_DATA_RX_SLOTS];
+  cnet_sctp_data_pending pending;
   uint16_t tx_ssn[CNET_SCTP_DATA_STREAMS], rx_ssn[CNET_SCTP_DATA_STREAMS];
   uint32_t next_tsn, last_ack, cumulative_rx, rx_gaps;
   uint32_t peer_rwnd, cwnd, ssthresh;
@@ -102,6 +114,18 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now_ms,
  * DATA returns a complete SACK packet via output, SACK returns 0 bytes.
  * No application callback runs; take() copies ready records explicitly.
  */
+/* One fragmented user message may be queued at a time. A copied, bounded
+ * pending buffer owns all bytes. pump() emits at most one DATA fragment per
+ * call (B|E flags and TSNs strictly sequential, fixed SSN, no interleaving).
+ * Backpressure/CWND/T3 and output-capacity failures do not advance offset.
+ * Every sender call and deadline remains driven by the original Owner.
+ */
+cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,
+    uint64_t now_ms, uint16_t stream_id, uint32_t ppid, int unordered,
+    const void *bytes, size_t length);
+cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d, uint64_t now_ms,
+    void *packet, size_t packet_capacity, size_t *packet_bytes);
+
 cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now_ms,
     const void *packet, size_t packet_size,
     void *output, size_t output_capacity, size_t *written);
