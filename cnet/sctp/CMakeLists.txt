@@ -87,7 +87,7 @@ if(CNET_SCTP_TEST_GMSSL)
   find_package(GmSSL CONFIG REQUIRED)
   add_library(cnet_sctp_gmssl_mac_proto STATIC src/sctp_gmssl_mac.c)
   target_include_directories(cnet_sctp_gmssl_mac_proto PRIVATE src)
-  target_link_libraries(cnet_sctp_gmssl_mac_proto PRIVATE GmSSL::GmSSL)
+  target_link_libraries(cnet_sctp_gmssl_mac_proto PRIVATE cnet_sctp_wire GmSSL::GmSSL)
   set_target_properties(cnet_sctp_gmssl_mac_proto PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   add_executable(cnet_sctp_gmssl_mac_test tests/assoc_gmssl_test.c)
