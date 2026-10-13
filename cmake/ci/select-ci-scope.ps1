@@ -153,7 +153,27 @@ $compare = $benchmarkChanged -and $compare -and -not $unified23Review
 $transportOwner = $PrepareRelease -or $release23Push -or $releaseTagPush -or
   ((-not $aceBranchPr) -and (-not $unifiedSanitizerQualification) -and
    (Test-Changed '^(cnet|native-io)/(src/|include/|CMakeLists\.txt$|benchmarks/)'))
-$work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic -or $transportOwner
+# ACE throughput sampling is a separate benchmark consumer, never part of
+# native functional qualification. The regular ACE development lane is
+# Linux-only, and sanitizer-only lanes cannot produce the three benchmark
+# host artifacts. Explicit full-matrix ACE and release lanes remain eligible.
+$aceActor = $release23Push -or $releaseTagPush -or $PrepareRelease -or (
+  (-not $acePatternsDevelopment) -and
+  (-not $aceSanitizerQualification) -and
+  (-not $unifiedSanitizerQualification) -and
+  (Test-Changed '^(cflow/(include/|src/|benchmarks/|CMakeLists\.txt$)|concurrency/(include/|src/|benchmarks/|CMakeLists\.txt$)|\.github/workflows/(native-build|native-io-benchmarks)\.yml$|cmake/ci/select-ci-scope\.ps1$)')
+)
+# CNet progress measurements also consume the benchmark stage; select them
+# for CNet/NativeIO inputs or when the benchmark workflow itself changes.
+$cnetProgressBench = $PrepareRelease -or (
+  $benchmarkChanged -and ($benchmarkCommon -or $nativeRuntime -or $cnetRuntime -or $cnetBenchCommon -or
+    (Test-Changed '^cnet/(tests/cnet_progress_strategy_test\.c$|benchmarks/.*progress)'))
+) -or (
+  (-not $acePatternsDevelopment) -and (-not $aceSanitizerQualification) -and
+  (-not $unifiedSanitizerQualification) -and
+  (Test-Changed '^\.github/workflows/native-io-benchmarks\.yml$')
+)
+$work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic -or $transportOwner -or $aceActor -or $cnetProgressBench
 
 $checks = [ordered]@{
   contracts = $native -or $execution -or $projection -or $lean
@@ -163,6 +183,8 @@ $checks = [ordered]@{
   lean = $lean
   mobile = $mobile
   work = $work
+  ace_actor = $aceActor
+  cnet_progress_bench = $cnetProgressBench
   transport_owner = $transportOwner
   evidence = $work
   cnet_compare = $compare
@@ -242,7 +264,9 @@ foreach ($profile in $profiles) {
   $entry.execution = $execution -and -not $entry.cross -and $entry.id -ne 'linux-arm64-release'
   $entry.armcontracts = $entry.id -eq 'linux-arm64-release' -and ($native -or $execution)
   $entry.projection = $projection -and $entry.id -in @('linux-release', 'linux-clang-release', 'macos-clang-release')
-  $entry.benchmarks = if ($entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
+  # Build throughput binaries only for hosts selected as benchmark producers.
+  # Ordinary native/Windows conformance must not compile or run performance suites.
+  $entry.benchmarks = if ($work -and $entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
   $entry.package = ($PrepareRelease -or $release23Push -or $releaseTagPush) -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
   $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }

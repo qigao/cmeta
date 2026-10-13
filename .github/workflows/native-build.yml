@@ -187,66 +187,8 @@ jobs:
           path: ${{ runner.temp }}/salts-private-owner-candidate-*
           if-no-files-found: warn
           retention-days: 14
-      - name: Run Actor, mailbox and ACE throughput benchmarks (Unix)
-        id: actor_bench_unix
-        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.benchmarks == 'ON' }}
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          set -euo pipefail
-          ctest --preset "${{ matrix.preset }}" --no-tests=error -LE '^$' \
-            -R '^(cflow_(actor_mailbox|ace_throughput)_benchmark|thread_pool_lf_benchmark)$' --repeat until-fail:5 -V \
-            --output-log '${{ matrix.build_dir }}/actor-mailbox-benchmark.log'
-      - name: Run Actor, mailbox and ACE throughput benchmarks (Windows)
-        id: actor_bench_windows
-        if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.benchmarks == 'ON' }}
-        timeout-minutes: 10
-        shell: cmd
-        run: |
-          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error -LE "^$" -R "^(cflow_(actor_mailbox|ace_throughput)_benchmark|thread_pool_lf_benchmark)$" --repeat until-fail:5 -V --output-log "${{ matrix.build_dir }}/actor-mailbox-benchmark.log"
-          if errorlevel 1 exit /b 1
-      - name: Upload Actor and mailbox benchmark evidence
-        if: ${{ always() && (steps.actor_bench_unix.outcome == 'success' || steps.actor_bench_unix.outcome == 'failure' || steps.actor_bench_windows.outcome == 'success' || steps.actor_bench_windows.outcome == 'failure') }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: cflow-actor-mailbox-${{ matrix.id }}
-          path: ${{ matrix.build_dir }}/actor-mailbox-benchmark.log
-          if-no-files-found: error
-          retention-days: 30
-      - name: Measure CNet progress strategies (Unix)
-        id: progress_bench_unix
-        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.benchmarks == 'ON' }}
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          set -euo pipefail
-          ctest --preset "${{ matrix.preset }}" --no-tests=error -LE '^$' \
-            -R '^cnet_progress_strategy_benchmark$' -V \
-            --output-log '${{ matrix.build_dir }}/cnet-progress-strategy.log'
-      - name: Measure CNet progress strategies (Windows)
-        id: progress_bench_windows
-        if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.benchmarks == 'ON' }}
-        timeout-minutes: 5
-        shell: cmd
-        run: |
-          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error -LE "^$" -R "^cnet_progress_strategy_benchmark$" -V --output-log "${{ matrix.build_dir }}/cnet-progress-strategy.log"
-          if errorlevel 1 exit /b 1
-      - name: Upload CNet progress strategy measurements
-        if: ${{ always() && (steps.progress_bench_unix.outcome == 'success' || steps.progress_bench_unix.outcome == 'failure' || steps.progress_bench_windows.outcome == 'success' || steps.progress_bench_windows.outcome == 'failure') }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: cnet-progress-strategy-${{ matrix.id }}
-          path: ${{ matrix.build_dir }}/cnet-progress-strategy.log
-          if-no-files-found: error
-          retention-days: 30
+      # ACE/Actor and CNet progress sampling is owned by the separate benchmark
+      # consumer, using the exact native producer SHA; never delay native CI.
       # Unicode conformance must execute (not merely compile) on each native OS.
       # Linux's full suite already covers these tests; do not run them twice there.
       - name: Qualify Unicode 17 conformance (Unix)

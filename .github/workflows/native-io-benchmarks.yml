@@ -90,6 +90,49 @@ jobs:
         with:
           artifact: native-${{ matrix.build_artifact }}
           build-dir: ${{ matrix.build_dir }}
+      # Throughput sampling consumes the exact native build artifact, never
+      # delays functional CI, and runs Linux only once (epoll, not io_uring).
+      - name: Sample Actor mailbox / ACE / Leader-Followers throughput
+        id: actor_benchmark
+        if: ${{ fromJSON(inputs.scope).ace_actor == 'true' && matrix.backend != 'io_uring' }}
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path native-io-results | Out-Null
+          $log = Join-Path $env:GITHUB_WORKSPACE "native-io-results/actor-mailbox-benchmark.log"
+          ctest --test-dir "${{ matrix.build_dir }}" --no-tests=error -LE '^$' `
+            -R '^(cflow_(actor_mailbox|ace_throughput)_benchmark|thread_pool_lf_benchmark)$' `
+            --repeat until-fail:5 -V --output-log $log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Actor / ACE throughput evidence
+        if: ${{ always() && (steps.actor_benchmark.outcome == 'success' || steps.actor_benchmark.outcome == 'failure') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cflow-actor-mailbox-${{ matrix.build_artifact }}
+          path: native-io-results/actor-mailbox-benchmark.log
+          if-no-files-found: error
+          retention-days: 30
+      - name: Sample CNet progress strategies
+        id: progress_benchmark
+        if: ${{ fromJSON(inputs.scope).cnet_progress_bench == 'true' && matrix.backend != 'io_uring' }}
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path native-io-results | Out-Null
+          $log = Join-Path $env:GITHUB_WORKSPACE "native-io-results/cnet-progress-strategy.log"
+          ctest --test-dir "${{ matrix.build_dir }}" --no-tests=error -LE '^$' `
+            -R '^cnet_progress_strategy_benchmark$' -V --output-log $log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload CNet progress strategy measurements
+        if: ${{ always() && (steps.progress_benchmark.outcome == 'success' || steps.progress_benchmark.outcome == 'failure') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnet-progress-strategy-${{ matrix.build_artifact }}
+          path: native-io-results/cnet-progress-strategy.log
+          if-no-files-found: error
+          retention-days: 30
       - name: Prepare Linux tracing tools
         if: matrix.family == 'linux' && fromJSON(inputs.scope).forensic == 'true'
         shell: bash
