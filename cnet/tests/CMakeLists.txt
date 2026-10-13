@@ -1,3 +1,19 @@
+# Native loader/export check for the separately linked private Monocypher
+# implementation. This executes the actual CNet DSO on Linux/macOS/Windows;
+# cross-built mobile targets do not assert host runtime verification.
+if(NOT CMAKE_CROSSCOMPILING)
+  add_executable(cnet_monocypher_namespace_test
+    cnet_monocypher_namespace_test.c)
+  target_compile_features(cnet_monocypher_namespace_test PRIVATE c_std_11)
+  target_link_libraries(cnet_monocypher_namespace_test PRIVATE
+    ${CMAKE_DL_LIBS})
+  set_target_properties(cnet_monocypher_namespace_test PROPERTIES
+    FOLDER "cnet/tests")
+  add_test(NAME cnet_monocypher_namespace_test
+    COMMAND "$<TARGET_FILE:cnet_monocypher_namespace_test>" "$<TARGET_FILE:cnet>")
+  set_tests_properties(cnet_monocypher_namespace_test PROPERTIES TIMEOUT 60)
+endif()
+
 # Independent executable gives cnet_module_once a cold, first-use gate.
 # CNet itself must be source-TSan instrumented to qualify cross-DSO publication.
 cmake_add_test(cnet_module_once_concurrency_test

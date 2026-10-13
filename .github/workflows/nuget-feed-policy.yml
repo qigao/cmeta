@@ -1,0 +1,37 @@
+name: Salts.Native public NuGet feed publishing policy (#1089)
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/candidate-native-sdk.yml'
+      - '.github/workflows/ace-candidate-native-sdk.yml'
+      - '.github/workflows/native-sdk-rc-release.yml'
+      - '.github/workflows/nuget-rcsha-feed-cleanup.yml'
+      - '.github/workflows/nuget-floating-six-rid-audit.yml'
+      - '.github/workflows/nuget-feed-policy.yml'
+      - 'packaging/nuget/feed_hygiene.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  feed-hygiene:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Reject public-feed uploads from incomplete SDK candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 packaging/nuget/feed_hygiene.py policy .
+      - name: Check prerelease precedence and deletion-safety fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 packaging/nuget/feed_hygiene.py self-test .
+      - name: Guard real project.assets.json floating version and six-RID admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 packaging/nuget/feed_hygiene.py floating-self-test

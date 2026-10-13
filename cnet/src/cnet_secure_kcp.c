@@ -4,6 +4,7 @@
 #include "cnet_kcp_secure_internal.h"
 #include "cnet_secure_kcp_internal.h"
 
+#include "cnet_monocypher_namespace.h"
 #include <monocypher.h>
 
 #include <limits.h>
