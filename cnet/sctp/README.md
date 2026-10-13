@@ -23,9 +23,26 @@ ctest --test-dir build-cnet-sctp-consumer -C Release --output-on-failure
 
 - **M1 wire:** sync, bounded, allocation-free RFC 9260 common header / Chunk framing, Castagnoli CRC32C, basic INIT validation and full packet validation before borrowed views. Borrowed views are valid only while the caller retains packet bytes. Association semantics, unknown chunk reporting and extension negotiation are not implemented by this decoder.
 - **M2 research handshake:** four-message INIT / INIT ACK / COOKIE ECHO / COOKIE ACK state transitions; explicit caller-provided monotonic clock, bounded T1-init/T1-cookie retransmit and timeout, capacity-before-state-change checks, fixed-size packet storage, one Owner verifier, stop/drain/destroy. Closed-side INIT ACK remains stateless until cookie validation; late duplicate COOKIE ECHO re-ACK does not re-open. Signed cookie claims include SCTP ports, tags, initial TSNs, stream/window parameters, creation time and a caller-supplied **opaque non-pointer DTLS peer-generation binding**.
-- MAC is injected through a provider interface. **The only MAC used by the current unit tests is explicitly non-cryptographic and must never be shipped**. No actual GmSSL cryptographic signing, key rotation, unpredictable tag/TSN generation or external DTLS peer-authentication evidence exists yet.
+- MAC is injected through a provider interface. The baseline Association test continues to use a **deliberately non-cryptographic** fixture, never valid for release. An independent optional **pure C11 GmSSL HMAC-SM3** test now exercises real provider-backed cookie signing/verification, with a domain-separated MAC, 32-byte owner-supplied key, GmSSL Linux RNG test keys, OpenSSL-derived independent known vector, tamper/key/generation/retire refusals and first-party ASan/UBSan. **The GmSSL adapter is private/test-only and NOT installed.** Production key lifecycle, safe overlapped rotation, unpredictable SCTP tags/TSNs and DTLS/browser authentication/interop remain unresolved.
 
 Every protocol entry point is synchronous and requires caller-provided Owner admission. No worker, independent UDP endpoint, process-global timer, retained external packet view, automatic application retry or raw runtime-object persistence was added.
+
+## Optional real GmSSL cookie-MAC qualification
+
+The regular C11 package/test build has **no GmSSL dependency**. The gated
+`-DCNET_SCTP_TEST_GMSSL=ON` option builds only the private test target
+`cnet_sctp_gmssl_mac_test`, using `find_package(GmSSL CONFIG REQUIRED)`;
+it never exports the adapter into `CNetSctpPrototype::Wire`.
+
+GitHub Actions [CNet SCTP C11 workflow](https://github.com/qigao/salts/actions/workflows/cnet-sctp-c11.yml)
+pins `setup-vcpkg-cache` to SHA `d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3`,
+the GmSSL registry to `1f9d46f66436e3ce74677f393c25e72c008e0fc7`,
+and the vcpkg baseline to `b1b19307e2d2ec1eefbdb7ea069de7d4bcd31f01`.
+The observed Linux binary was `gmssl:x64-linux@3.2.0#9` (Apache-2.0).
+It runs source-instrumented ASan/UBSan tests separately from a **clean Release**
+installed C11 consumer and checks that GmSSL/Association internals do not ship.
+A real MAC test is not a certification of the full association or its key/owner
+lifetime under concurrent cancellation.
 
 ## Gaps that block production
 
