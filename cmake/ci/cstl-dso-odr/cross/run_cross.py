@@ -55,12 +55,12 @@ def source_object(build, source, platform, mode):
     require(compile_json.is_file(), "original source compile database missing")
     rows = json.loads(compile_json.read_text(encoding="utf-8"))
     matches = [x for x in rows if Path(x.get("file", "")).resolve() == source.resolve()]
-    require(len(matches) == 1, "expected one original CSTL executor source compile")
+    require(len(matches) == 1, "expected one original CSTL associative metadata source compile")
     command = matches[0].get("command") or " ".join(matches[0].get("arguments", []))
     ext = "*associative_meta.c.obj" if platform == "windows" else "*associative_meta.c.o"
     objects = [x for x in build.rglob(ext)
                if x.is_file() and "cmeta_cstl.dir" in str(x)]
-    require(len(objects) == 1, f"expected one built CSTL executor object: {objects}")
+    require(len(objects) == 1, f"expected one built CSTL associative metadata object: {objects}")
     if platform == "macos" and mode == "static-hidden":
         require("-fvisibility=hidden" in command,
                 "macOS static-hidden CSTL source did not use hidden visibility")
@@ -166,7 +166,7 @@ def main():
         "-DBUILD_TESTS=OFF", "-DENABLE_TESTS=OFF",
         "-DBUILD_EXAMPLES=OFF", "-DBUILD_BENCHMARKS=OFF",
         "-DCMETA_BUILD_BENCHMARKS=OFF",
-        "-DNATIVE_IO_BUILD_BENCHMARKS=OFF", "-DCSTL_BUILD_BENCHMARKS=OFF",
+        "-DNATIVE_IO_BUILD_BENCHMARKS=OFF", "-DCFLOW_BUILD_BENCHMARKS=OFF",
         "-DCNET_BUILD_BENCHMARKS=OFF", "-DCONCURRENCY_BUILD_BENCHMARKS=OFF",
         "-DENABLE_SANITIZER_ADDRESS=OFF", "-DENABLE_SANITIZER_THREAD=OFF",
         "-DENABLE_SANITIZER_UNDEFINED=OFF",
@@ -198,8 +198,7 @@ def main():
         "-DVCPKG_INSTALLED_DIR=" + str(installed),
         "-DCMAKE_PREFIX_PATH=" + str(installed / triplet),
         "-DEXACT_SALTS_PREFIX=" + str(prefix),
-        "-DCROSS_CSTL_EXPECTED_IDENTITY=" +
-        ("isolated" if mode == "static-hidden" else "shared"),
+        # No shared-owner or pointer-identity compatibility mode.
     ]
     run(cfg, env=env, logfile=log)
     run(["cmake", "--build", consumer, "--parallel", "2"], env=env, logfile=log)
@@ -246,9 +245,9 @@ def main():
         "platform": platform, "mode": mode,
         "original_salts_release_sha": actual,
         "used_relocated_installed_SDK": True,
-        "source_executor": source_report,
+        "source_associative_meta": source_report,
         "real_images": images,
-        "load_orders": ["client-first", "server-first"],
+        "load_orders": ["first-first", "second-first"],
         "independent_native_test_processes": 6,
         "production_SDK_policy_approved": False,
         "release_or_tag_modified": False,
