@@ -35,6 +35,9 @@ jobs:
           - os: windows-2025
             rid: windows-x64
             mode: hidden
+          - os: windows-2025
+            rid: windows-x64
+            mode: shared
     env:
       SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       CMAKE_BUILD_PARALLEL_LEVEL: 2
