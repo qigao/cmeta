@@ -5,6 +5,7 @@ name: Salts #1170 published rc.15 buffer lease ownership
     paths:
       - '.github/workflows/cmeta-published-buffer-lease.yml'
       - 'utils/tests/cmeta_global_buffer_concurrent_tsan.c'
+      - 'utils/tests/cmeta_global_buffer_handoff_tsan.c'
   workflow_dispatch:
 
 permissions:
@@ -72,8 +73,11 @@ jobs:
           set -euo pipefail
           sdk="$SALTS_BINARY_SDK_ROOT"
           consumer="$RUNNER_TEMP/published-global-buffer-consumer.c"
+          handoff="$RUNNER_TEMP/published-buffer-handoff.c"
           binary="$RUNNER_TEMP/published-global-buffer-consumer"
+          handoff_binary="$RUNNER_TEMP/published-buffer-handoff"
           cp utils/tests/cmeta_global_buffer_concurrent_tsan.c "$consumer"
+          cp utils/tests/cmeta_global_buffer_handoff_tsan.c "$handoff"
           test -f "$sdk/include/cmeta_buffer.h"
           test -f "$sdk/lib/libsalts.so.2.3"
           # The input is copied OUTSIDE the checkout. No source-tree headers,
@@ -81,14 +85,19 @@ jobs:
           cc -std=c11 -O2 -g -pthread -Wall -Wextra -Werror \
             -I "$sdk/include" "$consumer" \
             "$sdk/lib/libsalts.so.2.3" -Wl,-rpath,"$sdk/lib" -o "$binary"
+          cc -std=c11 -O2 -g -pthread -Wall -Wextra -Werror \
+            -I "$sdk/include" "$handoff" \
+            "$sdk/lib/libsalts.so.2.3" -Wl,-rpath,"$sdk/lib" -o "$handoff_binary"
           export LD_LIBRARY_PATH="$sdk/lib"
           ldd "$binary" | tee "$RUNNER_TEMP/published-buffer-ldd.txt"
-          grep -F "$sdk/lib/libsalts.so.2.3" "$RUNNER_TEMP/published-buffer-ldd.txt"
+          ldd "$handoff_binary" | tee -a "$RUNNER_TEMP/published-buffer-ldd.txt"
+          test "$(grep -Fc "$sdk/lib/libsalts.so.2.3" "$RUNNER_TEMP/published-buffer-ldd.txt")" -eq 2
           if grep -F "not found" "$RUNNER_TEMP/published-buffer-ldd.txt"; then
             echo "Exact released binary dependency is unresolved" >&2
             exit 1
           fi
-          if nm -D "$binary" | grep -F ' __tsan_init'; then
+          if nm -D "$binary" | grep -F ' __tsan_init' ||
+             nm -D "$handoff_binary" | grep -F ' __tsan_init'; then
             echo 'Published lease-only consumer is unexpectedly TSan-linked' >&2
             exit 1
           fi
@@ -100,14 +109,19 @@ jobs:
           set -euo pipefail
           export LD_LIBRARY_PATH="$SALTS_BINARY_SDK_ROOT/lib"
           binary="$RUNNER_TEMP/published-global-buffer-consumer"
+          handoff="$RUNNER_TEMP/published-buffer-handoff"
           log="$RUNNER_TEMP/published-global-buffer-results.txt"
           : > "$log"
           for round in $(seq 1 10); do
             timeout 60s "$binary" | tee -a "$log"
+            timeout 60s "$handoff" | tee -a "$log"
           done
           count="$(grep -Fc 'Salts #1170: exact global buffer leases, two active owners and 40000 ungated recycles OK' "$log" || true)"
+          handoffs="$(grep -Fc 'Salts #1170: 1024 same-shell cross-owner relaxed turn handoffs OK' "$log" || true)"
           test "$count" -eq 10
-          echo "10/10 released rc.15 allocator: two genuine live owners, 256 overlaps and 40000 ungated recycles PASS per repetition" >> "$GITHUB_STEP_SUMMARY"
+          test "$handoffs" -eq 10
+          echo "10/10 released rc.15: 256 overlapped live leases + 40000 ungated recycles per run" >> "$GITHUB_STEP_SUMMARY"
+          echo "10/10 released rc.15: 1024 SAME buffer shells passed Owner A→B using relaxed test turn markers per run" >> "$GITHUB_STEP_SUMMARY"
           echo "Published binary synchronization is uninstrumented: do NOT infer TSan-clean or close #1170 from this test" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve published SDK provenance and lease proof
