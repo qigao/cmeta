@@ -13,7 +13,7 @@ permissions:
   packages: read
 
 concurrency:
-  group: salts-cflow-cross-sdk-${ github.event.pull_request.number || github.ref }
+  group: salts-cflow-cross-sdk-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -25,8 +25,8 @@ jobs:
         github.event.pull_request.head.repo.full_name == 'qigao/salts') ||
        (github.event_name == 'workflow_dispatch' &&
         github.ref == 'refs/heads/test/cflow-cross-platform-sdk-1180'))
-    name: ${ matrix.id } / real installed SDK native DSO
-    runs-on: ${ matrix.runner }
+    name: ${{ matrix.id }} / real installed SDK native DSO
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     strategy:
       fail-fast: false
@@ -49,14 +49,14 @@ jobs:
             platform: macos
             mode: shared-single
     env:
-      PROJECT_ROOT: ${ github.workspace }}/salts-source
-      CFLOW_CROSS_PLATFORM: ${ matrix.platform }
-      CFLOW_CROSS_MODE: ${ matrix.mode }
+      PROJECT_ROOT: ${{ github.workspace }}}/salts-source
+      CFLOW_CROSS_PLATFORM: ${{ matrix.platform }}
+      CFLOW_CROSS_MODE: ${{ matrix.mode }}
     steps:
       - name: Checkout reviewed test-only CFlow DSO experiment
         uses: actions/checkout@v4
         with:
-          ref: ${ github.event.pull_request.head.sha || github.sha }
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Checkout immutable Salts 2.3.0-rc.15 original source
         uses: actions/checkout@v4
@@ -76,7 +76,7 @@ jobs:
       - name: Attest exact upstream source and vcpkg cache
         shell: pwsh
         env:
-          REVIEWED_HEAD: ${ github.event.pull_request.head.sha || github.sha }
+          REVIEWED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           $ErrorActionPreference = "Stop"
           $testSha = (git rev-parse HEAD).Trim()
@@ -125,7 +125,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: salts-cflow-cross-${ matrix.id }
-          path: ${ runner.temp }}/salts-cflow-cross-evidence-${ matrix.platform }-${ matrix.mode }
+          name: salts-cflow-cross-${{ matrix.id }}
+          path: ${{ runner.temp }}}/salts-cflow-cross-evidence-${{ matrix.platform }}-${{ matrix.mode }}
           if-no-files-found: warn
           retention-days: 14
