@@ -407,6 +407,13 @@ cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now,
   return CNET_SCTP_DATA_PROTOCOL;
 }
 
+static cnet_sctp_data_rx *find_rx_tsn(cnet_sctp_data *d, uint32_t tsn) {
+  size_t i;
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i)
+    if (d->rx[i].used && d->rx[i].tsn == tsn) return &d->rx[i];
+  return NULL;
+}
+
 cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
     cnet_sctp_data_message *meta, void *out, size_t cap,
     size_t *written) {
@@ -416,21 +423,55 @@ cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
   if (!meta || !out || !written) return CNET_SCTP_DATA_INVALID;
   *written = 0u;
   for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
-    cnet_sctp_data_rx *msg = &d->rx[i];
-    if (!msg->used || (!msg->unordered &&
-        msg->ssn != d->rx_ssn[msg->stream_id])) continue;
-    if (msg->size > cap) return CNET_SCTP_DATA_CAPACITY;
-    memcpy(out, msg->payload, msg->size);
-    meta->stream_id = msg->stream_id;
-    meta->stream_sequence = msg->ssn;
-    meta->ppid = msg->ppid;
-    meta->tsn = msg->tsn;
-    meta->size = msg->size;
-    meta->unordered = msg->unordered;
-    *written = msg->size;
-    d->buffered_rx -= msg->size;
-    if (!msg->unordered) ++d->rx_ssn[msg->stream_id];
-    memset(msg, 0, sizeof(*msg));
+    cnet_sctp_data_rx *start = &d->rx[i];
+    uint32_t tsn;
+    size_t total = 0u, count;
+    int complete = 0;
+    if (!start->used || (start->flags & DATA_B) == 0u ||
+        (!start->unordered && start->ssn != d->rx_ssn[start->stream_id]))
+      continue;
+    /* RFC 9260 DATA fragments of one message have contiguous TSNs and
+     * identical SID/SSN/PPID/U; they may arrive out of order. Scan only
+     * the bounded RX slots. No partial user delivery or borrowed pointer. */
+    tsn = start->tsn;
+    for (count = 0u; count < CNET_SCTP_DATA_RX_SLOTS; ++count, ++tsn) {
+      cnet_sctp_data_rx *frag = find_rx_tsn(d, tsn);
+      if (!frag) break; /* incomplete: gap missing */
+      if (frag->stream_id != start->stream_id ||
+          frag->ssn != start->ssn || frag->ppid != start->ppid ||
+          frag->unordered != start->unordered ||
+          (count != 0u && (frag->flags & DATA_B) != 0u))
+        return CNET_SCTP_DATA_PROTOCOL; /* no legacy interleaving */
+      if (total > CNET_SCTP_DATA_MESSAGE_MAX - frag->size)
+        return CNET_SCTP_DATA_CAPACITY;
+      total += frag->size;
+      if (frag->flags & DATA_E) { complete = 1; break; }
+    }
+    if (!complete) continue;
+    if (total > cap) return CNET_SCTP_DATA_CAPACITY;
+    /* All capacity and coherency checks above precede any RX mutation. */
+    {
+      size_t copied = 0u;
+      uint32_t consume_tsn = start->tsn;
+      uint8_t last_flags;
+      do {
+        cnet_sctp_data_rx *frag = find_rx_tsn(d, consume_tsn);
+        last_flags = frag->flags;
+        memcpy((uint8_t *)out + copied, frag->payload, frag->size);
+        copied += frag->size;
+        d->buffered_rx -= frag->size;
+        memset(frag, 0, sizeof(*frag));
+        ++consume_tsn;
+      } while ((last_flags & DATA_E) == 0u);
+      meta->stream_id = start->stream_id; /* start was just erased! */
+      meta->stream_sequence = start->ssn;
+      meta->ppid = start->ppid;
+      meta->tsn = start->tsn;
+      meta->size = copied;
+      meta->unordered = start->unordered;
+      *written = copied;
+    }
+    if (!start->unordered) ++d->rx_ssn[start->stream_id];
     return CNET_SCTP_DATA_OK;
   }
   return CNET_SCTP_DATA_EMPTY;
