@@ -1,4 +1,5 @@
 #include "sctp_assoc_internal.h"
+#include "sctp_collision_internal.h"
 #include "sctp_init_params_internal.h"
 
 #include <limits.h>
@@ -316,7 +317,15 @@ static cnet_sctp_assoc_status handle_init(cnet_sctp_assoc *s, uint64_t now,
   size_t extra;
   size_t size = 0u;
   cnet_sctp_assoc_status status;
-  if (s->state != CNET_SCTP_ASSOC_CLOSED || header->verification_tag != 0u ||
+  /* RFC 9260 §5.2.1: simultaneous INIT may arrive while our own INIT
+   * or COOKIE ECHO awaits a response. Emit a stateless INIT ACK from the
+   * original parameters WITHOUT changing T1, saved packet, local Tag/TSN
+   * or the current state. Established-state restart needs authenticated
+   * Tie-Tag and Generation transactions and remains deliberately blocked. */
+  if ((s->state != CNET_SCTP_ASSOC_CLOSED &&
+       s->state != CNET_SCTP_ASSOC_COOKIE_WAIT &&
+       s->state != CNET_SCTP_ASSOC_COOKIE_ECHOED) ||
+      header->verification_tag != 0u ||
       !good_init_fields(chunk->value, chunk->value_size))
     return CNET_SCTP_ASSOC_PROTOCOL;
   parsed = cnet_sctp_init_params_preflight(chunk->value, chunk->value_size, 0, &params);
@@ -420,34 +429,66 @@ static cnet_sctp_assoc_status handle_init_ack(cnet_sctp_assoc *s,
   }
   return status;
 }
+/* Accept RFC Table 12 cases B/D only while no DATA, resource generation
+ * replacement, or external callback can exist. Restart A and stale C remain
+ * blocked; do NOT convert a decision-only classifier into a live restart.
+ * Publishing the complete COOKIE ACK is the last fallible operation before
+ * an Owner-local state/peer transaction. */
 static cnet_sctp_assoc_status handle_cookie_echo(cnet_sctp_assoc *s,
     uint64_t now, const cnet_sctp_wire_header *header,
     const cnet_sctp_wire_chunk *chunk,
     uint8_t *output, size_t cap, size_t *written) {
+  cnet_sctp_cookie_tags tags = {0};
+  cnet_sctp_cookie_decision decision;
   uint8_t scratch[CNET_SCTP_ASSOC_MAX_PACKET];
   size_t size = 0u;
+  uint32_t peer_tag, peer_tsn;
+  int may_commit;
   cnet_sctp_assoc_status status;
   if ((s->state != CNET_SCTP_ASSOC_CLOSED &&
+       s->state != CNET_SCTP_ASSOC_COOKIE_WAIT &&
+       s->state != CNET_SCTP_ASSOC_COOKIE_ECHOED &&
        s->state != CNET_SCTP_ASSOC_ESTABLISHED) ||
       header->verification_tag != s->local_tag)
     return CNET_SCTP_ASSOC_PROTOCOL;
   status = verify_cookie(s, now, chunk->value, chunk->value_size);
   if (status != CNET_SCTP_ASSOC_OK) return status;
-  if (s->state == CNET_SCTP_ASSOC_ESTABLISHED &&
-      (s->peer_tag != rd32(chunk->value + 16u) ||
-       s->peer_initial_tsn != rd32(chunk->value + 24u)))
-    return CNET_SCTP_ASSOC_AUTH;
-  status = encode_one(s, rd32(chunk->value + 16u), SCTP_TYPE_COOKIE_ACK,
+  peer_tag = rd32(chunk->value + 16u);
+  peer_tsn = rd32(chunk->value + 24u);
+  tags.existing_local = s->local_tag;
+  tags.existing_peer = s->peer_tag;
+  tags.cookie_local = rd32(chunk->value + 20u);
+  tags.cookie_peer = peer_tag;
+  decision = cnet_sctp_cookie_classify(&tags);
+  may_commit = s->state == CNET_SCTP_ASSOC_CLOSED ||
+      (s->state == CNET_SCTP_ASSOC_COOKIE_WAIT &&
+       decision == CNET_SCTP_COOKIE_COLLISION_REQUIRES_COMMIT) ||
+      (s->state == CNET_SCTP_ASSOC_COOKIE_ECHOED &&
+       decision == CNET_SCTP_COOKIE_DUPLICATE_ACK &&
+       s->peer_initial_tsn == peer_tsn);
+  if (!may_commit &&
+      !(s->state == CNET_SCTP_ASSOC_ESTABLISHED &&
+        decision == CNET_SCTP_COOKIE_DUPLICATE_ACK &&
+        s->peer_initial_tsn == peer_tsn))
+    return CNET_SCTP_ASSOC_AUTH; /* no live Restart A/C, no peer replacement */
+  status = encode_one(s, peer_tag, SCTP_TYPE_COOKIE_ACK,
       NULL, 0u, scratch, sizeof(scratch), &size);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   status = publish_packet(output, cap, written, scratch, size);
   if (status != CNET_SCTP_ASSOC_OK) return status;
-  if (s->state == CNET_SCTP_ASSOC_CLOSED) {
-    s->peer_tag = rd32(chunk->value + 16u);
-    s->peer_initial_tsn = rd32(chunk->value + 24u);
+  if (may_commit) {
+    /* Only the single Owner executes this bounded, no-fail state change.
+     * Once the ACK is admitted, no old T1 packet is retained or resent. */
+    s->peer_tag = peer_tag;
+    s->peer_initial_tsn = peer_tsn;
     s->peer_outbound_streams = rd16(chunk->value + 32u);
     s->peer_inbound_streams = rd16(chunk->value + 34u);
     s->state = CNET_SCTP_ASSOC_ESTABLISHED;
+    s->deadline_ms = 0u;
+    s->saved_size = 0u;
+    s->retransmits = 0u;
+    s->current_rto_ms = 0u;
+    memset(s->saved_packet, 0, sizeof(s->saved_packet));
   }
   s->last_time_ms = now;
   return CNET_SCTP_ASSOC_OK;
