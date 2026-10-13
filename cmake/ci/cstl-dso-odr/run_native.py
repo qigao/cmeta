@@ -149,21 +149,56 @@ def main() -> None:
         edited = edited.replace(
             marker,
             "set_target_properties(${TARGET_NAME} PROPERTIES "
-            "WINDOWS_EXPORT_ALL_SYMBOLS ON)\n" + marker,
+            "WINDOWS_EXPORT_ALL_SYMBOLS ON)\n"
+            # INTERFACE (not PUBLIC) ensures the producing CSTL DLL does
+            # not declare its *own* globals dllimport. The installed CMake
+            # target propagates the requirement to C11/C++17 consumers.
+            "target_compile_definitions(${TARGET_NAME} INTERFACE "
+            "CSTL_TEST_DLL_IMPORT=1)\n" + marker,
         )
         cstl_cmake.write_text(edited, encoding="utf-8")
+
+        # MSVC requires __declspec(dllimport) on the FIRST data declaration,
+        # not a later redeclaration (which fails C2370). Annotate ONLY the
+        # three metadata symbols used by this isolated candidate; the
+        # official rc.15 public header remains immutable in Git/release.
+        header = source / "cstl/include/cstl/detail/instance_meta.h"
+        pristine_header = header.read_text(encoding="utf-8")
+        original_header_sha256 = digest(header)
+        intro = "#ifdef __cplusplus\nextern \"C\" {\n#endif\n"
+        if pristine_header.count(intro) != 1:
+            raise RuntimeError("unexpected pinned header declaration boundary")
+        annotation = (
+            "#if defined(_WIN32) && defined(CSTL_TEST_DLL_IMPORT)\n"
+            "#define CSTL_TEST_DATA_IMPORT __declspec(dllimport)\n"
+            "#else\n#define CSTL_TEST_DATA_IMPORT\n#endif\n\n"
+        )
+        edited_header = pristine_header.replace(intro, annotation + intro)
+        for symbol, datatype in (
+            ("stl_bplus_tree_generic_desc", "cmeta_generic_desc"),
+            ("stl_bplus_tree_container_desc", "cmeta_container_desc"),
+            ("stl_vec_container_desc", "cmeta_container_desc"),
+        ):
+            old_decl = f"extern const {datatype} {symbol};"
+            new_decl = f"extern CSTL_TEST_DATA_IMPORT const {datatype} {symbol};"
+            if edited_header.count(old_decl) != 1:
+                raise RuntimeError(f"unexpected pinned CSTL declaration: {symbol}")
+            edited_header = edited_header.replace(old_decl, new_decl)
+        header.write_text(edited_header, encoding="utf-8")
+
         test_only_patch = temporary / ("cstl-shared-candidate-" + label + ".diff")
         patch = execute([
             "git", "-C", str(source), "--no-pager", "diff",
-            "--", "cstl/CMakeLists.txt"
+            "--", "cstl/CMakeLists.txt",
+            "cstl/include/cstl/detail/instance_meta.h"
         ])
-        if "add_library(" not in patch or "WINDOWS_EXPORT_ALL_SYMBOLS" not in patch:
-            raise RuntimeError("CSTL-only candidate source diff is incomplete")
+        if ("add_library(" not in patch or "CSTL_TEST_DLL_IMPORT" not in patch
+                or "CSTL_TEST_DATA_IMPORT" not in patch):
+            raise RuntimeError("test-only CSTL DLL/header candidate diff incomplete")
         test_only_patch.write_text(patch, encoding="utf-8")
-        # This is NOT a pristine release binary. Record candidate source
-        # modifications rather than describing it as an unmodified SDK.
         print("CSTL_TEST_ONLY_SHARED_PATCH=" + str(test_only_patch), flush=True)
-    execute(configure)
+        print("CSTL_OFFICIAL_HEADER_SHA256=" + original_header_sha256, flush=True)
+        # Candidate header annotation is an explicit experimental API\n        # change, NOT a release ABI/header conformance claim.\n    execute(configure)
     execute(["cmake", "--build", str(build), "--parallel", "2"])
     execute(["cmake", "--install", str(build), "--prefix", str(original)])
     if not (original / "lib/cmake/Salts/SaltsConfig.cmake").is_file():
@@ -318,12 +353,20 @@ def main() -> None:
         "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
         "installed_sdk_relocated": True,
         "public_header_sha256": digest(orig_header),
+        "windows_shared_test_only_import_annotations":
+            system == "Windows" and mode == "shared",
+        "windows_shared_official_rc15_header_sha256":
+            original_header_sha256 if system == "Windows" and mode == "shared" else None,
+        "windows_shared_test_only_patch_sha256":
+            digest(test_only_patch) if system == "Windows" and mode == "shared" else None,
         "consumer_c11_and_cpp17_executed": True,
         "native_dso_unload_executed": True,
         "images": report_images,
         "vcpkg_triplet": triplet,
         "vcpkg_revision": os.environ.get("VCPKG_CACHE_REVISION", "unknown"),
     }
+    if system == "Windows" and mode == "shared":
+        shutil.copyfile(test_only_patch, evidence / "test-only-source.patch")
     (evidence / "native-result.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8")
