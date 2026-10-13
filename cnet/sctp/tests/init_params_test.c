@@ -63,10 +63,16 @@ static void test_unknown_actions(void) {
   assert(cnet_sctp_init_params_preflight(p, n, 0, &out) == CNET_SCTP_INIT_PARAMS_OK);
   assert(out.stopped_by_unknown == 1 && out.skipped_count == 1u && out.parsed_count == 2u);
   assert_failure_does_not_expose_borrowed_cookie(p, n, 1, CNET_SCTP_INIT_PARAMS_MALFORMED);
-  put16(p + 20u, 0x4002u); /* unknown 01: report required, not implemented */
-  assert_failure_does_not_expose_borrowed_cookie(p, n, 0, CNET_SCTP_INIT_PARAMS_REPORT_REQUIRED);
-  put16(p + 20u, 0xc002u); /* unknown 11: skip + report, not implemented */
-  assert_failure_does_not_expose_borrowed_cookie(p, n, 0, CNET_SCTP_INIT_PARAMS_REPORT_REQUIRED);
+  put16(p + 20u, 0x4002u); /* unknown 01: stop and report */
+  assert(cnet_sctp_init_params_preflight(p, n, 0, &out) == CNET_SCTP_INIT_PARAMS_OK);
+  assert(out.report_count == 1u && out.reports[0].offset == 20u &&
+         out.reports[0].size == 4u && out.report_wire_size == 4u);
+  assert(out.stopped_by_unknown == 1 && out.parsed_count == 2u);
+  put16(p + 20u, 0xc002u); /* unknown 11: skip and report, then 01 */
+  assert(cnet_sctp_init_params_preflight(p, n, 0, &out) == CNET_SCTP_INIT_PARAMS_OK);
+  assert(out.report_count == 2u && out.skipped_count == 2u &&
+         out.report_wire_size == 8u && out.stopped_by_unknown == 1);
+  assert(out.reports[1].offset == 24u && out.reports[1].size == 4u);
   put16(p + 20u, 0x8005u);
   /* Unknown 00 after mandatory State Cookie permits COOKIE ECHO. */
   memset(p, 0, sizeof(p));
@@ -95,7 +101,8 @@ static void test_malformed_and_unsupported(void) {
   n = append(p, 16u, 9u, 4u); /* Cookie Preservative, not implemented */
   assert_failure_does_not_expose_borrowed_cookie(p, n, 0, CNET_SCTP_INIT_PARAMS_UNSUPPORTED);
   n = append(p, 16u, 11u, 4u); /* prohibited hostname */
-  assert_failure_does_not_expose_borrowed_cookie(p, n, 0, CNET_SCTP_INIT_PARAMS_UNSUPPORTED);
+  assert_failure_does_not_expose_borrowed_cookie(p, n, 0,
+      CNET_SCTP_INIT_PARAMS_ABORT_REQUIRED);
   n = append(p, 16u, 12u, 2u); /* Supported Address Types */
   assert_failure_does_not_expose_borrowed_cookie(p, n, 0, CNET_SCTP_INIT_PARAMS_UNSUPPORTED);
   n = append(p, 16u, 0x8000u, 0u); /* ECN, not implemented */
@@ -107,6 +114,29 @@ static void test_malformed_and_unsupported(void) {
   p[n++] = 0u; /* trailing 1 byte cannot encode next parameter */
   assert_failure_does_not_expose_borrowed_cookie(p, n, 1, CNET_SCTP_INIT_PARAMS_MALFORMED);
   assert(cnet_sctp_init_params_preflight(NULL, 20u, 1, NULL) == CNET_SCTP_INIT_PARAMS_INVALID);
+}
+
+static void test_report_capacity_and_cookie(void) {
+  uint8_t p[512] = {0};
+  cnet_sctp_init_param_view out = {0};
+  size_t n = 16u;
+  size_t i;
+  n = append(p, n, 7u, 4u);
+  n = append(p, n, 0xc001u, 3u); /* pad is not included in reported length */
+  assert(cnet_sctp_init_params_preflight(p, n, 1, &out) ==
+         CNET_SCTP_INIT_PARAMS_OK);
+  assert(out.cookie != NULL && out.cookie_size == 4u);
+  assert(out.report_count == 1u && out.report_wire_size == 8u);
+  assert(out.reports[0].size == 7u && out.reports[0].offset == 24u);
+  n = append(p, n, 0x4002u, 0u);
+  assert(cnet_sctp_init_params_preflight(p, n, 1, &out) ==
+         CNET_SCTP_INIT_PARAMS_OK);
+  assert(out.stopped_by_unknown && out.report_count == 2u);
+  n = 16u;
+  for (i = 0u; i < CNET_SCTP_INIT_REPORT_MAX + 1u; ++i)
+    n = append(p, n, 0xc004u, 0u);
+  assert_failure_does_not_expose_borrowed_cookie(p, n, 0,
+                                                 CNET_SCTP_INIT_PARAMS_CAPACITY);
 }
 
 static void test_capacity_and_mutations(void) {
@@ -134,7 +164,7 @@ static void test_capacity_and_mutations(void) {
       cnet_sctp_init_param_status result = cnet_sctp_init_params_preflight(
           p, length, (int)j, &out);
       assert(result <= CNET_SCTP_INIT_PARAMS_OK &&
-             result >= CNET_SCTP_INIT_PARAMS_CAPACITY);
+             result >= CNET_SCTP_INIT_PARAMS_ABORT_REQUIRED);
       if (result == CNET_SCTP_INIT_PARAMS_OK && out.cookie) {
         assert(out.cookie >= p + 16u && out.cookie <= p + length);
         assert(out.cookie_size <= (size_t)(p + length - out.cookie));
@@ -146,8 +176,9 @@ static void test_capacity_and_mutations(void) {
 int main(void) {
   test_cookie_and_padding();
   test_unknown_actions();
+  test_report_capacity_and_cookie();
   test_malformed_and_unsupported();
   test_capacity_and_mutations();
-  puts("C11 SCTP RFC9260 INIT TLV restrictive preflight: PASS (no ERROR/ABORT yet)");
+  puts("C11 SCTP RFC9260 TLV action/report/abort-intent parser: PASS");
   return 0;
 }
