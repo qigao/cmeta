@@ -2279,6 +2279,91 @@ spec("CNet bounded TLS engine") {
       check_equal(cnet_tls_server_destroy(&tls_server), SALTS_OK);
     }
 
+    it("rejects wrong CA and wrong DNS over the public NativeIO TLS owner") {
+      static const struct {
+        const char *ca;
+        const char *server_name;
+      } failures[] = {
+          {CNET_TLS_TEST_P384_WRONG_CA, "localhost"},
+          {CNET_TLS_TEST_P384_CA, "wrong.example"}};
+      size_t case_index;
+
+      for (case_index = 0u; case_index < sizeof(failures) / sizeof(failures[0]);
+           ++case_index) {
+        cnet_client client = {0};
+        cnet_client server = {0};
+        cnet_listener listener = {0};
+        cnet_tls_server tls_server = {0};
+        cnet_client_config client_config = cnet_tls_network_config();
+        cnet_client_config server_config = cnet_tls_network_config();
+        cnet_listener_config listener_config = {
+            .backend = client_config.backend, .host = "127.0.0.1", .port = 0u, .backlog = 2u};
+        cnet_tls_server_config server_tls = {
+            .size = sizeof(server_tls),
+            .cert_file = CNET_TLS_TEST_P384_LEAF,
+            .key_file = CNET_TLS_TEST_P384_KEY,
+            .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
+        cnet_tls_client_config client_tls = {
+            .size = sizeof(client_tls),
+            .ca_file = failures[case_index].ca,
+            .server_name = failures[case_index].server_name};
+        cnet_tls_network_probe client_probe = {.client = &client};
+        cnet_tls_network_probe server_probe = {.client = &server};
+        cnet_connect_options options;
+        cnet_connection client_connection = {0};
+        char uri[64] = {0};
+        uint16_t port = 0u;
+        uint64_t deadline;
+        bool accepted = false;
+
+        check_equal(cnet_tls_server_init(&tls_server, &server_tls), SALTS_OK);
+        check_equal(cnet_client_init(&client, &client_config), SALTS_OK);
+        check_equal(cnet_client_init(&server, &server_config), SALTS_OK);
+        check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
+        check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
+        check_greater(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u",
+                               (unsigned int)port), 0);
+        options = (cnet_connect_options){
+            .uri = uri,
+            .observer = {.on_state = cnet_tls_network_state,
+                         .on_receive = cnet_tls_network_receive,
+                         .on_send = cnet_tls_network_send,
+                         .user = &client_probe},
+            .tls = &client_tls};
+        check_equal(cnet_connect(&client, &options, &client_connection), SALTS_OK);
+
+        deadline = cmeta_monotonic_ms() + 5000u;
+        while (!client_probe.terminal && cmeta_monotonic_ms() < deadline)
+          check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server,
+                                             &server_probe, &accepted), SALTS_OK);
+
+        /* Public Owner must never publish an authenticated state or deliver
+         * plaintext on either certificate-trust or server-identity rejection. */
+        check_true(accepted);
+        check_true(client_probe.handshaking > 0);
+        check_true(client_probe.terminal);
+        check_true(client_probe.failed);
+        check_false(client_probe.connected);
+        check_equal(client_probe.connected_count, 0);
+        check_equal(client_probe.received_size, (size_t)0u);
+        check_equal(server_probe.received_size, (size_t)0u);
+        check_equal(client_probe.sent, 0);
+        check_not_null(client_probe.failure_stage);
+        if (client_probe.failure_stage != NULL)
+          check_equal(strcmp(client_probe.failure_stage, "handshake"), 0);
+
+        if (accepted && !server_probe.terminal)
+          check_equal(cnet_close(&server, server_probe.connection), SALTS_OK);
+        check_equal(cnet_listener_close(&listener), SALTS_OK);
+        check_equal(cnet_listener_destroy(&listener), SALTS_OK);
+        check_equal(cnet_client_stop(&client, 5000u), SALTS_OK);
+        check_equal(cnet_client_stop(&server, 5000u), SALTS_OK);
+        check_equal(cnet_client_destroy(&client), SALTS_OK);
+        check_equal(cnet_client_destroy(&server), SALTS_OK);
+        check_equal(cnet_tls_server_destroy(&tls_server), SALTS_OK);
+      }
+    }
+
     it("refuses a P-384 issuing CA outside the trusted roots") {
       cnet_tls_test_pair pair = {0};
       check_equal(cnet_tls_test_fixture_pair_init(
