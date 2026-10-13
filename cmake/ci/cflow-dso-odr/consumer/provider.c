@@ -12,7 +12,7 @@
  * not a stand-in or a mock reflection provider.
  */
 CFLOW_PROBE_PUBLIC int
-salts_cflow_probe_snapshot(salts_cflow_probe_snapshot *out) {
+salts_cflow_probe_read(salts_cflow_probe_snapshot *out) {
     const cmeta_type_desc *desc = &cflow_type_executor_protocol_stats_ptr;
     const cmeta_type_desc *value;
     if (out == NULL || desc->kind != CMETA_T_POINTER ||

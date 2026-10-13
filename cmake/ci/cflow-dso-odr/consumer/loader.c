@@ -13,7 +13,7 @@ static int query(void *module, salts_cflow_probe_snapshot *out) {
     probe_fn fn = NULL;
     const char *error;
     dlerror();
-    *(void **)(&fn) = dlsym(module, "salts_cflow_probe_snapshot");
+    *(void **)(&fn) = dlsym(module, "salts_cflow_probe_read");
     error = dlerror();
     if (error != NULL || fn == NULL) {
         fprintf(stderr, "CFLOW_EXPORT_MISSING: %s\n",
