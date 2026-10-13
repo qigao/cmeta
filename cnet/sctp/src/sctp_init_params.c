@@ -68,9 +68,9 @@ cnet_sctp_init_param_status cnet_sctp_init_params_preflight(
           return CNET_SCTP_INIT_PARAMS_MALFORMED;
         return CNET_SCTP_INIT_PARAMS_UNSUPPORTED; /* no TTL negotiation */
       case PARAM_HOSTNAME:
-        /* RFC 9260: Host Name Address MUST NOT appear in INIT/INIT ACK.
-         * An RFC-complete engine MUST send ABORT; this M2 engine cannot. */
-        return CNET_SCTP_INIT_PARAMS_UNSUPPORTED;
+        /* RFC 9260 section 5.1.2(B): well-formed Host Name Address
+         * requires an ABORT rather than ordinary parameter rejection. */
+        return CNET_SCTP_INIT_PARAMS_ABORT_REQUIRED;
       case PARAM_SUPPORTED_ADDRESSES:
         if (init_ack || length < 6u || ((length - 4u) & 1u) != 0u)
           return CNET_SCTP_INIT_PARAMS_MALFORMED;
@@ -80,15 +80,25 @@ cnet_sctp_init_param_status cnet_sctp_init_params_preflight(
         return CNET_SCTP_INIT_PARAMS_UNSUPPORTED; /* ECN unimplemented */
       default: {
         const uint16_t action = (uint16_t)(type >> 14);
-        if (action == 1u || action == 3u)
-          return CNET_SCTP_INIT_PARAMS_REPORT_REQUIRED;
-        if (action == 0u) {
-          /* RFC 9260 00: do not process parameters following this one.
-           * On INIT ACK, the State Cookie must already have been seen. */
+        if (action == 1u || action == 3u) {
+          /* 01: stop+report; 11: skip+report. RFC 9260 requires each
+           * unrecognized parameter to be copied as a complete TLV.
+           * Never silently drop excess reports, and do not store pointers. */
+          if (parsed.report_count >= CNET_SCTP_INIT_REPORT_MAX ||
+              padded > CNET_SCTP_INIT_REPORT_BYTES - parsed.report_wire_size)
+            return CNET_SCTP_INIT_PARAMS_CAPACITY;
+          parsed.reports[parsed.report_count].offset = position;
+          parsed.reports[parsed.report_count].size = length;
+          ++parsed.report_count;
+          parsed.report_wire_size += padded;
+        }
+        if (action == 0u || action == 1u) {
+          /* Stop scanning after this parameter. Parameters previously
+           * processed are not rolled back; later bytes are untouched. */
           parsed.stopped_by_unknown = 1;
           position = value_size;
         } else {
-          ++parsed.skipped_count; /* 10: skip and continue */
+          ++parsed.skipped_count; /* 10/11: skip, optionally report */
           position += padded;
         }
         continue;
