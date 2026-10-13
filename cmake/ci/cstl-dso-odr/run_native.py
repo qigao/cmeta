@@ -139,17 +139,17 @@ def main() -> None:
         # a candidate shared DLL, with its own explicit export manifest.
         cstl_cmake = source / "cstl/CMakeLists.txt"
         pristine = cstl_cmake.read_text(encoding="utf-8")
-        needle = "add_library(${TARGET_NAME}\\n"
+        needle = "add_library(${TARGET_NAME}\n"
         if pristine.count(needle) != 1:
             raise RuntimeError("unexpected pinned CSTL target declaration")
-        edited = pristine.replace(needle, "add_library(${TARGET_NAME} SHARED\\n")
+        edited = pristine.replace(needle, "add_library(${TARGET_NAME} SHARED\n")
         marker = "target_compile_features(${TARGET_NAME} PUBLIC c_std_11)"
         if edited.count(marker) != 1:
             raise RuntimeError("unexpected pinned CSTL compile configuration")
         edited = edited.replace(
             marker,
             "set_target_properties(${TARGET_NAME} PROPERTIES "
-            "WINDOWS_EXPORT_ALL_SYMBOLS ON)\\n" + marker,
+            "WINDOWS_EXPORT_ALL_SYMBOLS ON)\n" + marker,
         )
         cstl_cmake.write_text(edited, encoding="utf-8")
         test_only_patch = temporary / ("cstl-shared-candidate-" + label + ".diff")
