@@ -15,6 +15,8 @@ typedef struct peer_context {
   cnet_sctp_gmssl_mac mac;
   int on_owner;
   unsigned int calls;
+  unsigned int entropy_calls;
+  int deny_entropy;
 } peer_context;
 
 static void clear_bytes(void *data, size_t n) {
@@ -33,12 +35,19 @@ static int sign_cookie(void *ctx, const uint8_t *message, size_t size,
   return cnet_sctp_gmssl_mac_sign(&peer->mac, message, size, out);
 }
 
+/* C11 GmSSL OS-backed RNG: no fixed tag/TSN or insecure fallback. */
+static int fresh_entropy(void *ctx, uint8_t *output, size_t size) {
+  peer_context *peer = (peer_context *)ctx;
+  ++peer->entropy_calls;
+  if (peer->deny_entropy || size != CNET_SCTP_ASSOC_ENTROPY_BYTES)
+    return -1;
+  return rand_bytes(output, size) == 1 ? 0 : -1;
+}
+
 static cnet_sctp_assoc_config setup_config(uint16_t local, peer_context *peer) {
   cnet_sctp_assoc_config config = {0};
   config.local_port = local;
   config.remote_port = (uint16_t)(local == 5000u ? 5001u : 5000u);
-  config.local_tag = local == 5000u ? UINT32_C(0x17283940) : UINT32_C(0x24354657);
-  config.initial_tsn = local == 5000u ? UINT32_C(0xcdef0011) : UINT32_C(0xabcd9876);
   config.receive_window = 32768u;
   config.outbound_streams = 4u;
   config.inbound_streams = 8u;
@@ -48,6 +57,7 @@ static cnet_sctp_assoc_config setup_config(uint16_t local, peer_context *peer) {
   config.peer_binding = UINT64_C(0xbadc0ffee0ddfeed);
   config.max_retransmits = 3u;
   config.is_owner = owned;
+  config.entropy = fresh_entropy;
   config.mac = sign_cookie;
   config.provider_context = peer;
   return config;
@@ -63,6 +73,29 @@ static void init_peer(peer_context *peer) {
   assert(rand_bytes(key, sizeof(key)) == 1);
   assert(cnet_sctp_gmssl_mac_init(&peer->mac, key, sizeof(key)) == 0);
   clear_bytes(key, sizeof(key));
+}
+
+static void test_gmssl_random_tag_tsn(void) {
+  cnet_sctp_assoc first = {0}, second = {0}, rejected = {0};
+  cnet_sctp_assoc_config config;
+  peer_context ctx;
+  init_peer(&ctx);
+  config = setup_config(5000u, &ctx);
+  ctx.deny_entropy = 1;
+  assert(cnet_sctp_assoc_init(&rejected, &config, 0u) == CNET_SCTP_ASSOC_ENTROPY);
+  assert(rejected.magic == 0u && rejected.local_tag == 0u);
+  ctx.deny_entropy = 0;
+  assert(cnet_sctp_assoc_init(&first, &config, 0u) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_init(&second, &config, 0u) == CNET_SCTP_ASSOC_OK);
+  assert(first.local_tag != 0u && second.local_tag != 0u);
+  assert(ctx.entropy_calls == 3u);
+  /* A random 64-bit collision is possible but overwhelmingly unlikely. */
+  assert(first.local_tag != second.local_tag || first.initial_tsn != second.initial_tsn);
+  assert(cnet_sctp_assoc_stop(&first) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&second) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&first) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&second) == CNET_SCTP_ASSOC_OK);
+  cnet_sctp_gmssl_mac_retire(&ctx.mac);
 }
 
 static void test_hmac_sm3_known_vector(void) {
@@ -201,6 +234,7 @@ static void test_retired_key_fail_closed(void) {
 }
 
 int main(void) {
+  test_gmssl_random_tag_tsn();
   test_hmac_sm3_known_vector();
   test_independent_provider_cookie();
   test_retired_key_fail_closed();
