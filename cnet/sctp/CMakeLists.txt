@@ -75,3 +75,33 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME cnet_sctp_assoc_test COMMAND cnet_sctp_assoc_test)
 endif()
+
+# Optional cryptographic research gate. Its private C11 sources and GmSSL
+# dependency MUST NOT enter the installed CNetSctpPrototype::Wire package.
+# Standalone Wire/Association CI does not require GmSSL or a C++ runtime.
+option(CNET_SCTP_TEST_GMSSL "Build separate GmSSL-backed M2 cookie MAC tests" OFF)
+if(CNET_SCTP_TEST_GMSSL)
+  if(NOT BUILD_TESTING)
+    message(FATAL_ERROR "CNET_SCTP_TEST_GMSSL requires BUILD_TESTING=ON")
+  endif()
+  find_package(GmSSL CONFIG REQUIRED)
+  add_library(cnet_sctp_gmssl_mac_proto STATIC src/sctp_gmssl_mac.c)
+  target_include_directories(cnet_sctp_gmssl_mac_proto PRIVATE src)
+  target_link_libraries(cnet_sctp_gmssl_mac_proto PRIVATE GmSSL::GmSSL)
+  set_target_properties(cnet_sctp_gmssl_mac_proto PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  add_executable(cnet_sctp_gmssl_mac_test tests/assoc_gmssl_test.c)
+  target_include_directories(cnet_sctp_gmssl_mac_test PRIVATE src)
+  target_link_libraries(cnet_sctp_gmssl_mac_test PRIVATE
+    cnet_sctp_assoc_proto cnet_sctp_gmssl_mac_proto GmSSL::GmSSL)
+  set_target_properties(cnet_sctp_gmssl_mac_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  if(MSVC)
+    target_compile_options(cnet_sctp_gmssl_mac_proto PRIVATE /W4 /WX)
+    target_compile_options(cnet_sctp_gmssl_mac_test PRIVATE /W4 /WX)
+  else()
+    target_compile_options(cnet_sctp_gmssl_mac_proto PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_compile_options(cnet_sctp_gmssl_mac_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME cnet_sctp_gmssl_mac_test COMMAND cnet_sctp_gmssl_mac_test)
+endif()
