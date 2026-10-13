@@ -323,9 +323,13 @@ static cnet_sctp_assoc_status handle_init(cnet_sctp_assoc *s, uint64_t now,
   prepare_init(s, value);
   wr16(value + 16u, SCTP_PARAM_COOKIE);
   wr16(value + 18u, (uint16_t)(4u + CNET_SCTP_ASSOC_COOKIE_BYTES));
-  value_size += append_unknown_reports(value + INIT_ACK_BASE,
-      sizeof(value) - INIT_ACK_BASE, chunk->value, chunk->value_size, &params, 1);
-  if (value_size != INIT_ACK_BASE + extra) return CNET_SCTP_ASSOC_PROTOCOL;
+  {
+    size_t reported = append_unknown_reports(value + INIT_ACK_BASE,
+        sizeof(value) - INIT_ACK_BASE, chunk->value, chunk->value_size,
+        &params, 1);
+    if (reported != extra) return CNET_SCTP_ASSOC_PROTOCOL;
+    value_size += reported;
+  }
   /* If output cannot fit the full required response, do not even call
    * the signing provider; no incomplete signed INIT ACK may escape. */
   status = make_cookie(s, now, chunk->value, value + 20u);
@@ -458,6 +462,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   cnet_sctp_wire_header header;
   cnet_sctp_wire_decoder decoder;
   cnet_sctp_wire_chunk chunk;
+  cnet_sctp_wire_chunk second;
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (!packet || !output || !written) return CNET_SCTP_ASSOC_INVALID;
@@ -473,9 +478,17 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       CNET_SCTP_WIRE_OK) return CNET_SCTP_ASSOC_PROTOCOL;
   if (header.source_port != s->config.remote_port ||
       header.destination_port != s->config.local_port ||
-      header.chunk_count != 1u ||
+      header.chunk_count > 2u ||
       cnet_sctp_wire_next_chunk(&decoder, &chunk) != CNET_SCTP_WIRE_OK)
     return CNET_SCTP_ASSOC_PROTOCOL;
+  if (header.chunk_count == 2u) {
+    /* COOKIE ECHO may be bundled with an advisory ERROR; INIT/INIT ACK
+     * remain standalone. Malformed ERROR cannot trigger Cookie admission. */
+    if (chunk.type != SCTP_TYPE_COOKIE_ECHO ||
+        cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
+        !valid_cookie_echo_error(&second))
+      return CNET_SCTP_ASSOC_PROTOCOL;
+  }
   switch (chunk.type) {
     case SCTP_TYPE_INIT:
       return handle_init(s, now, &header, &chunk, output, cap, written);
@@ -483,6 +496,17 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       return handle_init_ack(s, now, &header, &chunk, output, cap, written);
     case SCTP_TYPE_COOKIE_ECHO:
       return handle_cookie_echo(s, now, &header, &chunk, output, cap, written);
+    case SCTP_TYPE_ABORT:
+      /* This private M2 path handles only a plain ABORT using the
+       * expected tag. It never responds to ABORT with another ABORT. */
+      if (header.verification_tag != s->local_tag || chunk.flags != 0u ||
+          chunk.value_size != 0u || s->state == CNET_SCTP_ASSOC_CLOSED)
+        return CNET_SCTP_ASSOC_PROTOCOL;
+      s->state = CNET_SCTP_ASSOC_FAILED;
+      s->deadline_ms = 0u;
+      s->saved_size = 0u;
+      memset(s->saved_packet, 0, sizeof(s->saved_packet));
+      return CNET_SCTP_ASSOC_OK;
     case SCTP_TYPE_COOKIE_ACK:
       return handle_cookie_ack(s, now, &header, &chunk);
     default:
