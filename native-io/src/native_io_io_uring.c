@@ -5,6 +5,13 @@
 #include "native_io_internal.h"
 #include "native_io_accept_escrow.h"
 
+/* #1168: private first-party source-copy CQE dispatch test only.
+ * This symbol and callsite are excluded from the installed NativeIO target. */
+#if defined(SALTS_NATIVE_IO_URING_CQE_TEST_HOOK)
+extern void salts_native_io_test_before_uring_dispatch(
+    cmeta_io_impl *owner, native_io_request request, int kernel_result);
+#endif
+
 #include <salts/clock.h>
 #include <salts/error_codes.h>
 
@@ -1129,6 +1136,13 @@ static int uring_process_cq(cmeta_io_uring_impl *impl, bool *saw_wake) {
     {
       cmeta_io_uring_request_record *request = uring_record_for_token(impl, token);
       if (request != NULL) {
+#if defined(SALTS_NATIVE_IO_URING_CQE_TEST_HOOK)
+        /* Real CQE token and result have been read from kernel shared CQ.
+         * Same Owner calls cancellation before resolving this terminal;
+         * NEVER fabricate CQEs or call the backend from another thread. */
+        salts_native_io_test_before_uring_dispatch(
+            &impl->base, request->request, result);
+#endif
         const uint32_t index = request->request.slot - 1u;
         cmeta_io_uring_endpoint *endpoint = uring_endpoint(impl, request->endpoint);
         cmeta_io_uring_lane *lane;
