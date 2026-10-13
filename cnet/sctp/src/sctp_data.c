@@ -98,21 +98,19 @@ cnet_sctp_data_status cnet_sctp_data_init(cnet_sctp_data *d,
   return CNET_SCTP_DATA_OK;
 }
 
-cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now,
-    uint16_t stream, uint32_t ppid, int unordered, const void *payload,
-    size_t n, void *output, size_t cap, size_t *written) {
-  cnet_sctp_data_status status = guard(d);
+/* One DATA chunk is admitted only after the output packet and TX ticket
+ * both fit. The caller fixes stream SSN and B/E flags for a fragmented
+ * message; no implicit per-fragment SSN increment or borrowed views. */
+static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
+    uint16_t stream, uint16_t ssn, uint32_t ppid, uint8_t flags,
+    const uint8_t *payload, size_t n, void *output, size_t cap,
+    size_t *written) {
   cnet_sctp_data_tx *slot = NULL;
   uint8_t value[DATA_HEADER + CNET_SCTP_DATA_PAYLOAD_MAX];
   size_t packet_bytes = 0u, i;
-  uint16_t seq;
-  if (status != CNET_SCTP_DATA_OK) return status;
-  if (!payload || !output || !written || n == 0u ||
-      stream >= d->config.outbound_streams) return CNET_SCTP_DATA_INVALID;
-  *written = 0u;
-  if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK)
-    return status;
-  if (n > CNET_SCTP_DATA_PAYLOAD_MAX) return CNET_SCTP_DATA_CAPACITY;
+  cnet_sctp_data_status status;
+  if (n == 0u || n > CNET_SCTP_DATA_PAYLOAD_MAX)
+    return CNET_SCTP_DATA_INVALID;
   if (n > d->peer_rwnd || d->in_flight > d->peer_rwnd - n ||
       n > d->cwnd || d->in_flight > d->cwnd - n)
     return CNET_SCTP_DATA_CAPACITY;
@@ -121,18 +119,14 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now,
   if (!slot) return CNET_SCTP_DATA_CAPACITY;
   if (d->t3_deadline_ms == 0u && now > UINT64_MAX - d->rto_ms)
     return CNET_SCTP_DATA_CLOCK;
-  seq = unordered ? 0u : d->tx_ssn[stream];
   wr32(value, d->next_tsn);
   wr16(value + 4u, stream);
-  wr16(value + 6u, seq);
+  wr16(value + 6u, ssn);
   wr32(value + 8u, ppid);
   memcpy(value + DATA_HEADER, payload, n);
-  status = encode_one(d, CHUNK_DATA, (uint8_t)(DATA_B | DATA_E |
-      (unordered ? DATA_U : 0u)), value, DATA_HEADER + n,
-      output, cap, &packet_bytes);
+  status = encode_one(d, CHUNK_DATA, flags, value, DATA_HEADER + n,
+                       output, cap, &packet_bytes);
   if (status != CNET_SCTP_DATA_OK) return status;
-  /* Last fallible step was wire admission, so the retransmit ticket is now
-   * owned by this session. Application acceptance is exactly once. */
   memcpy(slot->packet, output, packet_bytes);
   slot->packet_size = packet_bytes;
   slot->user_size = n;
@@ -140,10 +134,82 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now,
   slot->retransmits = 0u;
   slot->used = 1u;
   d->in_flight += n;
-  if (!unordered) ++d->tx_ssn[stream];
   if (d->t3_deadline_ms == 0u) d->t3_deadline_ms = now + d->rto_ms;
   d->last_time_ms = now;
   *written = packet_bytes;
+  return CNET_SCTP_DATA_OK;
+}
+
+cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now,
+    uint16_t stream, uint32_t ppid, int unordered, const void *payload,
+    size_t n, void *output, size_t cap, size_t *written) {
+  cnet_sctp_data_status status = guard(d);
+  uint16_t seq;
+  if (status != CNET_SCTP_DATA_OK) return status;
+  if (!payload || !output || !written || n == 0u ||
+      stream >= d->config.outbound_streams) return CNET_SCTP_DATA_INVALID;
+  *written = 0u;
+  if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  if (d->pending.active) return CNET_SCTP_DATA_CAPACITY;
+  if (n > CNET_SCTP_DATA_PAYLOAD_MAX) return CNET_SCTP_DATA_CAPACITY;
+  seq = unordered ? 0u : d->tx_ssn[stream];
+  status = send_frame(d, now, stream, seq, ppid,
+      (uint8_t)(DATA_B | DATA_E | (unordered ? DATA_U : 0u)),
+      (const uint8_t *)payload, n, output, cap, written);
+  if (status == CNET_SCTP_DATA_OK && !unordered) ++d->tx_ssn[stream];
+  return status;
+}
+
+cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,
+    uint64_t now, uint16_t stream, uint32_t ppid, int unordered,
+    const void *payload, size_t n) {
+  cnet_sctp_data_status status = guard(d);
+  if (status != CNET_SCTP_DATA_OK) return status;
+  if (!payload || stream >= d->config.outbound_streams || n == 0u)
+    return CNET_SCTP_DATA_INVALID;
+  if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  if (d->pending.active || n > CNET_SCTP_DATA_MESSAGE_MAX)
+    return CNET_SCTP_DATA_CAPACITY;
+  /* The entire user message is owned locally before any fragment leaves.
+   * Caller may immediately free/reuse its input buffer. */
+  memcpy(d->pending.bytes, payload, n);
+  d->pending.size = n;
+  d->pending.offset = 0u;
+  d->pending.stream_id = stream;
+  d->pending.ssn = unordered ? 0u : d->tx_ssn[stream];
+  d->pending.ppid = ppid;
+  d->pending.unordered = unordered != 0;
+  d->pending.active = 1u;
+  d->last_time_ms = now;
+  return CNET_SCTP_DATA_OK;
+}
+
+cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d,
+    uint64_t now, void *output, size_t cap, size_t *written) {
+  cnet_sctp_data_status status = guard(d);
+  size_t n;
+  uint8_t flags;
+  if (status != CNET_SCTP_DATA_OK) return status;
+  if (!output || !written) return CNET_SCTP_DATA_INVALID;
+  *written = 0u;
+  if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  if (!d->pending.active) return CNET_SCTP_DATA_EMPTY;
+  n = d->pending.size - d->pending.offset;
+  if (n > CNET_SCTP_DATA_PAYLOAD_MAX) n = CNET_SCTP_DATA_PAYLOAD_MAX;
+  flags = (uint8_t)((d->pending.offset == 0u ? DATA_B : 0u) |
+      (d->pending.offset + n == d->pending.size ? DATA_E : 0u) |
+      (d->pending.unordered ? DATA_U : 0u));
+  status = send_frame(d, now, d->pending.stream_id, d->pending.ssn,
+      d->pending.ppid, flags, d->pending.bytes + d->pending.offset,
+      n, output, cap, written);
+  if (status != CNET_SCTP_DATA_OK) return status;
+  d->pending.offset += n;
+  if (d->pending.offset == d->pending.size) {
+    if (!d->pending.unordered) ++d->tx_ssn[d->pending.stream_id];
+    /* No message body survives successful admission of the final fragment.
+     * Retransmit tickets own independent full-wire copies. */
+    memset(&d->pending, 0, sizeof(d->pending));
+  }
   return CNET_SCTP_DATA_OK;
 }
 
