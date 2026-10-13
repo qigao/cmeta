@@ -262,9 +262,79 @@ static void post_handshake_dcep_wire(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* Post-handshake >16KiB stream delivery through the SAME Association,
+ * with first fragment lost and recovered by T3 after Gap SACKs. This is the
+ * actual private INIT/COOKIE -> DATA fragment -> SACK -> take() path.
+ */
+static void post_handshake_twenty_kib_fragments(void) {
+  enum { MESSAGE = 20480, FRAGMENTS = 20 };
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  uint8_t original[MESSAGE], expected[MESSAGE], reassembled[MESSAGE];
+  uint8_t wire[1200], sack[1200], response[1200];
+  cnet_sctp_data_message metadata = {0};
+  size_t nw = 0u, ns = 0u, nr = 0u;
+  uint64_t now = 0u, deadline = 0u;
+  int has_deadline = 0;
+  unsigned int i;
+  ready_pair(&a, &b, &ca, &cb);
+  for (i = 0u; i < MESSAGE; ++i)
+    original[i] = (uint8_t)(i * 17u + 5u);
+  memcpy(expected, original, sizeof(original));
+  assert(cnet_sctp_assoc_queue_message(&a, 6u, 2u, 53u, 0,
+      original, sizeof(original)) == CNET_SCTP_ASSOC_OK);
+  memset(original, 0u, sizeof(original)); /* sender owns queued bytes now */
+  assert(cnet_sctp_assoc_pump_message(&a, 7u, wire, 10u, &nw) ==
+         CNET_SCTP_ASSOC_CAPACITY);
+  assert(nw == 0u && a.data.pending.offset == 0u);
+  assert(cnet_sctp_assoc_pump_message(&a, 7u, wire,
+                                    sizeof(wire), &nw) == CNET_SCTP_ASSOC_OK);
+  /* Drop first B-flag fragment. Sender must retain it as a T3 ticket. */
+  for (i = 1u; i < FRAGMENTS; ++i) {
+    now = 7u + (uint64_t)i * 3u;
+    assert(cnet_sctp_assoc_pump_message(&a, now, wire, sizeof(wire), &nw) ==
+           CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_input(&b, now + 1u, wire, nw,
+                                 sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_take_message(&b, &metadata, reassembled,
+                                        sizeof(reassembled), &nr) ==
+           CNET_SCTP_ASSOC_EMPTY);
+    assert(cnet_sctp_assoc_input(&a, now + 2u, sack, ns,
+                                 response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+    assert(nr == 0u);
+  }
+  assert(!a.data.pending.active && a.data.tx_ssn[2u] == 1u);
+  assert(b.data.buffered_rx == MESSAGE - CNET_SCTP_DATA_PAYLOAD_MAX);
+  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
+         CNET_SCTP_ASSOC_OK);
+  assert(has_deadline);
+  assert(cnet_sctp_assoc_advance(&a, deadline, wire,
+                                 sizeof(wire), &nw) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, deadline + 1u, wire, nw,
+                               sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_take_message(&b, &metadata, reassembled,
+                                      1024u, &nr) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(nr == 0u && b.data.buffered_rx == MESSAGE);
+  assert(cnet_sctp_assoc_take_message(&b, &metadata, reassembled,
+                                      sizeof(reassembled), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == MESSAGE && metadata.size == MESSAGE);
+  assert(metadata.stream_id == 2u && metadata.ppid == 53u &&
+         metadata.stream_sequence == 0u && !metadata.unordered);
+  assert(memcmp(reassembled, expected, MESSAGE) == 0);
+  assert(cnet_sctp_assoc_input(&a, deadline + 2u, sack, ns,
+                               response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(a.data.in_flight == 0u);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(!a.data_ready && !b.data_ready);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
   real_assoc_send_sack_and_t3();
   post_handshake_dcep_wire();
+  post_handshake_twenty_kib_fragments();
   puts("C11 SCTP post-COOKIE Association DATA/SACK/T3 stream test PASS");
   return 0;
 }
