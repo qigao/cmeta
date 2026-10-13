@@ -1,0 +1,123 @@
+name: Salts #1170 published rc.15 buffer lease ownership
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/cmeta-published-buffer-lease.yml'
+      - 'utils/tests/cmeta_global_buffer_concurrent_tsan.c'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cmeta-published-buffer-lease-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  released-buffer:
+    name: Exact released libsalts two-owner live leases (NO source TSan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      SALTS_BINARY_VERSION: 2.3.0-rc.15
+      SALTS_BINARY_SHA: 21bdb1145fbb2b39ee3fa644173ec037adba7b87
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download and attest the immutable published Linux SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="Salts.Native.$SALTS_BINARY_VERSION.nupkg"
+          root="https://github.com/qigao/salts/releases/download/v$SALTS_BINARY_VERSION"
+          curl --retry 5 --retry-all-errors -fLsS "$root/$archive" -o "$RUNNER_TEMP/$archive"
+          curl --retry 5 --retry-all-errors -fLsS "$root/SHA256SUMS" -o "$RUNNER_TEMP/SHA256SUMS"
+          python3 - "$RUNNER_TEMP/$archive" "$RUNNER_TEMP/SHA256SUMS" "$RUNNER_TEMP/published-salts" \
+            "$SALTS_BINARY_VERSION" "$SALTS_BINARY_SHA" <<'PY'
+          import hashlib, pathlib, sys, zipfile
+          package, checksum, dest, version, commit = sys.argv[1:]
+          digest = hashlib.sha256(pathlib.Path(package).read_bytes()).hexdigest()
+          values = pathlib.Path(checksum).read_text(encoding="utf-8").strip().splitlines()
+          if len(values) != 1 or values[0].split()[0].lower() != digest:
+              raise SystemExit("Published Salts package SHA256 does not match immutable release")
+          rid = "linux-x64"
+          with zipfile.ZipFile(package) as archive:
+              manifest = f"sdk/{rid}/salts-sdk-manifest.txt"
+              if manifest not in archive.namelist():
+                  raise SystemExit("Published SDK lacks exact Linux host manifest")
+              fields = dict(s.split("=", 1) for s in
+                            archive.read(manifest).decode("utf-8-sig").splitlines() if "=" in s)
+              for key, expected in (("commit", commit), ("version", version),
+                                    ("profile", "release")):
+                  if fields.get(key) != expected:
+                      raise SystemExit(f"Published SDK mismatch: {key}={fields.get(key)!r}")
+              required = (f"sdk/{rid}/include/cmeta_buffer.h",
+                          f"sdk/{rid}/lib/libsalts.so.2.3")
+              missing = [file for file in required if file not in archive.namelist()]
+              if missing:
+                  raise SystemExit(f"Missing original published binaries: {missing}")
+              pathlib.Path(dest).mkdir(parents=True, exist_ok=True)
+              archive.extractall(dest, [entry for entry in archive.infolist()
+                                       if entry.filename.startswith(f"sdk/{rid}/")])
+          print(f"Exact published Salts {version}: {commit}, linux-x64, sha256={digest}")
+          PY
+          echo "SALTS_BINARY_SDK_ROOT=$RUNNER_TEMP/published-salts/sdk/linux-x64" >> "$GITHUB_ENV"
+
+      - name: Compile same C11 test against PUBLISHED libsalts, never source
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="$SALTS_BINARY_SDK_ROOT"
+          consumer="$RUNNER_TEMP/published-global-buffer-consumer.c"
+          binary="$RUNNER_TEMP/published-global-buffer-consumer"
+          cp utils/tests/cmeta_global_buffer_concurrent_tsan.c "$consumer"
+          test -f "$sdk/include/cmeta_buffer.h"
+          test -f "$sdk/lib/libsalts.so.2.3"
+          # The input is copied OUTSIDE the checkout. No source-tree headers,
+          # cmake build artifacts or fallback Salts library can be included.
+          cc -std=c11 -O2 -g -pthread -Wall -Wextra -Werror \
+            -I "$sdk/include" "$consumer" \
+            "$sdk/lib/libsalts.so.2.3" -Wl,-rpath,"$sdk/lib" -o "$binary"
+          export LD_LIBRARY_PATH="$sdk/lib"
+          ldd "$binary" | tee "$RUNNER_TEMP/published-buffer-ldd.txt"
+          grep -F "$sdk/lib/libsalts.so.2.3" "$RUNNER_TEMP/published-buffer-ldd.txt"
+          if grep -F "not found" "$RUNNER_TEMP/published-buffer-ldd.txt"; then
+            echo "Exact released binary dependency is unresolved" >&2
+            exit 1
+          fi
+          if nm -D "$binary" | grep -F ' __tsan_init'; then
+            echo 'Published lease-only consumer is unexpectedly TSan-linked' >&2
+            exit 1
+          fi
+          echo "Exact released Core is the only Salts buffer allocator; this is NOT a full-source TSan gate" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Repeat published binary two-owner live-lease uniqueness
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$SALTS_BINARY_SDK_ROOT/lib"
+          binary="$RUNNER_TEMP/published-global-buffer-consumer"
+          log="$RUNNER_TEMP/published-global-buffer-results.txt"
+          : > "$log"
+          for round in $(seq 1 10); do
+            timeout 60s "$binary" | tee -a "$log"
+          done
+          count="$(grep -Fc 'Salts #1170: exact global buffer leases, two active owners and 40000 ungated recycles OK' "$log" || true)"
+          test "$count" -eq 10
+          echo "10/10 released rc.15 allocator: two genuine live owners, 256 overlaps and 40000 ungated recycles PASS per repetition" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published binary synchronization is uninstrumented: do NOT infer TSan-clean or close #1170 from this test" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve published SDK provenance and lease proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: salts-1170-published-rc15-lease
+          path: |
+            ${{ runner.temp }}/published-buffer-ldd.txt
+            ${{ runner.temp }}/published-global-buffer-results.txt
+            ${{ runner.temp }}/SHA256SUMS
+          if-no-files-found: warn
+          retention-days: 14
