@@ -8,6 +8,18 @@ include(CMakePackageConfigHelpers)
 # An isolated, C-only research target, not the production Salts::CNet library.
 add_library(cnet_sctp_wire STATIC src/sctp_wire.c)
 add_library(CNetSctpPrototype::Wire ALIAS cnet_sctp_wire)
+
+# M2 research only: not part of installed C11 ABI or Salts targets.
+add_library(cnet_sctp_assoc_proto STATIC src/sctp_assoc.c)
+target_link_libraries(cnet_sctp_assoc_proto PUBLIC cnet_sctp_wire)
+target_include_directories(cnet_sctp_assoc_proto PRIVATE src)
+set_target_properties(cnet_sctp_assoc_proto PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+if(MSVC)
+  target_compile_options(cnet_sctp_assoc_proto PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_assoc_proto PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
 set_target_properties(cnet_sctp_wire PROPERTIES
   EXPORT_NAME Wire
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
@@ -50,4 +62,16 @@ if(BUILD_TESTING)
     target_compile_options(cnet_sctp_wire_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
   add_test(NAME cnet_sctp_wire_test COMMAND cnet_sctp_wire_test)
+
+  add_executable(cnet_sctp_assoc_test tests/assoc_test.c)
+  target_link_libraries(cnet_sctp_assoc_test PRIVATE cnet_sctp_assoc_proto)
+  target_include_directories(cnet_sctp_assoc_test PRIVATE src)
+  set_target_properties(cnet_sctp_assoc_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  if(MSVC)
+    target_compile_options(cnet_sctp_assoc_test PRIVATE /W4 /WX)
+  else()
+    target_compile_options(cnet_sctp_assoc_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME cnet_sctp_assoc_test COMMAND cnet_sctp_assoc_test)
 endif()
