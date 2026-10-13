@@ -1,0 +1,123 @@
+name: Salts CSTL Windows/macOS installed SDK owner topology
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/cstl-cross-sdk-ownership.yml'
+      - 'cmake/ci/cstl-dso-odr/cross/**'
+      - 'cmake/ci/cstl-dso-odr/consumer/provider.c'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: salts-cstl-cross-sdk-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-platform:
+    if: >-
+      github.repository == 'qigao/salts' &&
+      ((github.event_name == 'pull_request' &&
+        github.event.pull_request.head.ref == 'test/cstl-cross-platform-sdk-1173' &&
+        github.event.pull_request.head.repo.full_name == 'qigao/salts') ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/test/cstl-cross-platform-sdk-1173'))
+    name: ${{ matrix.id }} / real installed SDK native DSO
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: windows-x64-hidden
+            runner: windows-2025
+            platform: windows
+            mode: static-hidden
+          - id: macos-arm64-hidden
+            runner: macos-15
+            platform: macos
+            mode: static-hidden
+    env:
+      PROJECT_ROOT: ${{ github.workspace }}/salts-source
+      CSTL_CROSS_PLATFORM: ${{ matrix.platform }}
+      CSTL_CROSS_MODE: ${{ matrix.mode }}
+    steps:
+      - name: Checkout reviewed test-only CSTL DSO experiment
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Checkout immutable Salts 2.3.0-rc.15 original source
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/salts
+          ref: 21bdb1145fbb2b39ee3fa644173ec037adba7b87
+          path: salts-source
+          persist-credentials: false
+      - name: Restore pinned vcpkg cache and exact toolchain
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@0dc254695917bc180504d916240292e9096e9da5
+        with:
+          mode: read
+      - name: Restore pinned native re2c host tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@0dc254695917bc180504d916240292e9096e9da5
+      - name: Prepare standard Salts build host
+        uses: ./salts-source/.github/actions/setup-build-host
+      - name: Attest exact upstream source and vcpkg cache
+        shell: pwsh
+        env:
+          REVIEWED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $testSha = (git rev-parse HEAD).Trim()
+          $saltsSha = (git -C salts-source rev-parse HEAD).Trim()
+          if ($testSha -ne $env:REVIEWED_HEAD) {
+            throw "Review branch SHA changed from the expected head"
+          }
+          if ($saltsSha -ne "21bdb1145fbb2b39ee3fa644173ec037adba7b87") {
+            throw "Immutable original Salts RC source did not match"
+          }
+          if (-not (Test-Path -LiteralPath $env:QIGAO_VCPKG_TOOLCHAIN_FILE)) {
+            throw "Exact vcpkg-cache toolchain was not restored"
+          }
+      - name: Locate MSVC host and exact supported Windows vcpkg triplet
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $programFilesX86 = [Environment]::GetFolderPath('ProgramFilesX86')
+          $vswhere = Join-Path $programFilesX86 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vs)) {
+            throw "Visual Studio MSVC x64 native toolchain missing"
+          }
+          if (-not $env:QIGAO_VCPKG_WINDOWS_TRIPLET) {
+            throw "Pinned Windows vcpkg-cache target triplet missing"
+          }
+          "VSINSTALL=$vs" >> $env:GITHUB_ENV
+          "VCPKG_WINDOWS_TRIPLET=$env:QIGAO_VCPKG_WINDOWS_TRIPLET" >> $env:GITHUB_ENV
+      - name: Execute Windows installed SDK and real LoadLibrary conformance
+        if: matrix.platform == 'windows'
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          python cmake/ci/cstl-dso-odr/cross/run_cross.py --platform windows --mode "%CSTL_CROSS_MODE%"
+          if errorlevel 1 exit /b 1
+      - name: Execute macOS ARM64 installed SDK and real dlopen conformance
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/cstl-dso-odr/cross/run_cross.py \
+            --platform macos --mode "$CSTL_CROSS_MODE"
+      - name: Preserve candidate native SDK evidence and failed linker logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: salts-cstl-cross-${{ matrix.id }}
+          path: ${{ runner.temp }}/salts-cstl-cross-evidence-${{ matrix.platform }}-${{ matrix.mode }}
+          if-no-files-found: warn
+          retention-days: 14
