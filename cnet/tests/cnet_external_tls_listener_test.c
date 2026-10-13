@@ -45,6 +45,7 @@ typedef struct state_probe {
   bool connected;
   bool terminal;
   bool failed;
+  unsigned int terminal_events;
 } state_probe;
 
 static native_io_backend_kind test_backend_kind(void) {
@@ -117,8 +118,10 @@ static void on_state(void *user, cnet_connection connection,
     probe->connected = true;
   }
   if (state == CNET_CONNECTION_CLOSED ||
-      state == CNET_CONNECTION_FAILED)
+      state == CNET_CONNECTION_FAILED) {
+    ++probe->terminal_events;
     probe->terminal = true;
+  }
   if (state == CNET_CONNECTION_FAILED || error != NULL)
     probe->failed = true;
 }
@@ -152,18 +155,40 @@ static int drive_shared_once(cnet_listener *listener,
     *out_listener_consumed = false;
 
   status = advance_client(server);
-  if (status != SALTS_OK) return status;
+  if (status != SALTS_OK) {
+    fprintf(stderr, "CNet shared TLS NativeIO failure at line %d: status=%d\n",
+            __LINE__, status);
+    return status;
+  }
   status = advance_client(client);
-  if (status != SALTS_OK) return status;
+  if (status != SALTS_OK) {
+    fprintf(stderr, "CNet shared TLS NativeIO failure at line %d: status=%d\n",
+            __LINE__, status);
+    return status;
+  }
 
   status = native_io_backend_observe(
       backend, completions, TEST_BATCH, timeout_ms, &completion_count);
   if (status == SALTS_ETIMEDOUT) {
     status = advance_client(server);
-    if (status != SALTS_OK) return status;
-    return advance_client(client);
+    if (status != SALTS_OK) {
+    fprintf(stderr, "CNet shared TLS NativeIO failure at line %d: status=%d\n",
+            __LINE__, status);
+    return status;
   }
-  if (status != SALTS_OK) return status;
+    status = advance_client(client);
+    if (status != SALTS_OK) {
+      fprintf(stderr,
+              "CNet shared TLS NativeIO client advance after observe timeout: status=%d\n",
+              status);
+    }
+    return status;
+  }
+  if (status != SALTS_OK) {
+    fprintf(stderr, "CNet shared TLS NativeIO failure at line %d: status=%d\n",
+            __LINE__, status);
+    return status;
+  }
 
   for (index = 0u; index < completion_count; ++index) {
     bool consumed = false;
@@ -171,7 +196,11 @@ static int drive_shared_once(cnet_listener *listener,
     if (listener != NULL && listener->impl != NULL) {
       status = cnet_listener_route_external_completion(
           listener, &completions[index], &consumed);
-      if (status != SALTS_OK) return status;
+      if (status != SALTS_OK) {
+    fprintf(stderr, "CNet shared TLS NativeIO failure at line %d: status=%d\n",
+            __LINE__, status);
+    return status;
+  }
     }
     if (consumed) {
       if (out_listener_consumed != NULL)
@@ -180,17 +209,41 @@ static int drive_shared_once(cnet_listener *listener,
     }
 
     status = route_client_completion(server, &completions[index], &consumed);
-    if (status != SALTS_OK) return status;
+    if (status != SALTS_OK) {
+    fprintf(stderr, "CNet shared TLS NativeIO failure at line %d: status=%d\n",
+            __LINE__, status);
+    return status;
+  }
     if (consumed) continue;
 
     status = route_client_completion(client, &completions[index], &consumed);
-    if (status != SALTS_OK) return status;
-    if (!consumed) return SALTS_EPROTO;
+    if (status != SALTS_OK) {
+    fprintf(stderr, "CNet shared TLS NativeIO failure at line %d: status=%d\n",
+            __LINE__, status);
+    return status;
+  }
+    if (!consumed) {
+      fprintf(stderr,
+              "CNet shared TLS NativeIO unclaimed completion: kind=%d bytes=%zu status=%d user_data=%zu\n",
+              (int)completions[index].kind, (size_t)completions[index].bytes,
+              completions[index].status, (size_t)completions[index].user_data);
+      return SALTS_EPROTO;
+    }
   }
 
   status = advance_client(server);
-  if (status != SALTS_OK) return status;
-  return advance_client(client);
+  if (status != SALTS_OK) {
+    fprintf(stderr, "CNet shared TLS NativeIO failure at line %d: status=%d\n",
+            __LINE__, status);
+    return status;
+  }
+  status = advance_client(client);
+  if (status != SALTS_OK) {
+    fprintf(stderr,
+            "CNet shared TLS NativeIO client advance after completion batch: status=%d\n",
+            status);
+  }
+  return status;
 }
 
 static native_io_backend backend;
@@ -407,6 +460,18 @@ static void test_external_tls_listener_shared_progress(void) {
       check(!server_probe.connected);
       check(server_probe.failed);
       check(server_probe.terminal);
+      /* The TLS 1.3 client can finish locally before the server rejects its
+       * certificate. Even then, borrowed NativeIO must deliver the peer's
+       * fatal response and retire both generations instead of leaking an
+       * active client after the server has failed. */
+      deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
+      while (!client_probe.terminal && cmeta_monotonic_ms() < deadline) {
+        check(drive_shared_once(
+                  &listener, &server, &client, &backend, 25u, NULL) == SALTS_OK);
+      }
+      check(client_probe.terminal);
+      check(server_probe.terminal_events == 1u);
+      check(client_probe.terminal_events == 1u);
     } else {
       check(!client_probe.connected);
       check(client_probe.failed);

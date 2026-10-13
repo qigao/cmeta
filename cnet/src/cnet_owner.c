@@ -53,6 +53,9 @@ typedef struct cnet_owner_session {
   bool tls_send_accepted;
   bool tls_close_after_send;
   bool tls_shutdown_after_flush;
+  /** Fatal TLS handshake alert must drain through the existing bounded
+   * NativeIO write owner before the failed terminal event is published. */
+  bool tls_fatal_alert_draining;
   uint8_t tcp_shutdown_mask;
   uint8_t tcp_shutdown_applied_mask;
   bool preserve_send_on_eof;
@@ -1171,11 +1174,22 @@ static int cnet_owner_tls_background_progress(cnet_owner_impl *impl,
 
   if (impl == NULL || session == NULL || session->peer.scheme != CNET_URI_TLS)
     return SALTS_EINVAL;
+  /* A failed TLS owner must never probe plaintext or re-enter GmSSL while
+   * a fatal-alert ciphertext write is outstanding. Its pending status is
+   * already owned by exactly one final terminal completion. */
+  if (session->pending_status != SALTS_OK)
+    return cnet_owner_finalize_session(impl, session);
   if (session->close_requested || session->read_active || session->receive_demand != 0u)
     return SALTS_OK;
 
   status = cnet_tls_probe_peer_close(&session->tls, &peer_closed, &plaintext_pending);
-  if (status != SALTS_OK) return status;
+  if (status != SALTS_OK) {
+    /* A post-handshake TLS alert or invalid authenticated record is a
+     * per-session READ failure, not an Owner/control-loop failure. A borrowed
+     * NativeIO host must remain able to route other completions and drain the
+     * failed session's request generation to exactly one terminal event. */
+    return cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_READ);
+  }
   status = cnet_owner_tls_start_write(impl, session, &started);
   if (status != SALTS_OK) return status;
   if (peer_closed) return cnet_owner_tls_begin_peer_close(impl, session);
@@ -1253,14 +1267,70 @@ static int cnet_owner_tls_pump(cnet_owner_impl *impl,
 #endif
 }
 
+/*
+ * Fail-closed after the private GmSSL provider has generated a fatal TLS alert.
+ * Its ciphertext belongs to the existing TLS output ring. Never resubmit the
+ * failed handshake or publish CONNECTED; send the queued alert with the same
+ * NativeIO write request/slot and finalize exactly once after the terminal
+ * write completion, cancellation or bounded handshake deadline.
+ */
+static int cnet_owner_tls_drain_fatal_alert(cnet_owner_impl *impl,
+                                            cnet_owner_session *session) {
+  bool started = false;
+  int status;
+  if (impl == NULL || session == NULL || !session->tls_fatal_alert_draining ||
+      session->pending_status == SALTS_OK)
+    return SALTS_EINVAL;
+  if (session->close_requested) {
+    session->tls_fatal_alert_draining = false;
+    return cnet_owner_finalize_session(impl, session);
+  }
+  if (session->write_active) return SALTS_OK;
+  status = cnet_owner_tls_start_write(impl, session, &started);
+  if (status != SALTS_OK) {
+    session->tls_fatal_alert_draining = false;
+    return status;
+  }
+  if (started) return SALTS_OK;
+  session->tls_fatal_alert_draining = false;
+  return cnet_owner_finalize_session(impl, session);
+}
+
 static int cnet_owner_tls_pump_impl(cnet_owner_impl *impl, cnet_owner_session *session) {
   bool started = false;
   int status;
 
+  /* No second handshake attempt after recording a fatal alert. */
+  if (session->tls_fatal_alert_draining)
+    return cnet_owner_tls_drain_fatal_alert(impl, session);
+
   if (!cnet_tls_state_handshake_complete(&session->tls)) {
     bool complete = false;
     status = cnet_tls_handshake(&session->tls, &complete);
-    if (status != SALTS_OK) return status;
+    if (status != SALTS_OK) {
+      /* The GmSSL handshake may have already encoded a fatal Alert into the
+       * bounded ciphertext output ring. Ordinary session failure would
+       * cancel the write and close the TCP socket first (peer sees EOF).
+       * Admit the alert under the existing write lease before settling the
+       * handshake failure; no additional handshake or fallback is permitted.
+       */
+      const int handshake_failure = status;
+      int cancel_status;
+      status = cnet_owner_tls_start_write(impl, session, &started);
+      if (status != SALTS_OK) return handshake_failure;
+      if (!started && !session->write_active) return handshake_failure;
+      session->tls_fatal_alert_draining = true;
+      cnet_owner_record_failure(session, handshake_failure,
+                                CNET_SESSION_STAGE_HANDSHAKE);
+      /* An already queued ciphertext receive can outlive a failed handshake.
+       * Cancel only receive ownership, never the in-flight fatal-alert send. */
+      cancel_status = cnet_owner_cancel_receive_requests(impl, session->handle);
+      if (cancel_status != SALTS_OK) {
+        session->tls_fatal_alert_draining = false;
+        return cancel_status;
+      }
+      return SALTS_OK;
+    }
     status = cnet_owner_tls_start_write(impl, session, &started);
     if (status != SALTS_OK) return status;
     if (!complete) return cnet_owner_tls_start_read(impl, session);
@@ -1831,6 +1901,10 @@ static int cnet_owner_discard_queued_writes(cnet_owner_impl *impl, cnet_owner_se
 static int cnet_owner_progress_close(cnet_owner_impl *impl, cnet_owner_session *session) {
   int status;
   if (impl == NULL || session == NULL || !session->close_requested) return SALTS_EPROTO;
+  /* User close preempts a failed handshake's bounded alert drain. The
+   * in-flight NativeIO request and its generation remain owned until the
+   * terminal completion/cancellation is routed; no partial resubmission. */
+  session->tls_fatal_alert_draining = false;
   session->receive_demand = 0u;
   status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
   if (status != SALTS_OK) return status;
@@ -1908,7 +1982,18 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
   close_after_send = request->close_after_send;
   status = cnet_owner_release_request(request);
   if (status != SALTS_OK) return status;
-  if (session->pending_status != SALTS_OK) return cnet_owner_finalize_session(impl, session);
+  if (session->pending_status != SALTS_OK) {
+    /* A handshake-alert write has completed only after NativeIO has sent
+     * its entire bounded record, including any partial kernel completions.
+     * No failed-session read completion may finalize while that write is
+     * active; the normal generation-checked request ownership still applies.
+     */
+    if (session->tls_fatal_alert_draining &&
+        role == CNET_OWNER_REQUEST_TLS_WRITE &&
+        completion->kind == NATIVE_IO_COMPLETION_OK)
+      return cnet_owner_tls_drain_fatal_alert(impl, session);
+    return cnet_owner_finalize_session(impl, session);
+  }
 
   if (role == CNET_OWNER_REQUEST_CONNECT) {
     if (session->close_requested) return cnet_owner_finalize_session(impl, session);
@@ -2215,8 +2300,13 @@ static int cnet_owner_route_completion(cnet_owner_impl *impl,
     }
 #endif
     /* Cancellation may lose to a partial success already queued by the OS. */
-    if (session->pending_status != SALTS_OK)
+    if (session->pending_status != SALTS_OK &&
+        !(session->tls_fatal_alert_draining &&
+          request->role == CNET_OWNER_REQUEST_TLS_WRITE))
       return cnet_owner_finish_direct_completion(impl, request, completion);
+    /* The fatal-alert write still owns its entire logical ciphertext record.
+     * Partial NativeIO success must resubmit its remainder before the
+     * final failed-session callback can retire this Owner generation. */
     if (completion->bytes == 0u || completion->bytes > request->submitted_size)
       return cnet_owner_fail_direct_request(impl, request, SALTS_EIO);
     if (cnet_write_handle_valid(request->write.handle)) {
@@ -2292,6 +2382,10 @@ static int cnet_owner_process_deadlines(cnet_owner_impl *impl) {
         status = cnet_resolver_cancel(&impl->resolver, session->resolve_query);
         if (status != SALTS_OK) return status;
       }
+      /* A handshake deadline must stop further fatal-alert sends even if
+       * NativeIO has already completed a partial write which CNet has yet to
+       * consume. Preserve its outstanding request lease until completion. */
+      session->tls_fatal_alert_draining = false;
       status = cnet_owner_cancel_session_requests(impl, session->handle);
       if (status != SALTS_OK) return status;
       status = cnet_owner_finalize_session(impl, session);
@@ -3030,7 +3124,8 @@ bool cnet_owner_test_get_request_snapshot(const cnet_owner *owner, size_t reques
       .token = (uintptr_t)(request_index + 1u),
       .native_request = request->native_request,
       .endpoint = request->operation.endpoint,
-      .active = request->active};
+      .active = request->active,
+      .tls_write = request->active && request->role == CNET_OWNER_REQUEST_TLS_WRITE};
   return true;
 }
 
