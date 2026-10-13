@@ -111,6 +111,7 @@ jobs:
           cmake --install build-sctp-sdk-clean --prefix "$RUNNER_TEMP/sctp-wire-only"
           test -f "$RUNNER_TEMP/sctp-wire-only/include/cnet/sctp_wire.h"
           test ! -e "$RUNNER_TEMP/sctp-wire-only/include/cnet/sctp_assoc_internal.h"
+          test ! -e "$RUNNER_TEMP/sctp-wire-only/include/cnet/sctp_init_params_internal.h"
           test ! -e "$RUNNER_TEMP/sctp-wire-only/include/cnet/sctp_gmssl_mac_internal.h"
           test ! -e "$RUNNER_TEMP/sctp-wire-only/lib/libcnet_sctp_assoc_proto.a"
           test ! -e "$RUNNER_TEMP/sctp-wire-only/lib/libcnet_sctp_gmssl_mac_proto.a"
