@@ -476,6 +476,7 @@ static cnet_sctp_assoc_status handle_init_ack(cnet_sctp_assoc *s,
   if (status == CNET_SCTP_ASSOC_OK) {
     s->peer_tag = peer_tag;
     s->peer_initial_tsn = rd32(chunk->value + 12u);
+    s->peer_receive_window = rd32(chunk->value + 4u);
     s->peer_outbound_streams = rd16(chunk->value + 8u);
     s->peer_inbound_streams = rd16(chunk->value + 10u);
   }
@@ -493,6 +494,7 @@ static cnet_sctp_assoc_status handle_cookie_echo(cnet_sctp_assoc *s,
   cnet_sctp_cookie_tags tags = {0};
   cnet_sctp_cookie_decision decision;
   uint8_t scratch[CNET_SCTP_ASSOC_MAX_PACKET];
+  cnet_sctp_data candidate = {0};
   size_t size = 0u;
   uint32_t peer_tag, peer_tsn;
   int may_commit;
@@ -523,6 +525,12 @@ static cnet_sctp_assoc_status handle_cookie_echo(cnet_sctp_assoc *s,
         decision == CNET_SCTP_COOKIE_DUPLICATE_ACK &&
         s->peer_initial_tsn == peer_tsn))
     return CNET_SCTP_ASSOC_AUTH; /* no live Restart A/C, no peer replacement */
+  if (may_commit) {
+    status = data_prepare(s, &candidate, now, peer_tag, peer_tsn,
+        rd32(chunk->value + 36u), rd16(chunk->value + 32u),
+        rd16(chunk->value + 34u));
+    if (status != CNET_SCTP_ASSOC_OK) return status;
+  }
   status = encode_one(s, peer_tag, SCTP_TYPE_COOKIE_ACK,
       NULL, 0u, scratch, sizeof(scratch), &size);
   if (status != CNET_SCTP_ASSOC_OK) return status;
@@ -533,6 +541,9 @@ static cnet_sctp_assoc_status handle_cookie_echo(cnet_sctp_assoc *s,
      * Once the ACK is admitted, no old T1 packet is retained or resent. */
     s->peer_tag = peer_tag;
     s->peer_initial_tsn = peer_tsn;
+    s->peer_receive_window = rd32(chunk->value + 36u);
+    s->data = candidate;
+    s->data_ready = 1u;
     s->peer_outbound_streams = rd16(chunk->value + 32u);
     s->peer_inbound_streams = rd16(chunk->value + 34u);
     s->state = CNET_SCTP_ASSOC_ESTABLISHED;
