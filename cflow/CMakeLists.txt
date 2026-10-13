@@ -125,6 +125,19 @@ elseif(UNIX)
   endif()
 endif()
 
+# A static CFlow/CSTL archive can be linked into more than one native DSO.
+# Keep its reflected CMeta descriptor globals image-local, preserving public
+# semantic type equality instead of making duplicate data symbols preemptible.
+# This is a pure static-owner policy: explicitly requested shared libraries
+# retain their existing export/link ABI and MUST be reviewed separately.
+get_target_property(_salts_owner_type ${TARGET_NAME} TYPE)
+if(_salts_owner_type STREQUAL "STATIC_LIBRARY")
+  set_target_properties(${TARGET_NAME} PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+endif()
+unset(_salts_owner_type)
+
 cmake_config_target(
   ${TARGET_NAME}
   ALIAS Salts::CFlow

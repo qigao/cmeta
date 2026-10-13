@@ -119,7 +119,7 @@ jobs:
           elif [ "${{ matrix.sanitizer }}" = 'tsan' ]; then
             set -- -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_UNDEFINED=OFF -DENABLE_SANITIZER_THREAD=ON
           fi
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }} "$@"
+          cmake --preset "${{ matrix.preset }}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }} "$@"
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
       - name: Configure and build all modules on Windows
         id: build_windows
@@ -130,7 +130,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
+          cmake --preset "${{ matrix.preset }}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
           if errorlevel 1 exit /b 1
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
           if errorlevel 1 exit /b 1
@@ -139,8 +139,54 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON
+          cmake --preset "${{ matrix.preset }}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SUPPRESS_REGENERATION=ON
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
+      # Only the Draft production POLICY candidate runs these explicit
+      # installed-SDK source tests. Original immutable release tags/packages,
+      # all other PRs and the existing native graph stay unchanged.
+      - name: Checkout pinned independent CFlow DLL/dylib consumer fixture
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/static-cstl-cflow-private-owner-1180' && (matrix.id == 'windows-release' || matrix.id == 'macos-release') }}
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/salts
+          ref: d938a9843d9db4cbbb1d6db3e1546b82df4a602b
+          path: build/private-owner-fixtures/cflow
+          persist-credentials: false
+      - name: Checkout pinned independent CSTL DLL/dylib consumer fixture
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/static-cstl-cflow-private-owner-1180' && (matrix.id == 'windows-release' || matrix.id == 'macos-release') }}
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/salts
+          ref: 579de3d85050799c5f93d19b92e3dbda7d58181f
+          path: build/private-owner-fixtures/cstl
+          persist-credentials: false
+      - name: Qualify real producer static owners via installed Windows C11 SDK
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/static-cstl-cflow-private-owner-1180' && matrix.id == 'windows-release' }}
+        shell: cmd
+        env:
+          EXPECTED_PRIVATE_OWNER_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          python cmake/ci/private-static-owner/verify_installed.py --platform windows --build build/Msvc-Release
+          if errorlevel 1 exit /b 1
+      - name: Qualify real producer static owners via installed macOS ARM64 C11 SDK
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/static-cstl-cflow-private-owner-1180' && matrix.id == 'macos-release' }}
+        shell: bash
+        env:
+          EXPECTED_PRIVATE_OWNER_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/private-static-owner/verify_installed.py \
+            --platform macos --build build/mac-arm64-appleclang-package-release
+      - name: Preserve private owner candidate original object and DSO evidence
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/static-cstl-cflow-private-owner-1180' && (matrix.id == 'windows-release' || matrix.id == 'macos-release') && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: salts-private-static-owner-${{ matrix.id }}
+          path: ${{ runner.temp }}/salts-private-owner-candidate-*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Run Actor, mailbox and ACE throughput benchmarks (Unix)
         id: actor_bench_unix
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.benchmarks == 'ON' }}
