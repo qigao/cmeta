@@ -225,9 +225,14 @@ def main():
         "--repeat", "until-fail:3", "--no-tests=error",
         "--output-on-failure", "-V", "--timeout", "120"],
         env=runtime, logfile=log)
-    require("100% tests passed" in tests and
-            "0 tests failed out of 2" in tests,
-            "native loader tests were not both executed and accepted")
+    # CTest differs by platform/version: macOS/MSVC can print
+    # "100% tests passed out of 2" without the redundant "0 tests failed".
+    # Still require both named cases and SIX actual native process markers.
+    require(re.search(r"100% tests passed(?:, 0 tests failed)? out of 2", tests)
+            is not None and
+            "cflow_cross_client_first" in tests and
+            "cflow_cross_server_first" in tests,
+            "two named native CFlow DSO loader tests did not both pass")
     for text in ("CFLOW_CROSS_TYPE_SHAPE_EQUAL=1",
                  "CFLOW_CROSS_PUBLIC_SEMANTIC_EQUAL_BOTH=1",
                  "CFLOW_CROSS_LIVE_FIRST_OWNER_OK",
