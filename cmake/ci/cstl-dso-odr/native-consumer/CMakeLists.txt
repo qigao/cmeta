@@ -22,6 +22,16 @@ find_package(Salts CONFIG REQUIRED PATHS "${_prefix}"
 if(NOT TARGET Salts::CSTL OR NOT TARGET Salts::CMeta)
   message(FATAL_ERROR "Installed SDK does not export public CSTL/CMeta targets")
 endif()
+if(WIN32 AND EXACT_CSTL_MODE STREQUAL "shared")
+  # The *installed* candidate target, not a private test-header hack, must
+  # propagate the exact Windows CSTL data-import ABI to both C and C++.
+  get_target_property(_cstl_imports Salts::CSTL INTERFACE_COMPILE_DEFINITIONS)
+  if(NOT _cstl_imports OR
+     NOT "CSTL_TEST_DLL_IMPORT=1" IN_LIST _cstl_imports)
+    message(FATAL_ERROR
+      "Shared CSTL candidate SDK lacks explicit installed DLL data-import contract")
+  endif()
+endif()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
