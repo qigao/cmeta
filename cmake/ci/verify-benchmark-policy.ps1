@@ -72,3 +72,57 @@ if ($WriteSummary) {
   Add-Content -LiteralPath $summaryPath -Value ""
   Add-Content -LiteralPath $summaryPath -Value "Allowed verdicts: **PASS**, **FAIL**, **UNSTABLE**, **DIAGNOSTIC**."
 }
+
+# CI structure admission: expensive throughput samples must not gate native
+# functional execution. This is checked before the benchmark matrix is run.
+$nativeWorkflowPath = Join-Path $ProjectRoot ".github/workflows/native-build.yml"
+$benchmarkWorkflowPath = Join-Path $ProjectRoot ".github/workflows/native-io-benchmarks.yml"
+$scopeScriptPath = Join-Path $ProjectRoot "cmake/ci/select-ci-scope.ps1"
+foreach ($requiredPath in @($nativeWorkflowPath, $benchmarkWorkflowPath, $scopeScriptPath)) {
+  if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+    throw "CI benchmark isolation input missing: $requiredPath"
+  }
+}
+$nativeWorkflow = Get-Content -LiteralPath $nativeWorkflowPath -Raw
+$benchmarkWorkflow = Get-Content -LiteralPath $benchmarkWorkflowPath -Raw
+$scopeScript = Get-Content -LiteralPath $scopeScriptPath -Raw
+
+foreach ($nativeForbidden in @(
+    "- name: Run Actor, mailbox and ACE throughput benchmarks",
+    "- name: Measure CNet progress strategies",
+    "actor_bench_unix", "actor_bench_windows",
+    "progress_bench_unix", "progress_bench_windows")) {
+  if ($nativeWorkflow.Contains($nativeForbidden)) {
+    throw "Throughput step leaked back into native functional jobs: $nativeForbidden"
+  }
+}
+foreach ($functionalGate in @(
+    "Run complete Unix integration tests",
+    "Run complete Windows ACE integration tests",
+    "Run Windows execution and nested CSTL contracts",
+    "Run Unix native and plugin contracts")) {
+  if (-not $nativeWorkflow.Contains($functionalGate)) {
+    throw "Native functional acceptance missing after benchmark split: $functionalGate"
+  }
+}
+foreach ($benchmarkGate in @(
+    "Restore compiled benchmark inputs",
+    "Sample Actor mailbox / ACE / Leader-Followers throughput",
+    "Sample CNet progress strategies",
+    "matrix.backend != 'io_uring'",
+    'cflow-actor-mailbox-${{ matrix.build_artifact }}',
+    'cnet-progress-strategy-${{ matrix.build_artifact }}')) {
+  if (-not $benchmarkWorkflow.Contains($benchmarkGate)) {
+    throw "Independent benchmark admission missing: $benchmarkGate"
+  }
+}
+foreach ($scopeFlag in @(
+    '$checks = [ordered]@{',
+    'ace_actor = $aceActor',
+    'cnet_progress_bench = $cnetProgressBench',
+    '$entry.benchmarks = if ($work -and')) {
+  if (-not $scopeScript.Contains($scopeFlag)) {
+    throw "Scoped benchmark producer selection missing: $scopeFlag"
+  }
+}
+Write-Host "Native/benchmark CI isolation verified: functional gates kept, performance runs separate"
