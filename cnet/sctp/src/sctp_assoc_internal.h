@@ -2,6 +2,7 @@
 #define CNET_SCTP_ASSOC_INTERNAL_H
 
 #include <cnet/sctp_wire.h>
+#include "sctp_data_internal.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -25,6 +26,7 @@ typedef enum cnet_sctp_assoc_state {
 
 typedef enum cnet_sctp_assoc_status {
   CNET_SCTP_ASSOC_OK = 0,
+  CNET_SCTP_ASSOC_EMPTY = 1,
   CNET_SCTP_ASSOC_INVALID = -1,
   CNET_SCTP_ASSOC_OWNER = -2,
   CNET_SCTP_ASSOC_CAPACITY = -3,
@@ -85,12 +87,15 @@ typedef struct cnet_sctp_assoc {
   uint64_t current_rto_ms;
   uint32_t peer_tag;
   uint32_t peer_initial_tsn;
+  uint32_t peer_receive_window;
   uint16_t peer_outbound_streams;
   uint16_t peer_inbound_streams;
   uint8_t saved_packet[CNET_SCTP_ASSOC_MAX_PACKET];
   size_t saved_size;
   uint8_t retransmits;
   uint8_t in_progress;
+  uint8_t data_ready;
+  cnet_sctp_data data; /* private, fixed-size, owner-local; NOT installed */
   uint32_t magic;
 } cnet_sctp_assoc;
 
@@ -109,6 +114,18 @@ cnet_sctp_assoc_status cnet_sctp_assoc_advance(
     uint8_t *output, size_t output_capacity, size_t *output_size);
 cnet_sctp_assoc_status cnet_sctp_assoc_next_deadline(
     cnet_sctp_assoc *association, uint64_t *deadline_ms, int *has_deadline);
+/* Established-only full-wire DATA/SACK, bounded single-fragment messages.
+ * No borrowed output/event pointer retained. All functions require the same
+ * Owner; only this private integration target includes the DATA machinery.
+ */
+cnet_sctp_assoc_status cnet_sctp_assoc_send_message(cnet_sctp_assoc *a,
+    uint64_t now_ms, uint16_t stream_id, uint32_t ppid, int unordered,
+    const void *payload, size_t length, void *packet, size_t packet_capacity,
+    size_t *packet_bytes);
+cnet_sctp_assoc_status cnet_sctp_assoc_take_message(cnet_sctp_assoc *a,
+    cnet_sctp_data_message *message, void *payload,
+    size_t payload_capacity, size_t *written);
+
 cnet_sctp_assoc_status cnet_sctp_assoc_stop(cnet_sctp_assoc *association);
 cnet_sctp_assoc_status cnet_sctp_assoc_destroy(cnet_sctp_assoc *association);
 
