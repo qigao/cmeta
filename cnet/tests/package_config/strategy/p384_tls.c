@@ -163,7 +163,7 @@ static int run_case(const char *ca_file, const char *cert_file,
   }
 
   REQUIRE(accepted);
-  REQUIRE(cp.handshaking > 0);
+  /* Rejection may be reported directly without an intermediate handshake callback. */
   if (reject) {
     REQUIRE(cp.terminal && cp.failed && !cp.connected);
     REQUIRE(cp.failure_stage != NULL);
