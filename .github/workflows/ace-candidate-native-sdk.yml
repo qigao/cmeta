@@ -1,9 +1,10 @@
 name: Salts.Native ACE 2.3 candidate (Linux x64)
 
 # This workflow is isolated to the unmerged ACE integration branch.
-# It can publish only an immutable SHA-qualified prerelease, never a stable tag.
+# It builds an immutable SHA-qualified Actions artifact only; never uploads
+# incomplete one-RID NuGet packages to the shared public feed (#1089).
 # [ACE-VERIFY] validates installed SDK and uploads an artifact without publishing.
-# [ACE-CANDIDATE] additionally requires full host matrix and publishes an immutable prerelease.
+# [ACE-CANDIDATE] additionally requires the full host matrix; still no feed publication.
 # These markers are exclusive and must be removed after qualification.
 'on':
   pull_request:
@@ -20,7 +21,7 @@ concurrency:
 
 jobs:
   candidate:
-    name: Qualify and publish exact ACE SDK
+    name: Qualify exact ACE SDK, Actions artifact only
     if: >-
       github.repository == 'qigao/salts' &&
       github.event.pull_request.head.repo.full_name == 'qigao/salts' &&
@@ -34,7 +35,7 @@ jobs:
     timeout-minutes: 150
     permissions:
       contents: read
-      packages: write
+      packages: read
       actions: read
     env:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
@@ -242,29 +243,21 @@ jobs:
           }
           echo "Candidate source SHA $SOURCE_SHA qualified by eight-profile CI $full_ci_id"
 
-      - name: Publish opt-in immutable prerelease (not a stable release)
+      - name: Record immutable artifact-only result
         if: contains(github.event.pull_request.title, '[ACE-CANDIDATE]')
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CANDIDATE_VERSION: ${{ steps.identity.outputs.candidate_version }}
         run: |
           set -euo pipefail
-          config="$RUNNER_TEMP/ace-candidate-nuget.config"
-          printf '<configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
-            --name github --username qigao --password "$GITHUB_TOKEN" \
-            --store-password-in-clear-text --configfile "$config"
-          dotnet nuget push "dist/Salts.Native.$CANDIDATE_VERSION.nupkg" \
-            --api-key "$GITHUB_TOKEN" --source github --skip-duplicate \
-            --configfile "$config"
+          test -f "dist/Salts.Native.$CANDIDATE_VERSION.nupkg"
           {
             echo '### ACE 2.3 integration-only candidate'
             echo "- Source commit: $SOURCE_SHA"
-            echo "- NuGet: Salts.Native $CANDIDATE_VERSION"
+            echo "- NuGet identity: Salts.Native $CANDIDATE_VERSION"
             echo '- RID: linux-x64 only'
-            echo '- Full Windows/macOS, sanitizer and downstream qualification remain separate.'
-            echo '- No tag, GitHub Release, 2.2.x overwrite or master merge was performed.'
+            echo '- Artifact archived in this Actions run, never published to GitHub Packages'
+            echo '- Full platform/consumer release qualification remains separate'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report ccache compilation statistics
