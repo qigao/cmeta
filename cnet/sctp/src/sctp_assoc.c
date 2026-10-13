@@ -567,6 +567,15 @@ static cnet_sctp_assoc_status handle_cookie_ack(cnet_sctp_assoc *s,
     return CNET_SCTP_ASSOC_OK;
   if (s->state != CNET_SCTP_ASSOC_COOKIE_ECHOED)
     return CNET_SCTP_ASSOC_PROTOCOL;
+  /* Establish per-Association DATA capacity and TSN starting points from
+   * INIT ACK before exposing ESTABLISHED. No alloc/worker/second Owner. */
+  if (!s->data_ready) {
+    cnet_sctp_assoc_status prepared = data_prepare(s, &s->data, now,
+        s->peer_tag, s->peer_initial_tsn, s->peer_receive_window,
+        s->peer_outbound_streams, s->peer_inbound_streams);
+    if (prepared != CNET_SCTP_ASSOC_OK) return prepared;
+    s->data_ready = 1u;
+  }
   s->state = CNET_SCTP_ASSOC_ESTABLISHED;
   s->saved_size = 0u;
   memset(s->saved_packet, 0, sizeof(s->saved_packet));
