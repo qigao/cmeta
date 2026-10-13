@@ -2,6 +2,8 @@
  * Do not dereference a borrowed descriptor after its owning DSO is closed.
  */
 #include <cmeta/type_identity.h>
+#include <cmeta/range.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -36,11 +38,90 @@ static unsigned long cstl_error(void) { return 0UL; }
 
 typedef const cmeta_generic_desc *(*cstl_generic_fn)(void);
 typedef int (*cstl_semantic_fn)(const cmeta_generic_desc *);
+typedef const cmeta_container_desc *(*cstl_container_fn)(void);
+typedef void *(*cstl_vec_create_fn)(void);
+typedef int (*cstl_vec_destroy_fn)(void *);
+typedef unsigned (*cstl_vec_live_fn)(void);
+
+typedef struct cstl_range_owner_api {
+  cstl_container_fn desc;
+  cstl_vec_create_fn create;
+  cstl_vec_destroy_fn destroy;
+  cstl_vec_live_fn live;
+} cstl_range_owner_api;
+
+static int cstl_resolve_range_api(cstl_native_library owner,
+                                  cstl_range_owner_api *out) {
+  if (!out) return 0;
+#if defined(_WIN32)
+  out->desc = (cstl_container_fn)cstl_lookup(
+      owner, "salts_test_cstl_vec_container");
+  out->create = (cstl_vec_create_fn)cstl_lookup(
+      owner, "salts_test_cstl_vec_create");
+  out->destroy = (cstl_vec_destroy_fn)cstl_lookup(
+      owner, "salts_test_cstl_vec_destroy");
+  out->live = (cstl_vec_live_fn)cstl_lookup(
+      owner, "salts_test_cstl_vec_live_count");
+#else
+  *(void **)(&out->desc) = cstl_lookup(
+      owner, "salts_test_cstl_vec_container");
+  *(void **)(&out->create) = cstl_lookup(
+      owner, "salts_test_cstl_vec_create");
+  *(void **)(&out->destroy) = cstl_lookup(
+      owner, "salts_test_cstl_vec_destroy");
+  *(void **)(&out->live) = cstl_lookup(
+      owner, "salts_test_cstl_vec_live_count");
+#endif
+  return out->desc && out->create && out->destroy && out->live;
+}
+
+/* Host invokes actual ContainerDesc->range factory, ->size and ->next
+ * callbacks across a DSO boundary. Their owner must remain loaded for the
+ * complete operation. The provider-allocated Vec is freed BEFORE dlclose.
+ */
+static int cstl_exercise_borrowed_range(const cstl_range_owner_api *api) {
+  const int expected[3] = {4, 7, 9};
+  const cmeta_container_desc *desc;
+  cmeta_range range;
+  cmeta_range_cursor cursor = {0};
+  void *object = NULL;
+  size_t i;
+  int result = 0;
+  if (!api || !api->desc || !api->create ||
+      !api->destroy || !api->live) return 0;
+  object = api->create();
+  if (!object || api->live() != 1U) goto cleanup;
+  desc = api->desc();
+  if (!desc || !desc->range || !desc->collector) goto cleanup;
+  range = desc->range(object);
+  if (range.object != object || !range.element_type ||
+      !range.size || !range.next || !range.current_version ||
+      cmeta_range_size(&range) != 3U) goto cleanup;
+  for (i = 0; i < 3; ++i) {
+    cmeta_gen_status status;
+    int item = 0;
+    status = cmeta_range_next(&range, &cursor, &item);
+    if (status != CMETA_GEN_VALUE &&
+        status != CMETA_GEN_VALUE_AND_DONE) goto cleanup;
+    if (item != expected[i]) goto cleanup;
+  }
+  {
+    int final_item = 0;
+    if (cmeta_range_next(&range, &cursor, &final_item) != CMETA_GEN_DONE)
+      goto cleanup;
+  }
+  result = 1;
+cleanup:
+  if (object && !api->destroy(object)) result = 0;
+  if (api->live() != 0U) result = 0;
+  return result;
+}
 
 int main(int argc, char **argv) {
   cstl_native_library core = NULL, first_lib = NULL, second_lib = NULL;
   cstl_generic_fn first_desc = NULL, second_desc = NULL;
   cstl_semantic_fn first_equal = NULL, second_equal = NULL;
+  cstl_range_owner_api first_range = {0}, second_range = {0};
   const cmeta_generic_desc *first, *second;
   int shared_mode, pointers_equal;
 
@@ -108,6 +189,15 @@ int main(int argc, char **argv) {
   printf("CSTL_GENERIC_POINTER_EQUAL=%d\n", pointers_equal);
   fflush(stdout);
 
+  if (!cstl_resolve_range_api(first_lib, &first_range) ||
+      !cstl_resolve_range_api(second_lib, &second_range) ||
+      !cstl_exercise_borrowed_range(&first_range) ||
+      !cstl_exercise_borrowed_range(&second_range)) {
+    fputs("CSTL_BORROWED_CONTAINER_RANGE_INVALID\n", stderr);
+    return 14;
+  }
+  puts("CSTL_CONTAINER_RANGE_CROSS_DSO=1");
+
   if (!cstl_close(second_lib)) {
     fputs("CSTL_PROVIDER_B_UNLOAD_FAILED\n", stderr);
     return 11;
@@ -119,6 +209,14 @@ int main(int argc, char **argv) {
     return 12;
   }
   puts("CSTL_LIVE_PROVIDER_SURVIVED_OTHER_UNLOAD");
+  /* Foreign Provider B callbacks have expired and are NOT invoked again.
+   * A's ContainerDesc remains live and its factory/next callbacks work.
+   */
+  if (!cstl_exercise_borrowed_range(&first_range)) {
+    fputs("CSTL_LIVE_CONTAINER_RANGE_FAILED_AFTER_B_UNLOAD\n", stderr);
+    return 15;
+  }
+  puts("CSTL_CONTAINER_RANGE_AFTER_OTHER_UNLOAD=1");
   if (!cstl_close(first_lib) || !cstl_close(core)) {
     fputs("CSTL_FINAL_NATIVE_UNLOAD_FAILED\n", stderr);
     return 13;
