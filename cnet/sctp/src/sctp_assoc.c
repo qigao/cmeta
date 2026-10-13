@@ -133,6 +133,58 @@ static int valid_cookie_echo_error(const cnet_sctp_wire_chunk *chunk) {
   return pos == chunk->value_size;
 }
 
+/* The DATA engine borrows the existing handshake's single Owner and tags.
+ * Nothing here opens a socket, starts a worker, or changes SCTP wire format.
+ * Peer stream counts and rwnd are authenticated by INIT ACK/State Cookie. */
+static cnet_sctp_assoc_status data_prepare(const cnet_sctp_assoc *s,
+    cnet_sctp_data *candidate, uint64_t now, uint32_t peer_tag,
+    uint32_t peer_tsn, uint32_t peer_rwnd,
+    uint16_t peer_outbound, uint16_t peer_inbound) {
+  cnet_sctp_data_config cfg = {0};
+  uint16_t outbound, inbound;
+  cnet_sctp_data_status result;
+  if (!candidate || peer_tag == 0u || peer_rwnd < 1500u ||
+      peer_outbound == 0u || peer_inbound == 0u)
+    return CNET_SCTP_ASSOC_PROTOCOL;
+  outbound = s->config.outbound_streams < peer_inbound ?
+      s->config.outbound_streams : peer_inbound;
+  inbound = s->config.inbound_streams < peer_outbound ?
+      s->config.inbound_streams : peer_outbound;
+  if (outbound > CNET_SCTP_DATA_STREAMS) outbound = CNET_SCTP_DATA_STREAMS;
+  if (inbound > CNET_SCTP_DATA_STREAMS) inbound = CNET_SCTP_DATA_STREAMS;
+  cfg.local_port = s->config.local_port;
+  cfg.remote_port = s->config.remote_port;
+  cfg.local_tag = s->local_tag;
+  cfg.peer_tag = peer_tag;
+  cfg.local_initial_tsn = s->initial_tsn;
+  cfg.peer_initial_tsn = peer_tsn;
+  cfg.outbound_streams = outbound;
+  cfg.inbound_streams = inbound;
+  cfg.peer_receive_window = peer_rwnd;
+  cfg.t3_initial_ms = s->config.t1_ms; /* private timer baseline until T3 config */
+  cfg.t3_max_ms = s->config.t1_max_ms;
+  cfg.max_retransmits = s->config.max_retransmits;
+  cfg.is_owner = s->config.is_owner;
+  cfg.owner_context = s->config.provider_context;
+  result = cnet_sctp_data_init(candidate, &cfg, now);
+  return result == CNET_SCTP_DATA_OK ? CNET_SCTP_ASSOC_OK :
+      result == CNET_SCTP_DATA_OWNER ? CNET_SCTP_ASSOC_OWNER :
+      CNET_SCTP_ASSOC_PROTOCOL;
+}
+static cnet_sctp_assoc_status data_result(cnet_sctp_data_status status) {
+  switch (status) {
+    case CNET_SCTP_DATA_OK: return CNET_SCTP_ASSOC_OK;
+    case CNET_SCTP_DATA_EMPTY: return CNET_SCTP_ASSOC_EMPTY;
+    case CNET_SCTP_DATA_OWNER: return CNET_SCTP_ASSOC_OWNER;
+    case CNET_SCTP_DATA_CAPACITY: return CNET_SCTP_ASSOC_CAPACITY;
+    case CNET_SCTP_DATA_CLOCK: return CNET_SCTP_ASSOC_CLOCK;
+    case CNET_SCTP_DATA_EXPIRED: return CNET_SCTP_ASSOC_EXPIRED;
+    case CNET_SCTP_DATA_CLOSED: return CNET_SCTP_ASSOC_CLOSED_ERROR;
+    case CNET_SCTP_DATA_INVALID: return CNET_SCTP_ASSOC_INVALID;
+    default: return CNET_SCTP_ASSOC_PROTOCOL;
+  }
+}
+
 static void prepare_init(const cnet_sctp_assoc *s, uint8_t value[16]) {
   wr32(value, s->local_tag);
   wr32(value + 4u, s->config.receive_window);
