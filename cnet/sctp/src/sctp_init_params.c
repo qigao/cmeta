@@ -53,10 +53,15 @@ cnet_sctp_init_param_status cnet_sctp_init_params_preflight(
         parsed.cookie_size = length - 4u;
         break;
       case PARAM_UNRECOGNIZED:
-        if (!init_ack || length < 8u)
+        /* RFC 9260 INIT ACK carries the reported original TLV inside
+         * Parameter Type 8. Validate its exact non-padded nested length.
+         * This diagnostic is accepted but not yet forwarded to the ULP. */
+        if (!init_ack || length < 8u ||
+            read16(value + position + 6u) < 4u ||
+            (size_t)read16(value + position + 6u) != length - 4u)
           return CNET_SCTP_INIT_PARAMS_MALFORMED;
-        /* Full reporting semantics cannot be implemented in this M2 profile. */
-        return CNET_SCTP_INIT_PARAMS_UNSUPPORTED;
+        ++parsed.skipped_count;
+        break;
       case PARAM_IPV4:
         if (length != 8u) return CNET_SCTP_INIT_PARAMS_MALFORMED;
         return CNET_SCTP_INIT_PARAMS_UNSUPPORTED; /* no multihoming */
