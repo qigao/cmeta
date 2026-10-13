@@ -14,8 +14,8 @@
     {
       "kind": "git",
       "repository": "https://github.com/qigao/vcpkg-cache",
-      "reference": "4c939495ab184d8f8c605e52351ad51db4ca4957",
-      "baseline": "4c939495ab184d8f8c605e52351ad51db4ca4957",
+      "reference": "e678e8c1d0510e89b79e53b1828bfd2cab18ab0e",
+      "baseline": "e678e8c1d0510e89b79e53b1828bfd2cab18ab0e",
       "packages": [
         "gmssl"
       ]
