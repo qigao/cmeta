@@ -200,6 +200,40 @@ def main() -> None:
             "dependency_audit": dependencies, "exports_audit": exports,
         }
 
+    # Exact Windows shared-CSTL acceptance is stricter than merely getting a
+    # green imported-CMake-target build. The CSTL DLL must physically exist in
+    # the relocated installation and be the *one* metadata provider used by
+    # both independently loaded Provider DLLs and Core.
+    if system == "Windows" and mode == "shared":
+        cstl_dll = strict_one(relocated / "bin", "cmeta_cstl.dll")
+        cstl_exports = execute(["dumpbin", "/EXPORTS", str(cstl_dll)])
+        for exported in ("stl_bplus_tree_generic_desc",
+                         "stl_bplus_tree_container_desc",
+                         "stl_vec_container_desc"):
+            if exported not in cstl_exports:
+                raise RuntimeError(
+                    f"shared CSTL DLL missing public metadata export: {exported}"
+                )
+        for label, image in (("core", core), ("a", provider_a), ("b", provider_b)):
+            dependent = execute(["dumpbin", "/DEPENDENTS", str(image)])
+            if "cmeta_cstl.dll" not in dependent.lower():
+                raise RuntimeError(
+                    f"{label} did not import the unique shared CSTL DLL"
+                )
+            if label != "core":
+                own_exports = report_images[label]["exports_audit"]
+                for exported in ("stl_bplus_tree_generic_desc",
+                                 "stl_vec_container_desc"):
+                    if exported in own_exports:
+                        raise RuntimeError(
+                            f"{label} exports a duplicate owner: {exported}"
+                        )
+        report_images["cstl"] = {
+            "path": str(cstl_dll),
+            "sha256": digest(cstl_dll),
+            "exports_audit": cstl_exports,
+        }
+
     # Remove ambient SDK library search paths; use only the isolated installed
     # prefix, independent vcpkg closure and OS runtime directories.
     env = dict(os.environ)
