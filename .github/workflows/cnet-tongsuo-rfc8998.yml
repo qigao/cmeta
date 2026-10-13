@@ -76,9 +76,9 @@ jobs:
           cc -std=c11 -O2 -Wall -Wextra             -I "$RUNNER_TEMP/rfc8998/gmssl/include"             cnet/tests/interop/gmssl_fixture_pkcs8_convert.c             -L "$RUNNER_TEMP/rfc8998/gmssl-build/bin" -lgmssl             -Wl,-rpath,"$RUNNER_TEMP/rfc8998/gmssl-build/bin"             -o "$RUNNER_TEMP/rfc8998/gmssl-key-convert"
           test -x "$RUNNER_TEMP/rfc8998/gmssl-key-convert"
       - name: Restore shared re2c tools for native CNet consumer
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
       - name: Configure exact Salts private-GmSSL candidate cache
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
         with:
           mode: read
       - name: Prepare native CNet build toolchain
