@@ -403,9 +403,97 @@ static void cookie_echo_t1_retransmission(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* End-to-end test through actual SCTP wire CRC, one-chunk parser and
+ * Association state machine; these are not only direct TLV helper tests. */
+static size_t append_parameter_to_sctp_packet(const uint8_t *input, size_t n,
+    uint16_t type, const uint8_t *payload, size_t payload_size,
+    uint8_t *out, size_t cap) {
+  cnet_sctp_wire_header header;
+  cnet_sctp_wire_decoder decoder;
+  cnet_sctp_wire_chunk chunk;
+  uint8_t value[1200];
+  size_t written = 0u;
+  const size_t length = payload_size + 4u;
+  const size_t padded = (length + 3u) & ~(size_t)3u;
+  size_t offset;
+  assert(payload_size <= UINT16_MAX - 4u);
+  assert(cnet_sctp_wire_decode(input, n, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  assert(chunk.value_size + padded <= sizeof(value));
+  offset = chunk.value_size;
+  memcpy(value, chunk.value, offset);
+  value[offset] = (uint8_t)(type >> 8);
+  value[offset + 1u] = (uint8_t)type;
+  value[offset + 2u] = (uint8_t)(length >> 8);
+  value[offset + 3u] = (uint8_t)length;
+  if (payload_size != 0u) memcpy(value + offset + 4u, payload, payload_size);
+  memset(value + offset + length, 0, padded - length);
+  chunk.value = value;
+  chunk.value_size = offset + padded;
+  assert(cnet_sctp_wire_encode(header.source_port, header.destination_port,
+      header.verification_tag, &chunk, 1u, out, cap, &written) == CNET_SCTP_WIRE_OK);
+  return written;
+}
+
+static void init_tlv_wire_gate(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  uint8_t init[1200], ack[1200], encoded[1200], echo[1200], confirm[1200];
+  uint8_t dummy_ipv4[4] = {127u, 0u, 0u, 1u};
+  size_t init_n = 0u, ack_n = 0u, encoded_n, echo_n = 0u, confirm_n = 0u;
+  unsigned int prior_signs;
+  setup(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
+  /* Unknown parameter action 01 requires reporting; we do not silently
+   * ignore it or publish a misleading partial INIT ACK. */
+  encoded_n = append_parameter_to_sctp_packet(init, init_n, 0x4003u,
+                                               NULL, 0u, encoded, sizeof(encoded));
+  prior_signs = (unsigned int)cb.mac_calls;
+  assert(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack,
+                               sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_PROTOCOL);
+  assert(ack_n == 0u && cb.mac_calls == (int)prior_signs);
+  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  /* Well-formed IPv4 is still explicitly unsupported in single-path M2. */
+  encoded_n = append_parameter_to_sctp_packet(init, init_n, 5u,
+                   dummy_ipv4, sizeof(dummy_ipv4), encoded, sizeof(encoded));
+  assert(cnet_sctp_assoc_input(&b, 3u, encoded, encoded_n, ack,
+                               sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_PROTOCOL);
+  assert(ack_n == 0u && cb.mac_calls == (int)prior_signs);
+  /* Unknown action 10 can safely be skipped. */
+  encoded_n = append_parameter_to_sctp_packet(init, init_n, 0x8005u,
+                   NULL, 0u, encoded, sizeof(encoded));
+  assert(cnet_sctp_assoc_input(&b, 4u, encoded, encoded_n, ack,
+                               sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_OK);
+  assert(ack_n > 0u && cb.mac_calls == (int)prior_signs + 1);
+  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  /* Unknown action 11 in INIT ACK requires ERROR reporting; hard refuse. */
+  encoded_n = append_parameter_to_sctp_packet(ack, ack_n, 0xc002u,
+                   NULL, 0u, encoded, sizeof(encoded));
+  assert(cnet_sctp_assoc_input(&a, 5u, encoded, encoded_n, echo,
+                               sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_PROTOCOL);
+  assert(echo_n == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  /* Unknown action 00 after mandatory Cookie stops TLV scan, not handshake. */
+  encoded_n = append_parameter_to_sctp_packet(ack, ack_n, 0x0002u,
+                   NULL, 0u, encoded, sizeof(encoded));
+  assert(cnet_sctp_assoc_input(&a, 6u, encoded, encoded_n, echo,
+                               sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+  assert(cnet_sctp_assoc_input(&b, 7u, echo, echo_n, confirm,
+                               sizeof(confirm), &confirm_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 8u, confirm, confirm_n, encoded,
+                               sizeof(encoded), &encoded_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
   entropy_init_fail_closed();
   normal_handshake();
+  init_tlv_wire_gate();
   clock_owner_and_timeout();
   stale_cookie_and_wrong_mac();
   binding_vtag_and_invalid_input();
