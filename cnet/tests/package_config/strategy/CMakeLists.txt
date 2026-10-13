@@ -59,9 +59,10 @@ set_tests_properties(cnet_installed_p384_tls PROPERTIES TIMEOUT 90)
 
 # Unlike header-only consumers this TLS executable pulls in Salts::Core through
 # the installed CNet DSO. ELF DT_RUNPATH does not resolve indirect DSO deps;
-# expose only the just-installed SDK lib directory in this test subprocess.
-# No build-tree or host-provider library fallback is permitted.
+# expose ONLY the just-installed SDK lib directory in this test subprocess.
+# Do not inherit a caller LD_LIBRARY_PATH: an empty trailing search entry
+# could resolve untrusted libraries from the test working directory.
 if(UNIX AND NOT APPLE)
   set_tests_properties(cnet_installed_p384_tls PROPERTIES
-    ENVIRONMENT "LD_LIBRARY_PATH=${SALTS_TEST_PREFIX}/lib:$ENV{LD_LIBRARY_PATH}")
+    ENVIRONMENT "LD_LIBRARY_PATH=${SALTS_TEST_PREFIX}/lib")
 endif()
