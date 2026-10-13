@@ -522,14 +522,17 @@ static int cnet_tls_configure_variant(cnet_tls_context *context,
   static const int range_signatures[] = {
       TLS_sig_rsa_pss_rsae_sha256,
       TLS_sig_rsa_pkcs1_sha256,
-      TLS_sig_ecdsa_secp256r1_sha256};
+      TLS_sig_ecdsa_secp256r1_sha256,
+      TLS_sig_ecdsa_secp384r1_sha384};
   static const int tls13_signatures[] = {
       TLS_sig_rsa_pss_rsae_sha256,
       TLS_sig_rsa_pkcs1_sha256,
-      TLS_sig_ecdsa_secp256r1_sha256};
+      TLS_sig_ecdsa_secp256r1_sha256,
+      TLS_sig_ecdsa_secp384r1_sha384};
   static const int tls12_signatures[] = {
       TLS_sig_rsa_pkcs1_sha256,
-      TLS_sig_ecdsa_secp256r1_sha256};
+      TLS_sig_ecdsa_secp256r1_sha256,
+      TLS_sig_ecdsa_secp384r1_sha384};
   static const int groups[] = {TLS_curve_secp256r1};
   const int *selected_groups = groups;
   size_t group_count = sizeof(groups) / sizeof(groups[0]);
