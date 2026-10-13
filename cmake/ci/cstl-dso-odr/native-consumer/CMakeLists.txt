@@ -40,6 +40,10 @@ foreach(target IN ITEMS cstl_provider_a cstl_provider_b)
 endforeach()
 
 add_executable(cstl_native_loader loader.c)
+# The loader intentionally does not LINK Salts::Core/CMeta: it obtains its
+# code via LoadLibrary/dlopen at runtime. Headers must still come exclusively
+# from the relocated, exact installed SDK, never the in-tree source checkout.
+target_include_directories(cstl_native_loader PRIVATE "${_prefix}/include")
 target_link_libraries(cstl_native_loader PRIVATE ${CMAKE_DL_LIBS})
 set_target_properties(cstl_native_loader PROPERTIES
   BUILD_RPATH "${_prefix}/lib")
