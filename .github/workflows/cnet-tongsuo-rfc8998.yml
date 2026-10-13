@@ -118,6 +118,16 @@ jobs:
             --fixture-key-converter "$RUNNER_TEMP/rfc8998/gmssl-key-convert" \
             --cnet-client "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_tongsuo_strict_client_probe" \
             --cnet-server "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_tongsuo_strict_server_probe"
+      - name: Refuse standard TLS cipher and TLS12 downgrade on both independent peers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 cnet/tests/interop/verify_tongsuo_rfc8998_downgrade.py \
+            --tongsuo "$RUNNER_TEMP/rfc8998/tongsuo/apps/openssl" \
+            --gmssl "$RUNNER_TEMP/rfc8998/gmssl-build/bin/gmssl" \
+            --fixture-key-converter "$RUNNER_TEMP/rfc8998/gmssl-key-convert" \
+            --cnet-client "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_tongsuo_strict_client_probe" \
+            --cnet-server "$GITHUB_WORKSPACE/build/linux-gcc-release/bin/cnet_tongsuo_strict_server_probe"
       - name: Record explicit qualification limit
         if: always()
         shell: bash
