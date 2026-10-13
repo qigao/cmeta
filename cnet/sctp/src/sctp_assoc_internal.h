@@ -50,6 +50,12 @@ typedef int (*cnet_sctp_assoc_entropy_fn)(void *context,
 typedef int (*cnet_sctp_assoc_mac_fn)(void *context,
     const uint8_t *message, size_t message_size,
     uint8_t out[CNET_SCTP_ASSOC_MAC_BYTES]);
+/* Authenticates a received Cookie using a bounded active/prior key-ring.
+ * Provider compares MACs in constant time and returns 0 only on a match.
+ * This is required; the Association has no implicit signing-key fallback. */
+typedef int (*cnet_sctp_assoc_mac_verify_fn)(void *context,
+    const uint8_t *message, size_t message_size,
+    const uint8_t claimed_mac[CNET_SCTP_ASSOC_MAC_BYTES]);
 
 typedef struct cnet_sctp_assoc_config {
   uint16_t local_port;
@@ -65,6 +71,7 @@ typedef struct cnet_sctp_assoc_config {
   cnet_sctp_assoc_owner_fn is_owner;
   cnet_sctp_assoc_entropy_fn entropy;
   cnet_sctp_assoc_mac_fn mac;
+  cnet_sctp_assoc_mac_verify_fn verify_mac;
   void *provider_context;
 } cnet_sctp_assoc_config;
 
