@@ -14,6 +14,15 @@ typedef struct test_context {
   int attempt_reentry;
   int reentry_called;
   int mac_calls;
+  int entropy_calls;
+  int fail_entropy;
+  int zero_tag;
+  int attempt_entropy_reentry;
+  int attempt_entropy_init_reentry;
+  int entropy_reentry_result;
+  int entropy_init_reentry_result;
+  uint32_t tag;
+  uint32_t initial_tsn;
   uint32_t test_key;
   cnet_sctp_assoc *association;
 } test_context;
@@ -45,13 +54,39 @@ static int fake_mac(void *v, const uint8_t *message, size_t size,
   return 0;
 }
 
+/* DELIBERATELY NON-CRYPTOGRAPHIC; deterministic mock for control flow.
+ * Never provide this in published or shipping Salts builds. */
+static int fake_entropy(void *v, uint8_t *out, size_t n) {
+  test_context *ctx = (test_context *)v;
+  uint32_t tag = ctx->zero_tag ? 0u : ctx->tag;
+  ++ctx->entropy_calls;
+  if (ctx->attempt_entropy_reentry && ctx->association) {
+    ctx->entropy_reentry_result = cnet_sctp_assoc_stop(ctx->association);
+  }
+  if (ctx->attempt_entropy_init_reentry && ctx->association) {
+    ctx->entropy_init_reentry_result = cnet_sctp_assoc_init(
+        ctx->association, &ctx->association->config, 0u);
+  }
+  if (ctx->fail_entropy) return -1;
+  if (n != CNET_SCTP_ASSOC_ENTROPY_BYTES) return -1;
+  out[0] = (uint8_t)(tag >> 24);
+  out[1] = (uint8_t)(tag >> 16);
+  out[2] = (uint8_t)(tag >> 8);
+  out[3] = (uint8_t)tag;
+  out[4] = (uint8_t)(ctx->initial_tsn >> 24);
+  out[5] = (uint8_t)(ctx->initial_tsn >> 16);
+  out[6] = (uint8_t)(ctx->initial_tsn >> 8);
+  out[7] = (uint8_t)ctx->initial_tsn;
+  return 0;
+}
+
 static cnet_sctp_assoc_config config(uint16_t local, uint32_t tag,
                                       test_context *ctx) {
   cnet_sctp_assoc_config c = {0};
   c.local_port = local;
   c.remote_port = local == 5000u ? 5001u : 5000u;
-  c.local_tag = tag;
-  c.initial_tsn = local == 5000u ? 0x0f0e0d0cu : 0x11223344u;
+  ctx->tag = tag;
+  ctx->initial_tsn = local == 5000u ? 0x0f0e0d0cu : 0x11223344u;
   c.receive_window = 8192u;
   c.outbound_streams = 8u;
   c.inbound_streams = 8u;
@@ -61,6 +96,7 @@ static cnet_sctp_assoc_config config(uint16_t local, uint32_t tag,
   c.peer_binding = UINT64_C(0x123456789abcdef0);
   c.max_retransmits = 2u;
   c.is_owner = is_owner;
+  c.entropy = fake_entropy;
   c.mac = fake_mac;
   c.provider_context = ctx;
   return c;
@@ -70,6 +106,8 @@ static void setup(cnet_sctp_assoc *a, cnet_sctp_assoc *b,
                   test_context *ca, test_context *cb) {
   cnet_sctp_assoc_config ac;
   cnet_sctp_assoc_config bc;
+  memset(a, 0, sizeof(*a));
+  memset(b, 0, sizeof(*b));
   memset(ca, 0, sizeof(*ca));
   memset(cb, 0, sizeof(*cb));
   ca->on_owner = cb->on_owner = 1;
@@ -79,6 +117,47 @@ static void setup(cnet_sctp_assoc *a, cnet_sctp_assoc *b,
   bc = config(5001u, UINT32_C(0x87654321), cb);
   assert(cnet_sctp_assoc_init(a, &ac, 0u) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_init(b, &bc, 0u) == CNET_SCTP_ASSOC_OK);
+}
+
+static void entropy_init_fail_closed(void) {
+  cnet_sctp_assoc a = {0};
+  test_context ctx = {0};
+  cnet_sctp_assoc_config c;
+  uint8_t packet[1200];
+  size_t packet_size = 0u;
+  ctx.on_owner = 1;
+  ctx.association = &a;
+  c = config(5000u, UINT32_C(0x12345678), &ctx);
+  c.entropy = NULL;
+  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_INVALID);
+  assert(ctx.entropy_calls == 0);
+  c.entropy = fake_entropy;
+  ctx.on_owner = 0;
+  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_INVALID);
+  assert(ctx.entropy_calls == 0);
+  ctx.on_owner = 1;
+  ctx.fail_entropy = 1;
+  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_ENTROPY);
+  assert(ctx.entropy_calls == 1);
+  assert(a.magic == 0u && a.local_tag == 0u && a.initial_tsn == 0u);
+  assert(cnet_sctp_assoc_start(&a, 0u, packet, sizeof(packet), &packet_size) ==
+         CNET_SCTP_ASSOC_INVALID);
+  ctx.fail_entropy = 0;
+  ctx.zero_tag = 1;
+  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_ENTROPY);
+  assert(a.magic == 0u && a.local_tag == 0u);
+  ctx.zero_tag = 0;
+  ctx.attempt_entropy_reentry = 1;
+  ctx.attempt_entropy_init_reentry = 1;
+  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_OK);
+  assert(ctx.entropy_reentry_result == CNET_SCTP_ASSOC_BUSY);
+  assert(ctx.entropy_init_reentry_result == CNET_SCTP_ASSOC_BUSY);
+  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_BUSY);
+  assert(a.local_tag == UINT32_C(0x12345678));
+  assert(a.initial_tsn == UINT32_C(0x0f0e0d0c));
+  assert(ctx.entropy_calls == 3);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
 }
 
 static void normal_handshake(void) {
@@ -232,7 +311,7 @@ static void stale_cookie_and_wrong_mac(void) {
 
 
 static void binding_vtag_and_invalid_input(void) {
-  cnet_sctp_assoc a, b, wrong_generation;
+  cnet_sctp_assoc a, b, wrong_generation = {0};
   test_context ca, cb, cg;
   cnet_sctp_assoc_config cfg;
   cnet_sctp_wire_chunk cookie_ack = {11u, 0u, NULL, 0u};
@@ -308,6 +387,7 @@ static void cookie_echo_t1_retransmission(void) {
 }
 
 int main(void) {
+  entropy_init_fail_closed();
   normal_handshake();
   clock_owner_and_timeout();
   stale_cookie_and_wrong_mac();
