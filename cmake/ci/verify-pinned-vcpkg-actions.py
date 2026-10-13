@@ -13,6 +13,7 @@ import re
 import sys
 
 PIN = "d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3"
+EXISTING_CANDIDATE_VCPKG_PIN = "fafb1efe5ac2440bfd7a08e493988d0459d89e51"
 PROVIDER_SOURCE_BLOBS = {
     "setup-vcpkg-cache": "0a23ba176cbe8846ca164c2477f9a1e401cdc072",
     "setup-re2c-tools": "3bbe8cb2b96ebe8a17b1970448ac0b25c186eced",
@@ -52,9 +53,16 @@ def check(lines: dict[str, str]) -> dict:
             if EXACT_SHA.fullmatch(sha) is None:
                 raise ValueError(
                     f"{filename}:{lineno}: mutable/unreviewed provider ref {sha!r}")
-            if filename in MIGRATED_FILES and sha != PIN:
-                raise ValueError(
-                    f"{filename}:{lineno}: reviewed pin changed: {sha} != {PIN}")
+            if filename in MIGRATED_FILES:
+                expected = (
+                    EXISTING_CANDIDATE_VCPKG_PIN
+                    if filename in ("candidate-native-sdk.yml", "ace-candidate-native-sdk.yml")
+                    and name == "setup-vcpkg-cache"
+                    else PIN
+                )
+                if sha != expected:
+                    raise ValueError(
+                        f"{filename}:{lineno}: reviewed pin changed: {sha} != {expected}")
             rows.append(dict(
                 workflow=filename, line=lineno, action=action, commit=sha,
                 action_definition_blob=PROVIDER_SOURCE_BLOBS[name]
@@ -62,14 +70,16 @@ def check(lines: dict[str, str]) -> dict:
             ))
 
     for filename in MIGRATED_FILES:
-        expected = 1 if filename in (
-            "candidate-native-sdk.yml", "ace-candidate-native-sdk.yml"
-        ) else 2
         actual = [x for x in rows if x["workflow"] == filename]
-        if len(actual) != expected:
+        if len(actual) != 2 or {
+            x["action"].rsplit("/", 1)[-1] for x in actual
+        } != {"setup-vcpkg-cache", "setup-re2c-tools"}:
             raise ValueError(
-                f"{filename}: expected {expected} immutable provider actions, "
-                f"found {len(actual)}")
+                f"{filename}: expected one exact vcpkg and one exact re2c Action")
+    migrated_count = sum(
+        x["workflow"] in MIGRATED_FILES and x["commit"] == PIN for x in rows)
+    if migrated_count != 14:
+        raise ValueError(f"expected 14 newly fixed refs, got {migrated_count}")
     if not any(x["workflow"] == "native-build.yml" for x in rows):
         raise ValueError("main native producer workflow has no pinned provider")
     return {
@@ -77,7 +87,8 @@ def check(lines: dict[str, str]) -> dict:
         "migrated_provider_revision": PIN,
         "pinned_action_definitions": PROVIDER_SOURCE_BLOBS,
         "migrated_workflows": len(MIGRATED_FILES),
-        "migrated_actions": 14,
+        "migrated_actions": migrated_count,
+        "preserved_candidate_vcpkg_commit": EXISTING_CANDIDATE_VCPKG_PIN,
         "provider_references_total": len(rows),
         "references": rows,
         "runtime_check_required": True,
@@ -87,14 +98,12 @@ def check(lines: dict[str, str]) -> dict:
 def self_test() -> dict:
     fixture: dict[str, str] = {}
     for filename in MIGRATED_FILES:
-        count = 1 if filename in (
-            "candidate-native-sdk.yml", "ace-candidate-native-sdk.yml"
-        ) else 2
-        kinds = ("setup-re2c-tools",) if count == 1 else (
-            "setup-re2c-tools", "setup-vcpkg-cache")
         fixture[filename] = "\n".join(
-            f"      - uses: qigao/vcpkg-cache/.github/actions/{kind}@{PIN}"
-            for kind in kinds)
+            f"      - uses: qigao/vcpkg-cache/.github/actions/{kind}@"
+            + (EXISTING_CANDIDATE_VCPKG_PIN if filename in (
+                "candidate-native-sdk.yml", "ace-candidate-native-sdk.yml"
+            ) and kind == "setup-vcpkg-cache" else PIN)
+            for kind in ("setup-re2c-tools", "setup-vcpkg-cache"))
     report = check(fixture)
     if report["status"] != "PASS":
         raise ValueError("valid exact-pin fixture was rejected")
@@ -110,7 +119,7 @@ def self_test() -> dict:
             raise ValueError(f"invalid provider action ref was accepted: {invalid}")
     return {
         "status": "PASS",
-        "positive": "14 references in 8 changed workflows",
+        "positive": "14 new SHA pins plus 2 preserved candidate vcpkg pins",
         "rejected": ["master", "main", "v1", "short SHA", "nonhex SHA"],
     }
 
