@@ -1,0 +1,174 @@
+name: CNet mainline fatal-alert fully source-sanitized Owner
+
+'on':
+  pull_request:
+    paths:
+      - 'cnet/src/cnet_owner.c'
+      - 'cnet/src/cnet_owner.h'
+      - 'cnet/src/cnet_tls.c'
+      - 'cnet/src/cnet_tls.h'
+      - 'cnet/tests/cnet_shangmi_tls13_fatal_owner_test.c'
+      - 'cnet/tests/cnet_shangmi_tls13_profile_test.c'
+      - 'cnet/tests/cnet_tls_handshake_framing_test.c'
+      - 'cnet/tests/verify_gmssl_shangmi_tls13.py'
+      - 'cnet/tests/CMakeLists.txt'
+      - '.github/workflows/cnet-fatal-alert-mainline-source-san.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cnet-mainline-fatal-owner-san-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-fatal-owner:
+    name: Mainline GmSSL fatal-alert owner / ${{ matrix.sanitizer }}
+    if: >-
+      github.repository == 'qigao/salts' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == 'qigao/salts' &&
+        github.head_ref == 'fix/cnet-fatal-alert-drain-isolated-1140'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sanitizer: asan-ubsan
+            address: ON
+            undefined: ON
+            thread: OFF
+          - sanitizer: tsan
+            address: OFF
+            undefined: OFF
+            thread: ON
+    env:
+      EXPECTED_MAINLINE_GMSSL_REGISTRY: 4c939495ab184d8f8c605e52351ad51db4ca4957
+      ASAN_OPTIONS: detect_odr_violation=2:detect_leaks=1:halt_on_error=1:abort_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      TSAN_OPTIONS: halt_on_error=1:exitcode=66
+      CCACHE_DIR: ${{ github.workspace }}/.ccache-fatal-owner-${{ matrix.sanitizer }}
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - name: Checkout exact isolated C11 owner source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Restore exact shared re2c binary
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
+
+      - name: Restore exact shared vcpkg dependencies
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
+        with:
+          mode: read
+
+      - name: Pin exact current-master provider and candidate commit
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          python3 - <<'PY'
+          import json, os
+          data = json.load(open("vcpkg-configuration.json", encoding="utf-8"))
+          gmssl = [r for r in data.get("registries", []) if "gmssl" in r.get("packages", [])]
+          expected = os.environ["EXPECTED_MAINLINE_GMSSL_REGISTRY"]
+          if len(gmssl) != 1 or gmssl[0].get("reference") != expected or gmssl[0].get("baseline") != expected:
+              raise SystemExit("Test candidate must keep the actual master GmSSL registry; no #1158 upgrade")
+          print("mainline gmssl registry source=" + expected)
+          PY
+          {
+            echo "source_sha=$EXPECTED_SOURCE_SHA"
+            echo "registry_pin=$EXPECTED_MAINLINE_GMSSL_REGISTRY"
+            echo "source_sanitizer=${{ matrix.sanitizer }}"
+            echo "no_rfc8998_registry_stack_import=true"
+          } | tee "$RUNNER_TEMP/fatal-owner-provenance.txt"
+
+      - name: Prepare native CNet build host
+        uses: ./.github/actions/setup-build-host
+
+      - name: Restore native compiler cache
+        uses: ./.github/actions/setup-compiler-cache
+        with:
+          profile: cnet-mainline-fatal-${{ matrix.sanitizer }}
+
+      - name: Compile actual CNet and true NativeIO short-write fixtures with Sanitizers
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/build/cnet-mainline-fatal-${{ matrix.sanitizer }}"
+          cmake --preset linux-release-ci -B "$root" \
+            -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
+            -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
+            -DCMETA_BUILD_BENCHMARKS=OFF -DNATIVE_IO_BUILD_BENCHMARKS=OFF \
+            -DCNET_BUILD_BENCHMARKS=OFF \
+            -DENABLE_SANITIZER_ADDRESS=${{ matrix.address }} \
+            -DENABLE_SANITIZER_UNDEFINED=${{ matrix.undefined }} \
+            -DENABLE_SANITIZER_THREAD=${{ matrix.thread }}
+          cmake --build "$root" --parallel 2 \
+            --target cnet_shangmi_tls13_fatal_owner_probe \
+                     cnet_shangmi_tls13_profile_probe \
+                     cnet_tls_handshake_framing_test
+
+      - name: Verify first-party source object sanitizer instrumentation
+        shell: bash
+        env:
+          SANITIZER_MODE: ${{ matrix.sanitizer }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee "$RUNNER_TEMP/fatal-owner-compile-audit.json"
+          import json, os
+          from pathlib import Path
+          build=Path("build/cnet-mainline-fatal-"+os.environ["SANITIZER_MODE"])
+          rows=json.loads((build/"compile_commands.json").read_text())
+          actual=[]
+          for src in (
+              "cnet/src/cnet_owner.c",
+              "cnet/src/cnet_tls.c",
+              "cnet/tests/cnet_shangmi_tls13_fatal_owner_test.c",
+              "cnet/tests/cnet_shangmi_tls13_profile_test.c",
+              "cnet/tests/cnet_tls_handshake_framing_test.c",
+          ):
+              found=[r for r in rows if r["file"].replace("\\","/").endswith("/"+src)]
+              if len(found)!=1:
+                  raise SystemExit(f"Missing or multiply compiled original source {src}: {len(found)}")
+              command=found[0].get("command") or " ".join(found[0].get("arguments", []))
+              required=("-fsanitize=thread",) if os.environ["SANITIZER_MODE"]=="tsan" else (
+                  "-fsanitize=address", "-fsanitize=undefined")
+              for flag in required:
+                  if flag not in command:
+                      raise SystemExit(f"NOT source instrumented: {src} absent {flag}")
+              actual.append({"source":src,"sanitizer":os.environ["SANITIZER_MODE"]})
+          print(json.dumps(actual,indent=2))
+          PY
+
+      - name: Run real Provider-generated TLS alert, one-byte writes and cancellation 3x
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/build/cnet-mainline-fatal-${{ matrix.sanitizer }}"
+          ctest --test-dir "$root" --no-tests=error --output-on-failure \
+            --timeout 150 --repeat until-fail:3 \
+            -R '^(cnet_shangmi_tls13_fatal_owner_(test|cancel_test|deadline_test)|cnet_shangmi_tls13_profile_test|cnet_tls_handshake_framing_test)$'
+
+      - name: Preserve actual exact-source sanitizer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mainline-cnet-fatal-owner-${{ matrix.sanitizer }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/fatal-owner-provenance.txt
+            ${{ runner.temp }}/fatal-owner-compile-audit.json
+            build/cnet-mainline-fatal-${{ matrix.sanitizer }}/Testing/Temporary/LastTest.log
+            build/cnet-mainline-fatal-${{ matrix.sanitizer }}/compile_commands.json
