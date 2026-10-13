@@ -1,8 +1,9 @@
-name: CNet mainline fatal-alert fully source-sanitized Owner
+name: CNet rev11 candidate fatal-alert source-sanitized Owner
 
 'on':
   pull_request:
     paths:
+      - 'vcpkg-configuration.json'
       - 'cnet/src/cnet_owner.c'
       - 'cnet/src/cnet_owner.h'
       - 'cnet/src/cnet_tls.c'
@@ -25,13 +26,13 @@ concurrency:
 
 jobs:
   real-fatal-owner:
-    name: Mainline GmSSL fatal-alert owner / ${{ matrix.sanitizer }}
+    name: GmSSL 3.2.0#11 fatal-alert owner / ${{ matrix.sanitizer }}
     if: >-
       github.repository == 'qigao/salts' &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.full_name == 'qigao/salts' &&
-        github.head_ref == 'fix/cnet-fatal-alert-drain-isolated-1140'))
+        github.head_ref == 'qualify/cnet-owner-r11-current-master-1140'))
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     strategy:
@@ -47,7 +48,7 @@ jobs:
             undefined: OFF
             thread: ON
     env:
-      EXPECTED_MAINLINE_GMSSL_REGISTRY: 4c939495ab184d8f8c605e52351ad51db4ca4957
+      EXPECTED_MAINLINE_GMSSL_REGISTRY: 9fc853a8a3a779e0115040d30caab3c05d777f44
       ASAN_OPTIONS: detect_odr_violation=2:detect_leaks=1:halt_on_error=1:abort_on_error=1
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
       TSAN_OPTIONS: halt_on_error=1:exitcode=66
@@ -82,14 +83,15 @@ jobs:
           gmssl = [r for r in data.get("registries", []) if "gmssl" in r.get("packages", [])]
           expected = os.environ["EXPECTED_MAINLINE_GMSSL_REGISTRY"]
           if len(gmssl) != 1 or gmssl[0].get("reference") != expected or gmssl[0].get("baseline") != expected:
-              raise SystemExit("Test candidate must keep the actual master GmSSL registry; no #1158 upgrade")
-          print("mainline gmssl registry source=" + expected)
+              raise SystemExit("Candidate requires exact GmSSL revision 11; no hidden overlay or fallback")
+          print("candidate gmssl revision 11 registry source=" + expected)
           PY
           {
             echo "source_sha=$EXPECTED_SOURCE_SHA"
             echo "registry_pin=$EXPECTED_MAINLINE_GMSSL_REGISTRY"
             echo "source_sanitizer=${{ matrix.sanitizer }}"
-            echo "no_rfc8998_registry_stack_import=true"
+            echo "candidate_gmssl_rev11=true"
+            echo "protected_1158_stacked_code_not_imported=true"
           } | tee "$RUNNER_TEMP/fatal-owner-provenance.txt"
 
       - name: Prepare native CNet build host
