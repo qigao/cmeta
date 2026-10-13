@@ -39,6 +39,7 @@ typedef struct cnet_sctp_dcep {
   cnet_sctp_dcep_channel channels[CNET_SCTP_DCEP_STREAMS];
   uint16_t streams;
   uint8_t is_dtls_client, stopped;
+  uint32_t magic;
   cnet_sctp_dcep_owner_fn is_owner;
   void *context;
 } cnet_sctp_dcep;
