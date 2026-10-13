@@ -288,8 +288,18 @@ static cnet_sctp_assoc_status verify_cookie(cnet_sctp_assoc *s,
   s->in_progress = 0u;
   if (mac_result != 0) return CNET_SCTP_ASSOC_AUTH;
   issued = rd64(cookie + 4u);
-  if (issued > now || now - issued > s->config.cookie_lifetime_ms)
-    return CNET_SCTP_ASSOC_EXPIRED;
+  if (issued > now) return CNET_SCTP_ASSOC_EXPIRED;
+  if (now - issued > s->config.cookie_lifetime_ms) {
+    /* RFC 9260 Section 5.2.4, existing-association case E: an authenticated
+     * duplicate Cookie that matches BOTH current verification tags may be
+     * ACKed after its nominal TTL. Never use this branch to admit a new TCB,
+     * switch peer identity or revive a stopped/closing generation. The
+     * additional peer TSN check is conservative for this M2 prototype. */
+    if (s->state != CNET_SCTP_ASSOC_ESTABLISHED ||
+        s->peer_tag == 0u || s->peer_tag != rd32(cookie + 16u) ||
+        s->peer_initial_tsn != rd32(cookie + 24u))
+      return CNET_SCTP_ASSOC_EXPIRED;
+  }
   return CNET_SCTP_ASSOC_OK;
 }
 
