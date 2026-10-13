@@ -449,8 +449,14 @@ cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
     }
     if (!complete) continue;
     if (total > cap) return CNET_SCTP_DATA_CAPACITY;
-    /* All capacity and coherency checks above precede any RX mutation. */
+    /* Snapshot metadata before freeing its first fragment. The entire
+     * message is committed at once, never exposing erased RX storage. */
     {
+      const uint16_t stream_id = start->stream_id;
+      const uint16_t stream_ssn = start->ssn;
+      const uint32_t ppid = start->ppid;
+      const uint32_t start_tsn = start->tsn;
+      const uint8_t unordered = start->unordered;
       size_t copied = 0u;
       uint32_t consume_tsn = start->tsn;
       uint8_t last_flags;
@@ -463,15 +469,15 @@ cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
         memset(frag, 0, sizeof(*frag));
         ++consume_tsn;
       } while ((last_flags & DATA_E) == 0u);
-      meta->stream_id = start->stream_id; /* start was just erased! */
-      meta->stream_sequence = start->ssn;
-      meta->ppid = start->ppid;
-      meta->tsn = start->tsn;
+      meta->stream_id = stream_id;
+      meta->stream_sequence = stream_ssn;
+      meta->ppid = ppid;
+      meta->tsn = start_tsn;
       meta->size = copied;
-      meta->unordered = start->unordered;
+      meta->unordered = unordered;
       *written = copied;
+      if (!unordered) ++d->rx_ssn[stream_id];
     }
-    if (!start->unordered) ++d->rx_ssn[start->stream_id];
     return CNET_SCTP_DATA_OK;
   }
   return CNET_SCTP_DATA_EMPTY;
