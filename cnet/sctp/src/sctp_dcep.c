@@ -151,7 +151,9 @@ cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
   if (bytes[0] != DCEP_OPEN || n < 12u)
     return CNET_SCTP_DCEP_PROTOCOL;
   /* The remote DTLS role must use the opposite SID parity. */
-  if (((sid & 1u) != 0u) == (d->is_dtls_client != 0u))
+  /* RFC 8832: the remote DTLS client sends OPEN on even SIDs and
+   * the remote DTLS server on odd SIDs. Compare with remote, not local role. */
+  if (((sid & 1u) != 0u) != (d->is_dtls_client != 0u))
     return CNET_SCTP_DCEP_PROTOCOL;
   if (channel->state) return CNET_SCTP_DCEP_BUSY;
   status = validate_type(bytes[1], rd32(bytes + 4u));
