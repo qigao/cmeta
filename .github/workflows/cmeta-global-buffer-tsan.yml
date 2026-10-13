@@ -102,7 +102,7 @@ jobs:
             build/cmeta-global-buffer-tsan/compile_commands.json
           retention-days: 14
 
-exact-release-source:
+  exact-release-source:
     name: Exact rc.15 tag source TSan with same two-owner fixtures
     runs-on: ubuntu-24.04
     timeout-minutes: 90
