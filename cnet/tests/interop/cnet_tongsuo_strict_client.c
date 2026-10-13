@@ -96,11 +96,16 @@ int main(int argc, char **argv) {
   char reversed[sizeof(kMessage)] = {0};
   size_t i, count = 0u;
   uint64_t deadline;
-  int client_initialized = 0, status, ok = 0;
+  int client_initialized = 0, status, ok = 0, reject_peer = 0;
 
-  if (argc != 3) {
-    fputs("usage: cnet_tongsuo_client ca-cert.pem port\n", stderr);
+  if (argc != 3 && argc != 4) {
+    fputs("usage: cnet_tongsuo_client ca-cert.pem port [wrong-ca|wrong-san]\n", stderr);
     return 2;
+  }
+  if (argc == 4) {
+    if (strcmp(argv[3], "wrong-ca") != 0 &&
+        strcmp(argv[3], "wrong-san") != 0) return 2;
+    reject_peer = 1;
   }
   if (snprintf(uri, sizeof(uri), "tls://127.0.0.1:%s", argv[2]) < 1)
     return 2;
@@ -125,7 +130,8 @@ int main(int argc, char **argv) {
 
   policy.size = sizeof(policy);
   policy.ca_file = argv[1];
-  policy.server_name = "localhost";
+  policy.server_name = argc == 4 && strcmp(argv[3], "wrong-san") == 0
+                         ? "wrong.example" : "localhost";
   policy.security_profile = CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13;
   if (cnet_tls_client_init(&tls, &policy) != SALTS_OK) goto done;
 
@@ -143,6 +149,13 @@ int main(int argc, char **argv) {
   while (!w.connected && !w.failed && cmeta_monotonic_ms() < deadline) {
     status = cnet_client_poll(&client, 20u, &count);
     if (status != SALTS_OK) goto done;
+  }
+  if (reject_peer) {
+    /* This is a *peer verification* negative on an admitted TCP socket:
+     * the client must terminate without publishing CONNECTED or plaintext. */
+    ok = !w.connected && w.failed && w.terminal &&
+         w.received_size == 0u && w.sent == 0;
+    goto done;
   }
   if (!w.connected || w.failed) goto done;
   if (cnet_receive(&client, connection, sizeof(w.received) - 1u) != SALTS_OK ||
@@ -174,6 +187,8 @@ done:
     fprintf(stderr, "CNet strict RFC8998/Tongsuo peer test failed: connected=%d "
                     "failed=%d received=%zu sent=%d\n",
             w.connected, w.failed, w.received_size, w.sent);
+  else if (reject_peer)
+    puts("CNet public NativeIO client rejected independent untrusted Tongsuo peer: PASS");
   else puts("CNet public NativeIO client ↔ independent Tongsuo strict RFC8998: PASS");
   return ok ? 0 : 1;
 }

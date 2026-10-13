@@ -100,10 +100,15 @@ int main(int argc, char **argv) {
   size_t events = 0u;
   int server_initialized = 0, listener_initialized = 0;
   int accepted = 0, receive_armed = 0, echoed = 0, ready = 0, ok = 0;
+  int expect_peer_rejection = 0;
 
-  if (argc != 3) {
-    fputs("usage: cnet_tongsuo_server server-cert.pem server-key.pem\n", stderr);
+  if (argc != 3 && argc != 4) {
+    fputs("usage: cnet_tongsuo_server server-cert.pem server-key.pem [reject]\n", stderr);
     return 2;
+  }
+  if (argc == 4) {
+    if (strcmp(argv[3], "reject") != 0) return 2;
+    expect_peer_rejection = 1;
   }
   server_cfg.backend = NATIVE_IO_BACKEND_EPOLL;
   server_cfg.connection_capacity = 1u;
@@ -175,10 +180,19 @@ int main(int argc, char **argv) {
       echoed = 1;
     }
     if (echoed && w.send_count != 0) {
-      ok = 1;
+      ok = !expect_peer_rejection;
       break;
     }
     if (w.terminal) break;
+  }
+
+  if (expect_peer_rejection) {
+    /* Client-side CA/SAN rejection may occur after the server's Finished.
+     * The CNet server can momentarily report CONNECTED; what must never
+     * happen is an authenticated application payload or successful echo.
+     * Require an admitted TCP socket and an observed terminal callback. */
+    ok = accepted && w.terminal && !echoed &&
+         w.data_size == 0u && w.send_count == 0;
   }
 
 done:
@@ -203,6 +217,8 @@ done:
             accepted, w.connected, w.failed, w.data_size, w.send_count);
     return 1;
   }
-  puts("Public CNet NativeIO server -> strict Tongsuo TLS1.3 peer: PASS");
+  if (expect_peer_rejection)
+    puts("Public CNet NativeIO server observed strict Tongsuo peer rejection: PASS");
+  else puts("Public CNet NativeIO server -> strict Tongsuo TLS1.3 peer: PASS");
   return 0;
 }
