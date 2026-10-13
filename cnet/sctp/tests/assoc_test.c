@@ -813,11 +813,73 @@ static void simultaneous_cookie_echo_wins_before_init_ack(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+
+/* Even with a valid MAC from our own test-only key, a COOKIE ECHO claiming
+ * a different peer tag cannot bypass COOKIE-ECHOED / Table 12 case B into
+ * live peer replacement. That transaction needs a Generation lease gate. */
+static void simultaneous_signed_peer_change_denied(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  uint8_t a_init[1200], b_init[1200], a_ack[1200], b_ack[1200];
+  uint8_t a_echo[1200], b_echo[1200], forged[1200], output[1200];
+  uint8_t cookie[CNET_SCTP_ASSOC_COOKIE_BYTES];
+  cnet_sctp_wire_header header;
+  cnet_sctp_wire_decoder decoder;
+  cnet_sctp_wire_chunk parsed, counterfeit;
+  size_t ai = 0u, bi = 0u, aa = 0u, ba = 0u;
+  size_t ae = 0u, be = 0u, nf = 0u, no = 0u;
+  uint64_t deadline = 0u;
+  uint32_t old_peer;
+  int has_deadline = 0;
+  setup(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_start(&a, 1u, a_init, sizeof(a_init), &ai) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_start(&b, 1u, b_init, sizeof(b_init), &bi) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 2u, b_init, bi,
+                               a_ack, sizeof(a_ack), &aa) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 2u, a_init, ai,
+                               b_ack, sizeof(b_ack), &ba) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 3u, b_ack, ba,
+                               a_echo, sizeof(a_echo), &ae) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 3u, a_ack, aa,
+                               b_echo, sizeof(b_echo), &be) == CNET_SCTP_ASSOC_OK);
+  old_peer = a.peer_tag;
+  assert(old_peer == b.local_tag && a.state == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+  assert(cnet_sctp_wire_decode(b_echo, be, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &parsed) == CNET_SCTP_WIRE_OK);
+  assert(parsed.type == 10u && parsed.value_size == sizeof(cookie));
+  memcpy(cookie, parsed.value, sizeof(cookie));
+  cookie[16u] ^= 1u; /* a different peer tag within authenticated claims */
+  assert(fake_mac(&ca, cookie, 56u, cookie + 56u) == 0);
+  counterfeit.type = 10u;
+  counterfeit.flags = 0u;
+  counterfeit.value = cookie;
+  counterfeit.value_size = sizeof(cookie);
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &counterfeit, 1u,
+                               forged, sizeof(forged), &nf) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_assoc_input(&a, 4u, forged, nf,
+                               output, sizeof(output), &no) == CNET_SCTP_ASSOC_AUTH);
+  assert(no == 0u && a.state == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+  assert(a.peer_tag == old_peer && a.saved_size == ae);
+  assert(memcmp(a.saved_packet, a_echo, ae) == 0);
+  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  assert(has_deadline && deadline == 103u);
+  /* The legitimate signed Cookie still succeeds after rejecting the rogue. */
+  assert(cnet_sctp_assoc_input(&a, 4u, b_echo, be,
+                               output, sizeof(output), &no) == CNET_SCTP_ASSOC_OK);
+  assert(no == 16u && a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(a.peer_tag == old_peer && a.saved_size == 0u);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
   entropy_init_fail_closed();
   normal_handshake();
   simultaneous_init_keeps_owner_and_t1();
   simultaneous_cookie_echo_wins_before_init_ack();
+  simultaneous_signed_peer_change_denied();
   init_tlv_wire_gate();
   clock_owner_and_timeout();
   stale_cookie_and_wrong_mac();
