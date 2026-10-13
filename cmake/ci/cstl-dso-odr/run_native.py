@@ -59,11 +59,6 @@ def main() -> None:
     system = platform.system()
     if system not in ("Darwin", "Windows"):
         raise RuntimeError(f"wrong runtime host {system}")
-    if system == "Windows" and args.mode == "shared":
-        raise RuntimeError(
-            "Windows shared-CSTL DLL export/import requires its own explicit "
-            "candidate design; do not silently fall back to static"
-        )
     if platform.machine().lower() not in (
         ("arm64", "aarch64") if system == "Darwin" else ("amd64", "x86_64")
     ):
@@ -116,6 +111,10 @@ def main() -> None:
         "-DCMAKE_SUPPRESS_REGENERATION=ON",
         "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
         "-DBUILD_SHARED_LIBS=" + ("ON" if mode == "shared" else "OFF"),
+        # Test-only Windows candidate: export the actual compiled native C
+        # data/functions from shared imported SDK DLLs. Preserve released ABI.
+        "-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=" +
+        ("ON" if system == "Windows" and mode == "shared" else "OFF"),
         f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
         f"-DCMAKE_INSTALL_PREFIX={original}",
         f"-DVCPKG_TARGET_TRIPLET={triplet}",
