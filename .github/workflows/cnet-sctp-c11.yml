@@ -102,7 +102,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --install build-sctp-gmssl --prefix "$RUNNER_TEMP/sctp-wire-only"
+          # Release SDK must not inherit the sanitizer instrumentation used
+          # only for the source-level MAC/Association stress tests above.
+          cmake -S cnet/sctp -B build-sctp-sdk-clean -DBUILD_TESTING=OFF \
+            -DCNET_SCTP_TEST_GMSSL=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-sctp-sdk-clean --parallel 2
+          cmake --install build-sctp-sdk-clean --prefix "$RUNNER_TEMP/sctp-wire-only"
           test -f "$RUNNER_TEMP/sctp-wire-only/include/cnet/sctp_wire.h"
           test ! -e "$RUNNER_TEMP/sctp-wire-only/include/cnet/sctp_assoc_internal.h"
           test ! -e "$RUNNER_TEMP/sctp-wire-only/include/cnet/sctp_gmssl_mac_internal.h"
