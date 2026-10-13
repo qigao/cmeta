@@ -403,6 +403,7 @@ static void cookie_echo_t1_retransmission(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+
 /* End-to-end test through actual SCTP wire CRC, one-chunk parser and
  * Association state machine; these are not only direct TLV helper tests. */
 static size_t append_parameter_to_sctp_packet(const uint8_t *input, size_t n,
