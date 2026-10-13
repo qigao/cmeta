@@ -256,6 +256,8 @@ typedef struct cnet_owner_test_request_snapshot {
   native_io_request native_request;
   native_io_endpoint endpoint;
   bool active;
+  /** Private diagnostic only: distinguishes an in-flight TLS ciphertext write. */
+  bool tls_write;
 } cnet_owner_test_request_snapshot;
 
 /** Test-only view of the NativeIO request and coroutine ownership beneath this owner. */

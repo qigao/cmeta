@@ -69,6 +69,10 @@ void *cnet_tls_state_write_buffer(cnet_tls_state *state);
 size_t cnet_tls_state_io_buffer_bytes(const cnet_tls_state *state);
 size_t cnet_tls_cipher_input_capacity(const cnet_tls_state *state);
 int cnet_tls_feed_cipher(cnet_tls_state *state, const void *data, size_t size);
+/* Internal diagnostics only; no public CNet API or raw TLS bytes. */
+int cnet_tls_diagnostic_send_stats(const cnet_tls_state *state,
+                                   size_t *calls, size_t *requested,
+                                   size_t *accepted, size_t *queued);
 int cnet_tls_take_cipher(cnet_tls_state *state, void *buffer, size_t capacity, size_t *out_size);
 int cnet_tls_write(cnet_tls_state *state, const void *data, size_t size, bool *out_complete);
 int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity, size_t *out_size,
