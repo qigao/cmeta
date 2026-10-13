@@ -87,7 +87,8 @@ jobs:
                          'sctp_collision.c', 'sctp_data.c', 'sctp_dcep.c',
                          'sctp_gmssl_mac.c', 'wire_test.c', 'assoc_test.c',
                          'init_params_test.c', 'collision_test.c', 'data_test.c',
-                         'assoc_data_test.c', 'dcep_test.c', 'assoc_gmssl_test.c')
+                         'assoc_data_test.c', 'fragment_test.c', 'dcep_test.c',
+                         'assoc_gmssl_test.c')
           found = {}
           for entry in cmds:
               src = Path(entry['file']).name
