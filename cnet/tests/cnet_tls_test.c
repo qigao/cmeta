@@ -2153,4 +2153,80 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_client_destroy(&client), SALTS_OK);
     check_equal(cnet_client_destroy(&raw_server), SALTS_OK);
   }
+
+  group("Let's Encrypt-style P-384 issuer with P-256 ECDSA/SHA-384 leaf") {
+    const cnet_tls_protocol_version tls_versions[] = {
+        CNET_TLS_PROTOCOL_VERSION_1_2, CNET_TLS_PROTOCOL_VERSION_1_3};
+    const char *tls_version_names[] = {"TLSv1.2", "TLSv1.3"};
+
+    it("accepts signed P-256 leaf and sends authenticated TLS 1.2/1.3 application data") {
+      static const unsigned char payload[] = "CNet P384 issuer SHA384 verified payload";
+      size_t index;
+      for (index = 0u; index < sizeof(tls_versions) / sizeof(tls_versions[0]); ++index) {
+        cnet_tls_test_pair pair = {0};
+        char negotiated[16] = {0};
+        size_t negotiated_len = 0u;
+        check_equal(cnet_tls_test_fixture_pair_init(
+                        &pair, CNET_TLS_TEST_P384_CA, CNET_TLS_TEST_P384_LEAF,
+                        CNET_TLS_TEST_P384_KEY, "localhost"), SALTS_OK);
+        check_equal(cnet_tls_state_set_protocol_range(&pair.client,
+                                                      tls_versions[index], tls_versions[index]),
+                    SALTS_OK);
+        check_equal(cnet_tls_state_set_protocol_range(&pair.server,
+                                                      tls_versions[index], tls_versions[index]),
+                    SALTS_OK);
+        check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+        check_true(cnet_tls_state_handshake_complete(&pair.client));
+        check_true(cnet_tls_state_handshake_complete(&pair.server));
+        check_equal(cnet_tls_state_negotiated_version(
+                        &pair.client, negotiated, sizeof(negotiated), &negotiated_len), SALTS_OK);
+        check_equal(strcmp(negotiated, tls_version_names[index]), 0);
+        check_equal(negotiated_len, strlen(tls_version_names[index]));
+        check_equal(cnet_tls_test_round_trip(
+                        &pair.client, &pair.server, payload, sizeof(payload) - 1u), SALTS_OK);
+        cnet_tls_test_pair_destroy(&pair);
+      }
+    }
+
+    it("refuses a P-384 issuing CA outside the trusted roots") {
+      cnet_tls_test_pair pair = {0};
+      check_equal(cnet_tls_test_fixture_pair_init(
+                      &pair, CNET_TLS_TEST_P384_WRONG_CA, CNET_TLS_TEST_P384_LEAF,
+                      CNET_TLS_TEST_P384_KEY, "localhost"), SALTS_OK);
+      check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
+      check_false(cnet_tls_state_handshake_complete(&pair.client));
+      cnet_tls_test_pair_destroy(&pair);
+    }
+
+    it("rejects server identity mismatch despite valid P-384 chain signature") {
+      cnet_tls_test_pair pair = {0};
+      check_equal(cnet_tls_test_fixture_pair_init(
+                      &pair, CNET_TLS_TEST_P384_CA, CNET_TLS_TEST_P384_LEAF,
+                      CNET_TLS_TEST_P384_KEY, "wrong.example"), SALTS_OK);
+      check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
+      check_false(cnet_tls_state_handshake_complete(&pair.client));
+      cnet_tls_test_pair_destroy(&pair);
+    }
+
+    it("rejects an expired P-256 leaf signed by a still-valid P-384 CA") {
+      cnet_tls_test_pair pair = {0};
+      check_equal(cnet_tls_test_fixture_pair_init(
+                      &pair, CNET_TLS_TEST_P384_CA, CNET_TLS_TEST_P384_EXPIRED,
+                      CNET_TLS_TEST_P384_KEY, "localhost"), SALTS_OK);
+      check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
+      check_false(cnet_tls_state_handshake_complete(&pair.client));
+      cnet_tls_test_pair_destroy(&pair);
+    }
+
+    it("rejects a tampered ECDSA/SHA-384 certificate signature") {
+      cnet_tls_test_pair pair = {0};
+      check_equal(cnet_tls_test_fixture_pair_init(
+                      &pair, CNET_TLS_TEST_P384_CA, CNET_TLS_TEST_P384_TAMPERED,
+                      CNET_TLS_TEST_P384_KEY, "localhost"), SALTS_OK);
+      check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
+      check_false(cnet_tls_state_handshake_complete(&pair.client));
+      cnet_tls_test_pair_destroy(&pair);
+    }
+  }
+
 }
