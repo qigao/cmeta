@@ -282,6 +282,27 @@ static void test_independent_provider_cookie(void) {
   assert(cnet_sctp_assoc_input(&a, 5u, reply, n_reply,
                                tampered, sizeof(tampered), &n_reply) == CNET_SCTP_ASSOC_OK);
   assert(n_reply == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
+  /* Real GmSSL HMAC/OS randomness now gate a fully established association
+   * followed by actual DATA/SACK and synchronous PPID/stream delivery. */
+  {
+    static const uint8_t app_bytes[] = {'c','n','e','t'};
+    cnet_sctp_data_message app = {0};
+    size_t n_data = 0u, n_sack = 0u, n_event = 0u;
+    assert(a.data_ready && b.data_ready);
+    assert(cnet_sctp_assoc_send_message(&a, 6u, 0u, 51u, 0,
+        app_bytes, sizeof(app_bytes), init, sizeof(init), &n_data) ==
+        CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_input(&b, 7u, init, n_data, init_ack,
+                                 sizeof(init_ack), &n_sack) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_take_message(&b, &app, tampered,
+                                        sizeof(tampered), &n_event) == CNET_SCTP_ASSOC_OK);
+    assert(app.stream_id == 0u && app.ppid == 51u && app.stream_sequence == 0u);
+    assert(n_event == sizeof(app_bytes) &&
+           memcmp(tampered, app_bytes, sizeof(app_bytes)) == 0);
+    assert(cnet_sctp_assoc_input(&a, 8u, init_ack, n_sack, reply,
+                                 sizeof(reply), &n_reply) == CNET_SCTP_ASSOC_OK);
+    assert(n_reply == 0u && a.data.in_flight == 0u);
+  }
 
   assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
