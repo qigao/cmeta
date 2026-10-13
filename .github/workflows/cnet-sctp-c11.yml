@@ -83,8 +83,9 @@ jobs:
           import json
           from pathlib import Path
           cmds = json.loads(Path('build-sctp-gmssl/compile_commands.json').read_text())
-          first_party = ('sctp_wire.c', 'sctp_assoc.c', 'sctp_gmssl_mac.c',
-                         'wire_test.c', 'assoc_test.c', 'assoc_gmssl_test.c')
+          first_party = ('sctp_wire.c', 'sctp_assoc.c', 'sctp_init_params.c',
+                         'sctp_gmssl_mac.c', 'wire_test.c', 'assoc_test.c',
+                         'init_params_test.c', 'assoc_gmssl_test.c')
           found = {}
           for entry in cmds:
               src = Path(entry['file']).name
