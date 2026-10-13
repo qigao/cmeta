@@ -1,4 +1,5 @@
 #include "sctp_assoc_internal.h"
+#include "sctp_dcep_internal.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -173,8 +174,97 @@ static void real_assoc_send_sack_and_t3(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* Real DATA wire path: RFC 8832 OPEN/ACK on PPID 50, fixed Owner,
+ * separate SACKs, followed by user text/binary data on the established SID.
+ * Application-level DCEP owns channels; the SCTP Association owns TSN/T3.
+ * No implicit second transport, background work or accepted message replay.
+ */
+static void post_handshake_dcep_wire(void) {
+  cnet_sctp_assoc a, b;
+  cnet_sctp_dcep client = {0}, server = {0};
+  test_context ca = {0}, cb = {0};
+  const uint8_t label[] = {'c','h','a','t'};
+  const uint8_t protocol[] = {'j','s','o','n'};
+  const uint8_t text[] = {'h','i'};
+  uint8_t open[300], ack_payload[8], wire[1200], sack[1200], response[1200];
+  uint8_t received[1024];
+  cnet_sctp_data_message meta = {0};
+  size_t nopen = 0u, nack = 0u, np = 0u, ns = 0u, nm = 0u, nr = 0u;
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_dcep_init(&client, a.data.config.outbound_streams,
+                             1, admitted, &ca) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_init(&server, b.data.config.inbound_streams,
+                             0, admitted, &cb) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_open(&client, 0u, 0u, 100u, 0u,
+      label, sizeof(label), protocol, sizeof(protocol),
+      open, sizeof(open), &nopen) == CNET_SCTP_DCEP_OK);
+  assert(nopen == 20u && !cnet_sctp_dcep_ready(&client, 0u));
+  assert(cnet_sctp_assoc_send_message(&a, 6u, 0u, CNET_SCTP_DCEP_PPID, 0,
+      open, nopen, wire, 8u, &np) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(np == 0u && a.data.in_flight == 0u);
+  assert(cnet_sctp_assoc_send_message(&a, 6u, 0u, CNET_SCTP_DCEP_PPID, 0,
+      open, nopen, wire, sizeof(wire), &np) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 7u, wire, np,
+                               sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_take_message(&b, &meta, received,
+                                      sizeof(received), &nm) == CNET_SCTP_ASSOC_OK);
+  assert(meta.stream_id == 0u && !meta.unordered &&
+         meta.ppid == CNET_SCTP_DCEP_PPID && meta.stream_sequence == 0u);
+  assert(nm == nopen && memcmp(received, open, nopen) == 0);
+  cb.owner = 0;
+  assert(cnet_sctp_dcep_input(&server, 0u, received, nm,
+      ack_payload, sizeof(ack_payload), &nack) == CNET_SCTP_DCEP_OWNER);
+  assert(server.channels[0].state == 0u);
+  cb.owner = 1;
+  assert(cnet_sctp_dcep_input(&server, 0u, received, nm,
+      ack_payload, 0u, &nack) == CNET_SCTP_DCEP_CAPACITY);
+  assert(server.channels[0].state == 0u && nack == 0u);
+  assert(cnet_sctp_dcep_input(&server, 0u, received, nm,
+      ack_payload, sizeof(ack_payload), &nack) == CNET_SCTP_DCEP_OK);
+  assert(nack == 1u && ack_payload[0] == 2u);
+  assert(cnet_sctp_dcep_ready(&server, 0u));
+  assert(cnet_sctp_assoc_input(&a, 8u, sack, ns,
+                               response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(a.data.in_flight == 0u && nr == 0u);
+  assert(cnet_sctp_assoc_send_message(&b, 9u, 0u, CNET_SCTP_DCEP_PPID, 0,
+      ack_payload, nack, wire, sizeof(wire), &np) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 10u, wire, np,
+                               sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_take_message(&a, &meta, received,
+                                      sizeof(received), &nm) == CNET_SCTP_ASSOC_OK);
+  assert(meta.ppid == CNET_SCTP_DCEP_PPID && meta.stream_id == 0u);
+  assert(nm == 1u && received[0] == 2u);
+  assert(cnet_sctp_dcep_input(&client, 0u, received, nm,
+      response, sizeof(response), &nr) == CNET_SCTP_DCEP_OK);
+  assert(nr == 0u && cnet_sctp_dcep_ready(&client, 0u));
+  assert(cnet_sctp_assoc_input(&b, 11u, sack, ns,
+                               response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(b.data.in_flight == 0u);
+  /* Application PPID 51 text shares the same SID after DCEP, but never
+   * masquerades as a DCEP control message. */
+  assert(cnet_sctp_assoc_send_message(&a, 12u, 0u, 51u, 0,
+      text, sizeof(text), wire, sizeof(wire), &np) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 13u, wire, np,
+                               sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_take_message(&b, &meta, received,
+                                      sizeof(received), &nm) == CNET_SCTP_ASSOC_OK);
+  assert(meta.stream_id == 0u && meta.stream_sequence == 1u &&
+         meta.ppid == 51u && !meta.unordered);
+  assert(nm == sizeof(text) && memcmp(received, text, nm) == 0);
+  assert(cnet_sctp_assoc_input(&a, 14u, sack, ns,
+                               response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(a.data.in_flight == 0u);
+  assert(cnet_sctp_dcep_stop(&client) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_stop(&server) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
   real_assoc_send_sack_and_t3();
+  post_handshake_dcep_wire();
   puts("C11 SCTP post-COOKIE Association DATA/SACK/T3 stream test PASS");
   return 0;
 }
