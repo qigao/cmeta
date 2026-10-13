@@ -110,11 +110,14 @@ def main() -> None:
         "-DCONCURRENCY_BUILD_BENCHMARKS=OFF",
         "-DCMAKE_SUPPRESS_REGENERATION=ON",
         "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
-        "-DBUILD_SHARED_LIBS=" + ("ON" if mode == "shared" else "OFF"),
+        "-DBUILD_SHARED_LIBS=" +
+        ("ON" if mode == "shared" and system == "Darwin" else "OFF"),
         # Test-only Windows candidate: export the actual compiled native C
         # data/functions from shared imported SDK DLLs. Preserve released ABI.
-        "-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=" +
-        ("ON" if system == "Windows" and mode == "shared" else "OFF"),
+        # Never auto-export the entire Windows CMeta/CFlow dependency graph.
+        # Only the test-only shared CSTL target above explicitly exports its
+        # C11 metadata symbols, whose import boundary must be verified later.
+        "-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=OFF",
         f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
         f"-DCMAKE_INSTALL_PREFIX={original}",
         f"-DVCPKG_TARGET_TRIPLET={triplet}",
@@ -127,6 +130,39 @@ def main() -> None:
         raise RuntimeError("MSVC Developer Cmd environment not loaded")
     if mode == "hidden" and system == "Darwin":
         configure.append(f"-DCMAKE_PROJECT_Salts_INCLUDE={overlay}")
+    if system == "Windows" and mode == "shared":
+        # Work in the SECOND, exact-commit checkout only. Windows cannot
+        # safely make every CMeta/CFlow target shared using the bare
+        # BUILD_SHARED_LIBS=ON switch: plain extern metadata variables then
+        # produce unresolved DLL import references. Keep all other targets
+        # at the official static/explicit-Core topology. Build only CSTL as
+        # a candidate shared DLL, with its own explicit export manifest.
+        cstl_cmake = source / "cstl/CMakeLists.txt"
+        pristine = cstl_cmake.read_text(encoding="utf-8")
+        needle = "add_library(${TARGET_NAME}\\n"
+        if pristine.count(needle) != 1:
+            raise RuntimeError("unexpected pinned CSTL target declaration")
+        edited = pristine.replace(needle, "add_library(${TARGET_NAME} SHARED\\n")
+        marker = "target_compile_features(${TARGET_NAME} PUBLIC c_std_11)"
+        if edited.count(marker) != 1:
+            raise RuntimeError("unexpected pinned CSTL compile configuration")
+        edited = edited.replace(
+            marker,
+            "set_target_properties(${TARGET_NAME} PROPERTIES "
+            "WINDOWS_EXPORT_ALL_SYMBOLS ON)\\n" + marker,
+        )
+        cstl_cmake.write_text(edited, encoding="utf-8")
+        test_only_patch = temporary / ("cstl-shared-candidate-" + label + ".diff")
+        patch = execute([
+            "git", "-C", str(source), "--no-pager", "diff",
+            "--", "cstl/CMakeLists.txt"
+        ])
+        if "add_library(" not in patch or "WINDOWS_EXPORT_ALL_SYMBOLS" not in patch:
+            raise RuntimeError("CSTL-only candidate source diff is incomplete")
+        test_only_patch.write_text(patch, encoding="utf-8")
+        # This is NOT a pristine release binary. Record candidate source
+        # modifications rather than describing it as an unmodified SDK.
+        print("CSTL_TEST_ONLY_SHARED_PATCH=" + str(test_only_patch), flush=True)
     execute(configure)
     execute(["cmake", "--build", str(build), "--parallel", "2"])
     execute(["cmake", "--install", str(build), "--prefix", str(original)])
