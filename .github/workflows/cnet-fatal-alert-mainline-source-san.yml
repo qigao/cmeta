@@ -139,15 +139,20 @@ jobs:
               "cnet/tests/cnet_tls_handshake_framing_test.c",
           ):
               found=[r for r in rows if r["file"].replace("\\","/").endswith("/"+src)]
-              if len(found)!=1:
-                  raise SystemExit(f"Missing or multiply compiled original source {src}: {len(found)}")
-              command=found[0].get("command") or " ".join(found[0].get("arguments", []))
+              if not found:
+                  raise SystemExit(f"Original source was not compiled: {src}")
               required=("-fsanitize=thread",) if os.environ["SANITIZER_MODE"]=="tsan" else (
                   "-fsanitize=address", "-fsanitize=undefined")
-              for flag in required:
-                  if flag not in command:
-                      raise SystemExit(f"NOT source instrumented: {src} absent {flag}")
-              actual.append({"source":src,"sanitizer":os.environ["SANITIZER_MODE"]})
+              # CNet may compile one original TU into the public runtime and
+              # the test-private Profile. Validate ALL translation units,
+              # never silently accept an uninstrumented duplicate object.
+              for item in found:
+                  command=item.get("command") or " ".join(item.get("arguments", []))
+                  for flag in required:
+                      if flag not in command:
+                          raise SystemExit(f"NOT source instrumented: {src} absent {flag}")
+              actual.append({"source":src,"compiled_units":len(found),
+                             "sanitizer":os.environ["SANITIZER_MODE"]})
           print(json.dumps(actual,indent=2))
           PY
 
