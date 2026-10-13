@@ -500,9 +500,9 @@ static void init_tlv_wire_gate(void) {
   assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
   assert(chunk.type == 10u && chunk.value_size == CNET_SCTP_ASSOC_COOKIE_BYTES);
   assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
-  assert(chunk.type == 9u && chunk.value_size == 12u);
+  assert(chunk.type == 9u && chunk.value_size == 8u);
   assert(chunk.value[0] == 0u && chunk.value[1] == 8u);
-  assert(chunk.value[2] == 0u && chunk.value[3] == 12u);
+  assert(chunk.value[2] == 0u && chunk.value[3] == 8u);
   assert(chunk.value[4] == 0xc0u && chunk.value[5] == 2u);
   assert(cnet_sctp_assoc_advance(&a, 103u, scratch,
                                  sizeof(scratch), &encoded_n) == CNET_SCTP_ASSOC_OK);
