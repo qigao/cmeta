@@ -1,0 +1,166 @@
+name: Salts rc.15 async logger original-source TSan (#1177)
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/tlog-rc15-source-tsan.yml'
+      - 'utils/tests/tlog_async_release_acquire_tsan.c'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: tlog-rc15-source-tsan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-source:
+    name: Exact rc.15 tlog producer/consumer TSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      EXPECTED_RC15_SHA: 21bdb1145fbb2b39ee3fa644173ec037adba7b87
+      TSAN_OPTIONS: halt_on_error=1:exitcode=66
+      CCACHE_DIR: ${{ github.workspace }}/.cache/tlog-rc15-source-tsan
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - name: Checkout independent C11 test fixture
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout immutable Salts.Native v2.3.0-rc.15 source
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/salts
+          ref: 21bdb1145fbb2b39ee3fa644173ec037adba7b87
+          path: build/tlog-rc15-source
+          persist-credentials: false
+
+      - name: Restore exact vcpkg dependencies
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@0dc254695917bc180504d916240292e9096e9da5
+        with:
+          mode: read
+
+      - name: Restore pinned host re2c and Unicode 17 tables
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@0dc254695917bc180504d916240292e9096e9da5
+
+      - name: Attest original release source and toolchain prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build nasm pkg-config ccache binutils python3
+          src="$GITHUB_WORKSPACE/build/tlog-rc15-source"
+          test "$(git -C "$src" rev-parse HEAD)" = "$EXPECTED_RC15_SHA"
+          test "$(git -C "$src" hash-object utils/src/tlog.c)" = "7f3781d262a7a5e432362c03351c1ca51c0a3ac4"
+          test -z "$(git -C "$src" status --porcelain)"
+          echo "rc15_source=$EXPECTED_RC15_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "tlog_blob=7f3781d262a7a5e432362c03351c1ca51c0a3ac4" >> "$GITHUB_STEP_SUMMARY"
+          echo 'comparison=released_binaries_NOT_TSan_instrumented' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build and install real rc.15 first-party TSan SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$GITHUB_WORKSPACE/build/tlog-rc15-source"
+          build="$GITHUB_WORKSPACE/build/tlog-rc15-source-tsan"
+          stage="$RUNNER_TEMP/tlog-rc15-source-tsan-sdk"
+          cmake --preset linux-tsan-ci -S "$src" -B "$build" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX="$stage" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_THREAD=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build "$build" --parallel 2
+          cmake --install "$build"
+          test -f "$stage/lib/libsalts.so.2.3"
+          test -f "$stage/include/tlog.h"
+          echo "SALTS_TS_SOURCE_SDK=$stage" >> "$GITHUB_ENV"
+          sha256sum "$stage/lib/libsalts.so.2.3" \
+            | tee "$build/tsan-salts-binary.sha256"
+          readelf -n "$stage/lib/libsalts.so.2.3" > "$build/tsan-salts-elf-notes.txt"
+
+      - name: Audit actual logger/allocator/Disruptor/platform TSan objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee build/tlog-rc15-source-tsan/instrumentation.json
+          import json
+          from pathlib import Path
+          rows = json.loads(Path("build/tlog-rc15-source-tsan/compile_commands.json").read_text())
+          required = [
+              "/utils/src/tlog.c",
+              "/utils/src/cmeta_buffer.c",
+              "/utils/src/cmeta_thread.c",
+              "/concurrency/src/disruptor.c",
+              "/platform/src/thread_posix.c",
+          ]
+          output = {}
+          for item in required:
+              matched = [r for r in rows if r["file"].replace("\\", "/").endswith(item)]
+              if len(matched) != 1:
+                  raise SystemExit(f"Original-source unit missing or duplicated: {item}, {len(matched)}")
+              command = matched[0].get("command") or " ".join(matched[0].get("arguments", []))
+              if "-fsanitize=thread" not in command:
+                  raise SystemExit(f"Original-source unit not really compiled with TSan: {item}")
+              output[item] = {"tsan_instrumented": True, "compiler": command}
+          print(json.dumps(output, indent=2))
+          PY
+          test "$(git -C build/tlog-rc15-source rev-parse HEAD)" = "$EXPECTED_RC15_SHA"
+
+      - name: Compile independent C11 publisher with installed source-TSan libsalts
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="$SALTS_TS_SOURCE_SDK"
+          fixture="$RUNNER_TEMP/tlog_async_release_acquire_tsan"
+          gcc -std=c11 -O1 -g -pthread -fsanitize=thread -fno-omit-frame-pointer \
+            -Wall -Wextra -Werror -I "$sdk/include" \
+            utils/tests/tlog_async_release_acquire_tsan.c \
+            "$sdk/lib/libsalts.so.2.3" -Wl,-rpath,"$sdk/lib" -o "$fixture"
+          nm -D "$fixture" | grep -F ' __tsan_init'
+          LD_LIBRARY_PATH="$sdk/lib:$sdk/bin:${LD_LIBRARY_PATH:-}" \
+            ldd "$fixture" \
+            | tee build/tlog-rc15-source-tsan/linked-sdk.txt
+          grep -F "$sdk/lib/libsalts.so.2.3" \
+            build/tlog-rc15-source-tsan/linked-sdk.txt
+          if grep -F 'not found' build/tlog-rc15-source-tsan/linked-sdk.txt; then
+            echo "Missing dependencies in exact-source TSan SDK" >&2
+            exit 1
+          fi
+
+      - name: Execute bounded four-publisher async release/acquire test 10x
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="$SALTS_TS_SOURCE_SDK"
+          export LD_LIBRARY_PATH="$sdk/lib:$sdk/bin:${LD_LIBRARY_PATH:-}"
+          log=build/tlog-rc15-source-tsan/tlog-results.txt
+          : > "$log"
+          for round in $(seq 1 10); do
+            echo "source-TSan iteration=$round" | tee -a "$log"
+            timeout 80s "$RUNNER_TEMP/tlog_async_release_acquire_tsan" | tee -a "$log"
+          done
+          test "$(grep -c 'TLOG_RC15_SOURCE_TSAN_PASS' "$log")" -eq 10
+          echo 'Original rc.15 async logger: 10/10 fully source-TSan multi-publisher/consumer PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Not a TSan PASS for the uninstrumented published rc.15 DSO' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve source SHA, binary provenance and unsuppressed TSan logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: salts-1177-rc15-original-tlog-source-tsan
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/tlog-rc15-source-tsan/instrumentation.json
+            build/tlog-rc15-source-tsan/tlog-results.txt
+            build/tlog-rc15-source-tsan/linked-sdk.txt
+            build/tlog-rc15-source-tsan/tsan-salts-binary.sha256
+            build/tlog-rc15-source-tsan/tsan-salts-elf-notes.txt
+            build/tlog-rc15-source-tsan/compile_commands.json
