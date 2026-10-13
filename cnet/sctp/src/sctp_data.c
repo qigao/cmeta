@@ -257,9 +257,9 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
   cnet_sctp_data_status status;
   unsigned int i;
   int duplicate = 0;
-  if ((ch->flags & (DATA_B | DATA_E)) != (DATA_B | DATA_E) ||
-      (ch->flags & 0xf0u) != 0u || ch->value_size < DATA_HEADER + 1u)
-    return CNET_SCTP_DATA_PROTOCOL; /* no fragments/empty RFC DATA */
+  if ((ch->flags & (uint8_t)~(DATA_B | DATA_E | DATA_U)) != 0u ||
+      ch->value_size < DATA_HEADER + 1u)
+    return CNET_SCTP_DATA_PROTOCOL; /* fragments legal, empty RFC DATA not */
   bytes = ch->value_size - DATA_HEADER;
   if (bytes > CNET_SCTP_DATA_PAYLOAD_MAX) return CNET_SCTP_DATA_CAPACITY;
   tsn = rd32(ch->value);
@@ -282,7 +282,11 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
         if (!slot) slot = &d->rx[i];
         continue;
       }
-      if ((ch->flags & DATA_U) == 0u && !d->rx[i].unordered &&
+      /* All fragments share an SSN. Reject two distinct ordered starts
+       * with the same stream/SSN, but admit contiguous middle/end chunks.
+       * The TSN bitmap already rejects exact duplicate fragments. */
+      if ((ch->flags & DATA_B) && !(ch->flags & DATA_U) &&
+          !d->rx[i].unordered && (d->rx[i].flags & DATA_B) &&
           d->rx[i].stream_id == stream && d->rx[i].ssn == ssn)
         return CNET_SCTP_DATA_PROTOCOL;
     }
@@ -305,6 +309,7 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
     slot->ssn = ssn;
     slot->ppid = rd32(ch->value + 8u);
     slot->unordered = (ch->flags & DATA_U) != 0u;
+    slot->flags = ch->flags;
     slot->used = 1u;
     d->buffered_rx += bytes;
     d->cumulative_rx = prospective_cum;
