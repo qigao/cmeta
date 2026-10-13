@@ -241,7 +241,12 @@ def main() -> None:
     # the relocated installation and be the *one* metadata provider used by
     # both independently loaded Provider DLLs and Core.
     if system == "Windows" and mode == "shared":
-        cstl_dll = strict_one(relocated / "bin", "cmeta_cstl.dll")
+        # Exact Windows SOVERSION can name the DLL cmeta_cstl-5.dll while
+        # its import archive is cmeta_cstl.lib. Resolve exactly one actual
+        # CSTL DLL from this relocated prefix; never silently accept an old
+        # ambient DLL or a static .lib instead.
+        cstl_dll = strict_one(relocated / "bin", "cmeta_cstl*.dll")
+        cstl_dll_name = cstl_dll.name.lower()
         cstl_exports = execute(["dumpbin", "/EXPORTS", str(cstl_dll)])
         for exported in ("stl_bplus_tree_generic_desc",
                          "stl_bplus_tree_container_desc",
@@ -252,7 +257,7 @@ def main() -> None:
                 )
         for label, image in (("core", core), ("a", provider_a), ("b", provider_b)):
             dependent = execute(["dumpbin", "/DEPENDENTS", str(image)])
-            if "cmeta_cstl.dll" not in dependent.lower():
+            if cstl_dll_name not in dependent.lower():
                 raise RuntimeError(
                     f"{label} did not import the unique shared CSTL DLL"
                 )
