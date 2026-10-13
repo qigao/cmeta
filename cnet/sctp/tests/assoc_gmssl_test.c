@@ -1,0 +1,209 @@
+#include "sctp_assoc_internal.h"
+#include "sctp_gmssl_mac_internal.h"
+
+#include <gmssl/rand.h>
+
+#ifdef NDEBUG
+#undef NDEBUG /* Release test checks are not compiled out. */
+#endif
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+typedef struct peer_context {
+  cnet_sctp_gmssl_mac mac;
+  int on_owner;
+  unsigned int calls;
+} peer_context;
+
+static void clear_bytes(void *data, size_t n) {
+  volatile uint8_t *bytes = (volatile uint8_t *)data;
+  while (n--) *bytes++ = 0u;
+}
+
+static int owned(void *ctx) {
+  return ((peer_context *)ctx)->on_owner;
+}
+
+static int sign_cookie(void *ctx, const uint8_t *message, size_t size,
+                       uint8_t out[CNET_SCTP_ASSOC_MAC_BYTES]) {
+  peer_context *peer = (peer_context *)ctx;
+  ++peer->calls;
+  return cnet_sctp_gmssl_mac_sign(&peer->mac, message, size, out);
+}
+
+static cnet_sctp_assoc_config setup_config(uint16_t local, peer_context *peer) {
+  cnet_sctp_assoc_config config = {0};
+  config.local_port = local;
+  config.remote_port = (uint16_t)(local == 5000u ? 5001u : 5000u);
+  config.local_tag = local == 5000u ? UINT32_C(0x17283940) : UINT32_C(0x24354657);
+  config.initial_tsn = local == 5000u ? UINT32_C(0xcdef0011) : UINT32_C(0xabcd9876);
+  config.receive_window = 32768u;
+  config.outbound_streams = 4u;
+  config.inbound_streams = 8u;
+  config.t1_ms = 100u;
+  config.t1_max_ms = 400u;
+  config.cookie_lifetime_ms = 500u;
+  config.peer_binding = UINT64_C(0xbadc0ffee0ddfeed);
+  config.max_retransmits = 3u;
+  config.is_owner = owned;
+  config.mac = sign_cookie;
+  config.provider_context = peer;
+  return config;
+}
+
+static void init_peer(peer_context *peer) {
+  uint8_t key[CNET_SCTP_GMSSL_KEY_BYTES] = {0};
+  memset(peer, 0, sizeof(*peer));
+  peer->on_owner = 1;
+  /* Linux-only test job: draws real fresh bytes from the GmSSL RNG.
+   * Production randomness/provider availability on other targets is OPEN.
+   */
+  assert(rand_bytes(key, sizeof(key)) == 1);
+  assert(cnet_sctp_gmssl_mac_init(&peer->mac, key, sizeof(key)) == 0);
+  clear_bytes(key, sizeof(key));
+}
+
+static void test_hmac_sm3_known_vector(void) {
+  static const uint8_t expected[] = {
+    0x90u, 0x30u, 0x0cu, 0xd1u, 0xb6u, 0x48u, 0xb2u, 0xccu,
+    0x33u, 0x72u, 0xf7u, 0xa5u, 0x9cu, 0xedu, 0xc2u, 0x1au,
+    0x1eu, 0x21u, 0xa9u, 0xecu, 0x71u, 0x9du, 0xabu, 0x00u,
+    0x38u, 0xa6u, 0x73u, 0x0au, 0x59u, 0x56u, 0x13u, 0x3eu
+  };
+  cnet_sctp_gmssl_mac provider = {0};
+  uint8_t key[CNET_SCTP_GMSSL_KEY_BYTES];
+  uint8_t mac[CNET_SCTP_ASSOC_MAC_BYTES];
+  memset(key, 0x0bu, sizeof(key));
+  memset(mac, 0xeeu, sizeof(mac));
+  assert(cnet_sctp_gmssl_mac_init(&provider, key, sizeof(key) - 1u) == -1);
+  assert(cnet_sctp_gmssl_mac_init(&provider, key, sizeof(key)) == 0);
+  assert(cnet_sctp_gmssl_mac_init(&provider, key, sizeof(key)) == -1);
+  clear_bytes(key, sizeof(key)); /* prove the key is copied and retained privately */
+  assert(cnet_sctp_gmssl_mac_sign(&provider, (const uint8_t *)"abc", 3u, mac) == 0);
+  assert(memcmp(mac, expected, sizeof(expected)) == 0);
+  cnet_sctp_gmssl_mac_retire(&provider);
+  assert(provider.active == 0u);
+  {
+    size_t i;
+    for (i = 0u; i < sizeof(provider.key); ++i) assert(provider.key[i] == 0u);
+  }
+  memset(mac, 0x5au, sizeof(mac));
+  assert(cnet_sctp_gmssl_mac_sign(&provider, (const uint8_t *)"abc", 3u, mac) == -1);
+  assert(mac[0] == 0x5au && mac[31] == 0x5au);
+}
+
+static void seal_packet(uint8_t *packet, size_t packet_size) {
+  uint32_t crc;
+  memset(packet + 8u, 0, 4u);
+  crc = cnet_sctp_wire_crc32c(packet, packet_size);
+  packet[8] = (uint8_t)crc;
+  packet[9] = (uint8_t)(crc >> 8);
+  packet[10] = (uint8_t)(crc >> 16);
+  packet[11] = (uint8_t)(crc >> 24);
+}
+
+static void test_independent_provider_cookie(void) {
+  cnet_sctp_assoc a = {0}, b = {0}, impostor = {0}, wrong_generation = {0};
+  peer_context ca, cb, ci, cg;
+  cnet_sctp_assoc_config ac, bc, ic, gc;
+  uint8_t init[1200], init_ack[1200], echo[1200], reply[1200], tampered[1200];
+  size_t n_init = 0u, n_ack = 0u, n_echo = 0u, n_reply = 0u;
+  init_peer(&ca); init_peer(&cb); init_peer(&ci); init_peer(&cg);
+  ac = setup_config(5000u, &ca);
+  bc = setup_config(5001u, &cb);
+  ic = setup_config(5001u, &ci);
+  gc = setup_config(5001u, &cg);
+  gc.peer_binding ^= 1u;
+  assert(cnet_sctp_assoc_init(&a, &ac, 0u) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_init(&b, &bc, 0u) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_init(&impostor, &ic, 0u) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_init(&wrong_generation, &gc, 0u) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &n_init) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 2u, init, n_init, init_ack, sizeof(init_ack), &n_ack) ==
+         CNET_SCTP_ASSOC_OK);
+  assert(cb.calls == 1u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  assert(cnet_sctp_assoc_input(&a, 3u, init_ack, n_ack, echo, sizeof(echo), &n_echo) ==
+         CNET_SCTP_ASSOC_OK);
+
+  assert(cnet_sctp_assoc_input(&impostor, 4u, echo, n_echo,
+                               reply, sizeof(reply), &n_reply) == CNET_SCTP_ASSOC_AUTH);
+  assert(n_reply == 0u && cnet_sctp_assoc_state_get(&impostor) == CNET_SCTP_ASSOC_CLOSED);
+  assert(cnet_sctp_assoc_input(&wrong_generation, 4u, echo, n_echo,
+                               reply, sizeof(reply), &n_reply) == CNET_SCTP_ASSOC_AUTH);
+  assert(n_reply == 0u);
+  memcpy(tampered, echo, n_echo);
+  tampered[16u + 36u] ^= 1u; /* authenticated rwnd claim, not packet checksum */
+  seal_packet(tampered, n_echo);
+  assert(cnet_sctp_assoc_input(&b, 4u, tampered, n_echo,
+                               reply, sizeof(reply), &n_reply) == CNET_SCTP_ASSOC_AUTH);
+  assert(n_reply == 0u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+
+  cb.on_owner = 0;
+  {
+    unsigned int before = cb.calls;
+    assert(cnet_sctp_assoc_input(&b, 4u, echo, n_echo,
+                                 reply, sizeof(reply), &n_reply) == CNET_SCTP_ASSOC_OWNER);
+    assert(cb.calls == before);
+  }
+  cb.on_owner = 1;
+  assert(cnet_sctp_assoc_input(&b, 4u, echo, n_echo, reply, 3u, &n_reply) ==
+         CNET_SCTP_ASSOC_CAPACITY);
+  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  assert(cnet_sctp_assoc_input(&b, 4u, echo, n_echo,
+                               reply, sizeof(reply), &n_reply) == CNET_SCTP_ASSOC_OK);
+  assert(n_reply == 16u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_input(&a, 5u, reply, n_reply,
+                               tampered, sizeof(tampered), &n_reply) == CNET_SCTP_ASSOC_OK);
+  assert(n_reply == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
+
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&impostor) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&wrong_generation) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_drained(&a) && cnet_sctp_assoc_drained(&b));
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&impostor) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&wrong_generation) == CNET_SCTP_ASSOC_OK);
+  cnet_sctp_gmssl_mac_retire(&ca.mac);
+  cnet_sctp_gmssl_mac_retire(&cb.mac);
+  cnet_sctp_gmssl_mac_retire(&ci.mac);
+  cnet_sctp_gmssl_mac_retire(&cg.mac);
+}
+
+static void test_retired_key_fail_closed(void) {
+  cnet_sctp_assoc a = {0}, b = {0};
+  peer_context ca, cb;
+  cnet_sctp_assoc_config ac, bc;
+  uint8_t init[1200], ack[1200], echo[1200], response[1200];
+  size_t ni = 0u, na = 0u, ne = 0u, nr = 0u;
+  init_peer(&ca); init_peer(&cb);
+  ac = setup_config(5000u, &ca);
+  bc = setup_config(5001u, &cb);
+  assert(cnet_sctp_assoc_init(&a, &ac, 0u) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_init(&b, &bc, 0u) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &ni) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 2u, init, ni, ack, sizeof(ack), &na) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 3u, ack, na, echo, sizeof(echo), &ne) == CNET_SCTP_ASSOC_OK);
+  /* Test misuse rejection only: production must not retire an admitted key
+   * before associations drain, and must never rely on this path for rotation. */
+  cnet_sctp_gmssl_mac_retire(&cb.mac);
+  assert(cnet_sctp_assoc_input(&b, 4u, echo, ne, response, sizeof(response), &nr) ==
+         CNET_SCTP_ASSOC_AUTH);
+  assert(nr == 0u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  cnet_sctp_gmssl_mac_retire(&ca.mac);
+}
+
+int main(void) {
+  test_hmac_sm3_known_vector();
+  test_independent_provider_cookie();
+  test_retired_key_fail_closed();
+  puts("C11 GmSSL real SM3-HMAC Cookie MAC research gate PASS (not browser interoperability)");
+  return 0;
+}
