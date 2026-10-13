@@ -439,52 +439,141 @@ static size_t append_parameter_to_sctp_packet(const uint8_t *input, size_t n,
 static void init_tlv_wire_gate(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
-  uint8_t init[1200], ack[1200], encoded[1200], echo[1200], confirm[1200];
+  uint8_t init[1200], ack[1200], encoded[1200], echo[1200], confirm[1200], scratch[1200];
   uint8_t dummy_ipv4[4] = {127u, 0u, 0u, 1u};
-  size_t init_n = 0u, ack_n = 0u, encoded_n, echo_n = 0u, confirm_n = 0u;
+  cnet_sctp_wire_header header;
+  cnet_sctp_wire_decoder decoder;
+  cnet_sctp_wire_chunk chunk;
+  size_t init_n = 0u, ack_n = 0u, encoded_n = 0u, echo_n = 0u, confirm_n = 0u;
   unsigned int prior_signs;
+
+  /* Unknown 01 on INIT: stop+report inside INIT ACK, then normal
+   * COOKIE ECHO/ACK. Capacity refusal must happen before MAC signing. */
   setup(&a, &b, &ca, &cb);
   assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
-  /* Unknown parameter action 01 requires reporting; we do not silently
-   * ignore it or publish a misleading partial INIT ACK. */
   encoded_n = append_parameter_to_sctp_packet(init, init_n, 0x4003u,
                                                NULL, 0u, encoded, sizeof(encoded));
   prior_signs = (unsigned int)cb.mac_calls;
+  assert(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack, 32u, &ack_n) ==
+         CNET_SCTP_ASSOC_CAPACITY);
+  assert(ack_n == 0u && cb.mac_calls == (int)prior_signs);
+  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
   assert(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack,
-                               sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(ack_n == 0u && cb.mac_calls == (int)prior_signs);
-  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
-  /* Well-formed IPv4 is still explicitly unsupported in single-path M2. */
-  encoded_n = append_parameter_to_sctp_packet(init, init_n, 5u,
-                   dummy_ipv4, sizeof(dummy_ipv4), encoded, sizeof(encoded));
-  assert(cnet_sctp_assoc_input(&b, 3u, encoded, encoded_n, ack,
-                               sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(ack_n == 0u && cb.mac_calls == (int)prior_signs);
-  /* Unknown action 10 can safely be skipped. */
-  encoded_n = append_parameter_to_sctp_packet(init, init_n, 0x8005u,
-                   NULL, 0u, encoded, sizeof(encoded));
-  assert(cnet_sctp_assoc_input(&b, 4u, encoded, encoded_n, ack,
                                sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_OK);
-  assert(ack_n > 0u && cb.mac_calls == (int)prior_signs + 1);
-  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
-  /* Unknown action 11 in INIT ACK requires ERROR reporting; hard refuse. */
-  encoded_n = append_parameter_to_sctp_packet(ack, ack_n, 0xc002u,
-                   NULL, 0u, encoded, sizeof(encoded));
-  assert(cnet_sctp_assoc_input(&a, 5u, encoded, encoded_n, echo,
-                               sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(echo_n == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
-  /* Unknown action 00 after mandatory Cookie stops TLV scan, not handshake. */
-  encoded_n = append_parameter_to_sctp_packet(ack, ack_n, 0x0002u,
-                   NULL, 0u, encoded, sizeof(encoded));
-  assert(cnet_sctp_assoc_input(&a, 6u, encoded, encoded_n, echo,
+  assert(ack_n != 0u && cb.mac_calls == (int)prior_signs + 1);
+  assert(cnet_sctp_wire_decode(ack, ack_n, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == 1u && header.verification_tag == a.local_tag);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  assert(chunk.type == 2u && chunk.value_size >= 116u);
+  /* 108 bytes fixed INIT ACK + Cookie followed by Unrecognized Parameter. */
+  assert(chunk.value[108u] == 0u && chunk.value[109u] == 8u);
+  assert(chunk.value[110u] == 0u && chunk.value[111u] == 8u);
+  assert(chunk.value[112u] == 0x40u && chunk.value[113u] == 3u);
+  assert(cnet_sctp_assoc_input(&a, 3u, ack, ack_n, echo,
                                sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_ECHOED);
-  assert(cnet_sctp_assoc_input(&b, 7u, echo, echo_n, confirm,
+  assert(cnet_sctp_assoc_input(&b, 4u, echo, echo_n, confirm,
                                sizeof(confirm), &confirm_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 8u, confirm, confirm_n, encoded,
-                               sizeof(encoded), &encoded_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 5u, confirm, confirm_n, scratch,
+                               sizeof(scratch), &encoded_n) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
   assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+
+  /* Unknown 11 on INIT ACK: COOKIE ECHO and ERROR cause 8 are bundled.
+   * Both must be covered by CRC32C and the entire saved T1 retransmission. */
+  setup(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 2u, init, init_n, ack,
+                               sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_OK);
+  encoded_n = append_parameter_to_sctp_packet(ack, ack_n, 0xc002u,
+                                               NULL, 0u, encoded, sizeof(encoded));
+  assert(cnet_sctp_assoc_input(&a, 3u, encoded, encoded_n, echo,
+                               16u, &echo_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(echo_n == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  assert(cnet_sctp_assoc_input(&a, 3u, encoded, encoded_n, echo,
+                               sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_wire_decode(echo, echo_n, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == 2u && header.verification_tag == b.local_tag);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  assert(chunk.type == 10u && chunk.value_size == CNET_SCTP_ASSOC_COOKIE_BYTES);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  assert(chunk.type == 9u && chunk.value_size == 12u);
+  assert(chunk.value[0] == 0u && chunk.value[1] == 8u);
+  assert(chunk.value[2] == 0u && chunk.value[3] == 12u);
+  assert(chunk.value[4] == 0xc0u && chunk.value[5] == 2u);
+  assert(cnet_sctp_assoc_advance(&a, 103u, scratch,
+                                 sizeof(scratch), &encoded_n) == CNET_SCTP_ASSOC_OK);
+  assert(encoded_n == echo_n && memcmp(echo, scratch, echo_n) == 0);
+  assert(cnet_sctp_assoc_input(&b, 104u, scratch, encoded_n, confirm,
+                               sizeof(confirm), &confirm_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 105u, confirm, confirm_n, scratch,
+                               sizeof(scratch), &encoded_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+
+  /* Known IPv4 address remains explicitly unsupported in this constrained
+   * single-path profile, and cannot trigger Cookie signing. */
+  setup(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
+  encoded_n = append_parameter_to_sctp_packet(init, init_n, 5u,
+                   dummy_ipv4, sizeof(dummy_ipv4), encoded, sizeof(encoded));
+  assert(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack,
+                               sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_PROTOCOL);
+  assert(ack_n == 0u && cb.mac_calls == 0);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+
+  /* Host Name Address in INIT: RFC 9260 requires ABORT with peer's
+   * Initiate Tag, without ever constructing a signed State Cookie. */
+  setup(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
+  encoded_n = append_parameter_to_sctp_packet(init, init_n, 11u,
+                        dummy_ipv4, sizeof(dummy_ipv4), encoded, sizeof(encoded));
+  assert(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack,
+                               15u, &ack_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(ack_n == 0u && cb.mac_calls == 0);
+  assert(cnet_sctp_assoc_input(&b, 2u, encoded, encoded_n, ack,
+                               sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_OK);
+  assert(ack_n == 16u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  assert(cnet_sctp_wire_decode(ack, ack_n, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  assert(header.verification_tag == a.local_tag && header.chunk_count == 1u);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  assert(chunk.type == 6u && chunk.flags == 0u && chunk.value_size == 0u);
+  assert(cnet_sctp_assoc_input(&a, 3u, ack, ack_n, echo,
+                               sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_FAILED);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+
+  /* Host Name Address in INIT ACK must also ABORT. Outbound capacity error
+   * must leave T1-init and COOKIE-WAIT unchanged until ABORT is emitted. */
+  setup(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 2u, init, init_n, ack,
+                               sizeof(ack), &ack_n) == CNET_SCTP_ASSOC_OK);
+  encoded_n = append_parameter_to_sctp_packet(ack, ack_n, 11u,
+                        dummy_ipv4, sizeof(dummy_ipv4), encoded, sizeof(encoded));
+  assert(cnet_sctp_assoc_input(&a, 3u, encoded, encoded_n, echo,
+                               15u, &echo_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  assert(cnet_sctp_assoc_input(&a, 3u, encoded, encoded_n, echo,
+                               sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_FAILED);
+  assert(cnet_sctp_wire_decode(echo, echo_n, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  assert(header.verification_tag == b.local_tag);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  assert(chunk.type == 6u && chunk.flags == 0u);
   assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
