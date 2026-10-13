@@ -44,7 +44,14 @@ static unsigned int tx_count(const cnet_sctp_data *d) {
   return count;
 }
 static size_t rx_available(const cnet_sctp_data *d) {
-  return CNET_SCTP_DATA_RECEIVE_CEILING - d->buffered_rx;
+  size_t by_bytes = CNET_SCTP_DATA_RECEIVE_CEILING - d->buffered_rx;
+  size_t free_slots = 0u;
+  size_t i;
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i)
+    if (!d->rx[i].used) ++free_slots;
+  if (by_bytes > free_slots * CNET_SCTP_DATA_PAYLOAD_MAX)
+    by_bytes = free_slots * CNET_SCTP_DATA_PAYLOAD_MAX;
+  return by_bytes;
 }
 static cnet_sctp_data_status encode_one(cnet_sctp_data *d, uint8_t type,
     uint8_t flags, const uint8_t *value, size_t value_size,
@@ -205,7 +212,10 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
   if (!duplicate) {
     if (bytes > rx_available(d)) return CNET_SCTP_DATA_CAPACITY;
     for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
-      if (!d->rx[i].used) { slot = &d->rx[i]; break; }
+      if (!d->rx[i].used) {
+        if (!slot) slot = &d->rx[i];
+        continue;
+      }
       if ((ch->flags & DATA_U) == 0u && !d->rx[i].unordered &&
           d->rx[i].stream_id == stream && d->rx[i].ssn == ssn)
         return CNET_SCTP_DATA_PROTOCOL;
@@ -263,7 +273,10 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
       return CNET_SCTP_DATA_PROTOCOL;
     prev_end = end;
   }
-  /* Validate all gap blocks BEFORE changing any outstanding ticket. */
+  /* Validate all gap blocks and rescheduling overflow BEFORE changing
+   * outstanding tickets. A bad SACK cannot partially settle the sender. */
+  if (now > UINT64_MAX - d->config.t3_max_ms)
+    return CNET_SCTP_DATA_CLOCK;
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
     cnet_sctp_data_tx *slot = &d->tx[i];
     size_t j;
