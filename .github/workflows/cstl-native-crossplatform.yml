@@ -1,0 +1,122 @@
+name: CSTL Windows/macOS installed DSO owner conformance
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/cstl-native-crossplatform.yml'
+      - 'cmake/ci/cstl-dso-odr/native-consumer/**'
+      - 'cmake/ci/cstl-dso-odr/run_native.py'
+      - 'cmake/ci/cstl-dso-odr/hidden_static.cmake'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: salts-cstl-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-sdk:
+    name: Native DSO ${{ matrix.rid }} / ${{ matrix.mode }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            rid: macos-arm64
+            mode: hidden
+          - os: macos-15
+            rid: macos-arm64
+            mode: shared
+          - os: windows-2025
+            rid: windows-x64
+            mode: hidden
+    env:
+      SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout exact pinned Salts rc.15 release source
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/salts
+          ref: 21bdb1145fbb2b39ee3fa644173ec037adba7b87
+          path: salts-source
+          persist-credentials: false
+
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+
+      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+
+      - name: Install exact Native host dependencies
+        uses: ./.github/actions/setup-build-host
+
+      - name: Discover Visual Studio and native MSVC compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) {
+            throw "Native Visual Studio C11/C++17 x64 toolchain is missing"
+          }
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+
+      - name: Build relocated SDK and run real AppleClang C11/C++17 dylibs
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test -f "$QIGAO_VCPKG_TOOLCHAIN_FILE"
+          python3 cmake/ci/cstl-dso-odr/run_native.py --mode "$MODE"
+
+      - name: Build relocated SDK and run real MSVC C11/C++17 DLLs
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          python cmake/ci/cstl-dso-odr/run_native.py --mode ${{ matrix.mode }}
+          if errorlevel 1 exit /b 1
+
+      - name: Save exact HEAD, RID, build and test status
+        if: always()
+        shell: pwsh
+        env:
+          RID: ${{ matrix.rid }}
+          MODE: ${{ matrix.mode }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:RUNNER_TEMP "cstl-native-evidence-$env:RID-$env:MODE"
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          @(
+            "tested_checkout=$env:GITHUB_SHA"
+            "source_head=$env:SOURCE_HEAD_SHA"
+            'pinned_rc15_source=21bdb1145fbb2b39ee3fa644173ec037adba7b87'
+            "run_id=$env:GITHUB_RUN_ID"
+            "rid=$env:RID"
+            "mode=$env:MODE"
+            "job_status=$env:JOB_STATUS"
+            'native_load_test=REQUIRED'
+          ) | Set-Content -LiteralPath (Join-Path $evidence 'provenance.txt') -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cstl-native-${{ matrix.rid }}-${{ matrix.mode }}
+          path: ${{ runner.temp }}/cstl-native-evidence-${{ matrix.rid }}-${{ matrix.mode }}
+          if-no-files-found: error
