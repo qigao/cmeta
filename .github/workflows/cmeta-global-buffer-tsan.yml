@@ -101,3 +101,138 @@ jobs:
             build/cmeta-global-buffer-tsan/Testing/Temporary/LastTest.log
             build/cmeta-global-buffer-tsan/compile_commands.json
           retention-days: 14
+
+exact-release-source:
+    name: Exact rc.15 tag source TSan with same two-owner fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      TSAN_OPTIONS: halt_on_error=1:exitcode=66
+      SALTS_RELEASE_SOURCE_SHA: 21bdb1145fbb2b39ee3fa644173ec037adba7b87
+      CCACHE_DIR: ${{ github.workspace }}/.ccache-rc15-source
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - name: Checkout exact Draft fixture (NOT a released allocator)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout exact official Salts.Native 2.3.0-rc.15 source
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/salts
+          ref: 21bdb1145fbb2b39ee3fa644173ec037adba7b87
+          path: build/cmeta-rc15-release-source
+          persist-credentials: false
+
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+
+      - name: Prepare exact release-source C11 TSan build
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache python3
+          test "$(git -C build/cmeta-rc15-release-source rev-parse HEAD)" = "$SALTS_RELEASE_SOURCE_SHA"
+          echo "Published source identity: $SALTS_RELEASE_SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build and install full exact rc.15 Salts source with TSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$GITHUB_WORKSPACE/build/cmeta-rc15-release-source"
+          build="$GITHUB_WORKSPACE/build/cmeta-rc15-source-tsan"
+          stage="$RUNNER_TEMP/cmeta-rc15-original-source-tsan-sdk"
+          cmake --preset linux-tsan-ci -S "$src" -B "$build" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX="$stage" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_THREAD=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build "$build" --parallel 2
+          cmake --install "$build"
+          test -f "$stage/lib/libsalts.so.2.3"
+          test -f "$stage/include/cmeta_buffer.h"
+          echo "SALTS_RC15_SOURCE_SDK=$stage" >> "$GITHUB_ENV"
+
+      - name: Attest release-tag first-party allocator and once source instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee build/cmeta-rc15-source-tsan/instrumentation.txt
+          import json
+          from pathlib import Path
+          path = Path("build/cmeta-rc15-source-tsan/compile_commands.json")
+          commands = json.loads(path.read_text(encoding="utf-8"))
+          for required in (
+              "/utils/src/cmeta_buffer.c",
+              "/utils/src/cmeta_thread.c",
+              "/platform/src/thread_posix.c",
+          ):
+              matched = [entry for entry in commands
+                         if entry["file"].replace("\\", "/").endswith(required)]
+              if not matched or any("-fsanitize=thread" not in
+                  entry.get("command", " ".join(entry.get("arguments", ())))
+                  for entry in matched):
+                  raise SystemExit(f"Not TSan-instrumented from official rc.15 source: {required}")
+              print(f"Exact v2.3.0-rc.15 source: {required}: {len(matched)} unit(s) with TSan")
+          PY
+
+      - name: Link the IDENTICAL two-owner fixtures to installed source-TSan libsalts
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="$SALTS_RC15_SOURCE_SDK"
+          for fixture in cmeta_global_buffer_concurrent_tsan cmeta_global_buffer_handoff_tsan; do
+            cc -std=c11 -O1 -g -pthread -fsanitize=thread -fno-omit-frame-pointer \
+              -Wall -Wextra -Werror \
+              -I "$sdk/include" "utils/tests/$fixture.c" \
+              "$sdk/lib/libsalts.so.2.3" -Wl,-rpath,"$sdk/lib" \
+              -o "$RUNNER_TEMP/$fixture-rc15-source-tsan"
+          done
+          export LD_LIBRARY_PATH="$sdk/lib:$sdk/bin:${LD_LIBRARY_PATH:-}"
+          for fixture in cmeta_global_buffer_concurrent_tsan cmeta_global_buffer_handoff_tsan; do
+            ldd "$RUNNER_TEMP/$fixture-rc15-source-tsan" |
+              tee -a build/cmeta-rc15-source-tsan/linked-sdk.txt
+            nm -D "$RUNNER_TEMP/$fixture-rc15-source-tsan" | grep -F ' __tsan_init'
+          done
+          test "$(grep -Fc "$sdk/lib/libsalts.so.2.3" build/cmeta-rc15-source-tsan/linked-sdk.txt)" -eq 2
+          if grep -F "not found" build/cmeta-rc15-source-tsan/linked-sdk.txt; then
+            echo "Exact source-tag SDK has missing runtime dependencies" >&2
+            exit 1
+          fi
+
+      - name: Repeat original rc.15 source-TSan two-owner and relaxed SAME-shell handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$SALTS_RC15_SOURCE_SDK/lib:$SALTS_RC15_SOURCE_SDK/bin:${LD_LIBRARY_PATH:-}"
+          log=build/cmeta-rc15-source-tsan/exact-rc15-two-owner-results.txt
+          : > "$log"
+          for round in $(seq 1 10); do
+            timeout 75s "$RUNNER_TEMP/cmeta_global_buffer_concurrent_tsan-rc15-source-tsan" | tee -a "$log"
+            timeout 75s "$RUNNER_TEMP/cmeta_global_buffer_handoff_tsan-rc15-source-tsan" | tee -a "$log"
+          done
+          test "$(grep -Fc 'Salts #1170: exact global buffer leases, two active owners and 40000 ungated recycles OK' "$log")" -eq 10
+          test "$(grep -Fc 'Salts #1170: 1024 same-shell cross-owner relaxed turn handoffs OK' "$log")" -eq 10
+          echo "Exact official Salts.Native 2.3.0-rc.15 source TSan: 10/10 overlapping leases and 10/10 original-shell A↔B handoffs" >> "$GITHUB_STEP_SUMMARY"
+          echo "Do NOT conflate this source-TSan result with uninstrumented released-binary TSan" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve exact release-source instrumentation and handoff evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: salts-1170-exact-rc15-source-tsan
+          path: |
+            build/cmeta-rc15-source-tsan/instrumentation.txt
+            build/cmeta-rc15-source-tsan/linked-sdk.txt
+            build/cmeta-rc15-source-tsan/exact-rc15-two-owner-results.txt
+            build/cmeta-rc15-source-tsan/compile_commands.json
+          if-no-files-found: warn
+          retention-days: 14
