@@ -496,9 +496,14 @@ static cnet_sctp_assoc_status handle_cookie_echo(cnet_sctp_assoc *s,
 static cnet_sctp_assoc_status handle_cookie_ack(cnet_sctp_assoc *s,
     uint64_t now, const cnet_sctp_wire_header *header,
     const cnet_sctp_wire_chunk *chunk) {
-  if (s->state != CNET_SCTP_ASSOC_COOKIE_ECHOED ||
-      header->verification_tag != s->local_tag ||
+  if (header->verification_tag != s->local_tag ||
       chunk->value_size != 0u) return CNET_SCTP_ASSOC_PROTOCOL;
+  /* RFC 9260 §5.2.5: duplicate COOKIE ACK cannot reopen or reset a live
+   * association, peer tag, counters or Timer T1. It is a no-op. */
+  if (s->state == CNET_SCTP_ASSOC_ESTABLISHED)
+    return CNET_SCTP_ASSOC_OK;
+  if (s->state != CNET_SCTP_ASSOC_COOKIE_ECHOED)
+    return CNET_SCTP_ASSOC_PROTOCOL;
   s->state = CNET_SCTP_ASSOC_ESTABLISHED;
   s->saved_size = 0u;
   memset(s->saved_packet, 0, sizeof(s->saved_packet));
