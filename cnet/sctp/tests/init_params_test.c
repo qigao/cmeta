@@ -109,11 +109,28 @@ static void test_malformed_and_unsupported(void) {
   assert_failure_does_not_expose_borrowed_cookie(p, n, 0, CNET_SCTP_INIT_PARAMS_UNSUPPORTED);
   n = append(p, 16u, 8u, 4u); /* Unrecognized Parameter only legal on INIT ACK */
   assert_failure_does_not_expose_borrowed_cookie(p, n, 0, CNET_SCTP_INIT_PARAMS_MALFORMED);
-  assert_failure_does_not_expose_borrowed_cookie(p, n, 1, CNET_SCTP_INIT_PARAMS_UNSUPPORTED);
+  assert_failure_does_not_expose_borrowed_cookie(p, n, 1, CNET_SCTP_INIT_PARAMS_MALFORMED);
   n = append(p, 16u, 7u, 4u);
   p[n++] = 0u; /* trailing 1 byte cannot encode next parameter */
   assert_failure_does_not_expose_borrowed_cookie(p, n, 1, CNET_SCTP_INIT_PARAMS_MALFORMED);
   assert(cnet_sctp_init_params_preflight(NULL, 20u, 1, NULL) == CNET_SCTP_INIT_PARAMS_INVALID);
+}
+
+static void test_received_unrecognized_parameter(void) {
+  uint8_t p[512] = {0};
+  cnet_sctp_init_param_view view = {0};
+  size_t n = append(p, 16u, 7u, 4u);
+  size_t offset = n;
+  n = append(p, n, 8u, 4u);
+  put16(p + offset + 4u, 0xc005u);
+  put16(p + offset + 6u, 4u);
+  assert(cnet_sctp_init_params_preflight(p, n, 1, &view) ==
+         CNET_SCTP_INIT_PARAMS_OK);
+  assert(view.cookie == p + 20u && view.skipped_count == 1u);
+  assert(view.report_count == 0u);
+  put16(p + offset + 6u, 5u); /* forged nested TLV length */
+  assert_failure_does_not_expose_borrowed_cookie(p, n, 1,
+                                                 CNET_SCTP_INIT_PARAMS_MALFORMED);
 }
 
 static void test_report_capacity_and_cookie(void) {
@@ -177,6 +194,7 @@ int main(void) {
   test_cookie_and_padding();
   test_unknown_actions();
   test_report_capacity_and_cookie();
+  test_received_unrecognized_parameter();
   test_malformed_and_unsupported();
   test_capacity_and_mutations();
   puts("C11 SCTP RFC9260 TLV action/report/abort-intent parser: PASS");
