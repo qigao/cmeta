@@ -660,9 +660,164 @@ static void established_expired_duplicate_cookie(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+
+/* Both sides start at once. INIT in COOKIE-WAIT or COOKIE-ECHOED MUST
+ * preserve the original local Initiate Tag, unsent packet/T1 and Owner. */
+static void simultaneous_init_keeps_owner_and_t1(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  uint8_t a_init[1200], b_init[1200], a_ack[1200], b_ack[1200];
+  uint8_t a_echo[1200], b_echo[1200], a_cookie_ack[1200], b_cookie_ack[1200];
+  uint8_t scratch[1200];
+  cnet_sctp_wire_header header;
+  cnet_sctp_wire_decoder decoder;
+  cnet_sctp_wire_chunk chunk;
+  size_t ai = 0u, bi = 0u, aa = 0u, ba = 0u;
+  size_t ae = 0u, be = 0u, ak = 0u, bk = 0u, out_n = 0u;
+  uint64_t deadline = 0u;
+  uint32_t a_tag, b_tag;
+  int has_deadline = 0;
+  setup(&a, &b, &ca, &cb);
+  a_tag = a.local_tag;
+  b_tag = b.local_tag;
+  assert(cnet_sctp_assoc_start(&a, 1u, a_init, sizeof(a_init), &ai) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_start(&b, 1u, b_init, sizeof(b_init), &bi) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 2u, a_init, ai, b_ack, 15u, &ba) ==
+         CNET_SCTP_ASSOC_CAPACITY);
+  assert(ba == 0u && cb.mac_calls == 0);
+  assert(b.local_tag == b_tag && b.state == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  assert(b.saved_size == bi && memcmp(b.saved_packet, b_init, bi) == 0);
+  assert(cnet_sctp_assoc_next_deadline(&b, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  assert(has_deadline && deadline == 101u);
+  assert(cnet_sctp_assoc_input(&b, 2u, a_init, ai,
+                               b_ack, sizeof(b_ack), &ba) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 2u, b_init, bi,
+                               a_ack, sizeof(a_ack), &aa) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  assert(a.local_tag == a_tag && b.local_tag == b_tag);
+  assert(a.saved_size == ai && memcmp(a.saved_packet, a_init, ai) == 0);
+  assert(b.saved_size == bi && memcmp(b.saved_packet, b_init, bi) == 0);
+  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  assert(has_deadline && deadline == 101u);
+  assert(cnet_sctp_assoc_next_deadline(&b, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  assert(has_deadline && deadline == 101u);
+  assert(cnet_sctp_wire_decode(a_ack, aa, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  assert(header.verification_tag == b_tag);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  assert(chunk.type == 2u && chunk.value[0] == (uint8_t)(a_tag >> 24));
+  assert(cnet_sctp_wire_decode(b_ack, ba, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  assert(header.verification_tag == a_tag);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  assert(chunk.type == 2u && chunk.value[0] == (uint8_t)(b_tag >> 24));
+
+  assert(cnet_sctp_assoc_input(&a, 3u, b_ack, ba,
+                               a_echo, sizeof(a_echo), &ae) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 3u, a_ack, aa,
+                               b_echo, sizeof(b_echo), &be) == CNET_SCTP_ASSOC_OK);
+  assert(a.state == CNET_SCTP_ASSOC_COOKIE_ECHOED && a.peer_tag == b_tag);
+  assert(b.state == CNET_SCTP_ASSOC_COOKIE_ECHOED && b.peer_tag == a_tag);
+  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  assert(has_deadline && deadline == 103u);
+  /* Retransmitted simultaneous INIT after COOKIE-ECHOED does not reset T1,
+   * replace the saved ECHO packet, switch the peer or change Initiate Tag. */
+  assert(cnet_sctp_assoc_input(&a, 4u, b_init, bi,
+                               scratch, sizeof(scratch), &out_n) == CNET_SCTP_ASSOC_OK);
+  assert(out_n > 0u && a.state == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+  assert(a.local_tag == a_tag && a.peer_tag == b_tag);
+  assert(a.saved_size == ae && memcmp(a.saved_packet, a_echo, ae) == 0);
+  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  assert(has_deadline && deadline == 103u);
+
+  assert(cnet_sctp_assoc_input(&a, 5u, b_echo, be,
+                               a_cookie_ack, sizeof(a_cookie_ack), &ak) ==
+         CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 5u, a_echo, ae,
+                               b_cookie_ack, sizeof(b_cookie_ack), &bk) ==
+         CNET_SCTP_ASSOC_OK);
+  assert(ak == 16u && bk == 16u);
+  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+         b.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(a.peer_tag == b_tag && b.peer_tag == a_tag);
+  assert(a.saved_size == 0u && b.saved_size == 0u);
+  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  assert(!has_deadline);
+  assert(cnet_sctp_assoc_next_deadline(&b, &deadline, &has_deadline) == CNET_SCTP_ASSOC_OK);
+  assert(!has_deadline);
+  /* Late COOKIE ACK is a harmless no-op, not a new ULP terminal event. */
+  assert(cnet_sctp_assoc_input(&a, 6u, b_cookie_ack, bk,
+                               scratch, sizeof(scratch), &out_n) == CNET_SCTP_ASSOC_OK);
+  assert(out_n == 0u && a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_input(&b, 6u, a_cookie_ack, ak,
+                               scratch, sizeof(scratch), &out_n) == CNET_SCTP_ASSOC_OK);
+  assert(out_n == 0u && b.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
+/* COOKIE ECHO may win while the local INIT still waits for INIT ACK:
+ * authenticated Table 12 case B is a bounded Owner-only commit. */
+static void simultaneous_cookie_echo_wins_before_init_ack(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  uint8_t a_init[1200], b_init[1200], a_init_ack[1200];
+  uint8_t b_cookie_echo[1200], a_cookie_ack[1200], output[1200];
+  size_t ai = 0u, bi = 0u, na = 0u, ne = 0u, nk = 0u, no = 0u;
+  uint64_t deadline = 0u;
+  uint32_t a_tag, b_tag;
+  int active = 0;
+  setup(&a, &b, &ca, &cb);
+  a_tag = a.local_tag;
+  b_tag = b.local_tag;
+  assert(cnet_sctp_assoc_start(&a, 1u, a_init, sizeof(a_init), &ai) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_start(&b, 1u, b_init, sizeof(b_init), &bi) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 2u, b_init, bi,
+                               a_init_ack, sizeof(a_init_ack), &na) ==
+         CNET_SCTP_ASSOC_OK);
+  assert(a.peer_tag == 0u && a.state == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  assert(cnet_sctp_assoc_input(&b, 3u, a_init_ack, na,
+                               b_cookie_echo, sizeof(b_cookie_echo), &ne) ==
+         CNET_SCTP_ASSOC_OK);
+  assert(b.state == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+  /* A has not received its INIT ACK. Failed ACK admission must not stop T1. */
+  assert(cnet_sctp_assoc_input(&a, 4u, b_cookie_echo, ne,
+                               a_cookie_ack, 15u, &nk) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(nk == 0u && a.state == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  assert(a.peer_tag == 0u && a.local_tag == a_tag);
+  assert(a.saved_size == ai && memcmp(a.saved_packet, a_init, ai) == 0);
+  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &active) == CNET_SCTP_ASSOC_OK);
+  assert(active && deadline == 101u);
+  assert(cnet_sctp_assoc_input(&a, 4u, b_cookie_echo, ne,
+                               a_cookie_ack, sizeof(a_cookie_ack), &nk) ==
+         CNET_SCTP_ASSOC_OK);
+  assert(nk == 16u && a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(a.local_tag == a_tag && a.peer_tag == b_tag);
+  assert(a.peer_initial_tsn == b.initial_tsn);
+  assert(a.deadline_ms == 0u && a.saved_size == 0u && a.current_rto_ms == 0u);
+  assert(cnet_sctp_assoc_input(&b, 5u, a_cookie_ack, nk,
+                               output, sizeof(output), &no) == CNET_SCTP_ASSOC_OK);
+  assert(no == 0u && b.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  /* Established-state INIT is deliberately NOT a live restart. */
+  {
+    int signed_count = ca.mac_calls;
+    assert(cnet_sctp_assoc_input(&a, 6u, b_init, bi,
+                                 output, sizeof(output), &no) == CNET_SCTP_ASSOC_PROTOCOL);
+    assert(no == 0u && ca.mac_calls == signed_count);
+    assert(a.peer_tag == b_tag && a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  }
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
   entropy_init_fail_closed();
   normal_handshake();
+  simultaneous_init_keeps_owner_and_t1();
+  simultaneous_cookie_echo_wins_before_init_ack();
   init_tlv_wire_gate();
   clock_owner_and_timeout();
   stale_cookie_and_wrong_mac();
