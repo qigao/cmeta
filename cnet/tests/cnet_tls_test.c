@@ -2189,7 +2189,7 @@ spec("CNet bounded TLS engine") {
     }
 
     it("accepts P-384/SHA-384 issuing CA through the public CNet NativeIO TCP TLS path") {
-      static const char message[] = "P384 issuing CA verified over real CNet TCP";
+      static const char message[] = "P384-SHA384-OK";
       cnet_client client = {0};
       cnet_client server = {0};
       cnet_listener listener = {0};
