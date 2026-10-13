@@ -171,7 +171,7 @@ static int run_case(const char *ca_file, const char *cert_file,
     if (!cp.terminal || !cp.failed || cp.connected)
       fprintf(stderr,
               "CNet installed TLS reject state: client terminal=%d failed=%d connected=%d "
-              "server terminal=%d failed=%d iteration=%zu\\n",
+              "server terminal=%d failed=%d iteration=%zu\n",
               cp.terminal, cp.failed, cp.connected, sp.terminal, sp.failed, iteration);
     REQUIRE(cp.terminal && cp.failed && !cp.connected);
     REQUIRE(cp.failure_stage != NULL);
