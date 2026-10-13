@@ -43,12 +43,6 @@ static cnet_sctp_assoc_status guard(cnet_sctp_assoc *s) {
 static cnet_sctp_assoc_status check_time(cnet_sctp_assoc *s, uint64_t now) {
   return now < s->last_time_ms ? CNET_SCTP_ASSOC_CLOCK : CNET_SCTP_ASSOC_OK;
 }
-static int consttime_equal(const uint8_t *a, const uint8_t *b, size_t n) {
-  size_t i;
-  uint8_t diff = 0u;
-  for (i = 0; i < n; ++i) diff |= (uint8_t)(a[i] ^ b[i]);
-  return diff == 0u;
-}
 static cnet_sctp_assoc_status encode_one(const cnet_sctp_assoc *s,
     uint32_t tag, uint8_t type, const uint8_t *value, size_t size,
     uint8_t *output, size_t capacity, size_t *written) {
@@ -108,7 +102,8 @@ cnet_sctp_assoc_status cnet_sctp_assoc_init(cnet_sctp_assoc *s,
   uint8_t entropy[CNET_SCTP_ASSOC_ENTROPY_BYTES] = {0};
   int entropy_result;
   uint32_t tag;
-  if (!s || !config || !config->is_owner || !config->mac || !config->entropy ||
+  if (!s || !config || !config->is_owner || !config->mac ||
+      !config->verify_mac || !config->entropy ||
       !config->is_owner(config->provider_context) ||
       config->local_port == 0u || config->remote_port == 0u ||
       config->receive_window < 1500u ||
@@ -196,7 +191,6 @@ static cnet_sctp_assoc_status make_cookie(cnet_sctp_assoc *s,
 }
 static cnet_sctp_assoc_status verify_cookie(cnet_sctp_assoc *s,
     uint64_t now, const uint8_t *cookie, size_t cookie_size) {
-  uint8_t expected[CNET_SCTP_ASSOC_MAC_BYTES];
   uint64_t issued;
   int mac_result;
   if (cookie_size != CNET_SCTP_ASSOC_COOKIE_BYTES ||
@@ -214,13 +208,10 @@ static cnet_sctp_assoc_status verify_cookie(cnet_sctp_assoc *s,
       rd64(cookie + 48u) != s->config.peer_binding)
     return CNET_SCTP_ASSOC_AUTH;
   s->in_progress = 1u;
-  mac_result = s->config.mac(s->config.provider_context, cookie,
-      SCTP_CLAIMS_BYTES, expected);
+  mac_result = s->config.verify_mac(s->config.provider_context, cookie,
+      SCTP_CLAIMS_BYTES, cookie + SCTP_CLAIMS_BYTES);
   s->in_progress = 0u;
   if (mac_result != 0) return CNET_SCTP_ASSOC_AUTH;
-  if (!consttime_equal(expected, cookie + SCTP_CLAIMS_BYTES,
-                       CNET_SCTP_ASSOC_MAC_BYTES))
-    return CNET_SCTP_ASSOC_AUTH;
   issued = rd64(cookie + 4u);
   if (issued > now || now - issued > s->config.cookie_lifetime_ms)
     return CNET_SCTP_ASSOC_EXPIRED;
