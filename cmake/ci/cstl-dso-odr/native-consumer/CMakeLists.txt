@@ -22,6 +22,16 @@ find_package(Salts CONFIG REQUIRED PATHS "${_prefix}"
 if(NOT TARGET Salts::CSTL OR NOT TARGET Salts::CMeta)
   message(FATAL_ERROR "Installed SDK does not export public CSTL/CMeta targets")
 endif()
+if(WIN32 AND EXACT_CSTL_MODE STREQUAL "shared")
+  # The *installed* candidate target, not a private test-header hack, must
+  # propagate the exact Windows CSTL data-import ABI to both C and C++.
+  get_target_property(_cstl_imports Salts::CSTL INTERFACE_COMPILE_DEFINITIONS)
+  if(NOT _cstl_imports OR
+     NOT "CSTL_TEST_DLL_IMPORT=1" IN_LIST _cstl_imports)
+    message(FATAL_ERROR
+      "Shared CSTL candidate SDK lacks explicit installed DLL data-import contract")
+  endif()
+endif()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -34,12 +44,6 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 foreach(target IN ITEMS cstl_provider_a cstl_provider_b)
   add_library(${target} SHARED provider.c)
   target_link_libraries(${target} PRIVATE Salts::CSTL Salts::CMeta)
-  if(WIN32 AND EXACT_CSTL_MODE STREQUAL "shared")
-    # Explicit test-only __declspec(dllimport) for Windows DLL metadata.
-    # The official installed header remains byte-identical to rc.15.
-    target_compile_definitions(${target} PRIVATE
-      CSTL_NATIVE_SHARED_IMPORT=1)
-  endif()
   set_target_properties(${target} PROPERTIES
     BUILD_RPATH "${_prefix}/lib"
     INSTALL_RPATH "${_prefix}/lib")
@@ -56,10 +60,6 @@ set_target_properties(cstl_native_loader PROPERTIES
 
 add_executable(cstl_cpp17_consumer consumer_cpp17.cpp)
 target_link_libraries(cstl_cpp17_consumer PRIVATE Salts::CSTL Salts::CMeta)
-if(WIN32 AND EXACT_CSTL_MODE STREQUAL "shared")
-  target_compile_definitions(cstl_cpp17_consumer PRIVATE
-    CSTL_NATIVE_SHARED_IMPORT=1)
-endif()
 set_target_properties(cstl_cpp17_consumer PROPERTIES
   BUILD_RPATH "${_prefix}/lib")
 
