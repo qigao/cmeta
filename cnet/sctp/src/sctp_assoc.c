@@ -64,11 +64,11 @@ static cnet_sctp_assoc_status encode_one(const cnet_sctp_assoc *s,
   return status == CNET_SCTP_WIRE_OK ? CNET_SCTP_ASSOC_OK : CNET_SCTP_ASSOC_PROTOCOL;
 }
 static void prepare_init(const cnet_sctp_assoc *s, uint8_t value[16]) {
-  wr32(value, s->config.local_tag);
+  wr32(value, s->local_tag);
   wr32(value + 4u, s->config.receive_window);
   wr16(value + 8u, s->config.outbound_streams);
   wr16(value + 10u, s->config.inbound_streams);
-  wr32(value + 12u, s->config.initial_tsn);
+  wr32(value + 12u, s->initial_tsn);
 }
 static int good_init_fields(const uint8_t *v, size_t len) {
   return len >= 16u && rd32(v) != 0u && rd32(v + 4u) >= 1500u &&
@@ -99,21 +99,45 @@ static cnet_sctp_assoc_status begin_packet(cnet_sctp_assoc *s, uint64_t now,
   return CNET_SCTP_ASSOC_OK;
 }
 
+/* A separate required CSPRNG fills the local verification tag and initial
+ * TSN. No caller-supplied, predictable or protocol-state-derived fallback.
+ * Initialization is serialized on the CNet Owner, and callback reentry is
+ * rejected while the provider is executing. */
 cnet_sctp_assoc_status cnet_sctp_assoc_init(cnet_sctp_assoc *s,
     const cnet_sctp_assoc_config *config, uint64_t initial_time_ms) {
-  if (!s || !config || !config->is_owner || !config->mac ||
+  uint8_t entropy[CNET_SCTP_ASSOC_ENTROPY_BYTES] = {0};
+  int entropy_result;
+  uint32_t tag;
+  if (!s || !config || !config->is_owner || !config->mac || !config->entropy ||
       !config->is_owner(config->provider_context) ||
       config->local_port == 0u || config->remote_port == 0u ||
-      config->local_tag == 0u || config->receive_window < 1500u ||
+      config->receive_window < 1500u ||
       config->outbound_streams == 0u || config->inbound_streams == 0u ||
       config->t1_ms == 0u || config->t1_max_ms < config->t1_ms ||
       config->t1_max_ms > UINT64_MAX - initial_time_ms ||
       config->cookie_lifetime_ms == 0u || config->peer_binding == 0u ||
       config->max_retransmits == 0u)
     return CNET_SCTP_ASSOC_INVALID;
+  /* The object must be zero-initialized by the owner before first init;
+   * never overwrite an admitted session or a provider-reentrant init. */
+  if (s->magic == SCTP_ASSOC_MAGIC) return CNET_SCTP_ASSOC_BUSY;
   memset(s, 0, sizeof(*s));
   s->config = *config;
   s->magic = SCTP_ASSOC_MAGIC;
+  s->in_progress = 1u;
+  entropy_result = s->config.entropy(s->config.provider_context,
+                                    entropy, sizeof(entropy));
+  s->in_progress = 0u;
+  tag = rd32(entropy);
+  if (entropy_result != 0 || tag == 0u) {
+    /* Even a broken callback's partial entropy output is never retained. */
+    memset(entropy, 0, sizeof(entropy));
+    memset(s, 0, sizeof(*s));
+    return CNET_SCTP_ASSOC_ENTROPY;
+  }
+  s->local_tag = tag;
+  s->initial_tsn = rd32(entropy + 4u);
+  memset(entropy, 0, sizeof(entropy));
   s->last_time_ms = initial_time_ms;
   s->state = CNET_SCTP_ASSOC_CLOSED;
   return CNET_SCTP_ASSOC_OK;
@@ -151,9 +175,9 @@ static cnet_sctp_assoc_status make_cookie(cnet_sctp_assoc *s,
   wr16(cookie + 12, s->config.remote_port); /* initiator port */
   wr16(cookie + 14, s->config.local_port);  /* responder port */
   wr32(cookie + 16, rd32(peer_init));
-  wr32(cookie + 20, s->config.local_tag);
+  wr32(cookie + 20, s->local_tag);
   wr32(cookie + 24, rd32(peer_init + 12));
-  wr32(cookie + 28, s->config.initial_tsn);
+  wr32(cookie + 28, s->initial_tsn);
   wr16(cookie + 32, rd16(peer_init + 8));
   wr16(cookie + 34, rd16(peer_init + 10));
   wr32(cookie + 36, rd32(peer_init + 4));
@@ -179,8 +203,8 @@ static cnet_sctp_assoc_status verify_cookie(cnet_sctp_assoc *s,
       memcmp(cookie, "SC11", 4u) != 0) return CNET_SCTP_ASSOC_AUTH;
   if (rd16(cookie + 12u) != s->config.remote_port ||
       rd16(cookie + 14u) != s->config.local_port ||
-      rd32(cookie + 20u) != s->config.local_tag ||
-      rd32(cookie + 28u) != s->config.initial_tsn ||
+      rd32(cookie + 20u) != s->local_tag ||
+      rd32(cookie + 28u) != s->initial_tsn ||
       rd32(cookie + 16u) == 0u ||
       rd16(cookie + 32u) == 0u || rd16(cookie + 34u) == 0u ||
       rd32(cookie + 36u) < 1500u ||
@@ -269,7 +293,7 @@ static cnet_sctp_assoc_status handle_init_ack(cnet_sctp_assoc *s,
   uint32_t peer_tag;
   cnet_sctp_assoc_status status;
   if (s->state != CNET_SCTP_ASSOC_COOKIE_WAIT ||
-      header->verification_tag != s->config.local_tag) return CNET_SCTP_ASSOC_PROTOCOL;
+      header->verification_tag != s->local_tag) return CNET_SCTP_ASSOC_PROTOCOL;
   status = find_cookie_parameter(chunk, &cookie, &cookie_size);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (cookie_size > CNET_SCTP_ASSOC_MAX_PACKET - 16u)
@@ -298,7 +322,7 @@ static cnet_sctp_assoc_status handle_cookie_echo(cnet_sctp_assoc *s,
   cnet_sctp_assoc_status status;
   if ((s->state != CNET_SCTP_ASSOC_CLOSED &&
        s->state != CNET_SCTP_ASSOC_ESTABLISHED) ||
-      header->verification_tag != s->config.local_tag)
+      header->verification_tag != s->local_tag)
     return CNET_SCTP_ASSOC_PROTOCOL;
   status = verify_cookie(s, now, chunk->value, chunk->value_size);
   if (status != CNET_SCTP_ASSOC_OK) return status;
@@ -325,7 +349,7 @@ static cnet_sctp_assoc_status handle_cookie_ack(cnet_sctp_assoc *s,
     uint64_t now, const cnet_sctp_wire_header *header,
     const cnet_sctp_wire_chunk *chunk) {
   if (s->state != CNET_SCTP_ASSOC_COOKIE_ECHOED ||
-      header->verification_tag != s->config.local_tag ||
+      header->verification_tag != s->local_tag ||
       chunk->value_size != 0u) return CNET_SCTP_ASSOC_PROTOCOL;
   s->state = CNET_SCTP_ASSOC_ESTABLISHED;
   s->saved_size = 0u;
