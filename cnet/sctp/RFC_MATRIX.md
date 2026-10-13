@@ -5,6 +5,7 @@ Evidence is scoped narrowly: **M1 wire = tested framing**, **M2 research = synth
 | RFC requirement | State | Still required for conformance |
 | --- | --- | --- |
 | RFC 9260 §3/§6.8/App A packet header, CRC32C, Chunk lengths/padding | **M1 local and CI-tested** | Independent wire oracle, malformed-input fuzz and explicit unknown-chunk handling |
+| RFC 9260 §3.2.1 / §§3.3.2–3.3.3 INIT / INIT ACK TLVs | **Private C11 restrictive preflight**, 128 bounded parameters, lengths/padding, unique State Cookie, stop(00)/skip(10), failure revokes borrowed views | 01/11 Unrecognized Parameter reporting, ABORT for prohibited Host Name, IPv4/IPv6/multihoming, ECN, cookie preservative and extension negotiation; independent peer |
 | RFC 9260 §5 INIT / INIT ACK / COOKIE ECHO / COOKIE ACK and T1 | **M2 isolated state machine + Owner-injected CSPRNG/Tag/TSN** | Complete INIT parameters/negotiation, provider lifecycle, restart/tie tags, source binding, independent browser peer |
 | RFC 9260 §5.1.3/§5.1.5 cookie authentication | **Private GmSSL HMAC-SM3 + two bounded key epochs**; prior-key in-flight Cookie test | Integrate real CNet Owner/DTLS Generation drain, enforce previous-key retirement deadline, replay/collision security and independent browser interoperability |
 | RFC 9260 §§3.3,6,7 DATA, TSN/SACK, congestion, retransmission, RTO | **Not implemented** | Loss/reorder/duplicate/wraparound, PMTU, flow and congestion tests |
