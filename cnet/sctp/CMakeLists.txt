@@ -15,6 +15,18 @@ add_library(cnet_sctp_assoc_proto STATIC
 
 # M2/M3 DATA sub-engine: independent static C11 target, not installed/exported.
 add_library(cnet_sctp_data_proto STATIC src/sctp_data.c)
+
+# RFC 8832 DCEP codec is private until PR-SCTP, stream reset and full
+# peer interoperability qualify a complete public WebRTC DataChannel API.
+add_library(cnet_sctp_dcep_proto STATIC src/sctp_dcep.c)
+target_include_directories(cnet_sctp_dcep_proto PRIVATE src)
+set_target_properties(cnet_sctp_dcep_proto PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+if(MSVC)
+  target_compile_options(cnet_sctp_dcep_proto PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_dcep_proto PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
 target_link_libraries(cnet_sctp_data_proto PUBLIC cnet_sctp_wire)
 # Existing private Association now admits DATA/SACK only after Cookie ACK.
 target_link_libraries(cnet_sctp_assoc_proto PUBLIC cnet_sctp_data_proto)
@@ -138,6 +150,18 @@ if(BUILD_TESTING)
     target_compile_options(cnet_sctp_assoc_data_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
   add_test(NAME cnet_sctp_assoc_data_test COMMAND cnet_sctp_assoc_data_test)
+
+  add_executable(cnet_sctp_dcep_test tests/dcep_test.c)
+  target_link_libraries(cnet_sctp_dcep_test PRIVATE cnet_sctp_dcep_proto)
+  target_include_directories(cnet_sctp_dcep_test PRIVATE src)
+  set_target_properties(cnet_sctp_dcep_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  if(MSVC)
+    target_compile_options(cnet_sctp_dcep_test PRIVATE /W4 /WX)
+  else()
+    target_compile_options(cnet_sctp_dcep_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME cnet_sctp_dcep_test COMMAND cnet_sctp_dcep_test)
 
 
 endif()
