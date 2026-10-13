@@ -31,6 +31,7 @@ typedef struct cnet_sctp_dcep_channel {
   uint32_t reliability;
   uint8_t channel_type; /* Only 0x00 and 0x80 admitted until PR-SCTP */
   uint8_t state; /* 0 free, 1 local WAIT_ACK, 2 open, 3 closing */
+  uint8_t locally_initiated; /* never accept ACK for a peer-opened stream */
   uint8_t label[CNET_SCTP_DCEP_TEXT_MAX];
   uint8_t protocol[CNET_SCTP_DCEP_TEXT_MAX];
   size_t label_size, protocol_size;
