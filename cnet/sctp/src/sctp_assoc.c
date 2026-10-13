@@ -665,6 +665,12 @@ cnet_sctp_assoc_status cnet_sctp_assoc_advance(cnet_sctp_assoc *s,
   s->last_time_ms = now;
   if (s->state == CNET_SCTP_ASSOC_STOPPED || s->state == CNET_SCTP_ASSOC_FAILED)
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
+  if (s->state == CNET_SCTP_ASSOC_ESTABLISHED && s->data_ready) {
+    cnet_sctp_assoc_status mapped = data_result(
+        cnet_sctp_data_advance(&s->data, now, output, cap, written));
+    if (mapped == CNET_SCTP_ASSOC_EXPIRED) s->state = CNET_SCTP_ASSOC_FAILED;
+    return mapped;
+  }
   if (s->state != CNET_SCTP_ASSOC_COOKIE_WAIT &&
       s->state != CNET_SCTP_ASSOC_COOKIE_ECHOED) {
     s->last_time_ms = now;
@@ -704,6 +710,9 @@ cnet_sctp_assoc_status cnet_sctp_assoc_next_deadline(cnet_sctp_assoc *s,
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (!deadline_ms || !has_deadline) return CNET_SCTP_ASSOC_INVALID;
+  if (s->state == CNET_SCTP_ASSOC_ESTABLISHED && s->data_ready)
+    return data_result(cnet_sctp_data_deadline(&s->data,
+                                              deadline_ms, has_deadline));
   *has_deadline = s->state == CNET_SCTP_ASSOC_COOKIE_WAIT ||
       s->state == CNET_SCTP_ASSOC_COOKIE_ECHOED;
   *deadline_ms = *has_deadline ? s->deadline_ms : 0u;
@@ -713,6 +722,11 @@ cnet_sctp_assoc_status cnet_sctp_assoc_next_deadline(cnet_sctp_assoc *s,
 cnet_sctp_assoc_status cnet_sctp_assoc_stop(cnet_sctp_assoc *s) {
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (s->data_ready) {
+    (void)cnet_sctp_data_stop(&s->data);
+    memset(&s->data, 0, sizeof(s->data));
+    s->data_ready = 0u;
+  }
   s->state = CNET_SCTP_ASSOC_STOPPED;
   s->deadline_ms = 0u;
   s->saved_size = 0u;
