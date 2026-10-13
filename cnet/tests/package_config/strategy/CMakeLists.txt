@@ -56,3 +56,12 @@ add_test(NAME cnet_installed_p384_tls
     "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-server-key.pem"
     "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-wrong-root-cert.pem")
 set_tests_properties(cnet_installed_p384_tls PROPERTIES TIMEOUT 90)
+
+# Unlike header-only consumers this TLS executable pulls in Salts::Core through
+# the installed CNet DSO. ELF DT_RUNPATH does not resolve indirect DSO deps;
+# expose only the just-installed SDK lib directory in this test subprocess.
+# No build-tree or host-provider library fallback is permitted.
+if(UNIX AND NOT APPLE)
+  set_tests_properties(cnet_installed_p384_tls PROPERTIES
+    ENVIRONMENT "LD_LIBRARY_PATH=${SALTS_TEST_PREFIX}/lib:$ENV{LD_LIBRARY_PATH}")
+endif()
