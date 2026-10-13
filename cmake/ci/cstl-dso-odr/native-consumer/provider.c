@@ -1,4 +1,5 @@
 #include <cstl/detail/instance_meta.h>
+#include "shared_cstl_data_imports.h"
 #include <cmeta/type_identity.h>
 #include <cmeta/range.h>
 #include <cmeta/cmeta.h>
