@@ -56,6 +56,33 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   add_dependencies(native_io_test native_io_readiness_lifetime_test)
 
+  # #1168: independent real io_uring CQE completion/cancel conformance.
+  # The extra hook exists ONLY in these private source-copy objects; it
+  # never appears in the installed NativeIO SDK or release target.
+  add_executable(native_io_uring_kernel_dispatch_test
+    native_io_uring_kernel_dispatch_test.c
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_io.c"
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_io_accept_escrow.c"
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_io_linux.c"
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_io_epoll.c"
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_io_io_uring.c"
+    "${PROJECT_SOURCE_DIR}/native-io/src/native_io_readiness.c")
+  target_include_directories(native_io_uring_kernel_dispatch_test PRIVATE
+    "${PROJECT_SOURCE_DIR}/native-io/include"
+    "${PROJECT_SOURCE_DIR}/native-io/src")
+  target_compile_definitions(native_io_uring_kernel_dispatch_test PRIVATE
+    SALTS_NATIVE_IO_URING_CQE_TEST_HOOK=1)
+  target_link_libraries(native_io_uring_kernel_dispatch_test PRIVATE
+    Salts::Platform Salts::Coroutine)
+  set_target_properties(native_io_uring_kernel_dispatch_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+    FOLDER "native-io/tests")
+  add_test(NAME native_io_uring_kernel_dispatch_test
+    COMMAND native_io_uring_kernel_dispatch_test)
+  # io_uring_setup may be prohibited by hosted-runner seccomp. SKIP != PASS.
+  set_tests_properties(native_io_uring_kernel_dispatch_test PROPERTIES
+    SKIP_RETURN_CODE 77 TIMEOUT 30)
+
   add_executable(native_io_uring_batch_test native_io_uring_batch_test.c)
   target_link_libraries(native_io_uring_batch_test PRIVATE Salts::NativeIO Salts::TinyTest)
   set_target_properties(native_io_uring_batch_test PROPERTIES
