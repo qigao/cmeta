@@ -343,26 +343,58 @@ static cnet_sctp_assoc_status handle_init_ack(cnet_sctp_assoc *s,
     const cnet_sctp_wire_chunk *chunk,
     uint8_t *output, size_t cap, size_t *written) {
   cnet_sctp_init_param_view params;
-  const uint8_t *cookie = NULL;
-  size_t cookie_size = 0u;
+  cnet_sctp_init_param_status parsed;
+  uint8_t error[4u + CNET_SCTP_INIT_REPORT_BYTES];
+  const uint8_t *cookie;
+  size_t cookie_size;
   uint8_t scratch[CNET_SCTP_ASSOC_MAX_PACKET];
   size_t size = 0u;
   uint32_t peer_tag;
   cnet_sctp_assoc_status status;
   if (s->state != CNET_SCTP_ASSOC_COOKIE_WAIT ||
-      header->verification_tag != s->local_tag) return CNET_SCTP_ASSOC_PROTOCOL;
-  if (!good_init_fields(chunk->value, chunk->value_size) ||
-      cnet_sctp_init_params_preflight(chunk->value, chunk->value_size, 1, &params) !=
-          CNET_SCTP_INIT_PARAMS_OK)
+      header->verification_tag != s->local_tag ||
+      !good_init_fields(chunk->value, chunk->value_size))
     return CNET_SCTP_ASSOC_PROTOCOL;
+  parsed = cnet_sctp_init_params_preflight(chunk->value, chunk->value_size, 1, &params);
+  peer_tag = rd32(chunk->value);
+  if (parsed == CNET_SCTP_INIT_PARAMS_ABORT_REQUIRED)
+    return respond_abort(s, peer_tag, 1, output, cap, written);
+  if (parsed != CNET_SCTP_INIT_PARAMS_OK) return CNET_SCTP_ASSOC_PROTOCOL;
   cookie = params.cookie;
   cookie_size = params.cookie_size;
   if (cookie_size > CNET_SCTP_ASSOC_MAX_PACKET - 16u)
     return CNET_SCTP_ASSOC_CAPACITY;
-  peer_tag = rd32(chunk->value);
-  status = encode_one(s, peer_tag, SCTP_TYPE_COOKIE_ECHO,
-      cookie, cookie_size, scratch, sizeof(scratch), &size);
-  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (params.report_count == 0u) {
+    status = encode_one(s, peer_tag, SCTP_TYPE_COOKIE_ECHO,
+        cookie, cookie_size, scratch, sizeof(scratch), &size);
+    if (status != CNET_SCTP_ASSOC_OK) return status;
+  } else {
+    cnet_sctp_wire_chunk chunks[2];
+    size_t report_bytes;
+    cnet_sctp_wire_status wire_status;
+    memset(error, 0, sizeof(error));
+    report_bytes = append_unknown_reports(error + 4u, sizeof(error) - 4u,
+        chunk->value, chunk->value_size, &params, 0);
+    if (report_bytes != params.report_wire_size || report_bytes == 0u)
+      return CNET_SCTP_ASSOC_PROTOCOL;
+    wr16(error, SCTP_ERROR_UNRECOGNIZED);
+    wr16(error + 2u, (uint16_t)(4u + report_bytes));
+    chunks[0].type = SCTP_TYPE_COOKIE_ECHO;
+    chunks[0].flags = 0u;
+    chunks[0].value = cookie;
+    chunks[0].value_size = cookie_size;
+    chunks[1].type = SCTP_TYPE_ERROR;
+    chunks[1].flags = 0u;
+    chunks[1].value = error;
+    chunks[1].value_size = 4u + report_bytes;
+    wire_status = cnet_sctp_wire_encode(s->config.local_port,
+        s->config.remote_port, peer_tag, chunks, 2u,
+        scratch, sizeof(scratch), &size);
+    if (wire_status == CNET_SCTP_WIRE_CAPACITY)
+      return CNET_SCTP_ASSOC_CAPACITY;
+    if (wire_status != CNET_SCTP_WIRE_OK)
+      return CNET_SCTP_ASSOC_PROTOCOL;
+  }
   if (now > UINT64_MAX - s->config.t1_ms) return CNET_SCTP_ASSOC_CLOCK;
   status = begin_packet(s, now, scratch, size, CNET_SCTP_ASSOC_COOKIE_ECHOED,
       output, cap, written);
