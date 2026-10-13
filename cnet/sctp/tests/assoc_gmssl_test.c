@@ -153,6 +153,13 @@ static void test_independent_provider_cookie(void) {
   assert(cnet_sctp_assoc_init(&b, &bc, 0u) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_init(&impostor, &ic, 0u) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_init(&wrong_generation, &gc, 0u) == CNET_SCTP_ASSOC_OK);
+  /* Only the test harness copies responder verification attributes so
+   * wrong-key and wrong-DTLS-generation probes reach MAC verification.
+   * Production never accepts caller-defined verification tags or TSNs. */
+  impostor.local_tag = b.local_tag;
+  impostor.initial_tsn = b.initial_tsn;
+  wrong_generation.local_tag = b.local_tag;
+  wrong_generation.initial_tsn = b.initial_tsn;
   assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &n_init) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_input(&b, 2u, init, n_init, init_ack, sizeof(init_ack), &n_ack) ==
          CNET_SCTP_ASSOC_OK);
