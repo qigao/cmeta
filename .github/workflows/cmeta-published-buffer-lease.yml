@@ -124,6 +124,43 @@ jobs:
           echo "10/10 released rc.15: 1024 SAME buffer shells passed Owner A→B using relaxed test turn markers per run" >> "$GITHUB_STEP_SUMMARY"
           echo "Published binary synchronization is uninstrumented: do NOT infer TSan-clean or close #1170 from this test" >> "$GITHUB_STEP_SUMMARY"
 
+      # Diagnostic, NOT an acceptance gate: all accessor/C11 test code has
+      # visible TSan accesses, but the released Salts allocator's internal
+      # release/acquire atomics were built without TSan instrumentation.
+      # Explicitly capture the original exit 66 and raw stacks: never
+      # suppress TSan warnings or pronounce this published DSO TSan clean.
+      - name: Observe uninstrumented released-binary TSan visibility (NOT a PASS)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="$SALTS_BINARY_SDK_ROOT"
+          source="$RUNNER_TEMP/published-buffer-handoff.c"
+          binary="$RUNNER_TEMP/published-buffer-handoff-observe-tsan"
+          log="$RUNNER_TEMP/published-buffer-tsan-observation.log"
+          cc -std=c11 -O1 -g -pthread -fsanitize=thread \
+            -fno-omit-frame-pointer -Wall -Wextra -Werror \
+            -I "$sdk/include" "$source" \
+            "$sdk/lib/libsalts.so.2.3" -Wl,-rpath,"$sdk/lib" -o "$binary"
+          ldd "$binary" | tee "$RUNNER_TEMP/published-buffer-tsan-ldd.txt"
+          grep -F "$sdk/lib/libsalts.so.2.3" "$RUNNER_TEMP/published-buffer-tsan-ldd.txt"
+          nm -D "$binary" | grep -F ' __tsan_init'
+          set +e
+          env LD_LIBRARY_PATH="$sdk/lib" TSAN_OPTIONS="halt_on_error=1:exitcode=66" \
+            timeout 60s "$binary" > "$log" 2>&1
+          status=$?
+          set -e
+          cat "$log"
+          if [ "$status" -eq 66 ] &&
+             grep -Fq 'WARNING: ThreadSanitizer: data race' "$log"; then
+            echo '::warning title=Released allocator TSan UNQUALIFIED::Same exact shell reused via uninstrumented released binary; raw TSan race diagnostic archived. This is NOT a TSan pass or proof of an actual double active lease.'
+            echo 'Release binary TSan observation: FAILED (exit=66), synchronization invisible in precompiled Salts; #1170 remains OPEN' >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$status" -eq 0 ]; then
+            echo 'Release binary TSan observation: no report in this single run; this is NOT a source-instrumented qualification' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Unexpected released binary TSan result: $status" >&2
+            exit "$status"
+          fi
+
       - name: Preserve published SDK provenance and lease proof
         if: always()
         uses: actions/upload-artifact@v4
@@ -132,6 +169,8 @@ jobs:
           path: |
             ${{ runner.temp }}/published-buffer-ldd.txt
             ${{ runner.temp }}/published-global-buffer-results.txt
+            ${{ runner.temp }}/published-buffer-tsan-observation.log
+            ${{ runner.temp }}/published-buffer-tsan-ldd.txt
             ${{ runner.temp }}/SHA256SUMS
           if-no-files-found: warn
           retention-days: 14
