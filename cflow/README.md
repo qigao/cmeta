@@ -18,6 +18,11 @@ Dependency:
 CFlow -> CMeta
 ```
 
+**Native DSO metadata ownership:** With static CFlow/CSTL, reflected
+descriptor storage is image-local. Compare semantic type identities while
+providers are live; keep callback/Plugin leases until final settlement.
+See the [native DSO owner contract](../cmeta/NATIVE_DSO_OWNERSHIP.md).
+
 ## Public headers
 
 ```text

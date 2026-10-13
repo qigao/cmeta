@@ -186,3 +186,29 @@ if(TARGET test_re)
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${SIMDE_INCLUDE_DIRS})
 endif()
+
+# The production default embeds static CFlow and CSTL into independent
+# native runtime images. Their address-bearing reflected descriptors are
+# image-local; exporting them reintroduces ASan ODR/interposition defects.
+# Run the real dynamic-loader contract on every native host, not only the
+# old #1187 feature branch. A deliberately shared CFlow/CSTL build has a
+# different, independently accepted data-import ABI and is excluded here.
+get_target_property(_salts_cstl_type cmeta_cstl TYPE)
+get_target_property(_salts_cflow_type cmeta_cflow TYPE)
+if(NOT CMAKE_CROSSCOMPILING AND
+   _salts_cstl_type STREQUAL "STATIC_LIBRARY" AND
+   _salts_cflow_type STREQUAL "STATIC_LIBRARY")
+  add_executable(salts_static_owner_exports_test static_owner_exports_test.c)
+  target_compile_features(salts_static_owner_exports_test PRIVATE c_std_11)
+  target_link_libraries(salts_static_owner_exports_test PRIVATE ${CMAKE_DL_LIBS})
+  set_target_properties(salts_static_owner_exports_test PROPERTIES
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    FOLDER "utils/tests")
+  add_test(NAME salts_static_owner_exports_test
+    COMMAND "$<TARGET_FILE:salts_static_owner_exports_test>"
+            "$<TARGET_FILE:salts>" "$<TARGET_FILE:cnet>")
+  set_tests_properties(salts_static_owner_exports_test PROPERTIES TIMEOUT 60)
+endif()
+unset(_salts_cstl_type)
+unset(_salts_cflow_type)

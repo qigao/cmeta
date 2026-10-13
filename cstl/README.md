@@ -23,6 +23,12 @@ target_link_libraries(my_target PRIVATE Salts::CSTL)
 #include <cstl/typed.h>
 ```
 
+**Native DLL/DSO contract:** Static CFlow/CSTL descriptor addresses are
+image-local; do not pass raw owning handles into another image's compiled
+algorithms. Use producer-owned `cstl_typed_import` callbacks and keep the
+supplying module loaded through every borrow/cleanup. See the
+[static native DSO owner policy](../cmeta/NATIVE_DSO_OWNERSHIP.md).
+
 ## One declaration is enough
 
 For a single typed container:
