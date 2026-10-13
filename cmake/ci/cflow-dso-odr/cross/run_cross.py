@@ -179,7 +179,49 @@ def main():
         cmake.append("-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=" +
                      ("ON" if mode == "shared-single" else "OFF"))
     run(cmake, env=env, logfile=log)
-    run(["cmake", "--build", build, "--parallel", "2"], env=env, logfile=log)
+    try:
+        run(["cmake", "--build", build, "--parallel", "2"], env=env, logfile=log)
+    except RuntimeError:
+        if not (platform == "windows" and mode == "shared-single"):
+            raise
+        # This is an EXPECTED NEGATIVE producer-ABI gate, not a passing
+        # shared CFlow runtime. All of these exact MSVC data import failures
+        # must actually occur before accepting the independently recorded
+        # Salts #1185 blocker. Never hide unrelated build errors.
+        build_log = log.read_text(encoding="utf-8", errors="replace")
+        expected = (
+            "cmeta_cflow-5.dll",
+            "error LNK2001",
+            "error LNK2019",
+            "cmeta_type_bool",
+            "cmeta_type_size_ptr",
+            "cmeta_type_gen_status",
+            "fatal error LNK1120",
+        )
+        require(all(item in build_log for item in expected),
+                "Windows shared CFlow failed for a cause other than the exact "
+                "known CMeta DLL data-import ABI blocker #1185")
+        record = {
+            "result": "EXPECTED_WINDOWS_SHARED_CFLOW_CMETA_DATA_IMPORT_REJECTION",
+            "real_shared_runtime_qualified": False,
+            "mode": mode,
+            "platform": platform,
+            "source_release_sha": actual,
+            "issue": "https://github.com/qigao/salts/issues/1185",
+            "matching_msvc_import_markers": list(expected),
+            "new_package_or_release": False,
+        }
+        (evidence / "owner-negative-result.json").write_text(
+            json.dumps(record, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8")
+        print("CFLOW_WINDOWS_SHARED_CANDIDATE=BLOCKED_BY_CMETA_DATA_IMPORT",
+              flush=True)
+        return
+    if platform == "windows" and mode == "shared-single":
+        raise RuntimeError(
+            "Pinned release shared CFlow unexpectedly linked: remove/replace "
+            "the #1185 expected-negative gate only after independently "
+            "qualifying its DLL data-import and external consumer ABI")
     run(["cmake", "--install", build, "--prefix", prefix],
         env=env, logfile=log)
     require((prefix / "lib/cmake/Salts/SaltsConfig.cmake").is_file(),
