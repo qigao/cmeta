@@ -1,5 +1,6 @@
 #include "sctp_assoc_internal.h"
 #include "sctp_dcep_internal.h"
+#include "sctp_webrtc_internal.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -331,10 +332,79 @@ static void post_handshake_twenty_kib_fragments(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* RFC 8831 WebRTC empty text/binary user messages: PPID 56/57 and
+ * exactly one zero byte on SCTP DATA, then logical zero bytes to the ULP.
+ * Application framing cannot accidentally reinterpret DCEP/partial PPIDs. */
+static void post_handshake_webrtc_empty_ppids(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_webrtc_payload encoded = {0}, decoded = {0};
+  cnet_sctp_data_message meta = {0};
+  uint8_t packet[1200], sack[1200], response[1200], app[1200];
+  static const uint8_t malformed[] = {0u, 0u};
+  static const uint8_t fake_data[] = {'t','e','s','t'};
+  size_t np = 0u, ns = 0u, nr = 0u;
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_webrtc_prepare(0, NULL, 0u, &encoded) ==
+         CNET_SCTP_WEBRTC_OK);
+  assert(encoded.ppid == 56u && encoded.wire_size == 1u &&
+         encoded.wire_bytes[0] == 0u && encoded.logical_size == 0u);
+  assert(cnet_sctp_assoc_send_message(&a, 6u, 0u, encoded.ppid, 0,
+      encoded.wire_bytes, encoded.wire_size,
+      packet, sizeof(packet), &np) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 7u, packet, np,
+                               sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_take_message(&b, &meta, app,
+                                      sizeof(app), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == 1u && meta.ppid == 56u);
+  assert(cnet_sctp_webrtc_decode(meta.ppid, app, nr, &decoded) ==
+         CNET_SCTP_WEBRTC_OK);
+  assert(decoded.logical_size == 0u && !decoded.binary);
+  assert(cnet_sctp_assoc_input(&a, 8u, sack, ns,
+                               response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_webrtc_prepare(1, NULL, 0u, &encoded) ==
+         CNET_SCTP_WEBRTC_OK);
+  assert(encoded.ppid == 57u && encoded.wire_size == 1u);
+  assert(cnet_sctp_assoc_send_message(&b, 9u, 2u, encoded.ppid, 1,
+      encoded.wire_bytes, encoded.wire_size,
+      packet, sizeof(packet), &np) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 10u, packet, np,
+                               sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_take_message(&a, &meta, app,
+                                      sizeof(app), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(meta.ppid == 57u && nr == 1u);
+  assert(cnet_sctp_webrtc_decode(meta.ppid, app, nr, &decoded) ==
+         CNET_SCTP_WEBRTC_OK);
+  assert(decoded.logical_size == 0u && decoded.binary);
+  assert(cnet_sctp_assoc_input(&b, 11u, sack, ns,
+                               response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_webrtc_prepare(0, fake_data, sizeof(fake_data), &encoded) ==
+         CNET_SCTP_WEBRTC_OK);
+  assert(encoded.ppid == 51u && encoded.wire_size == 4u);
+  assert(cnet_sctp_webrtc_decode(51u, fake_data, 4u, &decoded) ==
+         CNET_SCTP_WEBRTC_OK);
+  assert(decoded.logical_size == 4u && !decoded.binary);
+  assert(cnet_sctp_webrtc_decode(56u, malformed, 2u, &decoded) ==
+         CNET_SCTP_WEBRTC_INVALID);
+  assert(cnet_sctp_webrtc_decode(57u, fake_data, 1u, &decoded) ==
+         CNET_SCTP_WEBRTC_INVALID);
+  assert(cnet_sctp_webrtc_decode(50u, fake_data, 4u, &decoded) ==
+         CNET_SCTP_WEBRTC_UNSUPPORTED);
+  assert(cnet_sctp_webrtc_decode(52u, fake_data, 4u, &decoded) ==
+         CNET_SCTP_WEBRTC_UNSUPPORTED);
+  assert(cnet_sctp_webrtc_decode(54u, fake_data, 4u, &decoded) ==
+         CNET_SCTP_WEBRTC_UNSUPPORTED);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
   real_assoc_send_sack_and_t3();
   post_handshake_dcep_wire();
   post_handshake_twenty_kib_fragments();
+  post_handshake_webrtc_empty_ppids();
   puts("C11 SCTP post-COOKIE Association DATA/SACK/T3 stream test PASS");
   return 0;
 }
