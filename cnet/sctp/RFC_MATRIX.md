@@ -1,42 +1,35 @@
-# RFC-first C11 SCTP protocol matrix — Salts #1181
+# RFC-first SCTP conformance matrix — Salts #1181
 
-Status is deliberately conservative. `M1 wire` is **not** SCTP association
-compatibility and **not** evidence of a functioning WebRTC DataChannel.
+Evidence is scoped narrowly: **M1 wire = tested framing**, **M2 research = synthetic two-engine handshake with a non-cryptographic test MAC**. Neither milestone establishes secure RFC compatibility or WebRTC interoperability.
 
-| Normative source | Required feature for WebRTC | Status | Evidence needed |
-| --- | --- | --- | --- |
-| RFC 9260 §3, §6.8, Appendix A | Common header, CRC32C, chunk length/padding | **M1 implemented** | C11 wire/installed consumer tests, independent wire vectors, fuzz + sanitizers |
-| RFC 9260 §5 | INIT / INIT-ACK / COOKIE-ECHO / COOKIE-ACK | Not implemented | Independent association handshake, cookie security, state-machine negative tests |
-| RFC 9260 §§3.3,6,7 | DATA, TSN/SACK, retransmission, RTO, flow/congestion control | Not implemented | Loss/reorder/duplicate, wraparound, PMTU and deterministic clock |
-| RFC 9260 §9 | SHUTDOWN / ABORT and resource retirement | Not implemented | Cancellation precedence, no callback after drained |
-| RFC 8261 | SCTP packet transport over DTLS | Not implemented | Existing GmSSL DTLS plaintext packet bridge, browser interoperability |
-| RFC 3758 + RFC 7496 | PR-SCTP FORWARD-TSN, per-message lifetime/retransmits | Not implemented | Timed/maxRetransmits independent browser tests |
-| RFC 6525 + RFC 5061 | Stream reset/reconfiguration | Not implemented | Stream reset, stream reuse, pending reset collisions |
-| RFC 8260 | I-DATA / I-FORWARD-TSN interleaving when negotiated | Not implemented | Negotiation and concurrent fragmented messages |
-| RFC 8831 / RFC 8832 | WebRTC multistream DataChannel + DCEP | Not implemented | OPEN/ACK, SID, PPID, ordered/unordered, empty/text/binary |
-| RFC 8841 | SDP association configuration | Not implemented | Browser handshake/SDP trace and m-line constraints |
-| RFC 6455 | WebSocket framing | **Out of scope** | May inform CNet API architecture; cannot replace WebRTC SCTP wire protocol |
+| RFC requirement | State | Still required for conformance |
+| --- | --- | --- |
+| RFC 9260 §3/§6.8/App A packet header, CRC32C, Chunk lengths/padding | **M1 local and CI-tested** | Independent wire oracle, malformed-input fuzz and explicit unknown-chunk handling |
+| RFC 9260 §5 INIT / INIT ACK / COOKIE ECHO / COOKIE ACK and T1 | **M2 research prototype** | Real cryptographic GmSSL MAC, cookie key rotation/expiry, unpredictable tags and TSNs, INIT parameters, collision/restart/tie tags, independent peer |
+| RFC 9260 §5.1.3/§5.1.5 cookie authentication | **Test-only MAC and opaque peer-generation binding** | Provider-backed secure keyed MAC + replay/stale handling, source identity, external independent oracle, misuse tests |
+| RFC 9260 §§3.3,6,7 DATA, TSN/SACK, congestion, retransmission, RTO | **Not implemented** | Loss/reorder/duplicate/wraparound, PMTU, flow and congestion tests |
+| RFC 9260 §9 SHUTDOWN/ABORT | **Not implemented** | Full close states, pending DATA, simultaneous shutdown, correct ABORT |
+| RFC 8261 SCTP over DTLS | **Not implemented** | Existing GmSSL DTLS plaintext ingress/egress with real browser |
+| RFC 3758 / RFC 7496 PR-SCTP | **Not implemented** | Timed/max-retransmits, FORWARD-TSN, independent peer |
+| RFC 6525 / RFC 5061 stream reset | **Not implemented** | Reset/reuse and collisions |
+| RFC 8260 I-DATA interleaving | **Not implemented** | Negotiation, fragmentation, I-FORWARD-TSN |
+| RFC 8831 / RFC 8832 DataChannel/DCEP | **Not implemented** | OPEN/ACK, PPID, SID parity, reliability semantics |
+| RFC 8841 SDP | **Not implemented** | Browser-facing SDP matrix |
+| RFC 6455 WebSocket | **Out of scope** | Useful CNet design reference only, not an SCTP wire replacement |
 
-## License and toolchain audit
+## Source, license, language and ownership
 
-- This M1 module is original C11 implementation from published RFC behavior;
-  no SCTP source code was copied or translated from usrsctp, dcSCTP, libwebrtc,
-  or Rust/C++ implementations.
-- Build language: **C** only; installed consumer: **C11** only.
-- Dependencies: C11 headers/library only, CMake host build tool.
-- Non-production standalone package: `CNetSctpPrototype::Wire`, not added to
-  `Salts::CNet` source list, export set, or released SDK.
-- Independent SCTP implementation permitted only as an *external black-box
-  interoperability oracle*, not linked into or distributed with this module.
-- License review of test vectors, external fixtures and all dependencies is
-  mandatory prior to any published SDK export.
+- Original **C11-only** RFC-first code. No third-party SCTP library source was copied/translated, no Rust/C++ protocol engine, FFI, Cargo, GN, cxx or new runtime.
+- License/source provenance of any future external fixture or optional secure-MAC provider must be reviewed separately. Independent browser/libwebrtc implementations are black-box test oracles only.
+- Private M2 experiment uses one callback-verified Owner, no thread/worker, bounded fixed packet memory (1200 bytes per retained handshake packet), external monotonic clock, no hidden retransmission, explicit stop/drain/destroy. **Concurrent Owner cancellation and effective-source TSan are still pending**.
+- `cnet_sctp_assoc_proto` is not installed/exported. Existing `Salts::CNet`, `SaltsTargets`, CNet runtime, TurboMedia and public SDK remain unchanged.
+- M2 unit tests use **intentionally insecure deterministic MAC stubs** only to test callback/auth failure/control flow. Never promote their PASS status to production cookie security.
 
-## Next gates
+## Release gates (all still open)
 
-1. M1: checksum oracle vectors and malformed packet fuzz/sanitizer matrix.
-2. M2: bounded owner-local association, secure cookie generation strategy,
-   independent timer progression and deterministic INIT/COOKIE state tests.
-3. M3: data, fragmentation, SACK/retransmission, PR-SCTP, reset + interleaving.
-4. M4: GmSSL DTLS/browser independent wire interop; no self-loopback substitute.
-5. M5: ASan/UBSan/effective-source TSan and Windows/macOS/Linux arm64/Android/iOS.
-6. M6: reviewed production cutover and removal of legacy usrsctp; never fallback.
+1. Complete RFC 9260 state machine, robust authenticated cookies and full parameter/unknown-chunk policy.
+2. RFC 8261 GmSSL/DTLS integration with independent browser/libwebrtc wire interoperability.
+3. Bounded DATA, TSN, SACK, congestion, fragmentation, PR-SCTP, reset and WebRTC DCEP.
+4. Independent malformed-input fuzz, actual cryptographic oracle, effective-source ASan/UBSan/TSan.
+5. Windows IOCP, macOS, Linux x64/arm64, Android, iOS full installed SDK qualification with immutable source graph.
+6. Separate TurboMedia #227 exclusive usrsctp cutover; **no fallback**, no production merge/release before approval.
