@@ -9,6 +9,7 @@
 #endif
 
 #include <cstl/hash_map.h>
+#include "cnet_monocypher_namespace.h"
 #include <monocypher.h>
 #include <salts/clock.h>
 
