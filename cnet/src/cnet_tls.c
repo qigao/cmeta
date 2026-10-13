@@ -49,7 +49,8 @@ typedef enum cnet_tls_variant {
   CNET_TLS_VARIANT_RANGE = 0,
   CNET_TLS_VARIANT_1_2 = 1,
   CNET_TLS_VARIANT_1_3 = 2,
-  CNET_TLS_VARIANT_COUNT = 3
+  CNET_TLS_VARIANT_SHANGMI_TLS13 = 3,
+  CNET_TLS_VARIANT_COUNT = 4
 } cnet_tls_variant;
 
 struct cnet_tls_context {
@@ -62,6 +63,7 @@ struct cnet_tls_context {
   bool server;
   bool verify_peer;
   bool native_system_trust;
+  cnet_tls_security_profile security_profile;
 };
 
 typedef struct cnet_tls_gmssl_state {
@@ -511,6 +513,9 @@ static int cnet_tls_configure_variant(cnet_tls_context *context,
       TLS_cipher_ecdhe_rsa_with_aes_128_gcm_sha256,
       TLS_cipher_ecdhe_ecdsa_with_aes_128_gcm_sha256};
   static const int tls13_ciphers[] = {TLS_cipher_aes_128_gcm_sha256};
+  static const int shangmi_ciphers[] = {TLS_cipher_sm4_gcm_sm3};
+  static const int shangmi_signatures[] = {TLS_sig_sm2sig_sm3};
+  static const int shangmi_groups[] = {TLS_curve_sm2p256v1};
   static const int tls12_ciphers[] = {
       TLS_cipher_ecdhe_rsa_with_aes_128_gcm_sha256,
       TLS_cipher_ecdhe_ecdsa_with_aes_128_gcm_sha256};
@@ -526,6 +531,8 @@ static int cnet_tls_configure_variant(cnet_tls_context *context,
       TLS_sig_rsa_pkcs1_sha256,
       TLS_sig_ecdsa_secp256r1_sha256};
   static const int groups[] = {TLS_curve_secp256r1};
+  const int *selected_groups = groups;
+  size_t group_count = sizeof(groups) / sizeof(groups[0]);
   TLS_CTX *tls;
   const int *ciphers;
   const int *signatures;
@@ -542,7 +549,18 @@ static int cnet_tls_configure_variant(cnet_tls_context *context,
     return SALTS_EIO;
   context->tls_ready[variant] = true;
 
-  if (variant == CNET_TLS_VARIANT_RANGE) {
+  if (variant == CNET_TLS_VARIANT_SHANGMI_TLS13) {
+    /* Exact provider admission must happen before any other TLS_CTX policy.
+     * Never retry or fall back to the standard TLS1.2/1.3 configuration. */
+    if (tls_ctx_set_strict_protocol(tls, TLS_protocol_tls13) != 1)
+      return SALTS_EIO;
+    ciphers = shangmi_ciphers;
+    cipher_count = sizeof(shangmi_ciphers) / sizeof(shangmi_ciphers[0]);
+    signatures = shangmi_signatures;
+    signature_count = sizeof(shangmi_signatures) / sizeof(shangmi_signatures[0]);
+    selected_groups = shangmi_groups;
+    group_count = sizeof(shangmi_groups) / sizeof(shangmi_groups[0]);
+  } else if (variant == CNET_TLS_VARIANT_RANGE) {
     if (tls_ctx_set_protocol_range(tls, TLS_protocol_tls12,
                                    TLS_protocol_tls13) != 1)
       return SALTS_EIO;
@@ -563,8 +581,7 @@ static int cnet_tls_configure_variant(cnet_tls_context *context,
   }
 
   if (tls_ctx_set_cipher_suites(tls, ciphers, cipher_count) != 1 ||
-      tls_ctx_set_supported_groups(tls, groups,
-                                   sizeof(groups) / sizeof(groups[0])) != 1 ||
+      tls_ctx_set_supported_groups(tls, selected_groups, group_count) != 1 ||
       tls_ctx_set_signature_algorithms(tls, signatures, signature_count) != 1)
     return SALTS_EIO;
 
@@ -630,7 +647,8 @@ static int cnet_tls_context_create_common(
     bool server, bool verify_peer, const char *ca_file, const char *ca_path,
     const char *cert_file, const char *key_file, const char *key_password,
     cnet_tls_client_auth client_auth, const char *const *alpn_protocols,
-    size_t alpn_protocol_count, cnet_tls_context **out_context) {
+    size_t alpn_protocol_count, cnet_tls_security_profile security_profile,
+    cnet_tls_context **out_context) {
   cnet_tls_context *context;
   size_t index;
   int status;
@@ -642,6 +660,7 @@ static int cnet_tls_context_create_common(
   if (context == NULL) return SALTS_ENOMEM;
   context->server = server;
   context->verify_peer = verify_peer;
+  context->security_profile = security_profile;
 #if defined(__APPLE__) && !TARGET_OS_OSX
   context->native_system_trust =
       !server && verify_peer && ca_file == NULL && ca_path == NULL;
@@ -657,6 +676,10 @@ static int cnet_tls_context_create_common(
   }
 
   for (index = 0u; index < CNET_TLS_VARIANT_COUNT; ++index) {
+    if (security_profile == CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 &&
+        index != CNET_TLS_VARIANT_SHANGMI_TLS13) continue;
+    if (security_profile == CNET_TLS_SECURITY_PROFILE_STANDARD &&
+        index == CNET_TLS_VARIANT_SHANGMI_TLS13) continue;
     status = cnet_tls_configure_variant(
         context, (cnet_tls_variant)index, ca_file, ca_path, cert_file, key_file,
         key_password, client_auth);
@@ -690,13 +713,16 @@ int cnet_tls_client_context_create(const cnet_tls_client_config *config,
                                CNET_TLS_SERVER_NAME_CAPACITY - 1u, NULL) ||
       (config->server_name != NULL && config->server_name[0] == '\0') ||
       ((config->cert_file == NULL) != (config->key_file == NULL)) ||
-      (config->cert_file == NULL && config->key_password != NULL))
+      (config->cert_file == NULL && config->key_password != NULL) ||
+      (config->security_profile != CNET_TLS_SECURITY_PROFILE_STANDARD &&
+       config->security_profile != CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13))
     return SALTS_EINVAL;
 
   status = cnet_tls_context_create_common(
       false, true, config->ca_file, config->ca_path, config->cert_file,
       config->key_file, config->key_password, CNET_TLS_CLIENT_AUTH_NONE,
-      config->alpn_protocols, config->alpn_protocol_count, &context);
+      config->alpn_protocols, config->alpn_protocol_count,
+      config->security_profile, &context);
   if (status != SALTS_OK) return status;
   if (config->server_name != NULL)
     memcpy(context->client_server_name, config->server_name,
@@ -760,14 +786,16 @@ int cnet_tls_server_init(cnet_tls_server *server,
       (config->client_auth == CNET_TLS_CLIENT_AUTH_REQUIRED &&
        config->ca_file == NULL && config->ca_path == NULL) ||
       (config->client_auth == CNET_TLS_CLIENT_AUTH_NONE &&
-       (config->ca_file != NULL || config->ca_path != NULL)))
+       (config->ca_file != NULL || config->ca_path != NULL)) ||
+      (config->security_profile != CNET_TLS_SECURITY_PROFILE_STANDARD &&
+       config->security_profile != CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13))
     return SALTS_EINVAL;
 
   status = cnet_tls_context_create_common(
       true, config->client_auth == CNET_TLS_CLIENT_AUTH_REQUIRED,
       config->ca_file, config->ca_path, config->cert_file, config->key_file,
       config->key_password, config->client_auth, config->alpn_protocols,
-      config->alpn_protocol_count, &context);
+      config->alpn_protocol_count, config->security_profile, &context);
   if (status != SALTS_OK) return status;
   server->impl = context;
   return SALTS_OK;
@@ -1059,7 +1087,10 @@ int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context,
   state->io_buffer_bytes = io_buffer_bytes;
   state->server = server;
 
-  status = cnet_tls_engine_init_connection(state, CNET_TLS_VARIANT_RANGE);
+  status = cnet_tls_engine_init_connection(
+      state, context->security_profile == CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13
+                 ? CNET_TLS_VARIANT_SHANGMI_TLS13
+                 : CNET_TLS_VARIANT_RANGE);
   if (status != SALTS_OK) {
     state->context = NULL;
     state->engine = NULL;
@@ -1183,6 +1214,10 @@ static int cnet_tls_finish_handshake(cnet_tls_state *state,
   if (tls_get_handshake_complete(&engine->connection, &complete) != 1)
     return SALTS_EIO;
   if (!complete) return SALTS_OK;
+  if (state->context->security_profile == CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 &&
+      (engine->connection.protocol != TLS_protocol_tls13 ||
+       engine->connection.cipher_suite != TLS_cipher_sm4_gcm_sm3))
+    return SALTS_EPROTO;
 
   if (state->context->verify_peer) {
     result = tls_get_verify_result(&engine->connection, &verify_result);
@@ -1277,6 +1312,14 @@ int cnet_tls_state_set_protocol_range(cnet_tls_state *state,
   if (state == NULL || CNET_TLS_ENGINE(state) == NULL ||
       state->handshake_complete)
     return SALTS_EINVAL;
+  if (state->context->security_profile == CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13) {
+    /* A configured SM-only TLS 1.3 connection can never switch to range/TLS1.2. */
+    return ((minimum == CNET_TLS_PROTOCOL_VERSION_DEFAULT &&
+             maximum == CNET_TLS_PROTOCOL_VERSION_DEFAULT) ||
+            (minimum == CNET_TLS_PROTOCOL_VERSION_1_3 &&
+             maximum == CNET_TLS_PROTOCOL_VERSION_1_3))
+               ? SALTS_OK : SALTS_EINVAL;
+  }
   status = cnet_tls_select_variant(minimum, maximum, &variant);
   if (status != SALTS_OK) return status;
   if (CNET_TLS_ENGINE(state)->variant == variant) return SALTS_OK;

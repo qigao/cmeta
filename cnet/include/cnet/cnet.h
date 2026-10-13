@@ -351,6 +351,16 @@ typedef enum cnet_tls_client_auth {
   CNET_TLS_CLIENT_AUTH_REQUIRED = 1
 } cnet_tls_client_auth;
 
+/** Immutable secure transport choice, fixed when client/server TLS context is created.
+ * STANDARD preserves existing verified TLS 1.2-1.3 behavior; SHANGMI_TLS13
+ * requires RFC 8998 TLS 1.3 with SM2/SM3/SM4-GCM, never a TLS/TLCP fallback.
+ * TLCP is intentionally a different protocol and is not selected here.
+ */
+typedef enum cnet_tls_security_profile {
+  CNET_TLS_SECURITY_PROFILE_STANDARD = 0,
+  CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 = 1
+} cnet_tls_security_profile;
+
 /**
  * Per-connection client policy. The configuration is consumed synchronously
  * by `cnet_connect()` and is not retained. Peer and hostname verification are
@@ -370,6 +380,8 @@ typedef struct cnet_tls_client_config {
   /** Optional ordered ALPN offer; each non-empty name is at most 255 bytes. */
   const char *const *alpn_protocols;
   size_t alpn_protocol_count;
+  /** Explicit security profile; zero retains verified STANDARD TLS. */
+  cnet_tls_security_profile security_profile;
 } cnet_tls_client_config;
 
 /** Configuration copied into a reusable server context during initialization. */
@@ -386,6 +398,8 @@ typedef struct cnet_tls_server_config {
   /** Optional server-preference ALPN list. */
   const char *const *alpn_protocols;
   size_t alpn_protocol_count;
+  /** Explicit security profile; zero retains verified STANDARD TLS. */
+  cnet_tls_security_profile security_profile;
 } cnet_tls_server_config;
 
 typedef struct cnet_connect_options {

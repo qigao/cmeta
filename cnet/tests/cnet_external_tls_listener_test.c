@@ -8,9 +8,26 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum { TEST_BATCH = 16, TEST_TIMEOUT_MS = 5000 };
+
+#ifndef CNET_SHANGMI_TLS13_TEST
+#define CNET_SHANGMI_TLS13_TEST 0
+#endif
+#if CNET_SHANGMI_TLS13_TEST
+#define CNET_TLS_TEST_SECURITY_PROFILE CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13
+#define CNET_TLS_TEST_IDENTITY "localhost"
+#define CNET_TLS_TEST_SERVER_PASSWORD "fixture-only-password"
+#define CNET_EXTERNAL_TLS_CA getenv("SALTS_SHANGMI_CA")
+#define CNET_EXTERNAL_TLS_CERT getenv("SALTS_SHANGMI_CERT")
+#define CNET_EXTERNAL_TLS_KEY getenv("SALTS_SHANGMI_KEY")
+#else
+#define CNET_TLS_TEST_SECURITY_PROFILE CNET_TLS_SECURITY_PROFILE_STANDARD
+#define CNET_TLS_TEST_IDENTITY "127.0.0.1"
+#define CNET_TLS_TEST_SERVER_PASSWORD NULL
+#endif
 
 #ifndef CNET_EXTERNAL_TLS_CA
 #error CNET_EXTERNAL_TLS_CA is required
@@ -75,6 +92,28 @@ static void on_state(void *user, cnet_connection connection,
       probe->failed = true;
       return;
     }
+#if CNET_SHANGMI_TLS13_TEST
+    {
+      char cipher[64] = {0};
+      size_t cipher_size = 0u;
+      status = cnet_tls_negotiated_cipher(
+          probe->client, connection, cipher, sizeof(cipher), &cipher_size);
+      if (status != SALTS_OK || strcmp(cipher, "TLS_SM4_GCM_SM3") != 0) {
+        probe->failed = true;
+        return;
+      }
+      {
+        char alpn[32] = {0};
+        size_t alpn_size = 0u;
+        status = cnet_tls_negotiated_alpn(
+            probe->client, connection, alpn, sizeof(alpn), &alpn_size);
+        if (status != SALTS_OK || strcmp(alpn, "http/1.1") != 0) {
+          probe->failed = true;
+          return;
+        }
+      }
+    }
+#endif
     probe->connected = true;
   }
   if (state == CNET_CONNECTION_CLOSED ||
@@ -179,15 +218,18 @@ static void test_external_tls_listener_shared_progress(void) {
       .size = sizeof(server_tls_config),
       .cert_file = CNET_EXTERNAL_TLS_CERT,
       .key_file = CNET_EXTERNAL_TLS_KEY,
+      .key_password = CNET_TLS_TEST_SERVER_PASSWORD,
       .client_auth = CNET_TLS_CLIENT_AUTH_NONE,
       .alpn_protocols = alpn,
-      .alpn_protocol_count = 1u};
+      .alpn_protocol_count = 1u,
+      .security_profile = CNET_TLS_TEST_SECURITY_PROFILE};
   cnet_tls_client_config client_tls_config = {
       .size = sizeof(client_tls_config),
       .ca_file = CNET_EXTERNAL_TLS_CA,
-      .server_name = "127.0.0.1",
+      .server_name = CNET_TLS_TEST_IDENTITY,
       .alpn_protocols = alpn,
-      .alpn_protocol_count = 1u};
+      .alpn_protocol_count = 1u,
+      .security_profile = CNET_TLS_TEST_SECURITY_PROFILE};
   cnet_connect_options connect_options;
   cnet_observer server_observer = {0};
   native_io_request first = {0};
@@ -199,6 +241,25 @@ static void test_external_tls_listener_shared_progress(void) {
   uint64_t listener_receive_buffer = 0u;
   uint64_t listener_send_buffer = 0u;
   char uri[64];
+#if CNET_SHANGMI_TLS13_TEST
+  /* Each negative test must reach the same admitted TCP/TLS connection.
+   * Only peer trust, peer DNS identity, or client security profile differs.
+   */
+  const char *failure_case = getenv("SALTS_SHANGMI_FAILURE_CASE");
+  bool expect_failure = failure_case != NULL && failure_case[0] != '\0';
+  if (expect_failure) {
+    if (strcmp(failure_case, "wrong-ca") == 0) {
+      client_tls_config.ca_file = getenv("SALTS_SHANGMI_UNTRUSTED_CA");
+      check(client_tls_config.ca_file != NULL);
+    } else if (strcmp(failure_case, "wrong-san") == 0) {
+      client_tls_config.server_name = "wrong.example";
+    } else if (strcmp(failure_case, "standard-peer") == 0) {
+      client_tls_config.security_profile = CNET_TLS_SECURITY_PROFILE_STANDARD;
+    } else {
+      check(0); /* Unknown scenario is a failing test, never a skip. */
+    }
+  }
+#endif
 
   check(native_io_backend_init(&backend, &backend_config) == SALTS_OK);
   check(cnet_client_init_external(
@@ -270,8 +331,16 @@ static void test_external_tls_listener_shared_progress(void) {
   server_observer.user = &server_probe;
 
   deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
-  while ((!client_probe.connected || !server_probe.connected) &&
-         !client_probe.failed && !server_probe.failed &&
+  while (
+#if CNET_SHANGMI_TLS13_TEST
+         (expect_failure
+              ? (!client_probe.failed && !client_probe.connected)
+              : ((!client_probe.connected || !server_probe.connected) &&
+                 !client_probe.failed && !server_probe.failed)) &&
+#else
+         ((!client_probe.connected || !server_probe.connected) &&
+          !client_probe.failed && !server_probe.failed) &&
+#endif
          cmeta_monotonic_ms() < deadline) {
     check(drive_shared_once(
                &listener, &server, &client, &backend,
@@ -295,6 +364,18 @@ static void test_external_tls_listener_shared_progress(void) {
 
   check(accept_completion_seen);
   check(accepted_started);
+#if CNET_SHANGMI_TLS13_TEST
+  if (expect_failure) {
+    /* Fail closed: TCP acceptance and TLS negotiation were attempted, but
+     * the untrusted / wrong-profile client must never report CONNECTED.
+     * Server-side completion may race the client's certificate rejection.
+     */
+    check(!client_probe.connected);
+    check(client_probe.failed);
+    check(client_probe.terminal);
+    return; /* after_each owns orderly bounded cleanup of both NativeIO owners. */
+  }
+#endif
   check(client_probe.connected);
   check(server_probe.connected);
   check(!client_probe.failed);
