@@ -135,6 +135,26 @@ jobs:
             --output-on-failure --timeout 30 --repeat until-fail:12 \
             -R '^native_io_kernel_dispatch_test$'
           echo 'NativeIO real kernel readiness/cancel: 12 repeats PASS' >> "$GITHUB_STEP_SUMMARY"
+      # A sandbox may deny io_uring_setup. Record SKIP explicitly: it does
+      # not qualify CQE and never falls back to epoll/native worker threads.
+      - name: Probe real io_uring CQE and Owner cancellation (Linux opt-in)
+        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && !matrix.cross && matrix.family == 'linux' }}
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/native_io_uring_cqe_${{ matrix.id }}.log"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error \
+            --output-on-failure --timeout 30 --repeat until-fail:12 -V \
+            -R '^native_io_uring_kernel_dispatch_test$' 2>&1 | tee "$log"
+          if grep -Eq 'SKIP real io_uring CQE gate:|Not Run \(Skipped\)' "$log"; then
+            echo '::warning title=io_uring CQE unqualified::Kernel does not admit native io_uring; CQE conformance skipped without fallback'
+            echo 'io_uring real CQE gate: SKIPPED, not qualified' >> "$GITHUB_STEP_SUMMARY"
+          else
+            n="$(grep -Fc 'real io_uring CQE/Owner cancel: 12 kernel request-generation crosses PASS' "$log" || true)"
+            if [ "$n" -ne 12 ]; then echo "expected 12 genuine CQE PASS runs, observed $n" >&2; exit 1; fi
+            echo 'io_uring real CQE gate: 12 CTest repeats PASS' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Qualify actual NativeIO GQCS cancel crossover (Windows)
         if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.family == 'windows' }}
         timeout-minutes: 5
