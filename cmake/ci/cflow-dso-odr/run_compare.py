@@ -212,7 +212,9 @@ def main():
         else:
             require(test.returncode == 0 and
                     "CFLOW_DSO_LOAD_QUERY_UNLOAD_OK" in test.stdout and
-                    "CFLOW_DESCRIPTOR_SHAPE_MATCH=1" in test.stdout,
+                    "CFLOW_DESCRIPTOR_SHAPE_MATCH=1" in test.stdout and
+                    "CFLOW_SEMANTIC_EQUAL_BOTH_DIRECTIONS=1" in test.stdout and
+                    "CFLOW_LIVE_OWNER_SURVIVED_OTHER_UNLOAD" in test.stdout,
                     f"positive CFlow topology failed native loader: {name}\n"
                     + test.stdout[-9000:])
             require(ODR_MARKER not in test.stdout,

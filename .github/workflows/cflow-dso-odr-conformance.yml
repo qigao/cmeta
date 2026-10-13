@@ -5,9 +5,6 @@ name: CFlow CMeta descriptor cross-DSO ownership comparison
     paths:
       - '.github/workflows/cflow-dso-odr-conformance.yml'
       - 'cmake/ci/cflow-dso-odr/**'
-  push:
-    branches:
-      - test/cflow-dso-odr-topologies-1180
   workflow_dispatch:
 
 permissions:
@@ -25,8 +22,6 @@ jobs:
       ((github.event_name == 'pull_request' &&
         github.event.pull_request.head.ref == 'test/cflow-dso-odr-topologies-1180' &&
         github.event.pull_request.head.repo.full_name == 'qigao/salts') ||
-       (github.event_name == 'push' &&
-        github.ref == 'refs/heads/test/cflow-dso-odr-topologies-1180') ||
        (github.event_name == 'workflow_dispatch' &&
         github.ref == 'refs/heads/test/cflow-dso-odr-topologies-1180'))
     name: CFlow ${{ matrix.mode }} / real dual DSO ASan/UBSan
