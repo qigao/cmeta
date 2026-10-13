@@ -86,7 +86,8 @@ static void *produce_entries(void *userdata) {
     }
     cmeta_log_str(ctx->logger, SALTS_LOG_LEVEL_INFO,
                   vstr_from_buf("tsan", 4),
-                  vstr_from_buf("tlog_async_release_acquire_tsan.c", 32),
+                  vstr_from_buf("tlog_async_release_acquire_tsan.c",
+                                sizeof("tlog_async_release_acquire_tsan.c") - 1),
                   1, vstr_from_buf(text, (size_t)n));
     /* The logger must have copied this caller-owned stack buffer before
      * returning. The consumer must never borrow it across this mutation. */
