@@ -16,6 +16,8 @@ add_library(cnet_sctp_assoc_proto STATIC
 # M2/M3 DATA sub-engine: independent static C11 target, not installed/exported.
 add_library(cnet_sctp_data_proto STATIC src/sctp_data.c)
 target_link_libraries(cnet_sctp_data_proto PUBLIC cnet_sctp_wire)
+# Existing private Association now admits DATA/SACK only after Cookie ACK.
+target_link_libraries(cnet_sctp_assoc_proto PUBLIC cnet_sctp_data_proto)
 target_include_directories(cnet_sctp_data_proto PRIVATE src)
 set_target_properties(cnet_sctp_data_proto PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
