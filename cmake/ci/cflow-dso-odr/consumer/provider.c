@@ -2,7 +2,9 @@
 #include <cflow/executor.h>
 #include <cmeta/cmeta.h>
 #include <string.h>
-#if defined(__GNUC__)
+#if defined(_WIN32)
+#  define CFLOW_PROBE_PUBLIC __declspec(dllexport)
+#elif defined(__GNUC__)
 #  define CFLOW_PROBE_PUBLIC __attribute__((visibility("default")))
 #else
 #  define CFLOW_PROBE_PUBLIC
