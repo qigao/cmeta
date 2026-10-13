@@ -618,6 +618,13 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       return CNET_SCTP_ASSOC_PROTOCOL;
   }
   switch (chunk.type) {
+    case 0u: /* DATA */
+    case 3u: /* SACK */
+      if (s->state != CNET_SCTP_ASSOC_ESTABLISHED || !s->data_ready ||
+          header.chunk_count != 1u)
+        return CNET_SCTP_ASSOC_PROTOCOL;
+      return data_result(cnet_sctp_data_input(&s->data, now, packet,
+          packet_size, output, cap, written));
     case SCTP_TYPE_INIT:
       return handle_init(s, now, &header, &chunk, output, cap, written);
     case SCTP_TYPE_INIT_ACK:
@@ -630,6 +637,11 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       if (header.verification_tag != s->local_tag || chunk.flags != 0u ||
           chunk.value_size != 0u || s->state == CNET_SCTP_ASSOC_CLOSED)
         return CNET_SCTP_ASSOC_PROTOCOL;
+      if (s->data_ready) {
+        (void)cnet_sctp_data_stop(&s->data);
+        memset(&s->data, 0, sizeof(s->data));
+        s->data_ready = 0u;
+      }
       s->state = CNET_SCTP_ASSOC_FAILED;
       s->deadline_ms = 0u;
       s->saved_size = 0u;
