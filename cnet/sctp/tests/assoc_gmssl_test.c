@@ -44,6 +44,13 @@ static int fresh_entropy(void *ctx, uint8_t *output, size_t size) {
   return rand_bytes(output, size) == 1 ? 0 : -1;
 }
 
+static int check_cookie(void *ctx, const uint8_t *message, size_t size,
+                        const uint8_t claimed[CNET_SCTP_ASSOC_MAC_BYTES]) {
+  peer_context *peer = (peer_context *)ctx;
+  ++peer->calls;
+  return cnet_sctp_gmssl_mac_verify(&peer->mac, message, size, claimed);
+}
+
 static cnet_sctp_assoc_config setup_config(uint16_t local, peer_context *peer) {
   cnet_sctp_assoc_config config = {0};
   config.local_port = local;
@@ -59,6 +66,7 @@ static cnet_sctp_assoc_config setup_config(uint16_t local, peer_context *peer) {
   config.is_owner = owned;
   config.entropy = fresh_entropy;
   config.mac = sign_cookie;
+  config.verify_mac = check_cookie;
   config.provider_context = peer;
   return config;
 }
@@ -135,6 +143,83 @@ static void seal_packet(uint8_t *packet, size_t packet_size) {
   packet[9] = (uint8_t)(crc >> 8);
   packet[10] = (uint8_t)(crc >> 16);
   packet[11] = (uint8_t)(crc >> 24);
+}
+
+static void test_two_epoch_rotation_bounds(void) {
+  cnet_sctp_gmssl_mac mac = {0};
+  uint8_t first_key[CNET_SCTP_GMSSL_KEY_BYTES];
+  uint8_t second_key[CNET_SCTP_GMSSL_KEY_BYTES];
+  uint8_t third_key[CNET_SCTP_GMSSL_KEY_BYTES];
+  uint8_t old_mac[CNET_SCTP_ASSOC_MAC_BYTES];
+  uint8_t new_mac[CNET_SCTP_ASSOC_MAC_BYTES];
+  static const uint8_t message[] = "two-epoch-cnet-cookie";
+  size_t i;
+  memset(first_key, 0x11, sizeof(first_key));
+  memset(second_key, 0x22, sizeof(second_key));
+  memset(third_key, 0x33, sizeof(third_key));
+  assert(cnet_sctp_gmssl_mac_init(&mac, first_key, sizeof(first_key)) == 0);
+  assert(cnet_sctp_gmssl_mac_sign(&mac, message, sizeof(message), old_mac) == 0);
+  assert(cnet_sctp_gmssl_mac_verify(&mac, message, sizeof(message), old_mac) == 0);
+  assert(cnet_sctp_gmssl_mac_rotate(&mac, first_key, sizeof(first_key)) == -1);
+  assert(mac.previous_active == 0u);
+  assert(cnet_sctp_gmssl_mac_rotate(&mac, second_key, sizeof(second_key)) == 0);
+  assert(mac.previous_active == 1u);
+  assert(cnet_sctp_gmssl_mac_rotate(&mac, third_key, sizeof(third_key)) == -1);
+  assert(mac.previous_active == 1u); /* cannot silently evict outstanding epoch */
+  assert(cnet_sctp_gmssl_mac_verify(&mac, message, sizeof(message), old_mac) == 0);
+  assert(cnet_sctp_gmssl_mac_sign(&mac, message, sizeof(message), new_mac) == 0);
+  assert(memcmp(old_mac, new_mac, sizeof(old_mac)) != 0);
+  assert(cnet_sctp_gmssl_mac_verify(&mac, message, sizeof(message), new_mac) == 0);
+  cnet_sctp_gmssl_mac_retire_previous(&mac);
+  assert(mac.previous_active == 0u);
+  for (i = 0; i < sizeof(mac.previous_key); ++i) assert(mac.previous_key[i] == 0u);
+  assert(cnet_sctp_gmssl_mac_verify(&mac, message, sizeof(message), old_mac) == -1);
+  assert(cnet_sctp_gmssl_mac_verify(&mac, message, sizeof(message), new_mac) == 0);
+  assert(cnet_sctp_gmssl_mac_rotate(&mac, third_key, sizeof(third_key)) == 0);
+  assert(cnet_sctp_gmssl_mac_verify(&mac, message, sizeof(message), new_mac) == 0);
+  cnet_sctp_gmssl_mac_retire(&mac);
+  assert(cnet_sctp_gmssl_mac_verify(&mac, message, sizeof(message), new_mac) == -1);
+  assert(cnet_sctp_gmssl_mac_rotate(&mac, first_key, sizeof(first_key)) == -1);
+  clear_bytes(first_key, sizeof(first_key));
+  clear_bytes(second_key, sizeof(second_key));
+  clear_bytes(third_key, sizeof(third_key));
+}
+
+static void test_rotated_cookie_inflight_handshake(void) {
+  cnet_sctp_assoc a = {0}, b = {0};
+  peer_context ca, cb;
+  cnet_sctp_assoc_config ac, bc;
+  uint8_t init[1200], ack[1200], echo[1200], answer[1200], no_output[1200];
+  uint8_t replacement[CNET_SCTP_GMSSL_KEY_BYTES];
+  size_t ni = 0u, na = 0u, ne = 0u, nr = 0u;
+  init_peer(&ca); init_peer(&cb);
+  ac = setup_config(5000u, &ca);
+  bc = setup_config(5001u, &cb);
+  assert(cnet_sctp_assoc_init(&a, &ac, 0u) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_init(&b, &bc, 0u) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &ni) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 2u, init, ni, ack, sizeof(ack), &na) ==
+         CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 3u, ack, na, echo, sizeof(echo), &ne) ==
+         CNET_SCTP_ASSOC_OK);
+  assert(rand_bytes(replacement, sizeof(replacement)) == 1);
+  assert(cnet_sctp_gmssl_mac_rotate(&cb.mac, replacement, sizeof(replacement)) == 0);
+  clear_bytes(replacement, sizeof(replacement));
+  /* Old Cookie is still valid under retained epoch after active-key rotation. */
+  assert(cnet_sctp_assoc_input(&b, 4u, echo, ne,
+                              answer, sizeof(answer), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == 16u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_input(&a, 5u, answer, nr,
+                              no_output, sizeof(no_output), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  /* Owner explicitly retires prior material only after associated work drains. */
+  cnet_sctp_gmssl_mac_retire_previous(&cb.mac);
+  cnet_sctp_gmssl_mac_retire(&ca.mac);
+  cnet_sctp_gmssl_mac_retire(&cb.mac);
 }
 
 static void test_independent_provider_cookie(void) {
@@ -243,6 +328,8 @@ static void test_retired_key_fail_closed(void) {
 int main(void) {
   test_gmssl_random_tag_tsn();
   test_hmac_sm3_known_vector();
+  test_two_epoch_rotation_bounds();
+  test_rotated_cookie_inflight_handshake();
   test_independent_provider_cookie();
   test_retired_key_fail_closed();
   puts("C11 GmSSL real SM3-HMAC Cookie MAC research gate PASS (not browser interoperability)");
