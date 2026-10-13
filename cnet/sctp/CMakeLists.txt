@@ -12,6 +12,18 @@ add_library(CNetSctpPrototype::Wire ALIAS cnet_sctp_wire)
 # M2 research only: not part of installed C11 ABI or Salts targets.
 add_library(cnet_sctp_assoc_proto STATIC
   src/sctp_assoc.c src/sctp_init_params.c src/sctp_collision.c)
+
+# M2/M3 DATA sub-engine: independent static C11 target, not installed/exported.
+add_library(cnet_sctp_data_proto STATIC src/sctp_data.c)
+target_link_libraries(cnet_sctp_data_proto PUBLIC cnet_sctp_wire)
+target_include_directories(cnet_sctp_data_proto PRIVATE src)
+set_target_properties(cnet_sctp_data_proto PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+if(MSVC)
+  target_compile_options(cnet_sctp_data_proto PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_data_proto PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
 target_link_libraries(cnet_sctp_assoc_proto PUBLIC cnet_sctp_wire)
 target_include_directories(cnet_sctp_assoc_proto PRIVATE src)
 set_target_properties(cnet_sctp_assoc_proto PROPERTIES
@@ -100,6 +112,18 @@ if(BUILD_TESTING)
     target_compile_options(cnet_sctp_collision_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
   add_test(NAME cnet_sctp_collision_test COMMAND cnet_sctp_collision_test)
+
+  add_executable(cnet_sctp_data_test tests/data_test.c)
+  target_link_libraries(cnet_sctp_data_test PRIVATE cnet_sctp_data_proto)
+  target_include_directories(cnet_sctp_data_test PRIVATE src)
+  set_target_properties(cnet_sctp_data_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  if(MSVC)
+    target_compile_options(cnet_sctp_data_test PRIVATE /W4 /WX)
+  else()
+    target_compile_options(cnet_sctp_data_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME cnet_sctp_data_test COMMAND cnet_sctp_data_test)
 
 
 endif()
