@@ -35,6 +35,10 @@ static int framing_init(framing_fixture *f) {
   TLS_IO io = {f, framing_send, framing_recv};
   memset(f, 0, sizeof(*f));
   f->conn.ctx = &f->ctx;
+  /* This fixture consumes the peer's server traffic as a TLS client.
+   * Fatal Alerts use our client-write AEAD epoch, never the inbound
+   * server read epoch. Keep the fail-closed authentication tag test. */
+  f->ctx.is_client = TLS_client_mode;
   f->conn.protocol = TLS_protocol_tls13;
   f->conn.cipher_suite = TLS_cipher_aes_128_gcm_sha256;
   f->conn.digest = DIGEST_sha256();
@@ -177,7 +181,10 @@ spec("TLS 1.3 provider handshake framing") {
     f->wire[f->size - 1] ^= 1;
     f->available = f->size;
     check_equal(tls13_recv_encrypted_extensions(&f->conn), -1);
+    /* The rejected peer ciphertext must not spend its server nonce.
+     * The locally emitted authenticated fatal Alert spends one client nonce. */
     check_equal(f->conn.server_seq_num[7], 0);
+    check_equal(f->conn.client_seq_num[7], 1);
     check(framing_digest_matches(f, extensions, 0));
   }
 }
