@@ -8,9 +8,13 @@
 enum {
   SCTP_TYPE_INIT = 1,
   SCTP_TYPE_INIT_ACK = 2,
+  SCTP_TYPE_ABORT = 6,
+  SCTP_TYPE_ERROR = 9,
   SCTP_TYPE_COOKIE_ECHO = 10,
   SCTP_TYPE_COOKIE_ACK = 11,
   SCTP_PARAM_COOKIE = 7,
+  SCTP_PARAM_UNRECOGNIZED = 8,
+  SCTP_ERROR_UNRECOGNIZED = 8,
   SCTP_CLAIMS_BYTES = 56
 };
 
@@ -58,6 +62,76 @@ static cnet_sctp_assoc_status encode_one(const cnet_sctp_assoc *s,
   if (status == CNET_SCTP_WIRE_CAPACITY) return CNET_SCTP_ASSOC_CAPACITY;
   return status == CNET_SCTP_WIRE_OK ? CNET_SCTP_ASSOC_OK : CNET_SCTP_ASSOC_PROTOCOL;
 }
+/* Construct reporting fields synchronously from the preflight's borrowed
+ * offsets. No pointer survives this call, and each exact unknown TLV is
+ * padded for its enclosing INIT ACK parameter or ERROR cause. */
+static size_t append_unknown_reports(uint8_t *out, size_t cap,
+    const uint8_t *original_value, size_t original_size,
+    const cnet_sctp_init_param_view *parsed, int init_ack) {
+  size_t pos = 0u;
+  size_t i;
+  for (i = 0u; i < parsed->report_count; ++i) {
+    const cnet_sctp_init_report *r = &parsed->reports[i];
+    size_t padded = (r->size + 3u) & ~(size_t)3u;
+    size_t total = padded + (init_ack ? 4u : 0u);
+    if (r->size < 4u || r->offset > original_size ||
+        r->size > original_size - r->offset || total > cap - pos)
+      return SIZE_MAX;
+    if (init_ack) {
+      wr16(out + pos, SCTP_PARAM_UNRECOGNIZED);
+      wr16(out + pos + 2u, (uint16_t)(r->size + 4u));
+      pos += 4u;
+    }
+    memcpy(out + pos, original_value + r->offset, r->size);
+    if (padded > r->size) memset(out + pos + r->size, 0, padded - r->size);
+    pos += padded;
+  }
+  return pos;
+}
+
+/* ABORTs in this small handshake profile always use an expected peer
+ * Verification Tag (T-bit=0) and no optional error cause. */
+static cnet_sctp_assoc_status respond_abort(cnet_sctp_assoc *s,
+    uint32_t peer_initiate_tag, int abort_local,
+    uint8_t *output, size_t cap, size_t *written) {
+  cnet_sctp_assoc_status status;
+  status = encode_one(s, peer_initiate_tag, SCTP_TYPE_ABORT,
+                      NULL, 0u, output, cap, written);
+  if (status == CNET_SCTP_ASSOC_OK && abort_local) {
+    s->state = CNET_SCTP_ASSOC_FAILED;
+    s->saved_size = 0u;
+    s->deadline_ms = 0u;
+    memset(s->saved_packet, 0, sizeof(s->saved_packet));
+  }
+  return status;
+}
+
+/* An ERROR bundled with COOKIE ECHO is an advisory unrecognized-parameter
+ * cause, not an application message and not an excuse to create a second
+ * delivery or lifetime path. Reject malformed or other causes. */
+static int valid_cookie_echo_error(const cnet_sctp_wire_chunk *chunk) {
+  const uint8_t *p;
+  size_t pos = 4u;
+  if (!chunk || chunk->type != SCTP_TYPE_ERROR || chunk->value_size < 8u)
+    return 0;
+  p = chunk->value;
+  if (rd16(p) != SCTP_ERROR_UNRECOGNIZED ||
+      rd16(p + 2u) != chunk->value_size) return 0;
+  while (pos < chunk->value_size) {
+    size_t len;
+    size_t padded;
+    if (chunk->value_size - pos < 4u) return 0;
+    len = rd16(p + pos + 2u);
+    if (len < 4u || len > chunk->value_size - pos) return 0;
+    padded = (len + 3u) & ~(size_t)3u;
+    if (padded > chunk->value_size - pos) return 0;
+    if ((rd16(p + pos) >> 14) != 1u &&
+        (rd16(p + pos) >> 14) != 3u) return 0;
+    pos += padded;
+  }
+  return pos == chunk->value_size;
+}
+
 static void prepare_init(const cnet_sctp_assoc *s, uint8_t value[16]) {
   wr32(value, s->local_tag);
   wr32(value + 4u, s->config.receive_window);
