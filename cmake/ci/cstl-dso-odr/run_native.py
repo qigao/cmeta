@@ -21,12 +21,17 @@ import sys
 SOURCE_SHA = "21bdb1145fbb2b39ee3fa644173ec037adba7b87"
 
 
-def execute(argv: list[str], env: dict[str, str] | None = None) -> str:
+def execute(argv: list[str], env: dict[str, str] | None = None,
+            log_path: Path | None = None) -> str:
     print("RUN " + " ".join(shlex.quote(item) for item in argv), flush=True)
     proc = subprocess.run(argv, env=env, text=True,
                           encoding="utf-8", errors="replace",
                           stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, check=False)
+    # Preserve the complete output even when the command fails. A failed
+    # consumer link must not leave an artifact containing only provenance.
+    if log_path is not None:
+        log_path.write_text(proc.stdout, encoding="utf-8")
     print(proc.stdout[-4500:], flush=True)
     if proc.returncode != 0:
         raise RuntimeError(
@@ -150,11 +155,12 @@ def main() -> None:
             marker,
             "set_target_properties(${TARGET_NAME} PROPERTIES "
             "WINDOWS_EXPORT_ALL_SYMBOLS ON)\n"
-            # INTERFACE (not PUBLIC) ensures the producing CSTL DLL does
-            # not declare its *own* globals dllimport. The installed CMake
-            # target propagates the requirement to C11/C++17 consumers.
-            "target_compile_definitions(${TARGET_NAME} INTERFACE "
-            "CSTL_TEST_DLL_IMPORT=1)\n" + marker,
+            # CMake's auto-export scan skips read-only constants. Mark the
+            # real three metadata definitions dllexport in the producer;
+            # propagate only dllimport to installed C11/C++17 consumers.
+            "target_compile_definitions(${TARGET_NAME} "
+            "PRIVATE CSTL_TEST_DLL_EXPORT=1 "
+            "INTERFACE CSTL_TEST_DLL_IMPORT=1)\n" + marker,
         )
         cstl_cmake.write_text(edited, encoding="utf-8")
 
@@ -169,9 +175,14 @@ def main() -> None:
         if pristine_header.count(intro) != 1:
             raise RuntimeError("unexpected pinned header declaration boundary")
         annotation = (
-            "#if defined(_WIN32) && defined(CSTL_TEST_DLL_IMPORT)\n"
-            "#define CSTL_TEST_DATA_IMPORT __declspec(dllimport)\n"
-            "#else\n#define CSTL_TEST_DATA_IMPORT\n#endif\n\n"
+            "#if defined(CSTL_TEST_DLL_EXPORT) && defined(CSTL_TEST_DLL_IMPORT)\n"
+            '#error "CSTL candidate cannot both export and import its data"\n'
+            "#endif\n"
+            "#if defined(_WIN32) && defined(CSTL_TEST_DLL_EXPORT)\n"
+            "#define CSTL_TEST_DATA_API __declspec(dllexport)\n"
+            "#elif defined(_WIN32) && defined(CSTL_TEST_DLL_IMPORT)\n"
+            "#define CSTL_TEST_DATA_API __declspec(dllimport)\n"
+            "#else\n#define CSTL_TEST_DATA_API\n#endif\n\n"
         )
         edited_header = pristine_header.replace(intro, annotation + intro)
         for symbol, datatype in (
@@ -180,7 +191,7 @@ def main() -> None:
             ("stl_vec_container_desc", "cmeta_container_desc"),
         ):
             old_decl = f"extern const {datatype} {symbol};"
-            new_decl = f"extern CSTL_TEST_DATA_IMPORT const {datatype} {symbol};"
+            new_decl = f"extern CSTL_TEST_DATA_API const {datatype} {symbol};"
             if edited_header.count(old_decl) != 1:
                 raise RuntimeError(f"unexpected pinned CSTL declaration: {symbol}")
             edited_header = edited_header.replace(old_decl, new_decl)
@@ -193,18 +204,22 @@ def main() -> None:
             "cstl/include/cstl/detail/instance_meta.h"
         ])
         if ("add_library(" not in patch or "CSTL_TEST_DLL_IMPORT" not in patch
-                or "CSTL_TEST_DATA_IMPORT" not in patch):
+                or "CSTL_TEST_DLL_EXPORT" not in patch
+                or "CSTL_TEST_DATA_API" not in patch):
             raise RuntimeError("test-only CSTL DLL/header candidate diff incomplete")
         test_only_patch.write_text(patch, encoding="utf-8")
+        shutil.copyfile(test_only_patch, evidence / "test-only-source.patch")
         print("CSTL_TEST_ONLY_SHARED_PATCH=" + str(test_only_patch), flush=True)
         print("CSTL_OFFICIAL_HEADER_SHA256=" + original_header_sha256, flush=True)
         # Candidate header annotation is an explicit experimental API
         # change, NOT a release ABI/header conformance claim.
-    execute(configure)
+    execute(configure, log_path=evidence / "sdk-configure.log")
     if not (build / "CMakeCache.txt").is_file():
         raise RuntimeError("fresh Salts candidate CMake did not configure")
-    execute(["cmake", "--build", str(build), "--parallel", "2"])
-    execute(["cmake", "--install", str(build), "--prefix", str(original)])
+    execute(["cmake", "--build", str(build), "--parallel", "2"],
+            log_path=evidence / "sdk-build.log")
+    execute(["cmake", "--install", str(build), "--prefix", str(original)],
+            log_path=evidence / "sdk-install.log")
     if not (original / "lib/cmake/Salts/SaltsConfig.cmake").is_file():
         raise RuntimeError("CMake-installed source SDK missing SaltsConfig")
     orig_header = source / "cstl/include/cstl/detail/instance_meta.h"
@@ -221,6 +236,29 @@ def main() -> None:
         core = strict_one(relocated / "lib", "libsalts.2.3.dylib")
     else:
         core = strict_one(relocated / "bin", "salts.dll")
+    # Audit the relocated producer BEFORE attempting consumer linkage.
+    # A DLL and an import archive must both expose each exact data symbol;
+    # a same-named static archive is not an acceptable substitute.
+    if system == "Windows" and mode == "shared":
+        cstl_dll = strict_one(relocated / "bin", "cmeta_cstl*.dll")
+        cstl_dll_name = cstl_dll.name.lower()
+        cstl_implib = strict_one(relocated / "lib", "cmeta_cstl.lib")
+        cstl_exports = execute(["dumpbin", "/EXPORTS", str(cstl_dll)],
+                               log_path=evidence / "cstl-exports.log")
+        cstl_imports = execute(["dumpbin", "/LINKERMEMBER:1", str(cstl_implib)],
+                               log_path=evidence / "cstl-import-library.log")
+        for exported in ("stl_bplus_tree_generic_desc",
+                         "stl_bplus_tree_container_desc",
+                         "stl_vec_container_desc"):
+            if not re.search(r"\b" + re.escape(exported) + r"\b", cstl_exports):
+                raise RuntimeError(
+                    f"shared CSTL DLL missing public metadata export: {exported}"
+                )
+            if not re.search(r"\b__imp_" + re.escape(exported) + r"\b", cstl_imports):
+                raise RuntimeError(
+                    f"shared CSTL import library missing data import: __imp_{exported}"
+                )
+
     config = [
         "cmake", "-S", str(consumer_source), "-B", str(consumer_build), "-G", "Ninja",
         "-DCMAKE_BUILD_TYPE=Release",
@@ -235,8 +273,9 @@ def main() -> None:
     ]
     if system == "Darwin":
         config.append("-DCMAKE_OSX_ARCHITECTURES=arm64")
-    execute(config)
-    execute(["cmake", "--build", str(consumer_build), "--parallel", "2"])
+    execute(config, log_path=evidence / "consumer-configure.log")
+    execute(["cmake", "--build", str(consumer_build), "--parallel", "2"],
+            log_path=evidence / "consumer-build.log")
 
     provider_extension = ".dll" if system == "Windows" else ".dylib"
     provider_a = strict_one(consumer_build, "*cstl_provider_a*" + provider_extension)
@@ -280,20 +319,7 @@ def main() -> None:
     # the relocated installation and be the *one* metadata provider used by
     # both independently loaded Provider DLLs and Core.
     if system == "Windows" and mode == "shared":
-        # Exact Windows SOVERSION can name the DLL cmeta_cstl-5.dll while
-        # its import archive is cmeta_cstl.lib. Resolve exactly one actual
-        # CSTL DLL from this relocated prefix; never silently accept an old
-        # ambient DLL or a static .lib instead.
-        cstl_dll = strict_one(relocated / "bin", "cmeta_cstl*.dll")
-        cstl_dll_name = cstl_dll.name.lower()
-        cstl_exports = execute(["dumpbin", "/EXPORTS", str(cstl_dll)])
-        for exported in ("stl_bplus_tree_generic_desc",
-                         "stl_bplus_tree_container_desc",
-                         "stl_vec_container_desc"):
-            if exported not in cstl_exports:
-                raise RuntimeError(
-                    f"shared CSTL DLL missing public metadata export: {exported}"
-                )
+        # Reuse the exact producer DLL/import archive audited before build.
         for label, image in (("core", core), ("a", provider_a), ("b", provider_b)):
             dependent = execute(["dumpbin", "/DEPENDENTS", str(image)])
             if cstl_dll_name not in dependent.lower():
@@ -303,6 +329,7 @@ def main() -> None:
             if label != "core":
                 own_exports = report_images[label]["exports_audit"]
                 for exported in ("stl_bplus_tree_generic_desc",
+                                 "stl_bplus_tree_container_desc",
                                  "stl_vec_container_desc"):
                     if exported in own_exports:
                         raise RuntimeError(
@@ -312,6 +339,9 @@ def main() -> None:
             "path": str(cstl_dll),
             "sha256": digest(cstl_dll),
             "exports_audit": cstl_exports,
+            "import_library_path": str(cstl_implib),
+            "import_library_sha256": digest(cstl_implib),
+            "import_library_audit": cstl_imports,
         }
 
     # Remove ambient SDK library search paths; use only the isolated installed
@@ -335,12 +365,12 @@ def main() -> None:
     output = execute([
         ctest, "--test-dir", str(consumer_build),
         "--no-tests=error", "--output-on-failure",
-    ], env=env)
+    ], env=env, log_path=evidence / "ctest.log")
     if "100% tests passed" not in output:
         raise RuntimeError("C11 and C++17 installed SDK runtime tests not evidenced")
     result = execute([
         str(native), str(core), str(provider_a), str(provider_b), mode
-    ], env=env)
+    ], env=env, log_path=evidence / "native-runtime.log")
     for token in ("CSTL_GENERIC_SEMANTIC_EQUAL=1",
                   "CSTL_GENERIC_POINTER_EQUAL=" + ("1" if mode == "shared" else "0"),
                   "CSTL_LIVE_PROVIDER_SURVIVED_OTHER_UNLOAD",
@@ -359,6 +389,8 @@ def main() -> None:
         "public_header_sha256": digest(orig_header),
         "windows_shared_test_only_import_annotations":
             system == "Windows" and mode == "shared",
+        "windows_shared_test_only_export_annotations":
+            system == "Windows" and mode == "shared",
         "windows_shared_official_rc15_header_sha256":
             original_header_sha256 if system == "Windows" and mode == "shared" else None,
         "windows_shared_test_only_patch_sha256":
@@ -369,13 +401,9 @@ def main() -> None:
         "vcpkg_triplet": triplet,
         "vcpkg_revision": os.environ.get("VCPKG_CACHE_REVISION", "unknown"),
     }
-    if system == "Windows" and mode == "shared":
-        shutil.copyfile(test_only_patch, evidence / "test-only-source.patch")
     (evidence / "native-result.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8")
-    (evidence / "ctest.log").write_text(output, encoding="utf-8")
-    (evidence / "native-runtime.log").write_text(result, encoding="utf-8")
     print(f"CSTL_NATIVE_RESULT={rid}/{mode}:PASS", flush=True)
     print(f"CSTL_NATIVE_EVIDENCE={evidence}", flush=True)
 
