@@ -599,12 +599,74 @@ static void init_tlv_wire_gate(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* RFC 9260 5.2.4: a MAC-authenticated duplicate Cookie matching the
+ * current established TCB can be ACKed after its original expiration. An
+ * expired Cookie with a different Peer Tag/TSN may not replace that TCB. */
+static void established_expired_duplicate_cookie(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  uint8_t init[1200], init_ack[1200], cookie_echo[1200], cookie_ack[1200];
+  uint8_t reply[1200], forged[1200], modified_cookie[CNET_SCTP_ASSOC_COOKIE_BYTES];
+  cnet_sctp_wire_chunk echo_chunk = {
+    10u, 0u, modified_cookie, sizeof(modified_cookie)
+  };
+  size_t ni = 0u, na = 0u, ne = 0u, nk = 0u, nr = 0u, nf = 0u;
+  uint32_t original_peer_tag;
+  uint32_t original_tsn;
+  setup(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &ni) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 2u, init, ni, init_ack,
+                               sizeof(init_ack), &na) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 3u, init_ack, na, cookie_echo,
+                               sizeof(cookie_echo), &ne) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 4u, cookie_echo, ne, cookie_ack,
+                               sizeof(cookie_ack), &nk) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 5u, cookie_ack, nk, reply,
+                               sizeof(reply), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+  original_peer_tag = b.peer_tag;
+  original_tsn = b.peer_initial_tsn;
+  /* Issued at t=2, lifetime 500; elapsed > 500 on duplicate receipt. */
+  assert(cnet_sctp_assoc_input(&b, 503u, cookie_echo, ne, reply,
+                               sizeof(reply), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == nk && memcmp(reply, cookie_ack, nk) == 0);
+  assert(b.peer_tag == original_peer_tag && b.peer_initial_tsn == original_tsn);
+  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+
+  memcpy(modified_cookie, cookie_echo + 16u, sizeof(modified_cookie));
+  modified_cookie[16u] ^= 1u; /* authenticated Cookie's peer Initiate Tag */
+  assert(fake_mac(&cb, modified_cookie, 56u, modified_cookie + 56u) == 0);
+  assert(cnet_sctp_wire_encode(5000u, 5001u, b.local_tag, &echo_chunk, 1u,
+                                forged, sizeof(forged), &nf) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_assoc_input(&b, 504u, forged, nf, reply,
+                               sizeof(reply), &nr) == CNET_SCTP_ASSOC_EXPIRED);
+  assert(nr == 0u && b.peer_tag == original_peer_tag);
+
+  modified_cookie[16u] ^= 1u;
+  modified_cookie[24u] ^= 1u; /* authenticated Cookie's peer TSN */
+  assert(fake_mac(&cb, modified_cookie, 56u, modified_cookie + 56u) == 0);
+  assert(cnet_sctp_wire_encode(5000u, 5001u, b.local_tag, &echo_chunk, 1u,
+                                forged, sizeof(forged), &nf) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_assoc_input(&b, 505u, forged, nf, reply,
+                               sizeof(reply), &nr) == CNET_SCTP_ASSOC_EXPIRED);
+  assert(nr == 0u && b.peer_initial_tsn == original_tsn);
+  assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 506u, cookie_echo, ne, reply,
+                               sizeof(reply), &nr) == CNET_SCTP_ASSOC_CLOSED_ERROR);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
   entropy_init_fail_closed();
   normal_handshake();
   init_tlv_wire_gate();
   clock_owner_and_timeout();
   stale_cookie_and_wrong_mac();
+  established_expired_duplicate_cookie();
   binding_vtag_and_invalid_input();
   cookie_echo_t1_retransmission();
   puts("C11 SCTP owner-local INIT/COOKIE research gates PASS (test-only MAC)");
