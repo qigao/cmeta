@@ -191,6 +191,7 @@ def main():
         "cmake", "-S", root, "-B", consumer, "-G", "Ninja",
         "-DCMAKE_BUILD_TYPE=Release",
         "-DCMAKE_TOOLCHAIN_FILE=" + str(tc),
+        "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         "-DVCPKG_MANIFEST_MODE=OFF",
         "-DVCPKG_TARGET_TRIPLET=" + triplet,
         "-DVCPKG_HOST_TRIPLET=" + triplet,
