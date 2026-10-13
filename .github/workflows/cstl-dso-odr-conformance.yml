@@ -1,0 +1,95 @@
+name: CSTL DSO descriptor-owner topology conformance
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/cstl-dso-odr-conformance.yml'
+      - 'cmake/ci/cstl-dso-odr/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: salts-cstl-odr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: CSTL ${{ matrix.mode }} / ASan ODR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        mode:
+          - static-default
+          - static-hidden
+          - shared-single
+    env:
+      CC: gcc
+      CXX: g++
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
+      SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout exact Salts rc.15 source under test
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/salts
+          ref: 21bdb1145fbb2b39ee3fa644173ec037adba7b87
+          path: salts-source
+          persist-credentials: false
+
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+
+      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+
+      - name: Install Linux native build prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build nasm
+
+      - name: Build exact source and compare real DSO metadata ownership
+        shell: bash
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          test -f "$QIGAO_VCPKG_TOOLCHAIN_FILE"
+          python3 cmake/ci/cstl-dso-odr/run_compare.py --mode "$MODE"
+
+      - name: Preserve mode-specific ASan, symbols, build and provenance
+        if: always()
+        shell: bash
+        env:
+          MODE: ${{ matrix.mode }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/salts-cstl-evidence-$MODE"
+          mkdir -p "$evidence"
+          {
+            echo "tested_checkout=$GITHUB_SHA"
+            echo "source_head=$SOURCE_HEAD_SHA"
+            echo "pinned_salts_release_source=21bdb1145fbb2b39ee3fa644173ec037adba7b87"
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "mode=$MODE"
+            echo "job_status=$JOB_STATUS"
+            echo "asan_odr_disabled=NO"
+          } > "$evidence/provenance.txt"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cstl-dso-owner-${{ matrix.mode }}
+          path: ${{ runner.temp }}/salts-cstl-evidence-${{ matrix.mode }}
+          if-no-files-found: error
