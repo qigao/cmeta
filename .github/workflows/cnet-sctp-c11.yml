@@ -1,0 +1,49 @@
+name: CNet SCTP C11 prototype
+
+on:
+  push:
+    paths:
+      - "cnet/sctp/**"
+      - ".github/workflows/cnet-sctp-c11.yml"
+  pull_request:
+    paths:
+      - "cnet/sctp/**"
+      - ".github/workflows/cnet-sctp-c11.yml"
+
+jobs:
+  c11-wire:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pure C11 wire module
+        shell: bash
+        run: |
+          cmake -S cnet/sctp -B build-sctp-c11 -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-sctp-c11 --config Release --parallel 2
+          ctest --test-dir build-sctp-c11 -C Release --output-on-failure
+      - name: Validate installed C11-only consumer
+        shell: bash
+        run: |
+          cmake --install build-sctp-c11 --config Release --prefix "$PWD/sctp-c11-sdk"
+          cmake -S cnet/sctp/tests/installed -B build-sctp-consumer -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PWD/sctp-c11-sdk"
+          cmake --build build-sctp-consumer --config Release --parallel 2
+          ctest --test-dir build-sctp-consumer -C Release --output-on-failure
+
+  sanitizer-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test C11 source with ASan/UBSan
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          cmake -S cnet/sctp -B build-sctp-san -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          cmake --build build-sctp-san --parallel 2
+          ctest --test-dir build-sctp-san --output-on-failure
