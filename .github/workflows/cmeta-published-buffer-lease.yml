@@ -1,4 +1,4 @@
-name: Salts #1170 published rc.15 buffer lease ownership
+name: Salts rc.15 published ownership gate (mixed TSan NOT qualified)
 
 'on':
   pull_request:
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   released-buffer:
-    name: Exact released libsalts two-owner live leases (NO source TSan)
+    name: Released rc.15 lease PASS + mixed TSan diagnostic (NOT a TSan gate)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
