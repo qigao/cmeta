@@ -30,3 +30,29 @@ endforeach()
 enable_testing()
 add_test(NAME cnet_installed_c11 COMMAND cnet_installed_c11)
 add_test(NAME cnet_installed_cpp17 COMMAND cnet_installed_cpp17)
+
+# #1196: consume only the installed Salts C11 headers and CNet DSO, with no
+# provider-private GmSSL headers or direct build-tree linkage. Copy public
+# test-only X.509 data into the independent consumer build directory.
+add_executable(cnet_installed_p384_tls p384_tls.c)
+target_compile_features(cnet_installed_p384_tls PRIVATE c_std_11)
+set_target_properties(cnet_installed_p384_tls PROPERTIES
+  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+target_link_libraries(cnet_installed_p384_tls PRIVATE Salts::CNet Salts::NativeIO)
+set(_p384_fixtures
+  p384-test-root-cert.pem
+  p384-test-server-cert.pem
+  p384-test-server-key.pem
+  p384-test-wrong-root-cert.pem)
+foreach(_fixture IN LISTS _p384_fixtures)
+  configure_file(
+    "${CMAKE_CURRENT_LIST_DIR}/../../fixtures/${_fixture}"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/${_fixture}" COPYONLY)
+endforeach()
+add_test(NAME cnet_installed_p384_tls
+  COMMAND cnet_installed_p384_tls
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-root-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-server-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-server-key.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-wrong-root-cert.pem")
+set_tests_properties(cnet_installed_p384_tls PROPERTIES TIMEOUT 90)
