@@ -749,6 +749,35 @@ cnet_sctp_assoc_status cnet_sctp_assoc_take_message(cnet_sctp_assoc *s,
                                         payload, cap, written));
 }
 
+cnet_sctp_assoc_status cnet_sctp_assoc_queue_message(cnet_sctp_assoc *s,
+    uint64_t now, uint16_t stream, uint32_t ppid, int unordered,
+    const void *payload, size_t n) {
+  cnet_sctp_assoc_status status = guard(s);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (!payload) return CNET_SCTP_ASSOC_INVALID;
+  if (s->state != CNET_SCTP_ASSOC_ESTABLISHED || !s->data_ready)
+    return CNET_SCTP_ASSOC_CLOSED_ERROR;
+  if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
+  status = data_result(cnet_sctp_data_queue_message(&s->data, now,
+      stream, ppid, unordered, payload, n));
+  if (status == CNET_SCTP_ASSOC_OK) s->last_time_ms = now;
+  return status;
+}
+
+cnet_sctp_assoc_status cnet_sctp_assoc_pump_message(cnet_sctp_assoc *s,
+    uint64_t now, void *out, size_t cap, size_t *written) {
+  cnet_sctp_assoc_status status = guard(s);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (!out || !written) return CNET_SCTP_ASSOC_INVALID;
+  *written = 0u;
+  if (s->state != CNET_SCTP_ASSOC_ESTABLISHED || !s->data_ready)
+    return CNET_SCTP_ASSOC_CLOSED_ERROR;
+  if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
+  status = data_result(cnet_sctp_data_pump(&s->data, now, out, cap, written));
+  if (status == CNET_SCTP_ASSOC_OK) s->last_time_ms = now;
+  return status;
+}
+
 cnet_sctp_assoc_status cnet_sctp_assoc_stop(cnet_sctp_assoc *s) {
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
