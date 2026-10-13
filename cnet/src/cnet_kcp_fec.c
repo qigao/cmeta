@@ -1,6 +1,7 @@
 #include "cnet_kcp_fec_internal.h"
 
 #include <gf256.h>
+#include "cnet_monocypher_namespace.h"
 #include <monocypher.h>
 
 #include <stdlib.h>

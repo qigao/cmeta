@@ -1,0 +1,237 @@
+name: CNet/DataBind private Monocypher full-source ASan
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/cnet-databind-source-asan.yml'
+      - 'vendor/monocypher/**'
+      - 'cnet/src/**'
+      - 'cnet/tests/cnet_monocypher_namespace_test.c'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cnet-databind-source-asan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-dual-dso:
+    if: >-
+      github.repository == 'qigao/salts' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == 'qigao/salts')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CC: gcc
+      CXX: g++
+      GRAPH_ROOT: /tmp/cnet-databind-source-asan-1178
+      SALTS_ROOT: /tmp/cnet-databind-source-asan-1178/install-salts
+      ASAN_OPTIONS: detect_odr_violation=2:detect_leaks=1:halt_on_error=1:abort_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      CCACHE_DIR: ${{ github.workspace }}/.cache/cnet-databind-source-asan
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - name: Checkout exact producer PR source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Checkout pinned independent SaltsUtils DataBind source
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/salts-utils
+          ref: 7949b5e615eb7e46f15abf896901b99b74e10ade
+          path: build/native-sources/salts-utils
+          persist-credentials: false
+
+      - name: Checkout immutable SaltsUtils 4.3.0-rc.10 base source
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/salts-utils
+          ref: v4.3.0-rc.10
+          path: build/native-sources/salts-utils-release
+          persist-credentials: false
+
+      - name: Restore exact shared vcpkg dependencies
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@0dc254695917bc180504d916240292e9096e9da5
+        with:
+          mode: read
+
+      - name: Restore exact re2c generator
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@0dc254695917bc180504d916240292e9096e9da5
+
+      - name: Prepare native Salts build host
+        uses: ./.github/actions/setup-build-host
+
+      - name: Attest immutable source graph
+        shell: bash
+        env:
+          EXPECTED_SALTS: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build nasm pkg-config ccache binutils
+          mkdir -p "$GRAPH_ROOT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SALTS"
+          test "$(git -C build/native-sources/salts-utils rev-parse HEAD)" = '7949b5e615eb7e46f15abf896901b99b74e10ade'
+          release="$GITHUB_WORKSPACE/build/native-sources/salts-utils-release"
+          test "$(git -C "$release" rev-parse HEAD)" = '1410c9fd479f9faab31503523d8e31cc506b5b25'
+          for path in vendor/monocypher/CMakeLists.txt \
+                      vendor/monocypher/databind_monocypher.c \
+                      vendor/monocypher/databind_monocypher_namespace.h \
+                      databind/runtime/data_bind_contract_fingerprint.c; do
+            cp "$GITHUB_WORKSPACE/build/native-sources/salts-utils/$path" "$release/$path"
+          done
+          test "$(git -C "$release" diff --name-only | wc -l)" -eq 2
+          test "$(git -C "$release" ls-files --others --exclude-standard | wc -l)" -eq 2
+          {
+            echo "salts_candidate_sha=$EXPECTED_SALTS"
+            echo 'saltsutils_original_source_sha=1410c9fd479f9faab31503523d8e31cc506b5b25'
+            echo 'saltsutils_monocypher_patch_sha=7949b5e615eb7e46f15abf896901b99b74e10ade'
+            echo 'saltsutils_source_overlay=4 private Monocypher files (candidate not published)'
+            echo 'current_source_not_published_sdk=true'
+            echo 'source_sanitizers=address,undefined'
+            echo 'asan_odr_detection=2'
+            echo 'production_cstl_cflow_static_hidden=true'
+            echo 'release_tags_unchanged=true'
+          } | tee "$GRAPH_ROOT/provenance.txt"
+          {
+            echo "LD_LIBRARY_PATH=$SALTS_ROOT/lib:$GRAPH_ROOT/build-utils/bin:$GITHUB_WORKSPACE/vcpkg_installed/x64-linux/lib:${LD_LIBRARY_PATH:-}"
+          } >> "$GITHUB_ENV"
+
+      - name: Build and install actual Salts CNet from instrumented current source
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags='-fsanitize=address -fsanitize=undefined -g -fno-omit-frame-pointer'
+          cmake --preset linux-dev-ci -S "$GITHUB_WORKSPACE" \
+            -B "$GRAPH_ROOT/build-salts" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX="$SALTS_ROOT" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_ADDRESS=ON -DENABLE_SANITIZER_UNDEFINED=ON \
+            -DENABLE_SANITIZER_THREAD=OFF \
+            -DCMAKE_C_FLAGS="$flags" -DCMAKE_CXX_FLAGS="$flags" \
+            -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=address -fsanitize=undefined' \
+            -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address -fsanitize=undefined'
+          cmake --build "$GRAPH_ROOT/build-salts" --parallel 2
+          cmake --install "$GRAPH_ROOT/build-salts"
+          test -f "$SALTS_ROOT/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$SALTS_ROOT/lib/libcnet.so"
+
+      - name: Build actual pinned DataBind source against installed Salts
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags='-fsanitize=address -fsanitize=undefined -g -fno-omit-frame-pointer'
+          cmake --preset ci-linux-release-user \
+            -S "$GITHUB_WORKSPACE/build/native-sources/salts-utils-release" \
+            -B "$GRAPH_ROOT/build-utils" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX="$GRAPH_ROOT/install-utils" \
+            -DCMAKE_PREFIX_PATH="$SALTS_ROOT" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_ADDRESS=ON -DENABLE_SANITIZER_UNDEFINED=ON \
+            -DENABLE_SANITIZER_THREAD=OFF \
+            -DCMAKE_C_FLAGS="$flags" -DCMAKE_CXX_FLAGS="$flags" \
+            -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=address -fsanitize=undefined' \
+            -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address -fsanitize=undefined'
+          cmake --build "$GRAPH_ROOT/build-utils" --target data_bind --parallel 2
+          test -f "$GRAPH_ROOT/build-utils/bin/libdata_bind.so"
+
+      - name: Audit real compiled source and native DSO symbol topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee "$GRAPH_ROOT/source-audit.json"
+          import json
+          import os
+          from pathlib import Path
+          root = Path(os.environ["GRAPH_ROOT"])
+          requested = {
+              "salts": [
+                  "vendor/monocypher/cnet_monocypher.c",
+                  "cnet/src/cnet_kcp_secure.c",
+                  "cnet/src/cnet_secure_kcp.c",
+                  "cnet/src/cnet_kcp_fec.c",
+                  "cnet/src/cnet_packet_endpoint.c",
+                  "cstl/src/associative_meta.c",
+                  "cflow/src/executor.c",
+              ],
+              "utils": [
+                  "vendor/monocypher/databind_monocypher.c",
+                  "databind/runtime/data_bind_contract_fingerprint.c",
+              ],
+          }
+          findings = {}
+          for label, suffixes in requested.items():
+              base = root / ("build-salts" if label == "salts" else "build-utils")
+              rows = json.loads((base / "compile_commands.json").read_text())
+              for suffix in suffixes:
+                  found = [r for r in rows if r["file"].replace("\\", "/").endswith("/" + suffix)]
+                  if len(found) != 1:
+                      raise SystemExit(f"{label}: not exactly one compiled original source: {suffix}")
+                  command = found[0].get("command") or " ".join(found[0].get("arguments", []))
+                  if "-fsanitize=address" not in command or "-fsanitize=undefined" not in command:
+                      raise SystemExit(f"{label}: source not actually ASan/UBSan instrumented: {suffix}")
+              findings[label] = {"source_objects": suffixes, "compile_units": len(rows)}
+          print(json.dumps(findings, indent=2))
+          PY
+          for so in "$SALTS_ROOT/lib/libcnet.so" \
+                    "$GRAPH_ROOT/build-utils/bin/libdata_bind.so"; do
+            nm -D --defined-only "$so" > "$GRAPH_ROOT/$(basename "$so").exports"
+            if awk '{print $3}' "$GRAPH_ROOT/$(basename "$so").exports" \
+                | grep -Eq '^(crypto_|salts_cnet_private_crypto_|databind_private_crypto_)'; then
+              echo "Monocypher private symbol escaped from $so" >&2
+              exit 1
+            fi
+          done
+          nm --defined-only "$GRAPH_ROOT/build-salts/lib/libmonocypher.a" \
+            | tee "$GRAPH_ROOT/cnet-private-monocypher-symbols.txt"
+          grep -q 'salts_cnet_private_crypto_argon2_no_extras' \
+            "$GRAPH_ROOT/cnet-private-monocypher-symbols.txt"
+          for so in "$SALTS_ROOT/lib/libsalts.so" \
+                    "$GRAPH_ROOT/build-utils/bin/libdata_bind.so"; do
+            if nm -D --defined-only "$so" | awk '{print $3}' \
+                | grep -qx 'stl_bplus_tree_container_desc'; then
+              echo "Unsafe publicly duplicated CSTL descriptor in $so" >&2
+              exit 1
+            fi
+          done
+
+      - name: Load both real shared libraries under unsuppressed ASan and UBSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcc -std=c11 -Wall -Wextra -Werror \
+            -fsanitize=address -fsanitize=undefined \
+            -g -fno-omit-frame-pointer \
+            "$GITHUB_WORKSPACE/build/native-sources/salts-utils/cmake/ci/probe_monocypher_odr.c" \
+            -ldl -o "$GRAPH_ROOT/dual-dso-probe"
+          for order in cnet-first data-first; do
+            "$GRAPH_ROOT/dual-dso-probe" \
+              "$SALTS_ROOT/lib/libcnet.so" \
+              "$GRAPH_ROOT/build-utils/bin/libdata_bind.so" "$order"
+          done
+
+      - name: Preserve exact source and sanitizers evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: salts-1193-cnet-databind-source-asan
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            /tmp/cnet-databind-source-asan-1178/provenance.txt
+            /tmp/cnet-databind-source-asan-1178/source-audit.json
+            /tmp/cnet-databind-source-asan-1178/libcnet.so.exports
+            /tmp/cnet-databind-source-asan-1178/libdata_bind.so.exports
+            /tmp/cnet-databind-source-asan-1178/cnet-private-monocypher-symbols.txt

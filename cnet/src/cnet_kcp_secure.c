@@ -2,6 +2,7 @@
 
 #include <salts/random.h>
 
+#include "cnet_monocypher_namespace.h"
 #include <monocypher.h>
 
 #include <string.h>
