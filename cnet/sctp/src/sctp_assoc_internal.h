@@ -126,6 +126,17 @@ cnet_sctp_assoc_status cnet_sctp_assoc_take_message(cnet_sctp_assoc *a,
     cnet_sctp_data_message *message, void *payload,
     size_t payload_capacity, size_t *written);
 
+/* Explicit, bounded (>16 KiB) DATA message fragmentation:
+ * queue copies <=24 KiB under the original Owner; pump emits a single
+ * complete SCTP wire packet per call, respecting cwnd/rwnd and T3 state.
+ * No implicit background scheduler, non-owned buffer or application retry.
+ */
+cnet_sctp_assoc_status cnet_sctp_assoc_queue_message(cnet_sctp_assoc *a,
+    uint64_t now_ms, uint16_t sid, uint32_t ppid, int unordered,
+    const void *payload, size_t length);
+cnet_sctp_assoc_status cnet_sctp_assoc_pump_message(cnet_sctp_assoc *a,
+    uint64_t now_ms, void *output, size_t capacity, size_t *written);
+
 cnet_sctp_assoc_status cnet_sctp_assoc_stop(cnet_sctp_assoc *association);
 cnet_sctp_assoc_status cnet_sctp_assoc_destroy(cnet_sctp_assoc *association);
 
