@@ -304,6 +304,36 @@ static void test_independent_provider_cookie(void) {
     assert(n_reply == 0u && a.data.in_flight == 0u);
   }
 
+  /* Three RFC 9260 DATA B/E fragments through the SAME random-tag,
+   * real GmSSL-HMAC authenticated Association. PPID 53 is user binary,
+   * and unordered fragments retain SSN=0 across all three TSNs. */
+  {
+    uint8_t big[3072], assembled[3072];
+    cnet_sctp_data_message message = {0};
+    size_t n_data = 0u, n_sack = 0u, n_event = 0u;
+    unsigned int i, j;
+    for (i = 0u; i < sizeof(big); ++i) big[i] = (uint8_t)(i * 31u + 7u);
+    assert(cnet_sctp_assoc_queue_message(&a, 9u, 1u, 53u, 1,
+        big, sizeof(big)) == CNET_SCTP_ASSOC_OK);
+    for (j = 0u; j < 3u; ++j) {
+      const uint64_t now = 10u + 3u * j;
+      assert(cnet_sctp_assoc_pump_message(&a, now,
+          init, sizeof(init), &n_data) == CNET_SCTP_ASSOC_OK);
+      assert(cnet_sctp_assoc_input(&b, now + 1u, init, n_data,
+          init_ack, sizeof(init_ack), &n_sack) == CNET_SCTP_ASSOC_OK);
+      assert(cnet_sctp_assoc_input(&a, now + 2u, init_ack, n_sack,
+          reply, sizeof(reply), &n_reply) == CNET_SCTP_ASSOC_OK);
+      assert(n_reply == 0u);
+    }
+    assert(!a.data.pending.active && a.data.in_flight == 0u);
+    assert(cnet_sctp_assoc_take_message(&b, &message, assembled,
+        sizeof(assembled), &n_event) == CNET_SCTP_ASSOC_OK);
+    assert(n_event == sizeof(big) && message.stream_id == 1u &&
+           message.ppid == 53u && message.unordered &&
+           message.stream_sequence == 0u);
+    assert(memcmp(big, assembled, sizeof(big)) == 0);
+  }
+
   assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_stop(&impostor) == CNET_SCTP_ASSOC_OK);
