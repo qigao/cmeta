@@ -50,6 +50,14 @@ jobs:
           path: build/native-sources/salts-utils
           persist-credentials: false
 
+      - name: Checkout immutable SaltsUtils 4.3.0-rc.10 base source
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/salts-utils
+          ref: v4.3.0-rc.10
+          path: build/native-sources/salts-utils-release
+          persist-credentials: false
+
       - name: Restore exact shared vcpkg dependencies
         uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@0dc254695917bc180504d916240292e9096e9da5
         with:
@@ -72,9 +80,21 @@ jobs:
           mkdir -p "$GRAPH_ROOT"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SALTS"
           test "$(git -C build/native-sources/salts-utils rev-parse HEAD)" = '7949b5e615eb7e46f15abf896901b99b74e10ade'
+          release="$GITHUB_WORKSPACE/build/native-sources/salts-utils-release"
+          test "$(git -C "$release" rev-parse HEAD)" = '1410c9fd479f9faab31503523d8e31cc506b5b25'
+          for path in vendor/monocypher/CMakeLists.txt \
+                      vendor/monocypher/databind_monocypher.c \
+                      vendor/monocypher/databind_monocypher_namespace.h \
+                      databind/runtime/data_bind_contract_fingerprint.c; do
+            cp "$GITHUB_WORKSPACE/build/native-sources/salts-utils/$path" "$release/$path"
+          done
+          test "$(git -C "$release" diff --name-only | wc -l)" -eq 2
+          test "$(git -C "$release" ls-files --others --exclude-standard | wc -l)" -eq 2
           {
             echo "salts_candidate_sha=$EXPECTED_SALTS"
-            echo 'saltsutils_source_sha=7949b5e615eb7e46f15abf896901b99b74e10ade'
+            echo 'saltsutils_original_source_sha=1410c9fd479f9faab31503523d8e31cc506b5b25'
+            echo 'saltsutils_monocypher_patch_sha=7949b5e615eb7e46f15abf896901b99b74e10ade'
+            echo 'saltsutils_source_overlay=4 private Monocypher files (candidate not published)'
             echo 'current_source_not_published_sdk=true'
             echo 'source_sanitizers=address,undefined'
             echo 'asan_odr_detection=2'
@@ -112,7 +132,7 @@ jobs:
           set -euo pipefail
           flags='-fsanitize=address -fsanitize=undefined -g -fno-omit-frame-pointer'
           cmake --preset ci-linux-release-user \
-            -S "$GITHUB_WORKSPACE/build/native-sources/salts-utils" \
+            -S "$GITHUB_WORKSPACE/build/native-sources/salts-utils-release" \
             -B "$GRAPH_ROOT/build-utils" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_INSTALL_PREFIX="$GRAPH_ROOT/install-utils" \
             -DCMAKE_PREFIX_PATH="$SALTS_ROOT" \
