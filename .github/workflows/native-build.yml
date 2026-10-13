@@ -124,9 +124,8 @@ jobs:
           if errorlevel 1 exit /b 1
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
           if errorlevel 1 exit /b 1
-      # #1168: These private test-owned objects were formerly only COMPILED.
-      # Require execution of real epoll_wait/kevent and GQCS crossings in CI.
-      # No cross-compiled/mobile host execution is implied.
+      # #1168: private test-owned NativeIO source objects must execute,
+      # not merely compile. No mobile/cross-compiled runtime is claimed.
       - name: Run real NativeIO kernel readiness/cancel gate (Unix)
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && !matrix.cross && (matrix.family == 'linux' || matrix.family == 'mac') }}
         timeout-minutes: 5
@@ -135,7 +134,21 @@ jobs:
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" --no-tests=error \
             --output-on-failure --timeout 30 --repeat until-fail:12 \
-            -R '^native_io_kernel_dispatch_test        if: matrix.cross
+            -R '^native_io_kernel_dispatch_test$'
+          echo 'NativeIO real kernel readiness/cancel: 12 repeats PASS' >> "$GITHUB_STEP_SUMMARY"
+      - name: Run real NativeIO IOCP completion/cancel gate (Windows)
+        if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.family == 'windows' }}
+        timeout-minutes: 5
+        shell: cmd
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 30 --repeat until-fail:12 -R "^native_io_iocp_dispatch_test$"
+          if errorlevel 1 exit /b 1
+      - name: Configure and build all cross-platform modules
+        if: matrix.cross
         shell: bash
         run: |
           set -euo pipefail
