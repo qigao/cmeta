@@ -45,7 +45,7 @@ jobs:
           echo "Salts.Native candidate: $candidate_version"
 
       - name: Restore canonical re2c
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
 
       - name: Configure shared vcpkg cache
         uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@fafb1efe5ac2440bfd7a08e493988d0459d89e51
