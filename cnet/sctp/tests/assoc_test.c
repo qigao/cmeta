@@ -80,6 +80,19 @@ static int fake_entropy(void *v, uint8_t *out, size_t n) {
   return 0;
 }
 
+/* NON-CRYPTOGRAPHIC test verifier: mirrors the engine's private contract.
+ * Actual two-key verification is tested separately with GmSSL. */
+static int fake_verify(void *v, const uint8_t *message, size_t size,
+                       const uint8_t claimed[CNET_SCTP_ASSOC_MAC_BYTES]) {
+  uint8_t computed[CNET_SCTP_ASSOC_MAC_BYTES] = {0};
+  uint8_t diff = 0u;
+  size_t i;
+  if (fake_mac(v, message, size, computed) != 0) return -1;
+  for (i = 0u; i < sizeof(computed); ++i) diff |= (uint8_t)(computed[i] ^ claimed[i]);
+  memset(computed, 0, sizeof(computed));
+  return diff == 0u ? 0 : -1;
+}
+
 static cnet_sctp_assoc_config config(uint16_t local, uint32_t tag,
                                       test_context *ctx) {
   cnet_sctp_assoc_config c = {0};
@@ -98,6 +111,7 @@ static cnet_sctp_assoc_config config(uint16_t local, uint32_t tag,
   c.is_owner = is_owner;
   c.entropy = fake_entropy;
   c.mac = fake_mac;
+  c.verify_mac = fake_verify;
   c.provider_context = ctx;
   return c;
 }
@@ -128,6 +142,9 @@ static void entropy_init_fail_closed(void) {
   ctx.on_owner = 1;
   ctx.association = &a;
   c = config(5000u, UINT32_C(0x12345678), &ctx);
+  c.verify_mac = NULL;
+  assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_INVALID);
+  c.verify_mac = fake_verify;
   c.entropy = NULL;
   assert(cnet_sctp_assoc_init(&a, &c, 0u) == CNET_SCTP_ASSOC_INVALID);
   assert(ctx.entropy_calls == 0);
