@@ -1,6 +1,7 @@
 name: Salts.Native Component candidate (Linux x64)
 
-# Integration-only prerelease feed. Never tags, promotes or changes the stable SDK.
+# Integration-only Linux-x64 Actions artifact. Never publish a one-RID NuGet to
+# the shared package feed; see release hygiene #1089.
 on:
   push:
     branches:
@@ -9,7 +10,7 @@ on:
 
 permissions:
   contents: read
-  packages: write
+  packages: read
 
 concurrency:
   # A published SHA remains buildable even when the integration branch advances.
@@ -147,27 +148,19 @@ jobs:
             dist/SHA256SUMS
           if-no-files-found: error
 
-      - name: Publish immutable prerelease to GitHub Packages
+      - name: Record Actions-only candidate admission
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CANDIDATE_VERSION: ${{ steps.identity.outputs.version }}
         run: |
           set -euo pipefail
-          config="$RUNNER_TEMP/candidate-nuget.config"
-          printf '<configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
-            --name github --username qigao --password "$GITHUB_TOKEN" \
-            --store-password-in-clear-text --configfile "$config"
-          dotnet nuget push "dist/Salts.Native.$CANDIDATE_VERSION.nupkg" \
-            --api-key "$GITHUB_TOKEN" --source github --skip-duplicate \
-            --configfile "$config"
+          test -f "dist/Salts.Native.$CANDIDATE_VERSION.nupkg"
           {
-            echo "### Integration-only Salts.Native candidate"
+            echo '### Integration-only Salts.Native candidate'
             echo "- Exact version: \`$CANDIDATE_VERSION\`"
             echo "- Source commit: \`$GITHUB_SHA\`"
-            echo "- RID: \`linux-x64\`"
-            echo "- No stable tag, GitHub Release or master publication"
+            echo '- RID: linux-x64 only'
+            echo '- Disposition: Actions artifact only; NOT pushed to shared NuGet feed'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report ccache compilation statistics
