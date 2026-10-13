@@ -7,6 +7,7 @@ name: Salts global buffer original-source TSan #1170
       - 'utils/src/cmeta_buffer.c'
       - 'utils/src/cmeta_thread.c'
       - 'utils/tests/cmeta_global_buffer_concurrent_tsan.c'
+      - 'utils/tests/cmeta_global_buffer_handoff_tsan.c'
       - 'utils/tests/CMakeLists.txt'
       - 'utils/include/cmeta_buffer.h'
   workflow_dispatch:
@@ -57,7 +58,7 @@ jobs:
             -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_THREAD=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build/cmeta-global-buffer-tsan \
-            --target cmeta_global_buffer_tsan_test --parallel 2
+            --target cmeta_global_buffer_tsan_test cmeta_global_buffer_handoff_tsan_test --parallel 2
 
       - name: Verify real buffer, thread and test source TSan instrumentation
         shell: bash
@@ -72,6 +73,7 @@ jobs:
               '/utils/src/cmeta_buffer.c',
               '/utils/src/cmeta_thread.c',
               '/utils/tests/cmeta_global_buffer_concurrent_tsan.c',
+              '/utils/tests/cmeta_global_buffer_handoff_tsan.c',
           ):
               matches = [c for c in commands if c['file'].replace('\\','/').endswith(required)]
               if not matches or any('-fsanitize=thread' not in
@@ -85,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           ctest --test-dir build/cmeta-global-buffer-tsan \
-            -R '^cmeta_global_buffer_tsan$' \
+            -R '^(cmeta_global_buffer_tsan|cmeta_global_buffer_handoff_tsan)$' \
             --repeat until-fail:10 --no-tests=error --output-on-failure \
             --output-junit "$GITHUB_WORKSPACE/build/cmeta-global-buffer-tsan/results.xml"
 
