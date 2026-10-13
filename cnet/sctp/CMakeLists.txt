@@ -10,7 +10,8 @@ add_library(cnet_sctp_wire STATIC src/sctp_wire.c)
 add_library(CNetSctpPrototype::Wire ALIAS cnet_sctp_wire)
 
 # M2 research only: not part of installed C11 ABI or Salts targets.
-add_library(cnet_sctp_assoc_proto STATIC src/sctp_assoc.c src/sctp_init_params.c)
+add_library(cnet_sctp_assoc_proto STATIC
+  src/sctp_assoc.c src/sctp_init_params.c src/sctp_collision.c)
 target_link_libraries(cnet_sctp_assoc_proto PUBLIC cnet_sctp_wire)
 target_include_directories(cnet_sctp_assoc_proto PRIVATE src)
 set_target_properties(cnet_sctp_assoc_proto PROPERTIES
@@ -86,6 +87,20 @@ if(BUILD_TESTING)
     target_compile_options(cnet_sctp_init_params_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
   add_test(NAME cnet_sctp_init_params_test COMMAND cnet_sctp_init_params_test)
+
+  # Table 12 classifiers are decision-only: no side effects or production cutover.
+  add_executable(cnet_sctp_collision_test tests/collision_test.c)
+  target_link_libraries(cnet_sctp_collision_test PRIVATE cnet_sctp_assoc_proto)
+  target_include_directories(cnet_sctp_collision_test PRIVATE src)
+  set_target_properties(cnet_sctp_collision_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  if(MSVC)
+    target_compile_options(cnet_sctp_collision_test PRIVATE /W4 /WX)
+  else()
+    target_compile_options(cnet_sctp_collision_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME cnet_sctp_collision_test COMMAND cnet_sctp_collision_test)
+
 
 endif()
 
