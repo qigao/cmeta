@@ -1,5 +1,6 @@
 #include <cmeta/type_identity.h>
 #include <cstl/detail/instance_meta.h>
+#include "shared_cstl_data_imports.h"
 #include <type_traits>
 #include <cstdint>
 
