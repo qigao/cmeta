@@ -198,7 +198,11 @@ def main() -> None:
         test_only_patch.write_text(patch, encoding="utf-8")
         print("CSTL_TEST_ONLY_SHARED_PATCH=" + str(test_only_patch), flush=True)
         print("CSTL_OFFICIAL_HEADER_SHA256=" + original_header_sha256, flush=True)
-        # Candidate header annotation is an explicit experimental API\n        # change, NOT a release ABI/header conformance claim.\n    execute(configure)
+        # Candidate header annotation is an explicit experimental API
+        # change, NOT a release ABI/header conformance claim.
+    execute(configure)
+    if not (build / "CMakeCache.txt").is_file():
+        raise RuntimeError("fresh Salts candidate CMake did not configure")
     execute(["cmake", "--build", str(build), "--parallel", "2"])
     execute(["cmake", "--install", str(build), "--prefix", str(original)])
     if not (original / "lib/cmake/Salts/SaltsConfig.cmake").is_file():
