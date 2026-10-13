@@ -231,6 +231,8 @@ def main() -> None:
     for token in ("CSTL_GENERIC_SEMANTIC_EQUAL=1",
                   "CSTL_GENERIC_POINTER_EQUAL=" + ("1" if mode == "shared" else "0"),
                   "CSTL_LIVE_PROVIDER_SURVIVED_OTHER_UNLOAD",
+                  "CSTL_CONTAINER_RANGE_CROSS_DSO=1",
+                  "CSTL_CONTAINER_RANGE_AFTER_OTHER_UNLOAD=1",
                   "CSTL_NATIVE_DSO_LOAD_UNLOAD_OK"):
         if token not in result:
             raise RuntimeError(f"native descriptor/owner assertion missing: {token}")
