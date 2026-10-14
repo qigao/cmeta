@@ -1222,6 +1222,19 @@ static void runtime_concurrent_wake(void *user) {
     }
 }
 
+typedef struct runtime_wake_once_context {
+    cflow_subscription *run;
+    atomic_int returned;
+} runtime_wake_once_context;
+
+static void runtime_wake_once(void *user) {
+    runtime_wake_once_context *context =
+        (runtime_wake_once_context *)user;
+    if (context == NULL || context->run == NULL) return;
+    cflow_subscription_wake(context->run);
+    atomic_store(&context->returned, 1);
+}
+
 static bool runtime_concurrent_wake_value(
     void *user, const cmeta_type_desc *type, const void *value) {
     concurrent_wake_probe *probe = (concurrent_wake_probe *)user;
@@ -1336,6 +1349,146 @@ suite("CFlow runtime") {
                 check_equal(atomic_load(&probe.dones), 1);
             }
         }
+    }
+
+    it("coalesces first demand while a preceding wake admission is blocked") {
+        const int inputs[] = {0, 1, 2};
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        pending_foreign_scheduler_state scheduler_state = {0};
+        cflow_scheduler scheduler;
+        cflow_publisher source = {0};
+        cflow_subscription run = {0};
+        concurrent_wake_probe probe = {0};
+        cflow_subscriber_callbacks callbacks;
+        cflow_subscriber sink;
+        runtime_wake_once_context wake_context = {&run};
+        cmeta_thread_t wake_thread = 0;
+        bool blocked;
+
+        cmeta_mutex_init(&scheduler_state.mutex);
+        cmeta_cond_init(&scheduler_state.changed);
+        check_not_null(scheduler_state.mutex);
+        check_not_null(scheduler_state.changed);
+        scheduler_state.block_on_post = 1u;
+        scheduler = pending_foreign_scheduler_as_cflow_scheduler(
+            &scheduler_state);
+        normalized.root = CMETA_INVALID_ID;
+        probe.run = &run;
+        atomic_init(&probe.stop, false);
+        atomic_init(&probe.wakes, 0);
+        atomic_init(&probe.values, 0);
+        atomic_init(&probe.errors, 0);
+        atomic_init(&probe.dones, 0);
+        atomic_init(&wake_context.returned, 0);
+        callbacks = (cflow_subscriber_callbacks){
+            runtime_concurrent_wake_value,
+            runtime_concurrent_wake_error,
+            runtime_concurrent_wake_done,
+            &probe};
+        sink = cflow_subscriber_from_callbacks(&callbacks);
+
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_publisher_from_array(
+            &source, &cmeta_type_int, inputs,
+            sizeof(inputs) / sizeof(inputs[0])));
+        check_true(cflow_subscribe(
+            &run, &normalized, &source, &scheduler, &sink));
+        {
+            const int created = cmeta_thread_create(
+                &wake_thread, runtime_wake_once, &wake_context);
+            check_equal(created, 0);
+            if (created != 0) abort();
+        }
+
+        /* Synchronize on an actual in-flight Scheduler post, not a sleep.
+         * Wake owns the first admission while the demand thread arrives. */
+        blocked = runtime_wait_until_at_least(
+            &scheduler_state.blocked_posts, 1);
+        check_true(blocked);
+        if (!blocked) abort();
+        check_equal(
+            cflow_subscription_request_result(&run, SIZE_MAX).status,
+            CFLOW_STATUS_OK);
+        check_equal(cflow_subscription_outstanding_demand(&run),
+                    (size_t)SIZE_MAX);
+        check_equal(atomic_load(&probe.values), 0);
+        check_equal(atomic_load(&probe.errors), 0);
+
+        pending_foreign_release_blocked_post(&scheduler_state);
+        check_equal(cmeta_thread_join(&wake_thread), 0);
+        check_equal(atomic_load(&wake_context.returned), 1);
+        check_true(pending_foreign_run_one(&scheduler_state));
+        check_false(pending_foreign_run_one(&scheduler_state));
+        check_equal(scheduler_state.post_calls, (size_t)1u);
+        check_equal(atomic_load(&probe.values), 3);
+        check_equal(atomic_load(&probe.errors), 0);
+        check_equal(atomic_load(&probe.dones), 1);
+        check_true(cflow_subscription_is_done(&run));
+        check_null(cflow_subscription_error(&run));
+
+        cflow_subscription_close(&run);
+        cflow_scheduler_destroy(&scheduler);
+        cmeta_cond_destroy(&scheduler_state.changed);
+        cmeta_mutex_destroy(&scheduler_state.mutex);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
+    it("records a full Scheduler rejection before first demand without retry") {
+        const int input = 0;
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        coalescing_scheduler_state scheduler_state = {0};
+        cflow_scheduler scheduler =
+            coalescing_scheduler_as_cflow_scheduler(&scheduler_state);
+        cflow_publisher source = {0};
+        cflow_subscription run = {0};
+        concurrent_wake_probe probe = {0};
+        cflow_subscriber_callbacks callbacks;
+        cflow_subscriber sink;
+
+        scheduler_state.rejection_status = CFLOW_ADMISSION_FULL;
+        atomic_init(&scheduler_state.release, true);
+        probe.run = &run;
+        atomic_init(&probe.stop, false);
+        atomic_init(&probe.wakes, 0);
+        atomic_init(&probe.values, 0);
+        atomic_init(&probe.errors, 0);
+        atomic_init(&probe.dones, 0);
+        callbacks = (cflow_subscriber_callbacks){
+            runtime_concurrent_wake_value,
+            runtime_concurrent_wake_error,
+            runtime_concurrent_wake_done,
+            &probe};
+        sink = cflow_subscriber_from_callbacks(&callbacks);
+
+        normalized.root = CMETA_INVALID_ID;
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_publisher_from_array(
+            &source, &cmeta_type_int, &input, 1u));
+        check_true(cflow_subscribe(
+            &run, &normalized, &source, &scheduler, &sink));
+
+        /* Capture the existing failure contract without pretending it is
+         * fixed: a pre-demand autonomous wake can terminate on rejection. */
+        cflow_subscription_wake(&run);
+        check_equal(atomic_load(&scheduler_state.posts), 1);
+        check_equal(cflow_subscription_status(&run),
+                    CFLOW_STATUS_CAPACITY_EXCEEDED);
+        check_equal(cflow_subscription_request_result(&run, SIZE_MAX).status,
+                    CFLOW_STATUS_CAPACITY_EXCEEDED);
+        check_equal(atomic_load(&scheduler_state.posts), 1);
+        check_equal(atomic_load(&probe.values), 0);
+        check_equal(atomic_load(&probe.errors), 1);
+        check_equal(atomic_load(&probe.dones), 0);
+
+        cflow_subscription_close(&run);
+        cflow_scheduler_destroy(&scheduler);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
     }
 
     it("passes outstanding downstream demand to each source resume") {
