@@ -19,6 +19,12 @@ $release23Push = $EventName -eq 'push' -and
   $HeadBranch -eq 'release/salts-2.3-ace-cnet-review' -and -not $PrepareRelease
 $releaseTagPush = $EventName -eq 'push' -and
   $HeadBranch -match '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$' -and -not $PrepareRelease
+# Draft #1209: require six real SDK package producers on this PR only.
+# The reusable CI package job separately restricts itself to PR number 1209.
+# Never enable this packaging workflow for an ordinary PR or master push.
+$unicodeJointPackageQualification = $EventName -eq 'pull_request' -and
+  $HeadBranch -eq 'draft/unicode17-combined-abi-1164-1192' -and
+  -not $PrepareRelease
 $full = ($EventName -eq "workflow_dispatch") -or $release23Push -or $releaseTagPush
 # Normal ACE development runs full Linux CTest. An explicit [ACE-MATRIX]
 # marker on the same long-lived Draft PR runs host-complete integration tests
@@ -267,7 +273,8 @@ foreach ($profile in $profiles) {
   # Build throughput binaries only for hosts selected as benchmark producers.
   # Ordinary native/Windows conformance must not compile or run performance suites.
   $entry.benchmarks = if ($work -and $entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
-  $entry.package = ($PrepareRelease -or $release23Push -or $releaseTagPush) -and [bool]$entry.sdk
+  $entry.package = ($PrepareRelease -or $release23Push -or $releaseTagPush -or
+    $unicodeJointPackageQualification) -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
   $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
   # Full host CTest for an explicit qualification; Linux arm64 runs the
