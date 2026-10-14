@@ -16,6 +16,38 @@ NULL输出、surrogate或超出U+10FFFF返回`SALTS_UNICODE_ERR_INVALID_ARGUMENT
 官方UnicodeData.txt全码点对照验证770个Nd数字、非数字和非法scalar状态。
 数据语义参见[Unicode 17数字章节](https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-22/)。
 
+## General_Category P*/S*（Salts #1164）
+
+`salts_unicode_is_punctuation_or_symbol(uint32_t scalar, int *out_result)`
+提供 Unicode 17.0.0 的标点与符号分类，覆盖 P*、S*，例如 `<!-- Migrated from qigao/salts-utils @ c259f4c6fabc8c5d4c9663c44c5cb738519f5c30 (Unicode 17.0.0). -->
+# Salts Unicode
+
+`Salts::Unicode` 是一个独立的 C11 库：用 re2c 生成的 UTF-8 DFA 顺序读取 Unicode scalar，
+并返回固定 Unicode 17.0.0 版本的 `XID_Start`、`XID_Continue` 与 `White_Space` 属性。
+它不包含 Jinja 或 Mustache 语义，也不替代 Salts 的 `tstr` / `vstr` 字符串能力。
+
+`salts_unicode_decimal_value(uint32_t scalar, uint32_t *out_value)` 查询Unicode 17的
+十进制数字（Nd），成功返回`SALTS_UNICODE_OK`并写入0–9；非Nd返回`SALTS_UNICODE_NO_MATCH`。
+NULL输出、surrogate或超出U+10FFFF返回`SALTS_UNICODE_ERR_INVALID_ARGUMENT`，所有非成功路径
+均保持输出不变。接口不分配内存、不访问共享可变状态，可并发调用；不改变已有scalar布局。
+例如U+0662得到2，而上标²与汉字〇不是Nd。
+
+实现复用 re2c 4.6 的 Unicode 17 分类表，无另一份数字值映射。
+在连续Nd区间中按偏移模10取值，支持相邻多组数字；时间O(L)、空间O(1)，固定数据的L最多50。
+官方UnicodeData.txt全码点对照验证770个Nd数字、非数字和非法scalar状态。
+数据语义参见[Unicode 17数字章节](https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-22/)。
+
+、
+`£`、`€` 和 Unicode 符号，不将 NBSP/字母误分类。成功返回 0/1，
+非法 scalar 或 NULL 输出返回错误，且不改写现有输出。零分配、可重入，
+复用仓库已经校验 SHA-256 的 re2c Unicode 17 `unicode_categories.re`，
+不引入第二套类别数据、locale 或 ICU。
+
+新增完整 scalar 官方 `UnicodeData.txt` conformance 校验以及正式安装 SDK
+C11/C++17 消费测试。**这是新增公开 API 的开发候选**：发布前仍需 ABI
+审查、跨平台 SDK 验收与明确版本溯源；不会自动更新已有发布包，也不
+授权 Stun 使用未发布 API 或添加本地 Unicode 回退。
+
 ## 使用
 
 ```c

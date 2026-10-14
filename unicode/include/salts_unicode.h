@@ -309,6 +309,21 @@ salts_unicode_status salts_unicode_bidi_paragraph_level(
 salts_unicode_status salts_unicode_scalar_properties(uint32_t scalar, uint32_t *out_properties);
 
 /**
+ * Query whether one Unicode 17.0.0 scalar belongs to General_Category P*
+ * (punctuation) or S* (symbol). This is a category query, NOT Unicode
+ * White_Space and not a locale-sensitive C punctuation predicate.
+ *
+ * The canonical pinned Unicode 17 re2c category table is the sole source.
+ * The function is allocation-free, reentrant, and does not modify existing
+ * salts_unicode_scalar layout, property flags or case transformation modes.
+ * A valid scalar returns OK and sets *out_result to 0/1; a surrogate,
+ * out-of-range scalar or NULL output returns INVALID_ARGUMENT and leaves
+ * the supplied output unchanged.
+ */
+salts_unicode_status salts_unicode_is_punctuation_or_symbol(
+    uint32_t scalar, int *out_result);
+
+/**
  * Query the decimal value of a Unicode 17.0.0 Nd scalar, without allocation.
  *
  * @param scalar Unicode scalar value; surrogates and values above U+10FFFF are invalid.
