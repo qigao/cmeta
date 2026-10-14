@@ -19,5 +19,9 @@ int main(void) {
   if (salts_unicode_nfc(vstr_from_cstr("e\xcc\x81"), SALTS_UNICODE_NFC_17_0_0,
       work, 128, output, sizeof output, &size) != SALTS_UNICODE_NFC_OK) return 7;
   if (size != 2 || memcmp(output, "\xc3\xa9", 3) != 0) return 8;
+  size_t fold_bytes = 0u;
+  char folded[8] = {0};
+  if (salts_unicode_case_fold(vstr_from_cstr("\xc3\x9f"), folded, sizeof folded, &fold_bytes) != SALTS_UNICODE_OK) return 9;
+  if (fold_bytes != 2u || memcmp(folded, "ss", 2u) != 0) return 10;
   return 0;
 }

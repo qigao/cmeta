@@ -26,7 +26,8 @@ typedef enum salts_unicode_status {
   SALTS_UNICODE_NO_MATCH = 2,
   SALTS_UNICODE_ERR_INVALID_ARGUMENT = -1,
   SALTS_UNICODE_ERR_INVALID_UTF8 = -2,
-  SALTS_UNICODE_ERR_CALLBACK = -3
+  SALTS_UNICODE_ERR_CALLBACK = -3,
+  SALTS_UNICODE_ERR_CAPACITY = -4
 } salts_unicode_status;
 
 typedef enum salts_unicode_case_mode {
@@ -353,6 +354,20 @@ salts_unicode_status salts_unicode_trim_whitespace(vstr input, vstr *output);
  * borrow valid UTF-8 and a nonzero return stops with ERR_CALLBACK. */
 salts_unicode_status salts_unicode_case_transform(vstr input, salts_unicode_case_mode mode,
                                                   salts_unicode_case_write write, void *userdata);
+
+/**
+ * Apply Unicode 17.0.0 Default Full Case Folding (CaseFolding.txt C/F).
+ * This is not UPPER/LOWER/TITLE, Turkic T folding, NFC or NFKC_Casefold.
+ * Input is a caller-owned counted UTF-8 view, immutable for both passes.
+ * Input and output must not overlap.
+ *
+ * A NULL output with capacity zero measures bytes. Writing requires at least
+ * that many bytes and produces counted UTF-8 WITHOUT a terminating NUL.
+ * All source UTF-8 and capacity are validated before writing. On error
+ * buffer and *out_length remain unchanged. No allocation or global state.
+ */
+salts_unicode_status salts_unicode_case_fold(vstr input, char *output,
+                                             size_t capacity, size_t *out_length);
 
 /**
  * Scan one Unicode XID identifier starting at a byte offset.

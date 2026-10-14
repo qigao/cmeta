@@ -19,5 +19,8 @@ int main() {
   if (salts_idna_to_ascii(vstr_from_cstr("fa\xc3\x9f.de"), SALTS_IDNA_UNICODE17_UTS46_35_STRICT,
       &workspace, output, sizeof output, &size) != SALTS_IDNA_OK) return 4;
   if (size != 13 || std::strcmp(output, "xn--fa-hia.de") != 0) return 5;
+  char folded[8] = {0}; std::size_t fold_bytes = 0u;
+  if (salts_unicode_case_fold(vstr_from_cstr("\xe1\xba\x9e"), folded, sizeof folded, &fold_bytes) != SALTS_UNICODE_OK) return 6;
+  if (fold_bytes != 2u || std::memcmp(folded, "ss", 2u) != 0) return 7;
   return 0;
 }

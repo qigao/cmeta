@@ -16,6 +16,24 @@ NULL输出、surrogate或超出U+10FFFF返回`SALTS_UNICODE_ERR_INVALID_ARGUMENT
 官方UnicodeData.txt全码点对照验证770个Nd数字、非数字和非法scalar状态。
 数据语义参见[Unicode 17数字章节](https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-22/)。
 
+## Unicode 17 Default Full Case Folding（Salts #1192）
+
+`salts_unicode_case_fold(input, output, capacity, &bytes)` 是 Unicode 17
+Default Full Case Folding，严格使用官方 CaseFolding.txt 的 C/F 映射，
+不包含 Turkic T 或 S-only mappings，也不是 LOWER、NFC 或 NFKC_Casefold。
+例如 `ẞ → ss`、`ß → ss`、`ς → σ`。
+
+数据来源是 Unicode 官方 `unicode-org/unicodetools` 的
+`final-17.0-20250910` 标签，并被复制到本仓库
+`unicode/data/17.0.0/CaseFolding.txt`。通过
+`unicode/tools/generate_casefold_data.py` 生成静态只读 C11 映射。
+
+函数接受 caller-owned counted UTF-8，测量模式使用空 buffer/0 容量，
+写入模式需要足够容量，结果不包含隐式 NUL。非法 UTF-8、非法参数、
+容量失败保证 caller buffer 与长度参数不变；无堆分配、无共享可变状态、
+无输入输出重叠、无 fallback。本次是**未发布的 ABI 审查候选**：
+Stun #183/#223 只有在正式发布的 Salts SDK 提供接口后才能迁移。
+
 ## 使用
 
 ```c
