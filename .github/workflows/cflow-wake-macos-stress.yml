@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   macos-wake-status-capture:
-    if: github.head_ref == 'draft/cflow-wake-macos-stress-1210'
+    if: (github.head_ref == 'draft/cflow-wake-macos-stress-1210' || github.head_ref == 'fix/cflow-request-admitted-before-done-1210')
     runs-on: macos-15
     timeout-minutes: 75
     steps:
