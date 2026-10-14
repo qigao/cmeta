@@ -1633,6 +1633,10 @@ suite("CFlow runtime") {
                     CFLOW_STATUS_OK);
         check_true(cflow_subscription_is_done(&run));
         check_equal(scheduler_state.post_calls, (size_t)1u);
+        /* A NEW request after terminal remains CLOSED even though the
+         * first request ran to completion inside Scheduler admission. */
+        check_equal(cflow_subscription_request_result(&run, 1u).status,
+                    CFLOW_STATUS_CLOSED);
 
         cflow_subscription_close(&run);
         cflow_scheduler_destroy(&scheduler);
