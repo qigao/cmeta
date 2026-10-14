@@ -114,7 +114,11 @@ jobs:
     needs:
       - scope
       - native
-    if: (github.event_name == 'workflow_dispatch' && inputs.prepare_release) || (github.event_name == 'push' && (github.ref == 'refs/heads/release/salts-2.3-ace-cnet-review' || startsWith(github.ref, 'refs/tags/v')))
+    # Isolated Draft #1209 six-RID SDK/package qualification. Reuses the
+    # canonical pack workflow WITHOUT invoking the tag-only publisher.
+    # Deliberately limited to this exact review branch; remove this one-off
+    # condition before any final master merge or stable release.
+    if: (github.event_name == 'workflow_dispatch' && inputs.prepare_release) || (github.event_name == 'push' && (github.ref == 'refs/heads/release/salts-2.3-ace-cnet-review' || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'pull_request' && github.event.pull_request.number == 1209 && github.head_ref == 'draft/unicode17-combined-abi-1164-1192')
     uses: ./.github/workflows/sdk-package.yml
     with:
       version: ${{ needs.scope.outputs.version }}
