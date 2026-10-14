@@ -80,7 +80,9 @@ $concurrencyRuntime = Test-Changed '^concurrency/(include/|src/|CMakeLists\.txt$
 $concurrencyQualification = (-not $PrepareRelease) -and ($full -or $concurrencyRuntime -or
   (Test-Changed '^concurrency/tests/(thread_pool(_lf)?_test\.c|concurrency_header_cpp_test\.cpp|CMakeLists\.txt)$'))
 $coroutineRuntime = Test-Changed '^coroutine/(include/|src/|arch/|CMakeLists\.txt$)'
-$cflowRuntime = Test-Changed '^cflow/(include/|src/|CMakeLists\.txt$|tests/CMakeLists\.txt$|cnet-adapter/)'
+# CFlow test-source changes require real execution CTests; projection-only
+# qualification compiles cflow_reactive_test/cflow_actor_test but never runs them.
+$cflowRuntime = Test-Changed '^cflow/(include/|src/|tests/|CMakeLists\.txt$|cnet-adapter/)'
 $pluginRuntime = Test-Changed '^plugin/(include/|src/|CMakeLists\.txt$)'
 $utilsRuntime = Test-Changed '^utils/(include/|src/|CMakeLists\.txt$)'
 $unicodeRuntime = Test-Changed '^(unicode|idna)/'
