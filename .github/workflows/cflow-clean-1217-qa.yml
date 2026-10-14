@@ -1,0 +1,211 @@
+name: CFlow clean 1217 exact-source QA
+
+'on':
+  push:
+    branches:
+      - qa/cflow-1217-exact-source
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cflow-clean-1217-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-wake-status-capture:
+    name: macOS original 32-round Worker stress x120
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - name: Checkout exact source (no production modifications)
+        uses: actions/checkout@v7
+        with:
+          ref: a18c94a30700fa3dd157cc67e8895ea2725a89a3
+          persist-credentials: false
+
+      - name: Restore shared re2c binary
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - name: Restore shared vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Prepare macOS host
+        uses: ./.github/actions/setup-build-host
+      - name: Restore native compiler cache
+        uses: ./.github/actions/setup-compiler-cache
+        with:
+          profile: macos-release
+
+      - name: Build exact native CFlow reactive test
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "a18c94a30700fa3dd157cc67e8895ea2725a89a3"
+          test "$(git hash-object cflow/src/subscription.c)" = c075554cc1d75bf2663063752ca5e6733c0a87bd
+          test "$(git hash-object cflow/include/cflow/reactive.h)" = 28991868abfe5b591ec2f8a10746a9e7cef4e3e3
+          cmake --preset mac-arm64-release-ci \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_SUPPRESS_REGENERATION=ON \
+            -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
+            -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
+            -DCMETA_BUILD_BENCHMARKS=OFF \
+            -DCFLOW_BUILD_BENCHMARKS=OFF
+          cmake --build --preset mac-arm64-release-ci \
+            --target cflow_reactive_test --parallel 2
+
+      - name: Repeat original 32-round Worker wake/request with strict status assertions
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          ctest --preset mac-arm64-release-ci \
+            --no-tests=error --output-on-failure --timeout 90 \
+            --repeat until-fail:120 -R '^cflow_reactive_test$'
+
+      - name: Preserve exact failure trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cflow-wake-macos-stress-a18c94a30700fa3dd157cc67e8895ea2725a89a3
+          path: build/mac-arm64-appleclang-package-release/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  linux-source-tsan:
+    name: Real CFlow source TSan, bounded interleavings
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      TSAN_OPTIONS: "halt_on_error=1:exitcode=66"
+      CCACHE_DIR: ${{ github.workspace }}/.cflow-wake-1210-ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+    steps:
+      - name: Checkout exact isolated CFlow candidate
+        uses: actions/checkout@v4
+        with:
+          ref: a18c94a30700fa3dd157cc67e8895ea2725a89a3
+          persist-credentials: false
+
+      - name: Restore shared vcpkg binary cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+
+      - name: Restore re2c tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Prepare C11 TSan build tools and source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache python3
+          ccache --zero-stats
+          test "$(git rev-parse HEAD)" = "a18c94a30700fa3dd157cc67e8895ea2725a89a3"
+          test "$(git hash-object cflow/src/subscription.c)" = c075554cc1d75bf2663063752ca5e6733c0a87bd
+          test "$(git hash-object cflow/include/cflow/reactive.h)" = 28991868abfe5b591ec2f8a10746a9e7cef4e3e3
+
+      - name: Configure canonical first-party CFlow source TSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-tsan-ci -S . -B build/cflow-wake-1210-tsan \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTING=ON -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_ADDRESS=OFF \
+            -DENABLE_SANITIZER_UNDEFINED=OFF \
+            -DENABLE_SANITIZER_THREAD=ON
+
+      - name: Diagnose canonical dependency admission failure
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          if [[ -f build/cflow-wake-1210-tsan/vcpkg-manifest-install.log ]]; then
+            tail -n 180 build/cflow-wake-1210-tsan/vcpkg-manifest-install.log
+          fi
+
+      - name: Build real source CFlow reactive and actor tests with TSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/cflow-wake-1210-tsan --parallel 2 \
+            --target cflow_reactive_test cflow_actor_test
+          ccache --show-stats
+
+      - name: Verify actual TSan compilation of the entire first-party dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path.cwd().resolve()
+          commands = json.loads(
+              Path("build/cflow-wake-1210-tsan/compile_commands.json").read_text()
+          )
+          prefixes = (
+              "cflow/src/", "cflow/tests/",
+              "cmeta/src/", "platform/src/",
+              "concurrency/src/", "native-io/src/",
+              "cstl/src/", "coroutine/src/"
+          )
+          def relative(entry):
+              path = Path(entry["file"]).resolve()
+              try:
+                  return path.relative_to(root).as_posix()
+              except ValueError:
+                  return ""
+          first_party = [(relative(entry), entry) for entry in commands]
+          matched = [(path, entry) for path, entry in first_party
+                     if path.startswith(prefixes)]
+          assert matched, "No first-party CFlow/dependency compilation units"
+          expected = (
+              "cflow/src/subscription.c",
+              "cflow/src/scheduler_worker.c",
+              "cflow/tests/cflow_reactive_test.c",
+              "cflow/tests/cflow_actor_test.c"
+          )
+          actual = {path for path, _ in matched}
+          missing_sources = sorted(set(expected) - actual)
+          assert not missing_sources, "Missing compiled sources: " + ", ".join(missing_sources)
+          uninstrumented = [
+              path for path, entry in matched
+              if "-fsanitize=thread" not in entry.get(
+                  "command", " ".join(entry.get("arguments", []))
+              )
+          ]
+          print(f"first_party_compilations={len(matched)} "
+                f"missing_source={len(missing_sources)} "
+                f"uninstrumented={len(uninstrumented)}")
+          assert not uninstrumented, "TSan missing from: " + ", ".join(uninstrumented)
+          PY
+
+      - name: Repeat real CFlow wake/admission and Actor contracts under TSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/cflow-wake-1210-tsan \
+            -R '^(cflow_reactive_test|cflow_actor_test)$' \
+            --repeat until-fail:5 --timeout 90 --output-on-failure \
+            --no-tests=error
+
+      - name: Preserve unsuppressed TSan failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cflow-wake-1210-source-tsan-a18c94a30700fa3dd157cc67e8895ea2725a89a3
+          path: build/cflow-wake-1210-tsan/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
