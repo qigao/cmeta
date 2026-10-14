@@ -8,6 +8,7 @@
 
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -1307,7 +1308,24 @@ suite("CFlow runtime") {
                 waker_started = rc == 0;
                 check_equal(rc, 0);
                 check_true(runtime_wait_until_at_least(&probe.wakes, 1));
-                check_true(cflow_subscription_request(&run, SIZE_MAX));
+                /* #1210 diagnostic: preserve the exact concurrency test and
+                 * its admission assertion, but report the returned status
+                 * and concurrent producer/terminal counters on failure.
+                 * The bool wrapper previously discarded the only causal
+                 * evidence. Do NOT retry, extend budgets or mask failures. */
+                const cflow_status_result request =
+                    cflow_subscription_request_result(&run, SIZE_MAX);
+                if (request.status != CFLOW_STATUS_OK) {
+                    fprintf(stderr,
+                        "cflow wake-before-demand: round=%u status=%d "
+                        "wakes=%d values=%d errors=%d dones=%d\n",
+                        round, (int)request.status,
+                        atomic_load(&probe.wakes),
+                        atomic_load(&probe.values),
+                        atomic_load(&probe.errors),
+                        atomic_load(&probe.dones));
+                }
+                check_equal(request.status, CFLOW_STATUS_OK);
                 check_true(runtime_wait_until_at_least(&probe.dones, 1));
                 atomic_store(&probe.stop, true);
                 cmeta_thread_join(&waker_thread);
