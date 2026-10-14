@@ -1329,14 +1329,37 @@ suite("CFlow runtime") {
                 const cflow_status_result request =
                     cflow_subscription_request_result(&run, SIZE_MAX);
                 if (request.status != CFLOW_STATUS_OK) {
+                    /* Failure-only snapshot. These counters are observed
+                     * after the request returned: do not present them as
+                     * an atomic causal snapshot of the rejected admission.
+                     * In particular, CLOSED+OK+done is different from a
+                     * full/closed Scheduler admission failure. */
+                    cflow_scheduler_stats stats = {0};
+                    const bool stats_valid =
+                        cflow_scheduler_get_stats(&scheduler, &stats);
+                    const cflow_status run_status =
+                        cflow_subscription_status(&run);
+                    const bool run_done =
+                        cflow_subscription_is_done(&run);
+                    const bool run_cancelled =
+                        cflow_subscription_is_cancelled(&run);
+                    const size_t remaining =
+                        cflow_subscription_outstanding_demand(&run);
                     fprintf(stderr,
-                        "cflow wake-before-demand: round=%u status=%d "
-                        "wakes=%d values=%d errors=%d dones=%d\n",
-                        round, (int)request.status,
-                        atomic_load(&probe.wakes),
+                        "cflow wake-before-demand: round=%u request_status=%d "
+                        "run_status=%d run_done=%d run_cancelled=%d "
+                        "demand=%zu wakes=%d values=%d errors=%d dones=%d "
+                        "stats_valid=%d ready_pending=%zu timer_pending=%zu "
+                        "peak_pending=%zu rejected_full=%zu rejected_closed=%zu\n",
+                        round, (int)request.status, (int)run_status,
+                        run_done ? 1 : 0, run_cancelled ? 1 : 0,
+                        remaining, atomic_load(&probe.wakes),
                         atomic_load(&probe.values),
                         atomic_load(&probe.errors),
-                        atomic_load(&probe.dones));
+                        atomic_load(&probe.dones),
+                        stats_valid ? 1 : 0, stats.ready_pending,
+                        stats.timer_pending, stats.peak_pending,
+                        stats.rejected_full, stats.rejected_closed);
                 }
                 check_equal(request.status, CFLOW_STATUS_OK);
                 check_true(runtime_wait_until_at_least(&probe.dones, 1));
