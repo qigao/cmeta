@@ -21,9 +21,11 @@ set_property(DIRECTORY APPEND PROPERTY COMPILE_OPTIONS "${SALTS_UNICODE_TEST_COM
 set_property(DIRECTORY APPEND PROPERTY LINK_OPTIONS "${SALTS_UNICODE_TEST_LINK_OPTIONS}")
 
 add_executable(salts_unicode_installed_c11 main.c)
-target_link_libraries(salts_unicode_installed_c11 PRIVATE Salts::IDNA)
+# The Unicode ABI test must explicitly resolve Unicode's own public export,
+# not pass only because Salts::IDNA happens to depend on that target.
+target_link_libraries(salts_unicode_installed_c11 PRIVATE Salts::Unicode Salts::IDNA)
 add_executable(salts_unicode_installed_cpp17 main.cpp)
-target_link_libraries(salts_unicode_installed_cpp17 PRIVATE Salts::IDNA)
+target_link_libraries(salts_unicode_installed_cpp17 PRIVATE Salts::Unicode Salts::IDNA)
 
 enable_testing()
 add_test(NAME salts_unicode_installed_c11 COMMAND salts_unicode_installed_c11)
