@@ -1,0 +1,73 @@
+name: CFlow macOS first-demand race trace (#1210)
+
+'on':
+  pull_request:
+    paths:
+      - ".github/workflows/cflow-wake-macos-stress.yml"
+      - "cflow/tests/cflow_reactive_test.c"
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cflow-wake-macos-1210-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  macos-wake-status-capture:
+    if: github.head_ref == 'draft/cflow-wake-macos-stress-1210'
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - name: Checkout exact source (no production modifications)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Restore shared re2c binary
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - name: Restore shared vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Prepare macOS host
+        uses: ./.github/actions/setup-build-host
+      - name: Restore native compiler cache
+        uses: ./.github/actions/setup-compiler-cache
+        with:
+          profile: macos-release
+
+      - name: Build exact native CFlow reactive test
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          cmake --preset mac-arm64-release-ci \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_SUPPRESS_REGENERATION=ON \
+            -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
+            -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
+            -DCMETA_BUILD_BENCHMARKS=OFF \
+            -DCFLOW_BUILD_BENCHMARKS=OFF
+          cmake --build --preset mac-arm64-release-ci \
+            --target cflow_reactive_test --parallel 2
+
+      - name: Repeat original 32-round Worker wake/request with strict status assertions
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          ctest --preset mac-arm64-release-ci \
+            --no-tests=error --output-on-failure --timeout 90 \
+            --repeat until-fail:120 -R '^cflow_reactive_test$'
+
+      - name: Preserve exact failure trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cflow-wake-macos-stress-${{ github.event.pull_request.head.sha }}
+          path: build/mac-arm64-appleclang-package-release/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
