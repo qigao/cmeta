@@ -12,10 +12,16 @@ jobs:
   pack:
     name: Pack Salts.Native
     runs-on: ubuntu-24.04
+    # Pull-request github.sha is a synthetic merge commit. The SDK archives
+    # are built from the real PR HEAD. Keep checkout, manifests and NuGet's
+    # repository commit attestation bound to the same immutable source SHA.
+    # On tags/push/manual packaging, github.sha is already the source commit.
+    env:
+      SALTS_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.SALTS_SOURCE_SHA }}
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
@@ -26,6 +32,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "${#SALTS_SOURCE_SHA}" -eq 40
+          test "$(git rev-parse HEAD)" = "$SALTS_SOURCE_SHA"
           test -f package/sdk/linux-x64/lib/cmake/Salts/SaltsConfig.cmake
           test -f package/sdk/linux-x64/include/cmeta/function.h
           test -f package/sdk/linux-x64/include/cflow/function_projection.h
@@ -119,6 +127,13 @@ jobs:
           test "${#cache_contracts[@]}" -eq 1
           test "${#cache_revisions[@]}" -ge 1
           while IFS= read -r manifest; do
+            test "$(grep -c '^commit=' "$manifest")" -eq 1
+            source_commit="$(sed -n 's/^commit=//p' "$manifest" | tr -d '\r')"
+            if [ "$source_commit" != "$SALTS_SOURCE_SHA" ]; then
+              printf 'SDK source mismatch: %s records %s, expected %s\n' \
+                "$manifest" "$source_commit" "$SALTS_SOURCE_SHA" >&2
+              exit 1
+            fi
             test "$(grep -c '^vcpkg_cache_revision=' "$manifest")" -eq 1
             revision="$(sed -n 's/^vcpkg_cache_revision=//p' "$manifest" | tr -d '\r')"
             test -n "$revision"
@@ -133,7 +148,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dotnet pack packaging/nuget/Salts.Native.csproj --configuration Release --output dist -p:PackageVersion=${{ inputs.version }} -p:PackageRoot="$GITHUB_WORKSPACE/package" -p:RepositoryCommit="${{ github.sha }}"
+          dotnet pack packaging/nuget/Salts.Native.csproj --configuration Release --output dist -p:PackageVersion=${{ inputs.version }} -p:PackageRoot="$GITHUB_WORKSPACE/package" -p:RepositoryCommit="$SALTS_SOURCE_SHA"
           test -f "dist/Salts.Native.${{ inputs.version }}.nupkg"
       - uses: actions/upload-artifact@v4
         with:
