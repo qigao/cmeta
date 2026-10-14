@@ -152,3 +152,13 @@ jobs:
           path: build/cflow-wake-1210-tsan/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
           retention-days: 14
+
+  native-hosts:
+    if: github.head_ref == 'draft/cflow-wake-before-demand-interleavings-1210'
+    name: CFlow actual Linux Windows macOS CTest
+    uses: ./.github/workflows/native-build.yml
+    with:
+      version: '2.3.0'
+      builds: >-
+        {"include":[{"id":"linux-release","runner":"ubuntu-24.04","family":"linux","preset":"linux-release-ci","build_dir":"build/linux-gcc-release","sdk":"linux-x64","clang":false,"sanitizer":"","cross":false,"native_thunks":"OFF","native":false,"execution":true,"armcontracts":false,"projection":false,"benchmarks":"OFF","package":false,"compare":false,"artifact":false,"full_tests":false},{"id":"windows-release","runner":"windows-2025","family":"windows","preset":"win-release-ci","build_dir":"build/Msvc-Release","sdk":"windows-x64","clang":false,"sanitizer":"","cross":false,"native_thunks":"OFF","native":false,"execution":true,"armcontracts":false,"projection":false,"benchmarks":"OFF","package":false,"compare":false,"artifact":false,"full_tests":false},{"id":"macos-release","runner":"macos-15","family":"mac","preset":"mac-arm64-release-ci","build_dir":"build/mac-arm64-appleclang-package-release","sdk":"macos-arm64","clang":false,"sanitizer":"","cross":false,"native_thunks":"OFF","native":false,"execution":true,"armcontracts":false,"projection":false,"benchmarks":"OFF","package":false,"compare":false,"artifact":false,"full_tests":false},{"id":"macos-clang-release","runner":"macos-15","family":"mac","preset":"mac-arm64-clang-release-ci","build_dir":"build/mac-arm64-clang-release","sdk":"","clang":true,"sanitizer":"","cross":false,"native_thunks":"OFF","native":false,"execution":true,"armcontracts":false,"projection":false,"benchmarks":"OFF","package":false,"compare":false,"artifact":false,"full_tests":false}]}
+    secrets: inherit
