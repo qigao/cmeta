@@ -88,12 +88,31 @@ jobs:
           grep -F "cmeta_interface_desc_equal" "$mac_interface"
           grep -F "cmeta_function_abi_desc" "$mac_header"
           grep -F "cflow_function_typed_filter_projection_admit" "$mac_projection"
-          # All shipped RID SDKs must provide exactly the Salts-owned Unicode ABI.
+          # All six candidate SDKs must publish one byte-identical
+          # Unicode ABI header with BOTH additive symbols. A target name
+          # alone cannot prove either public C11 declaration is packaged.
+          unicode_header_sha=''
           for rid in linux-x64 linux-arm64 windows-x64 macos-arm64 android-arm64-v8a ios-arm64; do
-            test -f "package/sdk/$rid/include/unicode/salts_unicode.h"
+            header="package/sdk/$rid/include/unicode/salts_unicode.h"
+            test -f "$header"
             test -f "package/sdk/$rid/include/unicode/salts_unicode_normalize.h"
             test -f "package/sdk/$rid/include/idna/salts_idna.h"
             grep -Fq "Salts::Unicode" "package/sdk/$rid/lib/cmake/Salts/SaltsTargets.cmake"
+            grep -Fq 'salts_unicode_is_punctuation_or_symbol(' "$header"
+            grep -Fq 'salts_unicode_case_fold(' "$header"
+            grep -Fq 'SALTS_UNICODE_ERR_CAPACITY = -4' "$header"
+            test "$(grep -Fc 'salts_unicode_is_punctuation_or_symbol(' "$header")" -eq 1
+            test "$(grep -Fc 'salts_unicode_case_fold(' "$header")" -eq 1
+            current_sha="$(sha256sum "$header" | cut -d ' ' -f1)"
+            test -n "$current_sha"
+            if [ -z "$unicode_header_sha" ]; then
+              unicode_header_sha="$current_sha"
+            elif [ "$current_sha" != "$unicode_header_sha" ]; then
+              printf 'Mismatched installed Unicode public ABI: %s has %s vs %s\n' \
+                "$rid" "$current_sha" "$unicode_header_sha" >&2
+              exit 1
+            fi
+            printf '%s Unicode header SHA-256: %s\n' "$rid" "$current_sha"
           done
           # CNet's 2.3 additive ABI must be present in each shipped RID.
           for rid in linux-x64 linux-arm64 windows-x64 macos-arm64 android-arm64-v8a ios-arm64; do
