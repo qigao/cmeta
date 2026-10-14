@@ -76,6 +76,7 @@ add_custom_command(
 add_library(
   salts_unicode STATIC
   include/salts_unicode.h src/salts_unicode_case.c src/unicode_case_data.h
+  src/salts_unicode_casefold.c src/unicode_casefold_data.h
   include/salts_unicode_normalize.h src/salts_unicode_normalize.c src/unicode_normalization_data.h
   src/salts_unicode_grapheme.c src/unicode_grapheme_data.h
   src/salts_unicode_word.c src/unicode_word_data.h

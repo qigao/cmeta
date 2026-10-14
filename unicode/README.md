@@ -48,6 +48,20 @@ C11/C++17 消费测试。**这是新增公开 API 的开发候选**：发布前�
 审查、跨平台 SDK 验收与明确版本溯源；不会自动更新已有发布包，也不
 授权 Stun 使用未发布 API 或添加本地 Unicode 回退。
 
+## Unicode 17 Default Full Case Folding（Salts #1192）
+
+`salts_unicode_case_fold(input, output, capacity, &bytes)` exposes Unicode 17
+Default Full C/F Case Folding distinct from LOWER, UPPER, TITLE, NFC and
+Turkic T rules (ẞ → ss, ς → σ, İ → i + combining dot).
+
+The checked-in UnicodeData source is CaseFolding.txt from
+`unicode-org/unicodetools/final-17.0-20250910`; generated tables are
+immutable and have no runtime fallback. Measure/write uses caller-owned
+counted UTF-8, validates first and preserves output on failure.
+
+**This is a joint ABI CI candidate, not a published Salts SDK.** Neither
+upstream Draft is merged, and Stun must not consume unshipped API exports.
+
 ## 使用
 
 ```c

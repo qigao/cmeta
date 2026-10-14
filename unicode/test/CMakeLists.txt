@@ -20,6 +20,24 @@ cmake_add_test(test_salts_unicode_header_cpp
 set_tests_properties(test_salts_unicode PROPERTIES LABELS "unicode;unit")
 set_tests_properties(test_salts_unicode_header_cpp PROPERTIES LABELS "unicode;headers")
 
+cmake_add_test(test_salts_unicode_casefold
+  SOURCES test_salts_unicode_casefold.c
+  LIBS Salts::Unicode Salts::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  FOLDER "unicode/tests")
+target_compile_definitions(test_salts_unicode_casefold PRIVATE
+  SALTS_UNICODE_CASEFOLD_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/../data/17.0.0/CaseFolding.txt")
+set_tests_properties(test_salts_unicode_casefold PROPERTIES
+  LABELS "unicode;casefold;conformance")
+
+cmake_add_test(test_salts_unicode_combined_abi
+  SOURCES test_salts_unicode_combined_abi.c
+  LIBS Salts::Unicode Salts::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  FOLDER "unicode/tests")
+set_tests_properties(test_salts_unicode_combined_abi PROPERTIES
+  LABELS "unicode;abi;combined")
+
 # Compare every valid Unicode scalar against the checked-in Unicode 17
 # UnicodeData.txt General_Category P*/S* oracle; fail on a changed category.
 cmake_add_test(test_salts_unicode_category_conformance

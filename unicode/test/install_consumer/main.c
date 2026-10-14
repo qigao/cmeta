@@ -24,5 +24,10 @@ int main(void) {
       SALTS_UNICODE_OK || punctuation_or_symbol != 1) return 9;
   if (salts_unicode_is_punctuation_or_symbol(0x00a0u, &punctuation_or_symbol) !=
       SALTS_UNICODE_OK || punctuation_or_symbol != 0) return 10;
+  size_t fold_bytes = 0u;
+  char folded[8] = {0};
+  if (salts_unicode_case_fold(vstr_from_cstr("\xc3\x9f"), folded,
+                              sizeof folded, &fold_bytes) != SALTS_UNICODE_OK) return 11;
+  if (fold_bytes != 2u || memcmp(folded, "ss", 2u) != 0) return 12;
   return 0;
 }

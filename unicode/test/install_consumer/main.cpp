@@ -24,5 +24,9 @@ int main() {
       SALTS_UNICODE_OK || punctuation_or_symbol != 1) return 6;
   if (salts_unicode_is_punctuation_or_symbol(0x03b1u, &punctuation_or_symbol) !=
       SALTS_UNICODE_OK || punctuation_or_symbol != 0) return 7;
+  char folded[8] = {0}; std::size_t fold_bytes = 0u;
+  if (salts_unicode_case_fold(vstr_from_cstr("\xe1\xba\x9e"), folded,
+                              sizeof folded, &fold_bytes) != SALTS_UNICODE_OK) return 8;
+  if (fold_bytes != 2u || std::memcmp(folded, "ss", 2u) != 0) return 9;
   return 0;
 }
