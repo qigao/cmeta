@@ -1,0 +1,151 @@
+name: CFlow #1210 deterministic red-green QA (no production hook)
+
+'on':
+  push:
+    branches:
+      - qa/cflow-1210-deterministic-red-green
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cflow-1210-deterministic-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-source-red-green:
+    name: Old CLOSED vs clean fix OK (bounded real Worker C11)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - name: Checkout QA harness only
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Restore canonical vcpkg binary cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+
+      - name: Restore Salts re2c host tool
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Prepare Linux C11 host build
+        uses: ./.github/actions/setup-build-host
+
+      - name: Restore native compiler cache
+        uses: ./.github/actions/setup-compiler-cache
+        with:
+          profile: linux-release
+
+      - name: Create exact baseline and clean-fix disposable Git worktrees
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e '6cf093dc053db98bb21b1788eb2fc1ada4df195e^{commit}'
+          git cat-file -e 'a18c94a30700fa3dd157cc67e8895ea2725a89a3^{commit}'
+          root="$GITHUB_WORKSPACE/build/cflow-1210-redgreen"
+          mkdir -p "$root/sources" "$root/evidence"
+          git worktree add --detach \
+            "$root/sources/baseline" 6cf093dc053db98bb21b1788eb2fc1ada4df195e
+          git worktree add --detach \
+            "$root/sources/fixed" a18c94a30700fa3dd157cc67e8895ea2725a89a3
+          python3 qa/cflow-1210/prepare_variants.py \
+            --baseline "$root/sources/baseline" \
+            --fixed "$root/sources/fixed" \
+            --fixture qa/cflow-1210/cflow_request_interleave_test.c \
+            --manifest "$root/evidence/provenance.json"
+
+      - name: Build original and fixed CFlow independently from full source
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/build/cflow-1210-redgreen"
+          for variant in baseline fixed; do
+            src="$root/sources/$variant"
+            bld="$root/compiled/$variant"
+            cmake --preset linux-release-ci -S "$src" -B "$bld" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+              -DBUILD_TESTS=ON -DBUILD_TESTING=ON \
+              -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
+              -DCMETA_BUILD_BENCHMARKS=OFF -DCFLOW_BUILD_BENCHMARKS=OFF
+            cmake --build "$bld" --target cflow_qa_request_interleave_test \
+              --parallel 2
+            # Verify both actual built CFlow sources came from the instrumented
+            # worktrees; no published SDK, cached fixed runtime or test stub.
+            python3 - "$bld" "$src" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+          build, src = map(lambda v: Path(v).resolve(), sys.argv[1:])
+          commands = json.loads((build/"compile_commands.json").read_text())
+          wanted = {str(src/"cflow/src/subscription.c"),
+                    str(src/"cflow/tests/cflow_qa_request_interleave_test.c")}
+          found = {str(Path(entry["file"]).resolve()) for entry in commands}
+          missing = wanted - found
+          assert not missing, "Uncompiled instrumented source: " + str(missing)
+          print("qa_compiled_full_source", src.name, sorted(wanted))
+          PY
+          done
+
+      - name: Require original master to fail with CLOSED after successful delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/build/cflow-1210-redgreen"
+          set +e
+          ctest --test-dir "$root/compiled/baseline" -V \
+            -R '^cflow_qa_request_interleave_test$' \
+            --no-tests=error --timeout 50 \
+            > "$root/evidence/baseline-ctest.log" 2>&1
+          result=$?
+          set -e
+          cat "$root/evidence/baseline-ctest.log"
+          if [[ $result -eq 0 ]]; then
+            echo "::error::Unfixed baseline unexpectedly passed: regression gate invalid"
+            exit 1
+          fi
+          grep -F 'BASELINE_CLOSED_AFTER_SUCCESS status=7 values=1025 dones=1 rejected_full=0 rejected_closed=0' \
+            "$root/evidence/baseline-ctest.log"
+          if grep -E 'QA_INTERLEAVING_UNEXPECTED|timed_out=1' \
+             "$root/evidence/baseline-ctest.log"; then
+            echo "::error::Wrong baseline failure; not the known CFlow completion race"
+            exit 1
+          fi
+          echo 'RED_PROVEN: original master returned CLOSED on fulfilled admitted demand'
+
+      - name: Require exact clean fix to pass identically gated Worker race ten times
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/build/cflow-1210-redgreen"
+          ctest --test-dir "$root/compiled/fixed" -V \
+            -R '^cflow_qa_request_interleave_test$' \
+            --repeat until-fail:10 --no-tests=error --timeout 50 \
+            > "$root/evidence/fixed-ctest.log" 2>&1
+          cat "$root/evidence/fixed-ctest.log"
+          grep -F 'FIXED_ADMITTED_OK status=0 values=1025 dones=1 rejected_full=0 rejected_closed=0' \
+            "$root/evidence/fixed-ctest.log"
+          count="$(grep -Fc 'FIXED_ADMITTED_OK status=0 values=1025 dones=1 rejected_full=0 rejected_closed=0' "$root/evidence/fixed-ctest.log")"
+          test "$count" -eq 10
+          echo 'GREEN_PROVEN: clean #1217 returns OK, all ten controlled schedules complete correctly'
+
+      - name: Preserve original-vs-fixed deterministic proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cflow-1210-deterministic-red-green-${{ github.sha }}
+          path: |
+            build/cflow-1210-redgreen/evidence/
+            build/cflow-1210-redgreen/compiled/baseline/Testing/Temporary/LastTest.log
+            build/cflow-1210-redgreen/compiled/fixed/Testing/Temporary/LastTest.log
+          retention-days: 14
+          if-no-files-found: ignore
