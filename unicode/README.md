@@ -54,6 +54,14 @@ C11/C++17 消费测试。**这是新增公开 API 的开发候选**：发布前�
 Default Full C/F Case Folding distinct from LOWER, UPPER, TITLE, NFC and
 Turkic T rules (ẞ → ss, ς → σ, İ → i + combining dot).
 
+The build now fails fast if either checked-in `CaseFolding.txt` or its
+generated `unicode_casefold_data.h` differ from the qualified SHA-256 pins
+(`ff8d8fef...c4183` and `9a262099...b8a14b`, respectively), matching
+the existing canonical Unicode 17 re2c property/category pin policy.
+The generator enforces the source digest as well; `--check` compares its
+recomputed output against the committed table without rewriting it.
+A Unicode data upgrade requires separate qualification and new provenance.
+
 The checked-in UnicodeData source is CaseFolding.txt from
 `unicode-org/unicodetools/final-17.0-20250910`; generated tables are
 immutable and have no runtime fallback. Measure/write uses caller-owned

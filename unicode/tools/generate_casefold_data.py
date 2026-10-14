@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +15,12 @@ def generated() -> str:
     raw = SOURCE.read_text(encoding="utf-8")
     if not raw.startswith("# CaseFolding-17.0.0.txt\n"):
         raise ValueError("Expected Unicode 17.0.0 CaseFolding source")
+    # Same immutable Unicode 17 C/F bytes as the CMake release configure pin.
+    # read_text() normalizes CRLF checkout data to LF.
+    if hashlib.sha256(raw.encode("utf-8")).hexdigest() != (
+        "ff8d8fefbf123574205085d6714c36149eb946d717a0c585c27f0f4ef58c4183"
+    ):
+        raise ValueError("Unicode 17 CaseFolding fixture SHA-256 mismatch")
     records: dict[int, tuple[str, tuple[int, ...]]] = {}
     for line in raw.splitlines():
         value = line.partition("#")[0].strip()
