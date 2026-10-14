@@ -201,10 +201,12 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
     const cflow_eval_options *options);
 
 /* Demand is always downstream-value demand, never Publisher-item demand.
- * An immediate pump-admission failure retains the saturated demand so a later
- * wake/request can retry it. CLOSED denotes either a successfully terminated
- * Subscription or a Scheduler that rejected new pump work after demand was
- * retained. */
+ * On a live Subscription, publishing demand under the Run lock accepts this
+ * request. If another Worker finishes it before the caller's pump scheduling
+ * check, this request still returns OK; a NEW request after terminal returns
+ * CLOSED. Immediate Scheduler admission failures retain saturated demand
+ * and keep their exact error status for a later explicit wake/request.
+ * Cancellation, explicit close and Run error are never normalized to OK. */
 cflow_status_result cflow_subscription_request_result(
     cflow_subscription *subscription, size_t n);
 /* Compatibility facade returning true only when demand was accepted without
