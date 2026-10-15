@@ -1707,6 +1707,39 @@ spec("CNet public client API") {
     check_equal(cnet_client_destroy(&client), SALTS_OK);
   }
 
+#if defined(__linux__)
+  it("drains an admitted VSOCK using client stop without explicit close") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_api_test_batch_probe probe = {0};
+    cnet_connection connection = {17u, 19u};
+    cnet_connect_options options = {
+        .uri = "vsock://2:5000",
+        .observer = {.on_state = cnet_api_test_batch_state, .user = &probe}};
+
+    atomic_init(&probe.connected, 0);
+    atomic_init(&probe.received, 0);
+    atomic_init(&probe.terminal, 0);
+    atomic_init(&probe.failed, 0);
+
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    /* No cnet_client_poll and NO user cnet_close: dispatcher drain must
+     * create its own CLOSE and settle the real epoll AF_VSOCK connect,
+     * including its generation-checked NativeIO cancel/completion. */
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+    check_true(connection.slot != 0u);
+    check_true(connection.generation != 0u);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(atomic_load_explicit(&probe.terminal, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&probe.received, memory_order_acquire), 0);
+    /* The kernel may reject an unrouteable VSOCK peer first (FAILED), or
+     * the canonical client close may win (CLOSED). Exactly one terminal
+     * must be published and all NativeIO ownership retired either way. */
+    check_true(atomic_load_explicit(&probe.failed, memory_order_acquire) <= 1);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+  }
+#endif
+
   it("rejects TLS policy for a plaintext VSOCK URI") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
