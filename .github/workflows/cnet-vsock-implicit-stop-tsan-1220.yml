@@ -1,0 +1,114 @@
+name: CNet VSOCK explicit/implicit stop full-source TSan (#1220)
+
+'on':
+  push:
+    branches:
+      - qa/cnet-vsock-implicit-stop-tsan-1220
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  first-party-tsan:
+    name: Exact-source implicit stop CNet/NativeIO TSan 3x
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    env:
+      TSAN_OPTIONS: "halt_on_error=1:exitcode=66"
+    steps:
+      - name: Checkout exact qualified C11 test candidate
+        uses: actions/checkout@v7
+        with:
+          ref: c490e19d7728037408337b47807f08c2709a6d0e
+          persist-credentials: false
+
+      - name: Restore canonical vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+      - name: Restore re2c tool
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Prepare C11 first-party TSan host
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = c490e19d7728037408337b47807f08c2709a6d0e
+          test "$(git hash-object cnet/tests/cnet_api_test.c)" = d19eee3e994ffc3c62d7552d29dbc62864a4a1fe
+          grep -F 'drains an admitted VSOCK using client stop without explicit close' cnet/tests/cnet_api_test.c
+          grep -F '.on_receive = cnet_api_test_batch_receive' cnet/tests/cnet_api_test.c
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache python3
+          ccache --zero-stats
+
+      - name: Configure real CNet source TSan without package/publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-tsan-ci -S . -B build/cnet-vsock-implicit-stop-1220-tsan \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTING=ON -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_ADDRESS=OFF \
+            -DENABLE_SANITIZER_UNDEFINED=OFF \
+            -DENABLE_SANITIZER_THREAD=ON
+
+      - name: Build actual CNet public API and private Owner test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/cnet-vsock-implicit-stop-1220-tsan --parallel 2 \
+            --target cnet_owner_profile_test cnet_api_test
+
+      - name: Audit actual first-party C11 source instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path.cwd().resolve()
+          data = json.loads(Path("build/cnet-vsock-implicit-stop-1220-tsan/compile_commands.json").read_text())
+          prefixes = ("cnet/src/","cnet/tests/","native-io/src/","cmeta/src/",
+                      "platform/src/","concurrency/src/","cstl/src/")
+          def relative(entry):
+              try:
+                  return Path(entry["file"]).resolve().relative_to(root).as_posix()
+              except ValueError:
+                  return ""
+          first = [(relative(x),x) for x in data]
+          matched = [(p,x) for p,x in first if p.startswith(prefixes)]
+          actual = {p for p,_ in matched}
+          wanted = {"cnet/src/cnet_owner.c","cnet/src/cnet_dispatcher.c",
+                    "cnet/tests/cnet_owner_test.c","cnet/tests/cnet_api_test.c",
+                    "native-io/src/native_io_readiness.c"}
+          missing = wanted - actual
+          assert not missing, "Missing source: "+str(missing)
+          bad = [p for p,x in matched
+                 if "-fsanitize=thread" not in x.get("command"," ".join(x.get("arguments",[])))]
+          print("first_party_instrumented",len(matched),"missing",len(missing),"not_tsan",len(bad))
+          assert not bad,"Non-TSan source: "+str(bad)
+          PY
+
+      - name: Strict implicit stop public CNet and private Owner CTests under TSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/cnet-vsock-implicit-stop-1220-tsan \
+            --no-tests=error --output-on-failure --timeout 90 \
+            --repeat until-fail:3 \
+            -R '^(cnet_owner_profile_test|cnet_api_test)$'
+
+      - name: Preserve exact CNet TSan CTest evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnet-vsock-implicit-stop-1220-tsan-source-attested
+          retention-days: 14
+          if-no-files-found: ignore
+          path: build/cnet-vsock-implicit-stop-1220-tsan/Testing/Temporary/LastTest.log
