@@ -1715,7 +1715,9 @@ spec("CNet public client API") {
     cnet_connection connection = {17u, 19u};
     cnet_connect_options options = {
         .uri = "vsock://2:5000",
-        .observer = {.on_state = cnet_api_test_batch_state, .user = &probe}};
+        .observer = {.on_state = cnet_api_test_batch_state,
+                     .on_receive = cnet_api_test_batch_receive,
+                     .user = &probe}};
 
     atomic_init(&probe.connected, 0);
     atomic_init(&probe.received, 0);
@@ -1732,10 +1734,10 @@ spec("CNet public client API") {
     check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.terminal, memory_order_acquire), 1);
     check_equal(atomic_load_explicit(&probe.received, memory_order_acquire), 0);
-    /* The kernel may reject an unrouteable VSOCK peer first (FAILED), or
-     * the canonical client close may win (CLOSED). Exactly one terminal
-     * must be published and all NativeIO ownership retired either way. */
-    check_true(atomic_load_explicit(&probe.failed, memory_order_acquire) <= 1);
+    /* A real receive observer is registered so an unsolicited byte
+     * delivery cannot be hidden by an absent callback. Kernel connection
+     * failure or a canonical client close can win; terminal is required
+     * exactly once in either case. */
     check_equal(cnet_client_destroy(&client), SALTS_OK);
   }
 #endif
