@@ -5,6 +5,9 @@
 
 #include <stdatomic.h>
 #include <stdbool.h>
+#if defined(CNET_VSOCK_STOP_DIAGNOSTIC)
+#include <stdio.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -344,6 +347,54 @@ static bool cnet_dispatcher_is_idle(cnet_dispatcher_impl *impl) {
   return true;
 }
 
+/* Isolated #1220 QA trace ONLY. Never built or installed by master. Do not
+ * change drain progress, ownership, or the existing 5000ms cutoff. */
+#if defined(CNET_VSOCK_STOP_DIAGNOSTIC)
+static void cnet_qa_dump_dispatcher_timeout(cnet_dispatcher_impl *impl) {
+  const size_t entries = impl->shard_count * impl->connection_capacity_per_shard;
+  size_t recorded = 0u;
+  size_t index;
+  fprintf(stderr,
+          "CNET1220_DRAIN_TIMEOUT active=%zu shards=%zu "
+          "capacity_per_shard=%zu first_error=%d admission_open=%d drained=%d\n",
+          impl->active_count, impl->shard_count,
+          impl->connection_capacity_per_shard,
+          atomic_load_explicit(&impl->first_error, memory_order_acquire),
+          impl->admission_open ? 1 : 0, impl->drained ? 1 : 0);
+  for (index = 0u; index < entries; ++index) {
+    cnet_dispatch_entry *entry = &impl->entries[index];
+    cnet_session_state state = CNET_SESSION_FREE;
+    int status;
+    if (!entry->active) continue;
+    ++recorded;
+    status = cnet_shards_state(impl->shards, entry->connection, &state);
+    fprintf(stderr,
+            "CNET1220_ENTRY idx=%zu shard=%u slot=%u generation=%u "
+            "close_requested=%d state_status=%d session_state=%d\n",
+            index, (unsigned)entry->connection.shard,
+            (unsigned)entry->connection.session.slot,
+            (unsigned)entry->connection.session.generation,
+            entry->close_requested ? 1 : 0, status, (int)state);
+  }
+  for (index = 0u; index < impl->shard_count; ++index) {
+    cnet_dispatch_lane *lane = &impl->lanes[index];
+    const bool pending =
+        atomic_load_explicit(&lane->pending, memory_order_acquire);
+    fprintf(stderr,
+            "CNET1220_LANE shard=%zu pending=%d event_kind=%d "
+            "event_slot=%u event_generation=%u event_state=%d\n",
+            index, pending ? 1 : 0,
+            pending ? (int)lane->event.kind : -1,
+            pending ? (unsigned)lane->event.session.slot : 0u,
+            pending ? (unsigned)lane->event.session.generation : 0u,
+            pending ? (int)lane->event.state : -1);
+  }
+  fprintf(stderr, "CNET1220_DRAIN_TOTAL recorded=%zu active=%zu\n",
+          recorded, impl->active_count);
+  fflush(stderr);
+}
+#endif
+
 static int cnet_dispatcher_drive_all(cnet_dispatcher_impl *impl) {
   cnet_dispatcher dispatcher = {impl};
   size_t index;
@@ -428,7 +479,12 @@ int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms) {
     status = atomic_load_explicit(&impl->first_error, memory_order_acquire);
     if (status != SALTS_OK && first_status == SALTS_OK) first_status = status;
     if (cnet_dispatcher_is_idle(impl)) break;
-    if (cmeta_monotonic_ms() - started_ms >= timeout_ms) return SALTS_ETIMEDOUT;
+    if (cmeta_monotonic_ms() - started_ms >= timeout_ms) {
+#if defined(CNET_VSOCK_STOP_DIAGNOSTIC)
+      cnet_qa_dump_dispatcher_timeout(impl);
+#endif
+      return SALTS_ETIMEDOUT;
+    }
   }
   impl->drained = true;
   return first_status;
