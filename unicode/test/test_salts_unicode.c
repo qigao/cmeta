@@ -276,6 +276,38 @@ suite("salts_unicode") {
                 SALTS_UNICODE_ERR_INVALID_ARGUMENT);
   }
 
+  it("queries Unicode 17 General_Category punctuation and symbols") {
+    static const struct { uint32_t scalar; int expected; } cases[] = {
+      {0x0024u, 1}, {0x00a3u, 1}, {0x20acu, 1}, /* Sc currency */
+      {0x002eu, 1}, {0x2014u, 1}, {0xff1au, 1}, /* Po, Pd, Po */
+      {0x005fu, 1}, {0x003du, 1}, {0x2603u, 1}, /* Pc, Sm, So */
+      {0x1f600u, 1},                              /* So emoji */
+      {0x0041u, 0}, {0x03b1u, 0}, {0x00a0u, 0},
+      {0x0301u, 0}, {0x2003u, 0}, {0x10ffffu, 0}
+    };
+    for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+      int actual = -1;
+      check_equal(salts_unicode_is_punctuation_or_symbol(cases[i].scalar, &actual),
+                  SALTS_UNICODE_OK);
+      check_equal(actual, cases[i].expected);
+    }
+    int unchanged = 0x5a5a;
+    check_equal(salts_unicode_is_punctuation_or_symbol(0xd800u, &unchanged),
+                SALTS_UNICODE_ERR_INVALID_ARGUMENT);
+    check_equal(unchanged, 0x5a5a);
+    check_equal(salts_unicode_is_punctuation_or_symbol(0xdfffu, &unchanged),
+                SALTS_UNICODE_ERR_INVALID_ARGUMENT);
+    check_equal(unchanged, 0x5a5a);
+    check_equal(salts_unicode_is_punctuation_or_symbol(0x110000u, &unchanged),
+                SALTS_UNICODE_ERR_INVALID_ARGUMENT);
+    check_equal(unchanged, 0x5a5a);
+    check_equal(salts_unicode_is_punctuation_or_symbol(UINT32_MAX, &unchanged),
+                SALTS_UNICODE_ERR_INVALID_ARGUMENT);
+    check_equal(unchanged, 0x5a5a);
+    check_equal(salts_unicode_is_punctuation_or_symbol(0x20acu, NULL),
+                SALTS_UNICODE_ERR_INVALID_ARGUMENT);
+  }
+
   it("trims Unicode whitespace as a borrowed view") {
     static const unsigned char ascii[] = {'\t', 'x', '\r', '\n'};
     static const unsigned char padded[] = {0xc2, 0xa0, 'a', 0x00, 'b',

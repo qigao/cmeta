@@ -15,6 +15,17 @@ spec("salts_unicode_header_cpp") {
     check_equal(digit, static_cast<uint32_t>(2));
     check_equal(salts_unicode_name_lookup(vstr_from_cstr("LF"), &digit), SALTS_UNICODE_OK);
     check_equal(digit, static_cast<uint32_t>(10));
+    int punctuation_or_symbol = -1;
+    check_equal(salts_unicode_is_punctuation_or_symbol(0x20acu, &punctuation_or_symbol),
+                SALTS_UNICODE_OK);
+    check_equal(punctuation_or_symbol, 1);
+    check_equal(salts_unicode_is_punctuation_or_symbol(0x03b1u, &punctuation_or_symbol),
+                SALTS_UNICODE_OK);
+    check_equal(punctuation_or_symbol, 0);
+    std::size_t folded_bytes = static_cast<std::size_t>(-1);
+    check_equal(salts_unicode_case_fold(vstr_from_cstr("\xc3\x9f"), nullptr,
+                                        0u, &folded_bytes), SALTS_UNICODE_OK);
+    check_equal(folded_bytes, static_cast<std::size_t>(2));
     check_equal(static_cast<int>(SALTS_UNICODE_CASE_UPPER), 0);
     check_equal(static_cast<int>(SALTS_UNICODE_CASE_TITLE), 2);
   }

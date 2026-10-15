@@ -26,7 +26,8 @@ typedef enum salts_unicode_status {
   SALTS_UNICODE_NO_MATCH = 2,
   SALTS_UNICODE_ERR_INVALID_ARGUMENT = -1,
   SALTS_UNICODE_ERR_INVALID_UTF8 = -2,
-  SALTS_UNICODE_ERR_CALLBACK = -3
+  SALTS_UNICODE_ERR_CALLBACK = -3,
+  SALTS_UNICODE_ERR_CAPACITY = -4
 } salts_unicode_status;
 
 typedef enum salts_unicode_case_mode {
@@ -309,6 +310,21 @@ salts_unicode_status salts_unicode_bidi_paragraph_level(
 salts_unicode_status salts_unicode_scalar_properties(uint32_t scalar, uint32_t *out_properties);
 
 /**
+ * Query whether one Unicode 17.0.0 scalar belongs to General_Category P*
+ * (punctuation) or S* (symbol). This is a category query, NOT Unicode
+ * White_Space and not a locale-sensitive C punctuation predicate.
+ *
+ * The canonical pinned Unicode 17 re2c category table is the sole source.
+ * The function is allocation-free, reentrant, and does not modify existing
+ * salts_unicode_scalar layout, property flags or case transformation modes.
+ * A valid scalar returns OK and sets *out_result to 0/1; a surrogate,
+ * out-of-range scalar or NULL output returns INVALID_ARGUMENT and leaves
+ * the supplied output unchanged.
+ */
+salts_unicode_status salts_unicode_is_punctuation_or_symbol(
+    uint32_t scalar, int *out_result);
+
+/**
  * Query the decimal value of a Unicode 17.0.0 Nd scalar, without allocation.
  *
  * @param scalar Unicode scalar value; surrogates and values above U+10FFFF are invalid.
@@ -353,6 +369,16 @@ salts_unicode_status salts_unicode_trim_whitespace(vstr input, vstr *output);
  * borrow valid UTF-8 and a nonzero return stops with ERR_CALLBACK. */
 salts_unicode_status salts_unicode_case_transform(vstr input, salts_unicode_case_mode mode,
                                                   salts_unicode_case_write write, void *userdata);
+
+/** Unicode 17 Default Full Case Folding, C/F mappings (not locale or
+ * LOWER/UPPER/TITLE). Both passes borrow the same immutable counted UTF-8
+ * source; output must not overlap input. NULL output with capacity 0 measures
+ * bytes; writing requires capacity for counted bytes, no appended NUL.
+ * All malformed UTF-8 and capacity failures occur before output is changed.
+ * No heap allocation or global mutable state.
+ */
+salts_unicode_status salts_unicode_case_fold(vstr input, char *output,
+                                             size_t capacity, size_t *out_length);
 
 /**
  * Scan one Unicode XID identifier starting at a byte offset.

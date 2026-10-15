@@ -38,6 +38,25 @@ salts_unicode_status salts_unicode_decimal_value(uint32_t scalar, uint32_t *out_
   return SALTS_UNICODE_OK;
 }
 
+/* Unicode 17 General_Category P* / S* query from the existing pinned re2c
+ * unicode_categories.re. No second range table, locale or mutable state. */
+salts_unicode_status salts_unicode_is_punctuation_or_symbol(uint32_t scalar, int *out_result) {
+  const uint32_t *YYCURSOR = &scalar;
+
+  if (out_result == NULL || scalar > 0x10ffffu ||
+      (scalar >= 0xd800u && scalar <= 0xdfffu))
+    return SALTS_UNICODE_ERR_INVALID_ARGUMENT;
+
+  /*!re2c
+    re2c:define:YYCTYPE = "uint32_t";
+    re2c:encoding:utf32 = 1;
+    re2c:yyfill:enable = 0;
+    P { *out_result = 1; return SALTS_UNICODE_OK; }
+    S { *out_result = 1; return SALTS_UNICODE_OK; }
+    * { *out_result = 0; return SALTS_UNICODE_OK; }
+  */
+}
+
 static uint32_t salts_unicode_decode_scalar(const unsigned char *bytes, size_t length) {
   if (length == 1u) return bytes[0];
   if (length == 2u)
