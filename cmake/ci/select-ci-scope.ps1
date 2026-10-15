@@ -19,6 +19,9 @@ $release23Push = $EventName -eq 'push' -and
   $HeadBranch -eq 'release/salts-2.3-ace-cnet-review' -and -not $PrepareRelease
 $releaseTagPush = $EventName -eq 'push' -and
   $HeadBranch -match '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$' -and -not $PrepareRelease
+# QA-only on exact PR branch. No production source/selector change can merge.
+$unicodeMainlineQa = $EventName -eq 'pull_request' -and
+  $HeadBranch -eq 'qa/unicode17-mainline-six-rid-6d6fd38' -and -not $PrepareRelease
 $full = ($EventName -eq "workflow_dispatch") -or $release23Push -or $releaseTagPush
 # Normal ACE development runs full Linux CTest. An explicit [ACE-MATRIX]
 # marker on the same long-lived Draft PR runs host-complete integration tests
@@ -269,7 +272,7 @@ foreach ($profile in $profiles) {
   # Build throughput binaries only for hosts selected as benchmark producers.
   # Ordinary native/Windows conformance must not compile or run performance suites.
   $entry.benchmarks = if ($work -and $entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
-  $entry.package = ($PrepareRelease -or $release23Push -or $releaseTagPush) -and [bool]$entry.sdk
+  $entry.package = ($PrepareRelease -or $release23Push -or $releaseTagPush -or $unicodeMainlineQa) -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
   $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
   # Full host CTest for an explicit qualification; Linux arm64 runs the

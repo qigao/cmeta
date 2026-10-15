@@ -118,7 +118,8 @@ jobs:
     needs:
       - scope
       - native
-    if: (github.event_name == 'workflow_dispatch' && inputs.prepare_release) || (github.event_name == 'push' && (github.ref == 'refs/heads/release/salts-2.3-ace-cnet-review' || startsWith(github.ref, 'refs/tags/v')))
+    # QA-only exact branch, no tag and no publication. Never merge this override.
+    if: (github.event_name == 'workflow_dispatch' && inputs.prepare_release) || (github.event_name == 'push' && (github.ref == 'refs/heads/release/salts-2.3-ace-cnet-review' || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'pull_request' && github.repository == 'qigao/salts' && github.head_ref == 'qa/unicode17-mainline-six-rid-6d6fd38')
     uses: ./.github/workflows/sdk-package.yml
     with:
       version: ${{ needs.scope.outputs.version }}
