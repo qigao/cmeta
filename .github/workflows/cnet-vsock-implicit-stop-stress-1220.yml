@@ -30,7 +30,7 @@ jobs:
       - name: Checkout exact clean public regression test source
         uses: actions/checkout@v7
         with:
-          ref: 5a053fcde7a0a0c2ef35fd961f02baec37507a2e
+          ref: c490e19d7728037408337b47807f08c2709a6d0e
           persist-credentials: false
 
       - name: Restore canonical re2c and vcpkg cache
@@ -53,11 +53,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 5a053fcde7a0a0c2ef35fd961f02baec37507a2e
+          test "$(git rev-parse HEAD)" = c490e19d7728037408337b47807f08c2709a6d0e
           grep -F 'drains an admitted VSOCK using client stop without explicit close' cnet/tests/cnet_api_test.c
           test "$(git hash-object cnet/src/cnet_client.c)" = ad19c1e062a826367d5514b0cb02bf3d8697fff7
           test "$(git hash-object cnet/src/cnet_dispatcher.c)" = 66de12448671da27f4a0f1fcf676185e77827447
-          test "$(git hash-object cnet/tests/cnet_api_test.c)" = c7981ef60c80f49f402d44e1102b389ddfae766a
+          test "$(git hash-object cnet/tests/cnet_api_test.c)" = d19eee3e994ffc3c62d7552d29dbc62864a4a1fe
           test "$(git hash-object native-io/src/native_io_readiness.c)" = 9d84dd70a5b13c6643d05b4a2201733f989c5415
           python3 - <<'PY'
           import errno, os, socket
