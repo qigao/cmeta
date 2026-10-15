@@ -10,12 +10,12 @@ permissions:
   packages: read
 
 concurrency:
-  group: cnet-vsock-stop-1220-${{ github.ref }
+  group: cnet-vsock-stop-1220-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   vsock-stop:
-    name: Real Linux ${{ matrix.compiler } CNet API stop 40x
+    name: Real Linux ${{ matrix.compiler }} CNet API stop 40x
     strategy:
       fail-fast: false
       matrix:
@@ -75,8 +75,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          build="build/cnet-vsock-stop-${{ matrix.compiler }"
-          cmake --preset "${{ matrix.preset }" -S . -B "$build" \
+          build="build/cnet-vsock-stop-${{ matrix.compiler }}"
+          cmake --preset "${{ matrix.preset }}" -S . -B "$build" \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTS=ON -DBUILD_TESTING=ON \
             -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
@@ -99,7 +99,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          build="build/cnet-vsock-stop-${{ matrix.compiler }"
+          build="build/cnet-vsock-stop-${{ matrix.compiler }}"
           ctest --test-dir "$build" \
             --no-tests=error --output-on-failure --timeout 25 \
             --repeat until-fail:40 -R '^cnet_api_test$'
@@ -109,9 +109,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cnet-vsock-stop-${{ matrix.compiler }-${{ github.sha }
+          name: cnet-vsock-stop-${{ matrix.compiler }}-${{ github.sha }}
           retention-days: 21
           if-no-files-found: ignore
           path: |
-            build/cnet-vsock-stop-${{ matrix.compiler }/Testing/Temporary/LastTest.log
-            build/cnet-vsock-stop-${{ matrix.compiler }/Testing/Temporary/LastTestsFailed.log
+            build/cnet-vsock-stop-${{ matrix.compiler }}/Testing/Temporary/LastTest.log
+            build/cnet-vsock-stop-${{ matrix.compiler }}/Testing/Temporary/LastTestsFailed.log
