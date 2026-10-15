@@ -6,6 +6,9 @@
 
 #include <limits.h>
 #include <stdbool.h>
+#if defined(CNET_VSOCK_STOP_DIAGNOSTIC)
+#include <stdio.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -560,6 +563,26 @@ static int cnet_owner_cancel_native_request(cnet_owner_impl *impl,
       !native_io_request_valid(request->native_request))
     return SALTS_EPROTO;
   status = native_io_backend_cancel(&impl->backend, request->native_request);
+#if defined(CNET_VSOCK_STOP_DIAGNOSTIC)
+  {
+    const cnet_owner_session *observed =
+        cnet_owner_find_session(impl, request->session);
+    if (observed != NULL && observed->peer.scheme == CNET_URI_VSOCK) {
+      fprintf(stderr,
+              "CNET1220_OWNER_CANCEL slot=%u generation=%u role=%d "
+              "native_slot=%u native_generation=%u status=%d "
+              "close_requested=%d active_requests=%zu\n",
+              (unsigned)request->session.slot,
+              (unsigned)request->session.generation,
+              (int)request->role,
+              (unsigned)request->native_request.slot,
+              (unsigned)request->native_request.generation,
+              status,
+              observed->close_requested ? 1 : 0,
+              observed->active_requests);
+    }
+  }
+#endif
 #if defined(CNET_INTERNAL_TESTING)
   if (impl->test_force_cancel_ealready_once &&
       (status == SALTS_OK || status == SALTS_EALREADY)) {
@@ -650,6 +673,17 @@ static int cnet_owner_release_tls_send(cnet_owner_impl *impl, cnet_owner_session
 static int cnet_owner_finalize_session(cnet_owner_impl *impl, cnet_owner_session *session) {
   int close_status;
   int status;
+#if defined(CNET_VSOCK_STOP_DIAGNOSTIC)
+  if (session->peer.scheme == CNET_URI_VSOCK)
+    fprintf(stderr,
+            "CNET1220_OWNER_FINALIZE slot=%u generation=%u "
+            "active_requests=%zu resolve_active=%d close_requested=%d "
+            "pending_status=%d occupied=%d\n",
+            (unsigned)session->handle.slot, (unsigned)session->handle.generation,
+            session->active_requests, session->resolve_active ? 1 : 0,
+            session->close_requested ? 1 : 0, session->pending_status,
+            session->occupied ? 1 : 0);
+#endif
   if (session->pending_status != SALTS_OK) {
     status = cnet_owner_release_tls_send(impl, session);
     if (status != SALTS_OK) return status;
@@ -1901,6 +1935,15 @@ static int cnet_owner_discard_queued_writes(cnet_owner_impl *impl, cnet_owner_se
 static int cnet_owner_progress_close(cnet_owner_impl *impl, cnet_owner_session *session) {
   int status;
   if (impl == NULL || session == NULL || !session->close_requested) return SALTS_EPROTO;
+#if defined(CNET_VSOCK_STOP_DIAGNOSTIC)
+  if (session->peer.scheme == CNET_URI_VSOCK)
+    fprintf(stderr,
+            "CNET1220_OWNER_CLOSE slot=%u generation=%u "
+            "active_requests=%zu resolve_active=%d pending_status=%d\n",
+            (unsigned)session->handle.slot,
+            (unsigned)session->handle.generation, session->active_requests,
+            session->resolve_active ? 1 : 0, session->pending_status);
+#endif
   /* User close preempts a failed handshake's bounded alert drain. The
    * in-flight NativeIO request and its generation remain owned until the
    * terminal completion/cancellation is routed; no partial resubmission. */
@@ -1982,6 +2025,19 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
   close_after_send = request->close_after_send;
   status = cnet_owner_release_request(request);
   if (status != SALTS_OK) return status;
+#if defined(CNET_VSOCK_STOP_DIAGNOSTIC)
+  if (role == CNET_OWNER_REQUEST_CONNECT &&
+      session->peer.scheme == CNET_URI_VSOCK) {
+    fprintf(stderr,
+            "CNET1220_OWNER_CONNECT_COMPLETION slot=%u generation=%u "
+            "completion_kind=%d completion_status=%d close_requested=%d "
+            "active_requests=%zu pending_status=%d\n",
+            (unsigned)session->handle.slot, (unsigned)session->handle.generation,
+            (int)completion->kind, completion->status,
+            session->close_requested ? 1 : 0,
+            session->active_requests, session->pending_status);
+  }
+#endif
   if (session->pending_status != SALTS_OK) {
     /* A handshake-alert write has completed only after NativeIO has sent
      * its entire bounded record, including any partial kernel completions.
