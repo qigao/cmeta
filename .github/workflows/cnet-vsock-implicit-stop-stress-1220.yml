@@ -1,0 +1,118 @@
+name: CNet VSOCK explicit and implicit stop stress (#1220)
+
+'on':
+  push:
+    branches:
+      - qa/cnet-vsock-implicit-stop-stress-1220
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cnet-vsock-implicit-stop-1220-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vsock-stop:
+    name: Linux ${{ matrix.compiler }} explicit + implicit VSOCK stop 600x
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            preset: linux-release-ci
+          - compiler: clang
+            preset: linux-clang-release-ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - name: Checkout exact clean public regression test source
+        uses: actions/checkout@v7
+        with:
+          ref: 5a053fcde7a0a0c2ef35fd961f02baec37507a2e
+          persist-credentials: false
+
+      - name: Restore canonical re2c and vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+
+      - name: Restore immutable dependency cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+
+      - name: Prepare Linux C11/Clang host
+        uses: ./.github/actions/setup-build-host
+
+      - name: Restore native compile cache
+        uses: ./.github/actions/setup-compiler-cache
+        with:
+          profile: linux-release
+
+      - name: Attest new test and unchanged CNet + NativeIO source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 5a053fcde7a0a0c2ef35fd961f02baec37507a2e
+          grep -F 'drains an admitted VSOCK using client stop without explicit close' cnet/tests/cnet_api_test.c
+          test "$(git hash-object cnet/src/cnet_client.c)" = ad19c1e062a826367d5514b0cb02bf3d8697fff7
+          test "$(git hash-object cnet/src/cnet_dispatcher.c)" = 66de12448671da27f4a0f1fcf676185e77827447
+          test "$(git hash-object cnet/tests/cnet_api_test.c)" = c7981ef60c80f49f402d44e1102b389ddfae766a
+          test "$(git hash-object native-io/src/native_io_readiness.c)" = 9d84dd70a5b13c6643d05b4a2201733f989c5415
+          python3 - <<'PY'
+          import errno, os, socket
+          print("has_AF_VSOCK=",hasattr(socket,"AF_VSOCK"))
+          print("has_/dev/vsock=",os.path.exists("/dev/vsock"))
+          if hasattr(socket,"AF_VSOCK"):
+              try:
+                  s=socket.socket(socket.AF_VSOCK,socket.SOCK_STREAM)
+                  print("host_AF_VSOCK_socket_open=success")
+                  s.close()
+              except OSError as error:
+                  print(f"host_AF_VSOCK_socket_open=errno:{error.errno}={errno.errorcode.get(error.errno,'unknown')}")
+          PY
+
+      - name: Build actual first-party CNet API explicit/implicit close cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="build/cnet-vsock-stop-${{ matrix.compiler }}"
+          cmake --preset "${{ matrix.preset }}" -S . -B "$build" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=ON -DBUILD_TESTING=ON \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DCNET_BUILD_BENCHMARKS=OFF -DCFLOW_BUILD_BENCHMARKS=OFF
+          cmake --build "$build" --target cnet_api_test --parallel 2
+          python3 - "$build" <<'PY'
+          import json, pathlib, sys
+          build=pathlib.Path(sys.argv[1])
+          data=json.loads((build/"compile_commands.json").read_text())
+          files={pathlib.Path(entry["file"]).resolve().relative_to(pathlib.Path.cwd()).as_posix()
+                 for entry in data if pathlib.Path(entry["file"]).resolve().is_relative_to(pathlib.Path.cwd())}
+          need={"cnet/src/cnet_client.c","cnet/src/cnet_dispatcher.c",
+                "cnet/tests/cnet_api_test.c","native-io/src/native_io_readiness.c"}
+          missing=need-files
+          assert not missing,"Not compiled from first-party source: "+str(missing)
+          print("verified_full_source_cnet_and_nativeio",sorted(need))
+          PY
+
+      - name: Repeat strict explicit + implicit VSOCK stop CNet API 600x
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="build/cnet-vsock-stop-${{ matrix.compiler }}"
+          ctest --test-dir "$build" \
+            --no-tests=error --output-on-failure --timeout 25 \
+            --repeat until-fail:600 -R '^cnet_api_test$'
+          echo "PASS 600/600 public CNet API tests with strict explicit and implicit VSOCK stop deadlines"
+
+      - name: Preserve first failed explicit/implicit stop or full success
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnet-vsock-implicit-stop-${{ matrix.compiler }}-${{ github.sha }}
+          retention-days: 21
+          if-no-files-found: ignore
+          path: |
+            build/cnet-vsock-stop-${{ matrix.compiler }}/Testing/Temporary/LastTest.log
+            build/cnet-vsock-stop-${{ matrix.compiler }}/Testing/Temporary/LastTestsFailed.log
