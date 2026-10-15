@@ -1,0 +1,125 @@
+name: CNet VSOCK Owner drain trace (#1220)
+
+'on':
+  push:
+    branches:
+      - qa/cnet-vsock-drain-trace-1220
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cnet-vsock-drain-trace-1220-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vsock-stop:
+    name: Real Linux ${{ matrix.compiler }} CNet API drain trace 600x
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            preset: linux-release-ci
+          - compiler: clang
+            preset: linux-clang-release-ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - name: Checkout exact isolated QA trace build
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Restore canonical re2c and vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+
+      - name: Restore immutable dependency cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+        with:
+          mode: read
+
+      - name: Prepare Linux C11/Clang host
+        uses: ./.github/actions/setup-build-host
+
+      - name: Restore native compile cache
+        uses: ./.github/actions/setup-compiler-cache
+        with:
+          profile: linux-release
+
+      - name: Verify original baseline and QA-only CNet diagnostic source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git merge-base HEAD ab2c58b09294e00f46f196cf72e81951bf6fbe6c)" = ab2c58b09294e00f46f196cf72e81951bf6fbe6c
+          grep -F 'CNET_VSOCK_STOP_DIAGNOSTIC=1' cnet/CMakeLists.txt
+          grep -F CNET1220_DRAIN_TIMEOUT cnet/src/cnet_dispatcher.c
+          grep -F CNET1220_OWNER_CANCEL cnet/src/cnet_owner.c
+          grep -F CNET1220_OWNER_CONNECT_COMPLETION cnet/src/cnet_owner.c
+          test "$(git hash-object cnet/src/cnet_client.c)" = ad19c1e062a826367d5514b0cb02bf3d8697fff7
+          test "$(git hash-object cnet/tests/cnet_api_test.c)" = c23703f9173610addc4063bf9aaac37121086300
+          test "$(git hash-object native-io/src/native_io_readiness.c)" = 9d84dd70a5b13c6643d05b4a2201733f989c5415
+          python3 - <<'PY'
+          import errno, os, socket
+          print("has_AF_VSOCK=",hasattr(socket,"AF_VSOCK"))
+          print("has_/dev/vsock=",os.path.exists("/dev/vsock"))
+          if hasattr(socket,"AF_VSOCK"):
+              try:
+                  s=socket.socket(socket.AF_VSOCK,socket.SOCK_STREAM)
+                  print("host_AF_VSOCK_socket_open=success")
+                  s.close()
+              except OSError as error:
+                  print(f"host_AF_VSOCK_socket_open=errno:{error.errno}={errno.errorcode.get(error.errno,'unknown')}")
+          PY
+
+      - name: Compile diagnostic CNet DSO plus unchanged real public API test
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="build/cnet-vsock-stop-${{ matrix.compiler }}"
+          cmake --preset "${{ matrix.preset }}" -S . -B "$build" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=ON -DBUILD_TESTING=ON \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DCNET_BUILD_BENCHMARKS=OFF -DCFLOW_BUILD_BENCHMARKS=OFF
+          cmake --build "$build" --target cnet_api_test --parallel 2
+          python3 - "$build" <<'PY'
+          import json, pathlib, sys
+          build=pathlib.Path(sys.argv[1])
+          data=json.loads((build/"compile_commands.json").read_text())
+          files={pathlib.Path(entry["file"]).resolve().relative_to(pathlib.Path.cwd()).as_posix()
+                 for entry in data if pathlib.Path(entry["file"]).resolve().is_relative_to(pathlib.Path.cwd())}
+          need={"cnet/src/cnet_client.c","cnet/src/cnet_dispatcher.c",
+                "cnet/tests/cnet_api_test.c","native-io/src/native_io_readiness.c"}
+          missing=need-files
+          assert not missing,"Not compiled from first-party source: "+str(missing)
+          ds=[entry for entry in data
+              if pathlib.Path(entry["file"]).resolve().as_posix().endswith("/cnet/src/cnet_dispatcher.c")]
+          assert ds and any("CNET_VSOCK_STOP_DIAGNOSTIC" in entry.get("command","") for entry in ds), "CNet DSO diagnostic instrumentation not compiled"
+          print("verified_CNet_DSO_diagnostic_and_full_NativeIO",sorted(need))
+          PY
+
+      - name: Repeat original CNet API 600x until first real failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="build/cnet-vsock-stop-${{ matrix.compiler }}"
+          ctest --test-dir "$build" \
+            --no-tests=error --output-on-failure --timeout 25 \
+            --repeat until-fail:600 -R '^cnet_api_test$'
+          echo "PASS 600/600 full CNet API CTests with unchanged 5-second VSOCK stop assertion"
+
+      - name: Preserve first-failure Owner/Dispatcher trace or exact success
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnet-vsock-drain-trace-${{ matrix.compiler }}-${{ github.sha }}
+          retention-days: 21
+          if-no-files-found: ignore
+          path: |
+            build/cnet-vsock-stop-${{ matrix.compiler }}/Testing/Temporary/LastTest.log
+            build/cnet-vsock-stop-${{ matrix.compiler }}/Testing/Temporary/LastTestsFailed.log
