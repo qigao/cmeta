@@ -70,6 +70,9 @@ function(cnet_configure_target target_name)
 endfunction()
 
 add_library(${TARGET_NAME} SHARED ${CNET_SOURCE_FILES})
+# #1220 diagnostic branch ONLY: failed-drain read-only state snapshot.
+# This define must never enter the official CNet shared-library build.
+target_compile_definitions(${TARGET_NAME} PRIVATE CNET_VSOCK_STOP_DIAGNOSTIC=1)
 # Manager and inbound admission handoff share CNet's single DSO identity.
 # Do not add them to CNET_SOURCE_FILES: profile archives recompile that list.
 target_sources(${TARGET_NAME} PRIVATE
