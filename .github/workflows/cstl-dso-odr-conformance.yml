@@ -45,11 +45,11 @@ jobs:
           path: salts-source
           persist-credentials: false
 
-      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+      - uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
         with:
           mode: read
 
-      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
+      - uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
 
       - name: Install Linux native build prerequisites
         shell: bash

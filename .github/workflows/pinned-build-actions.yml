@@ -1,0 +1,44 @@
+name: Salts immutable shared build Actions provenance
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'cmake/ci/verify-pinned-vcpkg-actions.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-provider-actions:
+    name: Require immutable vcpkg and re2c Actions across Salts workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prove mutably named build provider refs fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/verify-pinned-vcpkg-actions.py --self-test
+
+      - name: Audit every actual workflow's external tool bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/verify-pinned-vcpkg-actions.py --repo . \
+            | tee "$RUNNER_TEMP/pinned-build-actions.json"
+          grep -F 'd4afc8cd2f5ed3585c1e26469e379a087ce9ecf3' \
+            "$RUNNER_TEMP/pinned-build-actions.json"
+
+      - name: Preserve exact action identity inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: salts-exact-provider-action-pins
+          path: ${{ runner.temp }}/pinned-build-actions.json
+          if-no-files-found: error
+          retention-days: 30
