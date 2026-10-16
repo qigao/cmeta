@@ -631,6 +631,45 @@ spec("cmeta_process") {
       free(directory);
     }
 
+#ifdef _WIN32
+    it("waits for cancelled Job Object descendants before returning") {
+      /* The nested cmd.exe retains cwd until it exits. A successful wait
+       * must imply that the workspace is immediately removable, without
+       * retries or sleeps in the consumer after process teardown. */
+      const char script_text[] =
+          "@echo off\r\n"
+          "start \"\" /b cmd.exe /d /s /c \"echo ready>ready.txt & ping -n 20 127.0.0.1 >nul\"\r\n"
+          "ping -n 20 127.0.0.1 >nul\r\n";
+      for (int iteration = 0; iteration < 8; ++iteration) {
+        cmeta_process_options_t options;
+        cmeta_process_t *process = NULL;
+        cmeta_process_result_t result = {0};
+        char *directory = tt_make_temp_dir("salts-process-job-drain");
+        char script[SALTS_FS_MAX_PATH];
+        char ready[SALTS_FS_MAX_PATH];
+        const char *args[] = {"/d", "/s", "/c", script, NULL};
+        check_not_null(directory);
+        check_equal(cmeta_fs_path_join(script, sizeof(script), directory, "tree.cmd"), SALTS_OK);
+        check_equal(cmeta_fs_path_join(ready, sizeof(ready), directory, "ready.txt"), SALTS_OK);
+        check_equal(tt_write_file(script, script_text, strlen(script_text)), 0);
+        cmeta_process_options_init(&options);
+        options.program = "cmd.exe";
+        options.args = args;
+        options.cwd = directory;
+        check_equal(cmeta_process_spawn(&options, &process), SALTS_OK);
+        for (int poll = 0; poll < 200 && !path_exists(ready); ++poll)
+          cmeta_sleep_ms(10);
+        check_true(path_exists(ready));
+        check_equal(cmeta_process_terminate(process), SALTS_OK);
+        check_equal(cmeta_process_wait_for(process, 5000, &result), SALTS_OK);
+        check_equal(result.state, SALTS_PROCESS_TERMINATED);
+        cmeta_process_destroy(process);
+        check_equal(tt_remove_tree(directory), 0);
+        free(directory);
+      }
+    }
+#endif
+
     it("bounds combined captured output") {
       cmeta_process_options_t options;
       cmeta_process_t *process = NULL;
