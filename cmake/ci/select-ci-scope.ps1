@@ -33,6 +33,8 @@ if (($AceMatrix -or $AceSan) -and -not $aceBranchPr) {
   throw "ACE qualification is restricted to its long-lived PR"
 }
 if ($AceMatrix -and $AceSan) { throw "ACE-MATRIX and ACE-SAN are exclusive" }
+$installedAbiProbe = $EventName -eq 'pull_request' -and -not $PrepareRelease -and
+  $HeadBranch -eq 'feature/component-runtime-sdk-abi-probe'
 $unified23Review = ($HeadBranch -eq 'release/salts-2.3-ace-cnet-review' -and
   ($EventName -eq 'pull_request' -or $release23Push) -and -not $PrepareRelease) -or $releaseTagPush
 if ($UnifiedSan -and -not $unified23Review) {
@@ -245,7 +247,7 @@ foreach ($profile in $profiles) {
   $entry.armcontracts = $entry.id -eq 'linux-arm64-release' -and ($native -or $execution)
   $entry.projection = $projection -and $entry.id -in @('linux-release', 'linux-clang-release', 'macos-clang-release')
   $entry.benchmarks = if ($entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
-  $entry.package = ($PrepareRelease -or $release23Push -or $releaseTagPush) -and [bool]$entry.sdk
+  $entry.package = ($PrepareRelease -or $release23Push -or $releaseTagPush -or $installedAbiProbe) -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
   $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
   # Full host CTest for an explicit qualification; Linux arm64 runs the
