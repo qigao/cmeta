@@ -637,9 +637,9 @@ spec("cmeta_process") {
        * must imply that the workspace is immediately removable, without
        * retries or sleeps in the consumer after process teardown. */
       const char script_text[] =
-          "@echo off\\r\\n"
-          "start \\"\\" /b cmd.exe /d /s /c \\"echo ready>ready.txt & ping -n 20 127.0.0.1 >nul\\"\\r\\n"
-          "ping -n 20 127.0.0.1 >nul\\r\\n";
+          "@echo off\r\n"
+          "start \"\" /b cmd.exe /d /s /c \"echo ready>ready.txt & ping -n 20 127.0.0.1 >nul\"\r\n"
+          "ping -n 20 127.0.0.1 >nul\r\n";
       for (int iteration = 0; iteration < 8; ++iteration) {
         cmeta_process_options_t options;
         cmeta_process_t *process = NULL;
