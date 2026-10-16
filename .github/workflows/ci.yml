@@ -128,6 +128,7 @@ jobs:
       - benchmarks
       - package
       - servicehost_sdk_abi_probe
+      - servicehost_sdk_abi_consistency
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -221,6 +222,51 @@ jobs:
             -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
             -DSALTS_INSTALLED_ROOT="$GITHUB_WORKSPACE/stage/sdk/ios-arm64"
           cmake --build build/servicehost-sdk-abi-consumer --parallel 2
+
+  servicehost_sdk_abi_consistency:
+    name: Six-RID ServiceHost ABI identity
+    needs: servicehost_sdk_abi_probe
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/component-runtime-sdk-abi-probe' && needs.servicehost_sdk_abi_probe.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: salts-sdk-*
+          path: stage/sdk
+          merge-multiple: true
+      - name: Compare exact source, six ABI headers and exported names
+        shell: bash
+        env:
+          ABI_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$ABI_EXPECTED_HEAD"
+          header_digest=''
+          for rid in linux-x64 linux-arm64 windows-x64 macos-arm64 android-arm64-v8a ios-arm64; do
+            root="stage/sdk/$rid"
+            header="$root/include/salts/component_runtime_abi.h"
+            targets="$root/lib/cmake/Salts/SaltsTargets.cmake"
+            manifest="$root/salts-sdk-manifest.txt"
+            test -f "$header" && test -f "$targets" && test -f "$manifest"
+            grep -Fq 'Salts::Configurator' "$targets"
+            grep -Fq 'Salts::ServiceHost' "$targets"
+            ! grep -Eq 'Salts::(ConfiguratorCandidate|ServiceHostCandidate)' "$targets"
+            test "$(sed -n 's/^commit=//p' "$manifest" | tr -d '\r')" = "$ABI_EXPECTED_HEAD"
+            digest="$(sha256sum "$header" | cut -d ' ' -f1)"
+            test -n "$digest"
+            if [ -n "$header_digest" ]; then
+              test "$digest" = "$header_digest" || { echo "ABI header mismatch: $rid" >&2; exit 1; }
+            else
+              header_digest="$digest"
+            fi
+            printf '%s: source=%s abi_header=%s\n' "$rid" "$ABI_EXPECTED_HEAD" "$digest"
+          done
+          echo 'All six genuine installed ABI headers and export manifests match one immutable HEAD.'
 
   publish:
     name: Publish tagged Salts.Native SDK
