@@ -227,14 +227,14 @@ jobs:
       # Salts #1154: branch-scoped, opt-in copy parity against real provider DSOs.
       # Keep the existing configured build graph and CTest infrastructure.
       - name: Qualify isolated Component runtime (Unix)
-        if: ${{ !cancelled() && github.head_ref == 'feature/component-runtime-isolated' && steps.build_unix.outcome == 'success' && matrix.execution && (matrix.family == 'linux' || matrix.family == 'mac') }}
+        if: ${{ !cancelled() && (github.head_ref == 'feature/component-runtime-isolated' || github.head_ref == 'feature/component-runtime-sdk-abi-probe') && steps.build_unix.outcome == 'success' && matrix.execution && (matrix.family == 'linux' || matrix.family == 'mac') }}
         timeout-minutes: 15
         shell: bash
         run: |
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R '^cmeta_native_(configurator_candidate|service_host_candidate|component_candidate)_'
       - name: Qualify isolated Component runtime (Windows)
-        if: ${{ !cancelled() && github.head_ref == 'feature/component-runtime-isolated' && steps.build_windows.outcome == 'success' && matrix.execution && matrix.family == 'windows' }}
+        if: ${{ !cancelled() && (github.head_ref == 'feature/component-runtime-isolated' || github.head_ref == 'feature/component-runtime-sdk-abi-probe') && steps.build_windows.outcome == 'success' && matrix.execution && matrix.family == 'windows' }}
         timeout-minutes: 15
         shell: cmd
         run: |
