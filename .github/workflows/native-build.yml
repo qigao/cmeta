@@ -119,6 +119,9 @@ jobs:
           elif [ "${{ matrix.sanitizer }}" = 'tsan' ]; then
             set -- -DENABLE_SANITIZER_ADDRESS=OFF -DENABLE_SANITIZER_UNDEFINED=OFF -DENABLE_SANITIZER_THREAD=ON
           fi
+          if [ "${{ github.head_ref }}" = 'review/component-runtime-mainline-requal' ]; then
+            set -- "$@" -DSALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE=ON
+          fi
           cmake --preset "${{ matrix.preset }}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }} "$@"
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
       - name: Configure and build all modules on Windows
@@ -130,7 +133,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }}
+          cmake --preset "${{ matrix.preset }}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DSALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE=${{ github.head_ref == 'review/component-runtime-mainline-requal' && 'ON' || 'OFF' }}
           if errorlevel 1 exit /b 1
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
           if errorlevel 1 exit /b 1
@@ -139,7 +142,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SUPPRESS_REGENERATION=ON
+          if [ "${{ github.head_ref }}" = 'review/component-runtime-mainline-requal' ]; then
+            cmake --preset "${{ matrix.preset }}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SUPPRESS_REGENERATION=ON -DSALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE=ON
+          else
+            cmake --preset "${{ matrix.preset }}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SUPPRESS_REGENERATION=ON
+          fi
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
       # Only the Draft production POLICY candidate runs these explicit
       # installed-SDK source tests. Original immutable release tags/packages,
@@ -227,6 +234,26 @@ jobs:
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 90 -R "cnet_sg_(hosted_gateway|handoff_owner)_test"
+          if errorlevel 1 exit /b 1
+      # Branch-only conformance of original #1234 FR Provider DSO and strict
+      # borrowed service admission against #1235 already merged into master.
+      - name: Requalify original Configurator/ServiceHost Candidate (Unix)
+        if: ${{ !cancelled() && github.head_ref == 'review/component-runtime-mainline-requal' && steps.build_unix.outcome == 'success' && matrix.execution && (matrix.family == 'linux' || matrix.family == 'mac') }}
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R '^cmeta_native_(configurator_candidate|service_host_candidate|component_candidate)_'
+      - name: Requalify original Configurator/ServiceHost Candidate (Windows)
+        if: ${{ !cancelled() && github.head_ref == 'review/component-runtime-mainline-requal' && steps.build_windows.outcome == 'success' && matrix.execution && matrix.family == 'windows' }}
+        shell: cmd
+        timeout-minutes: 15
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R "^cmeta_native_(configurator_candidate|service_host_candidate|component_candidate)_"
           if errorlevel 1 exit /b 1
       - name: Run ACE sanitizer ownership contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.sanitizer != '' }}
