@@ -33,5 +33,12 @@ foreach(lang IN ITEMS c cpp)
   target_link_libraries(${consumer} PRIVATE Salts::ServiceHost)
   add_test(NAME ${consumer} COMMAND ${consumer})
 endforeach()
+# A static-only Configurator consumer must resolve with no Plugin/ServiceHost
+# archive or module loader dependency in the link closure.
+add_executable(salts_configurator_only_consumer consumer_configurator.c)
+set_target_properties(salts_configurator_only_consumer PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+target_link_libraries(salts_configurator_only_consumer PRIVATE Salts::Configurator)
+add_test(NAME salts_configurator_only_consumer COMMAND salts_configurator_only_consumer)
 # The consumer project references no Salts source-tree paths, private archives,
 # or build-interface candidate targets. Imported target linkage is mandatory.
