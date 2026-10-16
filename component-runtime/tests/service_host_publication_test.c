@@ -308,6 +308,135 @@ suite("ComponentPlugin generation publication") {
     }
 
 
+    it("rejects invalid N+1 while live N stays published and then recovers") {
+        const cmeta_plugin_registry_config registry_config = {1};
+        cmeta_plugin_registry registry = {0};
+        cmeta_plugin_ref ref;
+        cmeta_plugin_lifecycle_info info;
+        publication_generation_fixture live = {0};
+        publication_generation_fixture pending = {0};
+        salts_service_host_runtime runtime = {0};
+        salts_service_host_scope old_scope = {0};
+        salts_service_host_scope new_scope = {0};
+        salts_service_host_generation *previous = NULL;
+        bool quiet = false;
+
+        check_equal(cmeta_plugin_registry_init(
+            &registry, &registry_config), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_load(
+            &registry, COMPONENT_PROVIDER_PLUGIN_PATH, &ref), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_start(
+            &registry, ref), CMETA_PLUGIN_OK);
+        check_equal(build_generation(
+            &live, UINT64_C(1), &registry, ref), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_runtime_init(
+            &runtime), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_runtime_publish(
+            &runtime, &live.generation, &previous), SALTS_SERVICE_HOST_OK);
+        check_null(previous);
+        check_equal(salts_service_host_scope_acquire(
+            &runtime, &old_scope), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_scope_generation_id(
+            &old_scope), UINT64_C(1));
+        check_equal(scope_value(&old_scope), COMPONENT_PROVIDER_VALUE);
+
+        {
+            const salts_service_host_generation_storage storage = {
+                pending.deployments, 1u,
+                pending.instances, 1u,
+                pending.dependencies, 1u,
+                pending.activation_order, 1u,
+                pending.modules, 1u
+            };
+            const salts_service_host_source invalid = {
+                ref, COMPONENT_PROVIDER_LEGACY_EXPORT_ID, NULL, NULL
+            };
+            const salts_service_host_source exact = {
+                ref, COMPONENT_PROVIDER_EXPORT_ID, NULL, NULL
+            };
+            /* The provider export itself is valid; its legacy R0 service ABI
+             * is insufficient for a borrowed cross-DSO Interface. */
+            check_equal(salts_service_host_generation_build(
+                &pending.generation, UINT64_C(2), &registry, &storage,
+                NULL, 0u, &invalid, 1u, NULL, 0u),
+                SALTS_SERVICE_HOST_PROVIDER_ERROR);
+            check_equal(pending.generation.state,
+                SALTS_SERVICE_HOST_GENERATION_FAILED);
+            check_equal(pending.generation.failure.source_index, (size_t)0u);
+            check_equal(cmeta_plugin_registry_get_lifecycle(
+                &registry, ref, &info), CMETA_PLUGIN_OK);
+            check_equal(info.active_leases, (size_t)1u);
+
+            /* Failure never withdraws the published N. The failed candidate
+             * cannot overwrite previous or be admitted for new requests. */
+            previous = &live.generation;
+            check_equal(salts_service_host_runtime_publish(
+                &runtime, &pending.generation, &previous),
+                SALTS_SERVICE_HOST_INVALID_STATE);
+            check_true(previous == &live.generation);
+            check_equal(live.generation.state,
+                SALTS_SERVICE_HOST_GENERATION_PUBLISHED);
+            check_equal(runtime.attached_generations, (size_t)1u);
+            check_equal(scope_value(&old_scope), COMPONENT_PROVIDER_VALUE);
+
+            /* Reuse the same failed candidate storage; no fallback execution
+             * of the malformed Provider and no extra leaked module lease. */
+            check_equal(salts_service_host_generation_build(
+                &pending.generation, UINT64_C(3), &registry, &storage,
+                NULL, 0u, &exact, 1u, NULL, 0u),
+                SALTS_SERVICE_HOST_OK);
+        }
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)2u);
+        check_equal(salts_service_host_runtime_publish(
+            &runtime, &pending.generation, &previous), SALTS_SERVICE_HOST_OK);
+        check_true(previous == &live.generation);
+        check_equal(live.generation.state,
+            SALTS_SERVICE_HOST_GENERATION_DRAINING);
+        check_equal(salts_service_host_scope_acquire(
+            &runtime, &new_scope), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_scope_generation_id(
+            &new_scope), UINT64_C(3));
+        check_equal(scope_value(&old_scope), COMPONENT_PROVIDER_VALUE);
+        check_equal(scope_value(&new_scope), COMPONENT_PROVIDER_VALUE);
+
+        check_equal(salts_service_host_generation_drain(
+            &runtime, &live.generation), SALTS_SERVICE_HOST_BUSY);
+        check_equal(salts_service_host_scope_release(
+            &old_scope), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_generation_drain(
+            &runtime, &live.generation), SALTS_SERVICE_HOST_OK);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)1u);
+
+        check_equal(salts_service_host_runtime_close(
+            &runtime, &previous), SALTS_SERVICE_HOST_OK);
+        check_true(previous == &pending.generation);
+        check_equal(salts_service_host_generation_drain(
+            &runtime, &pending.generation), SALTS_SERVICE_HOST_BUSY);
+        check_equal(salts_service_host_scope_release(
+            &new_scope), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_generation_drain(
+            &runtime, &pending.generation), SALTS_SERVICE_HOST_OK);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+
+        check_equal(salts_service_host_runtime_destroy(
+            &runtime), SALTS_SERVICE_HOST_OK);
+        check_equal(cmeta_plugin_registry_request_stop(
+            &registry, ref), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_poll_quiescent(
+            &registry, ref, &quiet), CMETA_PLUGIN_OK);
+        check_true(quiet);
+        check_equal(cmeta_plugin_registry_unload(
+            &registry, ref), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_destroy(
+            &registry), CMETA_PLUGIN_OK);
+    }
+
     it("publishes N+1 atomically while admitted N drains") {
         const cmeta_plugin_registry_config registry_config = {1};
         cmeta_plugin_registry registry = {0};
