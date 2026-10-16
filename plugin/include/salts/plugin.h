@@ -178,7 +178,19 @@ typedef struct cmeta_plugin_manifest {
 typedef const cmeta_plugin_manifest *(CMETA_PLUGIN_CALL *cmeta_plugin_query_fn)(
     uint32_t host_abi);
 
-/* Stable public registry reference. slot is 1-based; zero fields are invalid. */
+/*
+ * Registry-incarnation-scoped reference. slot is 1-based; zero fields are
+ * structurally invalid. The Ref fields identify a Slot only within one
+ * successfully initialized Registry's lifetime (init through final successful
+ * destroy). They do NOT carry a Registry owner/epoch/incarnation identity.
+ *
+ * Within that live Registry, a cleared/reused Slot changes generation and a
+ * historical Ref is rejected as STALE. After destroy -> init, new Slot and
+ * Lease generations may start at the same numeric values as old credentials.
+ * The Host MUST NOT present old Refs to a newly initialized or unrelated
+ * Registry: the current ABI cannot guarantee cross-incarnation STALE fencing.
+ * Changing that guarantee requires a separately versioned ABI decision.
+ */
 typedef struct cmeta_plugin_ref {
     uint32_t slot;
     uint32_t generation;
@@ -192,6 +204,13 @@ typedef enum cmeta_plugin_lifecycle_state {
     CMETA_PLUGIN_LIFECYCLE_QUIESCENT
 } cmeta_plugin_lifecycle_state;
 
+/*
+ * An acquired Lease is an owner-scoped, live Registry/DSO borrow, not a
+ * persistable identity or a second owner when its bytes are copied. The Host
+ * must release the authoritative Lease before final Registry destroy and must
+ * never carry a Lease token across destroy -> init (even with the same Registry
+ * object address). Numeric equality across incarnations grants NO authority.
+ */
 typedef struct cmeta_plugin_lease {
     cmeta_plugin_ref plugin;
     uint32_t slot;
@@ -213,10 +232,12 @@ typedef struct cmeta_plugin_registry {
     void *impl;
 } cmeta_plugin_registry;
 
+/* A shape check only: nonzero fields do not prove live Registry authority. */
 static inline bool cmeta_plugin_ref_valid(cmeta_plugin_ref ref) {
     return ref.slot != 0u && ref.generation != 0u;
 }
 
+/* A shape check only: this does not prove the Lease is still acquired. */
 static inline bool cmeta_plugin_lease_valid(cmeta_plugin_lease lease) {
     return cmeta_plugin_ref_valid(lease.plugin) &&
            lease.slot != 0u && lease.generation != 0u;
@@ -263,6 +284,20 @@ cmeta_plugin_status cmeta_plugin_manifest_find_export(
  * A lease is a DSO/resource borrow, not necessarily one lease per function
  * call. When a reflected function uses plugin-owned native traits/descriptors,
  * the borrow must cover binding, invocation, output publication and cleanup.
+ *
+ * Host ownership boundary: init succeeds only for an uninitialized Registry.
+ * Final successful destroy ends that incarnation; all previously issued Refs,
+ * Leases and borrowed DSO/manifest/export pointers lose authority. If destroy
+ * returns a failure or BUSY, the same Registry implementation may remain live;
+ * it must not be silently re-initialized or replaced. Recovery is an explicit
+ * Host operation after the documented quiescence/ownership requirements are
+ * met, not an automatic retry.
+ *
+ * Do not race final destroy or subsequent re-init with Registry callers or
+ * retained callbacks/borrows. The public Ref/Lease ABI has NO incarnation
+ * field: syntactic validity and coincident numeric equality after re-init do
+ * not establish ownership of the new incarnation. Do not persist raw runtime
+ * tokens/pointers or assume cross-incarnation CMETA_PLUGIN_STALE rejection.
  */
 cmeta_plugin_status cmeta_plugin_registry_init(
     cmeta_plugin_registry *registry,
@@ -327,6 +362,13 @@ cmeta_plugin_status cmeta_plugin_registry_unload(
 
 size_t cmeta_plugin_registry_count(const cmeta_plugin_registry *registry);
 
+/*
+ * Exclusive Host teardown. A successful final destroy releases Registry
+ * storage and ends this incarnation; a later init starts a NEW authority
+ * domain even if the same cmeta_plugin_registry object is reused.
+ * Failed destroy can retain ownership for an explicit Host recovery attempt.
+ * In particular, never reuse old Ref/Lease token bytes in the new Registry.
+ */
 cmeta_plugin_status cmeta_plugin_registry_destroy(
     cmeta_plugin_registry *registry);
 
