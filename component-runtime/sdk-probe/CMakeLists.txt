@@ -40,5 +40,20 @@ set_target_properties(salts_configurator_only_consumer PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_link_libraries(salts_configurator_only_consumer PRIVATE Salts::Configurator)
 add_test(NAME salts_configurator_only_consumer COMMAND salts_configurator_only_consumer)
+# Windows DLLs come only from the exact installed SDK selected by the test.
+# Put that one dependency closure beside consumers for native Windows loader
+# resolution; never search PATH or a second/stale SDK at execution time.
+if(WIN32)
+  file(GLOB salts_installed_dlls "${SALTS_INSTALLED_ROOT}/bin/*.dll")
+  foreach(consumer IN ITEMS salts_abi_consumer_c salts_abi_consumer_cpp
+                            salts_configurator_only_consumer)
+    foreach(dll IN LISTS salts_installed_dlls)
+      add_custom_command(TARGET ${consumer} POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${dll}"
+                "$<TARGET_FILE_DIR:${consumer}>"
+        VERBATIM)
+    endforeach()
+  endforeach()
+endif()
 # The consumer project references no Salts source-tree paths, private archives,
 # or build-interface candidate targets. Imported target linkage is mandatory.
