@@ -127,6 +127,7 @@ jobs:
       - formal
       - benchmarks
       - package
+      - servicehost_sdk_abi_probe
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -140,6 +141,86 @@ jobs:
           case ",$SELECTED_RESULTS," in
             *,failure,*|*,cancelled,*) exit 1 ;;
           esac
+
+  # Strictly PR-only; consumes actual six installed Salts Native SDK artifacts.
+  # A success is an ABI export/compile proof, never a publication decision.
+  servicehost_sdk_abi_probe:
+    name: ServiceHost installed ABI / ${{ matrix.rid }}
+    needs: [scope, native]
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/component-runtime-sdk-abi-probe' && needs.native.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {rid: linux-x64, runner: ubuntu-24.04, artifact: salts-sdk-linux-x64, native: true}
+          - {rid: linux-arm64, runner: ubuntu-24.04-arm, artifact: salts-sdk-linux-arm64, native: true}
+          - {rid: windows-x64, runner: windows-2025, artifact: salts-sdk-windows-x64, native: true}
+          - {rid: macos-arm64, runner: macos-15, artifact: salts-sdk-macos, native: true}
+          - {rid: android-arm64-v8a, runner: ubuntu-24.04, artifact: salts-sdk-android-arm64-v8a, native: false}
+          - {rid: ios-arm64, runner: macos-15, artifact: salts-sdk-ios-arm64, native: false}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: stage/sdk
+      - name: Assert genuine installed SDK ABI export
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:GITHUB_WORKSPACE "stage/sdk/${{ matrix.rid }}"
+          $targets = Join-Path $root "lib/cmake/Salts/SaltsTargets.cmake"
+          $header = Join-Path $root "include/salts/component_runtime_abi.h"
+          foreach ($file in @($targets, $header,
+              (Join-Path $root "include/salts/configurator.h"),
+              (Join-Path $root "include/salts/service_host.h"),
+              (Join-Path $root "lib/cmake/Salts/SaltsConfig.cmake"))) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing genuine installed ABI file: $file" }
+          }
+          $contents = Get-Content -LiteralPath $targets -Raw
+          foreach ($name in @("Salts::Configurator", "Salts::ServiceHost")) {
+            if (-not $contents.Contains($name)) { throw "Missing real exported CMake target $name" }
+          }
+          if ($contents.Contains("Salts::ConfiguratorCandidate") -or $contents.Contains("Salts::ServiceHostCandidate")) {
+            throw "Private candidate target leaked into installed SDK"
+          }
+          if ((Get-Content -LiteralPath $header -Raw) -notmatch 'SALTS_COMPONENT_RUNTIME_ABI_VERSION 0x00010000u') {
+            throw "Wrong component runtime ABI epoch in ${{ matrix.rid }}"
+          }
+      - name: Configure external C11/C++17 installed consumer (native)
+        if: matrix.native
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S component-runtime/sdk-probe -B build/servicehost-sdk-abi-consumer -DCMAKE_BUILD_TYPE=Release -DSALTS_INSTALLED_ROOT="$GITHUB_WORKSPACE/stage/sdk/${{ matrix.rid }}"
+          cmake --build build/servicehost-sdk-abi-consumer --config Release --parallel 2
+          ctest --test-dir build/servicehost-sdk-abi-consumer -C Release --output-on-failure --no-tests=error
+      - name: Configure and link Android arm64 installed consumer
+        if: matrix.rid == 'android-arm64-v8a'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+          cmake -S component-runtime/sdk-probe -B build/servicehost-sdk-abi-consumer \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 \
+            -DSALTS_INSTALLED_ROOT="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
+          cmake --build build/servicehost-sdk-abi-consumer --parallel 2
+      - name: Configure and link iOS arm64 installed consumer
+        if: matrix.rid == 'ios-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S component-runtime/sdk-probe -B build/servicehost-sdk-abi-consumer \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            -DSALTS_INSTALLED_ROOT="$GITHUB_WORKSPACE/stage/sdk/ios-arm64"
+          cmake --build build/servicehost-sdk-abi-consumer --parallel 2
 
   publish:
     name: Publish tagged Salts.Native SDK
