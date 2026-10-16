@@ -121,11 +121,13 @@ jobs:
           fi
           if [ "${{ github.head_ref }}" = 'review/component-runtime-mainline-requal' ] ||
              [ "${{ github.head_ref }}" = 'review/component-runtime-mainline-installed-abi' ] ||
-             [ "${{ github.head_ref }}" = 'review/servicehost-installed-dso-conformance' ]; then
+             [ "${{ github.head_ref }}" = 'review/servicehost-installed-dso-conformance' ] ||
+             [ "${{ github.head_ref }}" = 'review/servicehost-fullsource-sanitizers' ]; then
             set -- "$@" -DSALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE=ON
           fi
           if [ "${{ github.head_ref }}" = 'review/component-runtime-mainline-installed-abi' ] ||
-             [ "${{ github.head_ref }}" = 'review/servicehost-installed-dso-conformance' ]; then
+             [ "${{ github.head_ref }}" = 'review/servicehost-installed-dso-conformance' ] ||
+             [ "${{ github.head_ref }}" = 'review/servicehost-fullsource-sanitizers' ]; then
             set -- "$@" -DSALTS_ENABLE_COMPONENT_RUNTIME_INSTALLED_ABI_PROBE=ON
           fi
           cmake --preset "${{ matrix.preset }}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }} "$@"
@@ -264,6 +266,64 @@ jobs:
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R "^cmeta_native_(configurator_candidate|service_host_candidate|component_candidate)_"
           if errorlevel 1 exit /b 1
+      # First-party code in a single sanitizer build; no prebuilt Salts SDKs.
+      - name: Audit source-instrumented ServiceHost dependency closure
+        if: ${{ !cancelled() && github.head_ref == 'review/servicehost-fullsource-sanitizers' && matrix.sanitizer != '' && steps.build_unix.outcome == 'success' }}
+        shell: bash
+        timeout-minutes: 5
+        env:
+          SANITIZER_KIND: ${{ matrix.sanitizer }}
+          SANITIZER_BUILD_DIR: ${{ matrix.build_dir }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, shlex
+          root = pathlib.Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          db = pathlib.Path(os.environ["SANITIZER_BUILD_DIR"]) / "compile_commands.json"
+          rows = json.loads(db.read_text(encoding="utf-8"))
+          required = {
+              "ServiceHost and Configurator": ("component-runtime/src/",),
+              "ServiceHost real DSO tests": ("component-runtime/tests/",),
+              "Original Component": ("component/src/",),
+              "Original ComponentPlugin": ("component-plugin/src/",),
+              "Plugin loader": ("plugin/src/",),
+              "CMeta": ("cmeta/",),
+              "Platform": ("platform/src/",),
+              "CFlow": ("cflow/src/",),
+              "CNet": ("cnet/src/",),
+          }
+          kind = os.environ["SANITIZER_KIND"]
+          expected = ("-fsanitize=thread",) if kind == "tsan" else ("-fsanitize=address", "-fsanitize=undefined")
+          counts = {name: 0 for name in required}
+          missing = []
+          for row in rows:
+              path = pathlib.Path(row["file"]).resolve()
+              try:
+                  rel = path.relative_to(root).as_posix()
+              except ValueError:
+                  continue
+              matched = [name for name, prefixes in required.items() if any(rel.startswith(p) for p in prefixes)]
+              if not matched:
+                  continue
+              flags = row.get("arguments") or shlex.split(row["command"])
+              for name in matched:
+                  counts[name] += 1
+              for flag in expected:
+                  if not any(arg == flag or arg.startswith(flag + ",") for arg in flags):
+                      missing.append((rel, flag))
+          print("first-party source coverage:", counts, "sanitizers:", expected)
+          if any(v == 0 for v in counts.values()) or missing:
+              raise SystemExit("Missing first-party sanitizer closure: " + repr(missing[:12]))
+          PY
+      - name: Repeat ServiceHost under full-source Linux ASan/UBSan or TSan
+        if: ${{ !cancelled() && github.head_ref == 'review/servicehost-fullsource-sanitizers' && matrix.sanitizer != '' && steps.build_unix.outcome == 'success' }}
+        shell: bash
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          ctest --preset "${{ matrix.preset }}" --no-tests=error \
+            --output-on-failure --timeout 120 --repeat until-fail:3 \
+            -R '^cmeta_native_(configurator_candidate|service_host_candidate|component_candidate)_'
       - name: Run ACE sanitizer ownership contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.sanitizer != '' }}
         timeout-minutes: 30
