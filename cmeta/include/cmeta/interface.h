@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <cmeta/pp.h>
 #include <cmeta/function.h>
@@ -195,6 +196,45 @@ cmeta_interface_desc_has_owning_method(const cmeta_interface_desc *desc) {
         if (cmeta_interface_method_owns_self(&desc->methods[i]))
             return true;
     return false;
+}
+
+/*
+ * Opt-in admission for exact borrowed dynamic-service ABI.
+ * ABI-only R/V methods stay valid for static/legacy use, but cannot prove a
+ * cross-DSO native call. Descriptors must be live under the provider's lease.
+ * The provider/compiler remains responsible for matching metadata to code.
+ * No lookup, allocation, registration, invocation or lease retention occurs.
+ */
+CMETA_INLINE bool
+cmeta_interface_borrowed_service_abi_valid(const cmeta_interface_desc *desc) {
+    size_t i;
+    if (!cmeta_interface_desc_valid(desc))
+        return false;
+    for (i = 0u; i < desc->method_count; ++i) {
+        const cmeta_interface_method_desc *method = &desc->methods[i];
+        const cmeta_function_desc *function;
+        size_t j;
+        if (!cmeta_interface_method_reflection_valid(method) ||
+            cmeta_interface_method_owns_self(method))
+            return false;
+        function = method->function;
+        if (method->abi->return_carrier == CMETA_ABI_UNSPECIFIED ||
+            (function->return_type->kind != CMETA_T_VOID &&
+             (function->result_flags & CMETA_RESULT_CLASS_MASK) == CMETA_RESULT_UNKNOWN))
+            return false;
+        for (j = 0u; j < function->param_count; ++j) {
+            const cmeta_param_desc *param = &function->params[j];
+            if (method->abi->param_carriers[j] == CMETA_ABI_UNSPECIFIED ||
+                (param->flags & CMETA_PARAM_DIRECTION_MASK) == CMETA_PARAM_UNKNOWN ||
+                (param->type->kind == CMETA_T_POINTER &&
+                 (param->flags & CMETA_PARAM_OWNERSHIP_MASK) == 0u))
+                return false;
+        }
+        for (j = 0u; j < i; ++j)
+            if (strcmp(desc->methods[j].name, method->name) == 0)
+                return false;
+    }
+    return true;
 }
 
 /* Decode source rows once into:
