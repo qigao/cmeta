@@ -13,8 +13,18 @@ if(NOT EXISTS "${_salts_config}")
 endif()
 find_package(Salts CONFIG REQUIRED
   PATHS "${SALTS_INSTALLED_ROOT}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
-if(NOT Salts_DIR STREQUAL "${SALTS_INSTALLED_ROOT}/lib/cmake/Salts")
-  message(FATAL_ERROR "Salts was not resolved from the exact selected installed SDK: ${Salts_DIR}")
+# Resolve the actual file identities rather than comparing spelling of
+# Windows path separators or the case of the drive letter. On Unix the same
+# realpath guard continues to enforce one exact SDK; no host/toolchain fallback.
+file(REAL_PATH "${_salts_config}" _salts_expected_config_real)
+file(REAL_PATH "${Salts_DIR}/SaltsConfig.cmake" _salts_imported_config_real)
+if(WIN32)
+  string(TOLOWER "${_salts_expected_config_real}" _salts_expected_config_real)
+  string(TOLOWER "${_salts_imported_config_real}" _salts_imported_config_real)
+endif()
+if(NOT _salts_imported_config_real STREQUAL _salts_expected_config_real)
+  message(FATAL_ERROR
+    "Salts was not resolved from the exact selected installed SDK: ${Salts_DIR}")
 endif()
 foreach(name IN ITEMS Salts::Configurator Salts::ServiceHost Salts::ComponentABI
     Salts::ComponentPluginABI Salts::Plugin Salts::Platform)
