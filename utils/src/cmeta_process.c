@@ -19,6 +19,7 @@
 
 #define SALTS_PROCESS_POLL_INTERVAL_MS 10U
 #define SALTS_PROCESS_WINDOWS_BLOCK_MAX 32767U
+#define SALTS_PROCESS_WINDOWS_JOB_DRAIN_MS 5000U
 
 #ifdef _WIN32
   #include <wchar.h>
@@ -723,6 +724,25 @@ static int drain_windows_pipe(cmeta_process_t *process, HANDLE pipe, int is_stdo
   return SALTS_OK;
 }
 
+/* TerminateJobObject and the root process handle becoming signaled do not
+ * prove that descendants have released their current directories. Wait for
+ * real job accounting with a finite teardown budget before publishing a
+ * terminal state to callers. The root process handle must be closed first:
+ * ActiveProcesses can retain a terminated process while references remain. */
+static int process_windows_wait_job_drained(cmeta_process_t *process) {
+  uint64_t started = cmeta_monotonic_ms();
+  for (;;) {
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting = {0};
+    if (!QueryInformationJobObject(process->job_handle, JobObjectBasicAccountingInformation,
+                                   &accounting, sizeof(accounting), NULL))
+      return win32_error();
+    if (accounting.ActiveProcesses == 0) return SALTS_OK;
+    if (cmeta_monotonic_ms() - started >= SALTS_PROCESS_WINDOWS_JOB_DRAIN_MS)
+      return SALTS_ETIMEDOUT;
+    cmeta_sleep_ms(SALTS_PROCESS_POLL_INTERVAL_MS);
+  }
+}
+
 static void process_monitor(void *arg) {
   cmeta_process_t *process = (cmeta_process_t *)arg;
   uint64_t started = cmeta_monotonic_ms();
@@ -804,10 +824,25 @@ static void process_monitor(void *arg) {
     terminal = SALTS_PROCESS_WAIT_FAILED;
     error_code = win32_error();
   }
-  if (terminal == SALTS_PROCESS_EXITED) {
+  {
+    int drain_job;
     cmeta_mutex_lock(&process->mutex);
-    if (process->terminate_requested) terminal = SALTS_PROCESS_TERMINATED;
+    if (terminal == SALTS_PROCESS_EXITED && process->terminate_requested)
+      terminal = SALTS_PROCESS_TERMINATED;
+    drain_job = process->terminate_requested || process->shell_command ||
+                terminal != SALTS_PROCESS_EXITED;
     cmeta_mutex_unlock(&process->mutex);
+    if (drain_job) {
+      int drain_rc;
+      /* GetExitCodeProcess above must precede this close. A live handle to
+       * the exited root can keep the job's ActiveProcesses accounting nonzero. */
+      close_win_handle(&process->process_handle);
+      drain_rc = process_windows_wait_job_drained(process);
+      if (drain_rc != SALTS_OK && terminal != SALTS_PROCESS_WAIT_FAILED) {
+        terminal = SALTS_PROCESS_WAIT_FAILED;
+        error_code = drain_rc;
+      }
+    }
   }
   process_finish(process, terminal, terminal == SALTS_PROCESS_EXITED ? (int)exit_code : -1, 0,
                  error_code);
