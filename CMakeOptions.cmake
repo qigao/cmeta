@@ -40,3 +40,13 @@ if(SALTS_ENABLE_EPOLL_READINESS AND
 endif()
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
+# Explicit, nonpublishable installed SDK/ABI qualification of Salts #1153.
+# This never enables runtime candidates in the normal default SDK.
+option(SALTS_ENABLE_COMPONENT_RUNTIME_INSTALLED_ABI_PROBE
+       "PROBE ONLY: install/export new Configurator and ServiceHost ABI v1" OFF)
+if(SALTS_ENABLE_COMPONENT_RUNTIME_INSTALLED_ABI_PROBE AND
+   NOT SALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE)
+  message(FATAL_ERROR
+    "Installed ServiceHost ABI probe requires SALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE=ON")
+endif()
