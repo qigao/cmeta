@@ -839,7 +839,8 @@ static void finish_if_possible(run_impl *r) {
     if (notify && cflow_subscriber_valid(&r->sink)) cflow_subscriber_done(&r->sink);
 }
 
-static cflow_status schedule_pump(run_impl *r, bool fail_on_rejection);
+static cflow_status schedule_pump(
+    run_impl *r, bool fail_on_rejection, bool request_published_demand);
 
 static void wake_cb(void *user) {
     cflow_subscription *run = (cflow_subscription *)user;
@@ -849,7 +850,7 @@ static void wake_cb(void *user) {
     r->waiting = false;
     memset(&r->active_wait, 0, sizeof(r->active_wait));
     cmeta_mutex_unlock(&r->lock);
-    (void)schedule_pump(r, true);
+    (void)schedule_pump(r, true, false);
 }
 
 void cflow_subscription_wake(cflow_subscription *run) { wake_cb(run); }
@@ -1060,7 +1061,7 @@ static void pump_task(void *user) {
                     (r->source_done && !terminal_nodes_done(r) && d > 0);
     r->pump_running = false;
     cmeta_mutex_unlock(&r->lock);
-    if (!terminated && !waiting && runnable) (void)schedule_pump(r, true);
+    if (!terminated && !waiting && runnable) (void)schedule_pump(r, true, false);
 
     active_pump_run = previous_active_run;
     destroy = run_release_task_ref(r);
@@ -1134,7 +1135,8 @@ static cflow_status terminal_request_status_locked(const run_impl *r) {
     return r->cancelled ? CFLOW_STATUS_CANCELLED : r->status;
 }
 
-static cflow_status schedule_pump(run_impl *r, bool fail_on_rejection) {
+static cflow_status schedule_pump(
+    run_impl *r, bool fail_on_rejection, bool request_published_demand) {
     cflow_schedule_result result;
     const cflow_executor_task task = {
         .run = pump_task,
@@ -1152,7 +1154,19 @@ static cflow_status schedule_pump(run_impl *r, bool fail_on_rejection) {
     if (!r || !r->scheduler) return CFLOW_STATUS_INVALID_ARGUMENT;
     cmeta_mutex_lock(&r->lock);
     if (r->closed || r->terminated) {
-        const cflow_status status = terminal_request_status_locked(r);
+        /* A demand admission linearizes when request_result() publishes
+         * demand under r->lock. An already-running Worker may consume all
+         * values and terminate normally before its caller re-enters this
+         * lock for scheduling. That is a successful admitted request, NOT
+         * a new request after terminal. Preserve all true Scheduler,
+         * cancellation, close, and error results. */
+        const bool completed_after_admission =
+            request_published_demand && r->terminated &&
+            !r->closed && !r->close_requested &&
+            !r->cancel_requested && !r->cancelled &&
+            r->status == CFLOW_STATUS_OK;
+        const cflow_status status = completed_after_admission
+            ? CFLOW_STATUS_OK : terminal_request_status_locked(r);
         cmeta_mutex_unlock(&r->lock);
         return status;
     }
@@ -1500,7 +1514,7 @@ cflow_status_result cflow_subscription_request_result(
         &r->demand, &current, next,
         memory_order_release, memory_order_relaxed));
     cmeta_mutex_unlock(&r->lock);
-    return (cflow_status_result){schedule_pump(r, false)};
+    return (cflow_status_result){schedule_pump(r, false, true)};
 }
 
 bool cflow_subscription_request(cflow_subscription *run, size_t n) {
@@ -1517,7 +1531,7 @@ void cflow_subscription_cancel(cflow_subscription *run) {
     if (r->waiting) { wait = r->active_wait; r->waiting = false; memset(&r->active_wait, 0, sizeof(r->active_wait)); }
     cmeta_mutex_unlock(&r->lock);
     if (cflow_waitable_valid(&wait)) cflow_waitable_cancel(&wait);
-    (void)schedule_pump(r, false);
+    (void)schedule_pump(r, false, false);
 }
 
 void cflow_subscription_close(cflow_subscription *run) {
