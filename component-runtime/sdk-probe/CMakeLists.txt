@@ -4,7 +4,18 @@ enable_testing()
 if(NOT DEFINED SALTS_INSTALLED_ROOT OR NOT IS_DIRECTORY "${SALTS_INSTALLED_ROOT}")
   message(FATAL_ERROR "Set SALTS_INSTALLED_ROOT to one installed native SDK")
 endif()
-find_package(Salts CONFIG REQUIRED PATHS "${SALTS_INSTALLED_ROOT}" NO_DEFAULT_PATH)
+# Android/iOS toolchains may re-root absolute find paths into their sysroot.
+# Require the exact selected staged SDK package and do not substitute host or
+# sysroot packages when resolving the explicitly provided native SDK prefix.
+set(_salts_config "${SALTS_INSTALLED_ROOT}/lib/cmake/Salts/SaltsConfig.cmake")
+if(NOT EXISTS "${_salts_config}")
+  message(FATAL_ERROR "Selected installed Salts SDK lacks its Config: ${_salts_config}")
+endif()
+find_package(Salts CONFIG REQUIRED
+  PATHS "${SALTS_INSTALLED_ROOT}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+if(NOT Salts_DIR STREQUAL "${SALTS_INSTALLED_ROOT}/lib/cmake/Salts")
+  message(FATAL_ERROR "Salts was not resolved from the exact selected installed SDK: ${Salts_DIR}")
+endif()
 foreach(name IN ITEMS Salts::Configurator Salts::ServiceHost Salts::ComponentABI
     Salts::ComponentPluginABI Salts::Plugin Salts::Platform)
   if(NOT TARGET ${name})
