@@ -1,9 +1,9 @@
-/* Isolated Salts runtime candidate; copied from component-plugin/include/salts/component_plugin.h at c8a1a3d5.
- * See Salts #1154. No changes to the legacy module or provider ABI. */
+/* Canonical Salts ServiceHost: the sole Plugin generation and Scope owner.
+ * Public installed ABI epoch is selected through component_runtime_abi.h. */
 #ifndef SALTS_SERVICE_HOST_H
 #define SALTS_SERVICE_HOST_H
 
-#include <salts/component_plugin_abi.h>
+#include <salts/component_provider_abi.h>
 #include <salts/configurator.h>
 #include <salts/plugin.h>
 

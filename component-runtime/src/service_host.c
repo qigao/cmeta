@@ -1,5 +1,4 @@
-/* Isolated Salts runtime candidate; copied from component-plugin/src/component_plugin.c at c8a1a3d5.
- * See Salts #1154. No changes to the legacy module or provider ABI. */
+/* Canonical Salts ServiceHost: single Plugin generation/Scope owner. */
 #include <salts/service_host.h>
 #include <salts/thread.h>
 

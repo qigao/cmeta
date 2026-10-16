@@ -93,10 +93,14 @@ jobs:
           cmake --install build/linux-gcc-release --prefix "$prefix"
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          test -f "$prefix/include/salts/component.h"
-          test -f "$prefix/include/salts/component_plugin.h"
-          grep -Fq 'Salts::Component' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -Fq 'Salts::ComponentPlugin' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/salts/configurator.h"
+          test -f "$prefix/include/salts/service_host.h"
+          grep -Fq 'Salts::Configurator' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -Fq 'Salts::ServiceHost' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -Fq 'Salts::ComponentProviderABI' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          ! grep -Eq 'add_library\(Salts::Component(Plugin)? ' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test ! -e "$prefix/include/salts/component.h"
+          test ! -e "$prefix/include/salts/component_plugin.h"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=$CANDIDATE_VERSION
           commit=$GITHUB_SHA
@@ -134,7 +138,7 @@ jobs:
               if data != expected:
                   raise SystemExit(f'candidate manifest mismatch: {data} != {expected}')
               for name in ('sdk/linux-x64/lib/cmake/Salts/SaltsConfig.cmake',
-                           'sdk/linux-x64/include/salts/component_plugin.h'):
+                           'sdk/linux-x64/include/salts/service_host.h'):
                   if name not in names:
                       raise SystemExit(f'missing SDK entry {name}')
           PY

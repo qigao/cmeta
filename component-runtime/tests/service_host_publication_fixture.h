@@ -1,7 +1,7 @@
 #ifndef SERVICE_HOST_CANDIDATE_PUBLICATION_FIXTURE_H
 #define SERVICE_HOST_CANDIDATE_PUBLICATION_FIXTURE_H
 
-#include "component_plugin_fixture.h"
+#include "service_host_fixture.h"
 
 #include <salts/service_host.h>
 

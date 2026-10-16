@@ -114,16 +114,20 @@ jobs:
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/lib/cmake/Salts/SaltsConfigVersion.cmake"
           test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          test -f "$prefix/include/salts/component.h"
-          test -f "$prefix/include/salts/component_plugin.h"
-          grep -Fq 'Salts::Component' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
-          grep -Fq 'Salts::ComponentPlugin' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/salts/configurator.h"
+          test -f "$prefix/include/salts/service_host.h"
+          grep -Fq 'Salts::Configurator' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -Fq 'Salts::ServiceHost' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -Fq 'Salts::ComponentProviderABI' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          ! grep -Eq 'add_library\(Salts::Component(Plugin)? ' "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test ! -e "$prefix/include/salts/component.h"
+          test ! -e "$prefix/include/salts/component_plugin.h"
           grep -Fq 'set(PACKAGE_VERSION "2.3.0")' "$prefix/lib/cmake/Salts/SaltsConfigVersion.cmake"
           cnet_so="$(find "$prefix" -type f -name 'libcnet.so*' -print -quit)"
           test -n "$cnet_so" || { echo "missing versioned CNet shared library" >&2; exit 1; }
           readelf -d "$cnet_so" | grep -Eq 'SONAME.*libcnet[.]so[.]2[.]3([^0-9]|$)'
-          grep -Fq 'SALTS_COMPONENT_CONTEXT_INIT' "$prefix/include/salts/component.h"
-          grep -Fq 'owner_address' "$prefix/include/salts/component_plugin.h"
+          grep -Fq 'SALTS_CONFIGURATOR_CONTEXT_INIT' "$prefix/include/salts/configurator.h"
+          grep -Fq 'owner_address' "$prefix/include/salts/service_host.h"
 
           # This existing out-of-tree fixture rejects find_package(Salts 2.2)
           # and builds/runs a real exact-version Component consumer.
@@ -195,8 +199,8 @@ jobs:
               required = (
                   'sdk/linux-x64/lib/cmake/Salts/SaltsConfigVersion.cmake',
                   'sdk/linux-x64/lib/cmake/Salts/SaltsTargets.cmake',
-                  'sdk/linux-x64/include/salts/component.h',
-                  'sdk/linux-x64/include/salts/component_plugin.h'
+                  'sdk/linux-x64/include/salts/configurator.h',
+                  'sdk/linux-x64/include/salts/service_host.h'
               )
               for name in required:
                   if name not in names:

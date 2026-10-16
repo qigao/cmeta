@@ -1,5 +1,5 @@
-#ifndef SALTS_COMPONENT_PLUGIN_ABI_H
-#define SALTS_COMPONENT_PLUGIN_ABI_H
+#ifndef SALTS_COMPONENT_PROVIDER_ABI_H
+#define SALTS_COMPONENT_PROVIDER_ABI_H
 
 #include <salts/component_abi.h>
 
@@ -48,4 +48,4 @@ CMETA_INTERFACE(salts_component_provider, SALTS_COMPONENT_PROVIDER_METHODS);
 }
 #endif
 
-#endif /* SALTS_COMPONENT_PLUGIN_ABI_H */
+#endif /* SALTS_COMPONENT_PROVIDER_ABI_H */

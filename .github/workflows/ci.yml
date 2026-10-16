@@ -150,7 +150,7 @@ jobs:
   servicehost_sdk_abi_probe:
     name: ServiceHost installed ABI / ${{ matrix.rid }}
     needs: [scope, native]
-    if: ${{ github.event_name == 'pull_request' && (github.head_ref == 'review/component-runtime-mainline-installed-abi' || github.head_ref == 'review/servicehost-installed-dso-conformance') && needs.native.result == 'success' }}
+    if: ${{ github.event_name == 'pull_request' && (github.head_ref == 'feature/servicehost-configurator-canonical-release') && needs.native.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -186,11 +186,22 @@ jobs:
             if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing genuine installed ABI file: $file" }
           }
           $contents = Get-Content -LiteralPath $targets -Raw
-          foreach ($name in @("Salts::Configurator", "Salts::ServiceHost")) {
+          foreach ($name in @("Salts::Configurator", "Salts::ServiceHost", "Salts::ComponentProviderABI")) {
             if (-not $contents.Contains($name)) { throw "Missing real exported CMake target $name" }
           }
-          if ($contents.Contains("Salts::ConfiguratorCandidate") -or $contents.Contains("Salts::ServiceHostCandidate")) {
-            throw "Private candidate target leaked into installed SDK"
+          if ($contents.Contains("Salts::ConfiguratorCandidate") -or
+              $contents.Contains("Salts::ServiceHostCandidate") -or
+              ($contents -match 'add_library\(Salts::Component(Plugin)?\s') -or
+              $contents.Contains("Salts::ComponentPluginABI")) {
+            throw "Legacy or private Component runtime target leaked into installed SDK"
+          }
+          foreach ($oldHeader in @("component.h", "component_plugin.h", "component_plugin_abi.h")) {
+            if (Test-Path -LiteralPath (Join-Path $root "include/salts/$oldHeader")) {
+              throw "Legacy Component runtime/header leaked into installed SDK: $oldHeader"
+            }
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $root "include/salts/component_provider_abi.h"))) {
+            throw "Missing canonical ComponentProviderABI header"
           }
           if ((Get-Content -LiteralPath $header -Raw) -notmatch 'SALTS_COMPONENT_RUNTIME_ABI_VERSION 0x00010000u') {
             throw "Wrong component runtime ABI epoch in ${{ matrix.rid }}"
@@ -243,7 +254,7 @@ jobs:
   servicehost_sdk_abi_consistency:
     name: Six-RID ServiceHost ABI identity
     needs: servicehost_sdk_abi_probe
-    if: ${{ github.event_name == 'pull_request' && (github.head_ref == 'review/component-runtime-mainline-installed-abi' || github.head_ref == 'review/servicehost-installed-dso-conformance') && needs.servicehost_sdk_abi_probe.result == 'success' }}
+    if: ${{ github.event_name == 'pull_request' && (github.head_ref == 'feature/servicehost-configurator-canonical-release') && needs.servicehost_sdk_abi_probe.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -272,6 +283,13 @@ jobs:
             test -f "$header" && test -f "$targets" && test -f "$manifest"
             grep -Fq 'Salts::Configurator' "$targets"
             grep -Fq 'Salts::ServiceHost' "$targets"
+            grep -Fq 'Salts::ComponentProviderABI' "$targets"
+            ! grep -Eq 'add_library\(Salts::Component(Plugin)? ' "$targets"
+            ! grep -Fq 'Salts::ComponentPluginABI' "$targets"
+            test -f "$root/include/salts/component_provider_abi.h"
+            test ! -e "$root/include/salts/component_plugin.h"
+            test ! -e "$root/include/salts/component.h"
+            test ! -e "$root/include/salts/component_plugin_abi.h"
             ! grep -Eq 'Salts::(ConfiguratorCandidate|ServiceHostCandidate)' "$targets"
             test "$(sed -n 's/^commit=//p' "$manifest" | tr -d '\r')" = "$ABI_EXPECTED_HEAD"
             digest="$(sha256sum "$header" | cut -d ' ' -f1)"

@@ -80,11 +80,9 @@ add_subdirectory(cmeta)
 add_subdirectory(component)
 add_subdirectory(plugin)
 add_subdirectory(component-plugin)
-# Independent #1154/#1234 runtime requalification against current master.
-# No public export or production migration while this default-OFF gate exists.
-if(SALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE)
-  add_subdirectory(component-runtime)
-endif()
+# One installed Configurator/ServiceHost runtime with native ABI epoch 1.
+# Component/ComponentPlugin legacy implementations are not built or exported.
+add_subdirectory(component-runtime)
 add_subdirectory(simd)
 add_subdirectory(tinymock)
 add_subdirectory(cflow)
