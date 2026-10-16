@@ -1,5 +1,8 @@
 #include "cnet_module.h"
 #include "cnet_owner.h"
+#if defined(__linux__)
+#include "cnet_transport.h"
+#endif
 #include "cnet_test_named_pipe.h"
 #include "cnet_test_pipe.h"
 #include "tinytest.h"
@@ -823,6 +826,106 @@ static void cnet_owner_test_cancel_ealready(native_io_backend_kind backend_kind)
   check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
   check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
 }
+
+/* QA-only Linux VSOCK connect/close ordering with the EXISTING private
+ * EALREADY cancellation seam. This runs real epoll/AF_VSOCK NativeIO.
+ * All ownership and event assertions remain strict. */
+#if defined(__linux__)
+static void cnet_owner_test_vsock_cancel_ealready(void) {
+  cnet_session_table sessions = {0};
+  cnet_command_queue commands = {0};
+  cnet_event_queue events = {0};
+  cnet_owner owner = {0};
+  const cnet_command_queue_config command_config = {
+      8u, sizeof(cnet_owner_connect_payload)};
+  const cnet_event_queue_config event_config = {8u, 2u, 64u};
+  const cnet_owner_config owner_config = {
+      .backend_kind = NATIVE_IO_BACKEND_EPOLL,
+      .connection_capacity = 1u, .request_capacity = 2u,
+      .completion_batch_capacity = 2u,
+      .receive_buffer_bytes = 64u, .receive_buffer_count = 1u,
+      .write_capacity = 8u, .max_write_bytes = 256u,
+      .sessions = &sessions, .commands = &commands, .events = &events};
+  cnet_session_handle session = {0};
+  cnet_owner_connect_payload connect_payload = {.scheme = CNET_URI_VSOCK};
+  cnet_command command = {0};
+  cnet_event_view event = {0};
+  cnet_session_terminal terminal = {0};
+  cnet_session_state state = CNET_SESSION_FREE;
+  native_io_backend_stats native_stats = {0};
+  native_io_coroutine_stats coroutine_stats =
+      NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
+  size_t active_records = 0u;
+
+  check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
+  check_equal(cnet_owner_init(&owner, &owner_config), SALTS_OK);
+  check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
+  check_equal(cnet_transport_parse_vsock_address(
+                  2u, 5000u, false, connect_payload.address,
+                  sizeof(connect_payload.address),
+                  &connect_payload.address_length), SALTS_OK);
+
+  /* Both Owner commands are admitted before its first NativeIO observation.
+   * The connect request is real; the forced EALREADY only changes the
+   * caller-visible cancellation status, not backend cancellation or the
+   * generation-checked native terminal completion. */
+  check_equal(cnet_owner_test_force_cancel_ealready_once(&owner), SALTS_OK);
+  command = (cnet_command){CNET_COMMAND_CONNECT, session,
+                            &connect_payload, sizeof(connect_payload), 0u};
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+  command = (cnet_command){CNET_COMMAND_CLOSE, session, NULL, 0u, 0u};
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+  check_equal(cnet_owner_drive(&owner, 0u), SALTS_OK);
+  check_equal(cnet_session_table_state(&sessions, session, &state), SALTS_OK);
+  check_equal(state, CNET_SESSION_DRAINING);
+  check_true(cnet_owner_test_backend_stats(&owner, &native_stats, &coroutine_stats));
+  check_equal(native_stats.active_requests, 1u);
+  for (size_t index = 0u; index < owner_config.request_capacity; ++index) {
+    cnet_owner_test_request_snapshot request = {0};
+    check_true(cnet_owner_test_get_request_snapshot(&owner, index, &request));
+    if (request.active) {
+      ++active_records;
+      check_true(native_io_request_valid(request.native_request));
+    }
+  }
+  check_equal(active_records, (size_t)1u);
+  /* The EALREADY one-shot was consumed by the *actual* close cancellation. */
+  check_equal(cnet_owner_test_force_cancel_ealready_once(&owner), SALTS_OK);
+
+  check_equal(cnet_owner_test_drive_to_state(
+                  &owner, &sessions, session, CNET_SESSION_TERMINAL), SALTS_OK);
+  check_true(cnet_owner_test_backend_stats(&owner, &native_stats, &coroutine_stats));
+  check_equal(native_stats.active_requests, 0u);
+  check_equal(coroutine_stats.active, 0u);
+  check_equal(coroutine_stats.retained_frames, 0u);
+
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.kind, CNET_EVENT_STATE);
+  check_equal(event.state, CNET_EVENT_STATE_CLOSING);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.kind, CNET_EVENT_STATE);
+  check_equal(event.state, CNET_EVENT_STATE_CLOSED);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_ETIMEDOUT);
+  check_equal(cnet_session_table_take_terminal(
+                  &sessions, session, &terminal), SALTS_OK);
+  check_equal(terminal.kind, CNET_SESSION_TERMINAL_CLOSED);
+  check_equal(terminal.status, SALTS_OK);
+  check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
+  check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
+
+  check_equal(cnet_command_queue_close(&commands), SALTS_OK);
+  check_equal(cnet_owner_close(&owner), SALTS_OK);
+  check_equal(cnet_owner_destroy(&owner), SALTS_OK);
+  check_equal(cnet_event_queue_close(&events), SALTS_OK);
+  check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+  check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
+  check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
+}
+#endif
 #endif
 
 static void cnet_owner_test_start_tls_init_failure(native_io_backend_kind backend_kind) {
@@ -1594,6 +1697,14 @@ spec("CNet owner shard") {
     for (index = 0u; index < count; ++index) cnet_owner_test_cancel_ealready(backends[index]);
     check_equal(cnet_module_shutdown(), SALTS_OK);
   }
+
+#if defined(__linux__)
+  it("settles a real VSOCK connect after an EALREADY close cancellation") {
+    check_equal(cnet_module_init(), SALTS_OK);
+    cnet_owner_test_vsock_cancel_ealready();
+    check_equal(cnet_module_shutdown(), SALTS_OK);
+  }
+#endif
 #endif
 
   it("publishes handshaking before a local TLS initialization failure") {
