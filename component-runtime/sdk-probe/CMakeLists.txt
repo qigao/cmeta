@@ -61,13 +61,51 @@ set_target_properties(salts_configurator_only_consumer PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 target_link_libraries(salts_configurator_only_consumer PRIVATE Salts::Configurator)
 add_test(NAME salts_configurator_only_consumer COMMAND salts_configurator_only_consumer)
+# Native hosts additionally compile two genuinely distinct Provider DSOs using
+# only installed Salts SDK imports; this is not a private staged runtime.
+# Device cross-compile jobs continue to test the installed consumer's C11 and
+# C++17 link contracts without pretending to execute a Provider on-device.
+if(NOT CMAKE_CROSSCOMPILING)
+  foreach(index IN ITEMS 1 2)
+    set(provider salts_installed_provider_${index})
+    add_library(${provider} SHARED installed_provider.c)
+    set_target_properties(${provider} PROPERTIES
+      C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+    target_compile_definitions(${provider} PRIVATE INSTALLED_PROVIDER_INDEX=${index})
+    target_link_libraries(${provider} PRIVATE Salts::ComponentPluginABI Salts::PluginABI)
+  endforeach()
+  foreach(lang IN ITEMS c cpp)
+    if(lang STREQUAL "c")
+      set(consumer salts_installed_dso_consumer_c)
+      add_executable(${consumer} installed_dso_consumer.c)
+      set_target_properties(${consumer} PROPERTIES
+        C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+    else()
+      set(consumer salts_installed_dso_consumer_cpp)
+      add_executable(${consumer} installed_dso_consumer.cpp)
+      set_target_properties(${consumer} PROPERTIES
+        CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+    endif()
+    target_link_libraries(${consumer} PRIVATE Salts::ServiceHost)
+    add_dependencies(${consumer} salts_installed_provider_1 salts_installed_provider_2)
+    add_test(NAME ${consumer} COMMAND ${consumer}
+      "$<TARGET_FILE:salts_installed_provider_1>"
+      "$<TARGET_FILE:salts_installed_provider_2>")
+  endforeach()
+endif()
 # Windows DLLs come only from the exact installed SDK selected by the test.
 # Put that one dependency closure beside consumers for native Windows loader
 # resolution; never search PATH or a second/stale SDK at execution time.
 if(WIN32)
   file(GLOB salts_installed_dlls "${SALTS_INSTALLED_ROOT}/bin/*.dll")
-  foreach(consumer IN ITEMS salts_abi_consumer_c salts_abi_consumer_cpp
-                            salts_configurator_only_consumer)
+  set(installed_sdk_run_targets
+      salts_abi_consumer_c salts_abi_consumer_cpp salts_configurator_only_consumer)
+  if(TARGET salts_installed_dso_consumer_c)
+    list(APPEND installed_sdk_run_targets
+         salts_installed_dso_consumer_c salts_installed_dso_consumer_cpp
+         salts_installed_provider_1 salts_installed_provider_2)
+  endif()
+  foreach(consumer IN LISTS installed_sdk_run_targets)
     foreach(dll IN LISTS salts_installed_dlls)
       add_custom_command(TARGET ${consumer} POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${dll}"

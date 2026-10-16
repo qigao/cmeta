@@ -150,7 +150,7 @@ jobs:
   servicehost_sdk_abi_probe:
     name: ServiceHost installed ABI / ${{ matrix.rid }}
     needs: [scope, native]
-    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'review/component-runtime-mainline-installed-abi' && needs.native.result == 'success' }}
+    if: ${{ github.event_name == 'pull_request' && (github.head_ref == 'review/component-runtime-mainline-installed-abi' || github.head_ref == 'review/servicehost-installed-dso-conformance') && needs.native.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -243,7 +243,7 @@ jobs:
   servicehost_sdk_abi_consistency:
     name: Six-RID ServiceHost ABI identity
     needs: servicehost_sdk_abi_probe
-    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'review/component-runtime-mainline-installed-abi' && needs.servicehost_sdk_abi_probe.result == 'success' }}
+    if: ${{ github.event_name == 'pull_request' && (github.head_ref == 'review/component-runtime-mainline-installed-abi' || github.head_ref == 'review/servicehost-installed-dso-conformance') && needs.servicehost_sdk_abi_probe.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
