@@ -131,6 +131,8 @@ jobs:
       - formal
       - benchmarks
       - package
+      - servicehost_sdk_abi_probe
+      - servicehost_sdk_abi_consistency
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -144,6 +146,144 @@ jobs:
           case ",$SELECTED_RESULTS," in
             *,failure,*|*,cancelled,*) exit 1 ;;
           esac
+
+  servicehost_sdk_abi_probe:
+    name: ServiceHost installed ABI / ${{ matrix.rid }}
+    needs: [scope, native]
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'review/component-runtime-mainline-installed-abi' && needs.native.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {rid: linux-x64, runner: ubuntu-24.04, artifact: salts-sdk-linux-x64, native: true}
+          - {rid: linux-arm64, runner: ubuntu-24.04-arm, artifact: salts-sdk-linux-arm64, native: true}
+          - {rid: windows-x64, runner: windows-2025, artifact: salts-sdk-windows-x64, native: true}
+          - {rid: macos-arm64, runner: macos-15, artifact: salts-sdk-macos, native: true}
+          - {rid: android-arm64-v8a, runner: ubuntu-24.04, artifact: salts-sdk-android-arm64-v8a, native: false}
+          - {rid: ios-arm64, runner: macos-15, artifact: salts-sdk-ios-arm64, native: false}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: stage/sdk
+      - name: Assert genuine installed SDK ABI export
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:GITHUB_WORKSPACE "stage/sdk/${{ matrix.rid }}"
+          $targets = Join-Path $root "lib/cmake/Salts/SaltsTargets.cmake"
+          $header = Join-Path $root "include/salts/component_runtime_abi.h"
+          foreach ($file in @($targets, $header,
+              (Join-Path $root "include/salts/configurator.h"),
+              (Join-Path $root "include/salts/service_host.h"),
+              (Join-Path $root "lib/cmake/Salts/SaltsConfig.cmake"))) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing genuine installed ABI file: $file" }
+          }
+          $contents = Get-Content -LiteralPath $targets -Raw
+          foreach ($name in @("Salts::Configurator", "Salts::ServiceHost")) {
+            if (-not $contents.Contains($name)) { throw "Missing real exported CMake target $name" }
+          }
+          if ($contents.Contains("Salts::ConfiguratorCandidate") -or $contents.Contains("Salts::ServiceHostCandidate")) {
+            throw "Private candidate target leaked into installed SDK"
+          }
+          if ((Get-Content -LiteralPath $header -Raw) -notmatch 'SALTS_COMPONENT_RUNTIME_ABI_VERSION 0x00010000u') {
+            throw "Wrong component runtime ABI epoch in ${{ matrix.rid }}"
+          }
+      - name: Configure external C11/C++17 installed consumer (Unix hosts)
+        if: matrix.native && matrix.rid != 'windows-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S component-runtime/sdk-probe -B build/servicehost-sdk-abi-consumer -DCMAKE_BUILD_TYPE=Release -DSALTS_INSTALLED_ROOT="$GITHUB_WORKSPACE/stage/sdk/${{ matrix.rid }}"
+          cmake --build build/servicehost-sdk-abi-consumer --config Release --parallel 2
+          ctest --test-dir build/servicehost-sdk-abi-consumer -C Release --output-on-failure --no-tests=error
+      - name: Configure external Windows consumer with the installed MSVC toolset
+        if: matrix.rid == 'windows-x64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ([string]::IsNullOrWhiteSpace($vsInstall)) { throw 'Missing MSVC C11/C++17 toolchain' }
+          $sdkRoot = Join-Path $env:GITHUB_WORKSPACE 'stage/sdk/windows-x64'
+          $cmd = 'call "' + $vsInstall + '\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul && ' +
+            'cmake -S component-runtime/sdk-probe -B build/servicehost-sdk-abi-consumer -G Ninja -DCMAKE_BUILD_TYPE=Release -DSALTS_INSTALLED_ROOT="' + $sdkRoot + '" && ' +
+            'cmake --build build/servicehost-sdk-abi-consumer --parallel 2 && ' +
+            'ctest --test-dir build/servicehost-sdk-abi-consumer --output-on-failure --no-tests=error'
+          & cmd /d /c $cmd
+          if ($LASTEXITCODE -ne 0) { throw "Installed MSVC consumer failed ($LASTEXITCODE)" }
+      - name: Configure and link Android arm64 installed consumer
+        if: matrix.rid == 'android-arm64-v8a'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+          cmake -S component-runtime/sdk-probe -B build/servicehost-sdk-abi-consumer \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 \
+            -DSALTS_INSTALLED_ROOT="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
+          cmake --build build/servicehost-sdk-abi-consumer --parallel 2
+      - name: Configure and link iOS arm64 installed consumer
+        if: matrix.rid == 'ios-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S component-runtime/sdk-probe -B build/servicehost-sdk-abi-consumer \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            -DSALTS_INSTALLED_ROOT="$GITHUB_WORKSPACE/stage/sdk/ios-arm64"
+          cmake --build build/servicehost-sdk-abi-consumer --parallel 2
+
+  servicehost_sdk_abi_consistency:
+    name: Six-RID ServiceHost ABI identity
+    needs: servicehost_sdk_abi_probe
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'review/component-runtime-mainline-installed-abi' && needs.servicehost_sdk_abi_probe.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: salts-sdk-*
+          path: stage/sdk
+          merge-multiple: true
+      - name: Compare exact source, six ABI headers and exported names
+        shell: bash
+        env:
+          ABI_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$ABI_EXPECTED_HEAD"
+          header_digest=''
+          for rid in linux-x64 linux-arm64 windows-x64 macos-arm64 android-arm64-v8a ios-arm64; do
+            root="stage/sdk/$rid"
+            header="$root/include/salts/component_runtime_abi.h"
+            targets="$root/lib/cmake/Salts/SaltsTargets.cmake"
+            manifest="$root/salts-sdk-manifest.txt"
+            test -f "$header" && test -f "$targets" && test -f "$manifest"
+            grep -Fq 'Salts::Configurator' "$targets"
+            grep -Fq 'Salts::ServiceHost' "$targets"
+            ! grep -Eq 'Salts::(ConfiguratorCandidate|ServiceHostCandidate)' "$targets"
+            test "$(sed -n 's/^commit=//p' "$manifest" | tr -d '\r')" = "$ABI_EXPECTED_HEAD"
+            digest="$(sha256sum "$header" | cut -d ' ' -f1)"
+            test -n "$digest"
+            if [ -n "$header_digest" ]; then
+              test "$digest" = "$header_digest" || { echo "ABI header mismatch: $rid" >&2; exit 1; }
+            else
+              header_digest="$digest"
+            fi
+            printf '%s: source=%s abi_header=%s\n' "$rid" "$ABI_EXPECTED_HEAD" "$digest"
+          done
+          echo 'All six genuine installed ABI headers and export manifests match one immutable HEAD.'
 
   publish:
     name: Publish tagged Salts.Native SDK

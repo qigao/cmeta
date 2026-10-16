@@ -33,6 +33,8 @@ if (($AceMatrix -or $AceSan) -and -not $aceBranchPr) {
   throw "ACE qualification is restricted to its long-lived PR"
 }
 if ($AceMatrix -and $AceSan) { throw "ACE-MATRIX and ACE-SAN are exclusive" }
+$installedAbiProbe = $EventName -eq 'pull_request' -and -not $PrepareRelease -and
+  $HeadBranch -eq 'review/component-runtime-mainline-installed-abi'
 $unified23Review = ($HeadBranch -eq 'release/salts-2.3-ace-cnet-review' -and
   ($EventName -eq 'pull_request' -or $release23Push) -and -not $PrepareRelease) -or $releaseTagPush
 if ($UnifiedSan -and -not $unified23Review) {
@@ -75,6 +77,7 @@ $contractsChanged = Test-Changed '^\.github/workflows/cmeta-cflow-calculus\.yml$
 $cmetaRuntime = Test-Changed '^cmeta/(include/|src/|native/|CMakeLists\.txt$|tests/CMakeLists\.txt$)'
 $componentRuntime = Test-Changed '^component/(include/|src/|CMakeLists\.txt$|tests/)'
 $componentPluginRuntime = Test-Changed '^component-plugin/(include/|src/|CMakeLists\.txt$|tests/)'
+$componentRuntimeCandidate = Test-Changed '^component-runtime/(include/|src/|tests/|CMakeLists\.txt$)'
 $platformRuntime = Test-Changed '^platform/(include/|src/|arch/|CMakeLists\.txt$)'
 $concurrencyRuntime = Test-Changed '^concurrency/(include/|src/|CMakeLists\.txt$)'
 $concurrencyQualification = (-not $PrepareRelease) -and ($full -or $concurrencyRuntime -or
@@ -87,7 +90,7 @@ $pluginRuntime = Test-Changed '^plugin/(include/|src/|CMakeLists\.txt$)'
 $utilsRuntime = Test-Changed '^utils/(include/|src/|CMakeLists\.txt$)'
 $unicodeRuntime = Test-Changed '^(unicode|idna)/'
 $harness = Test-Changed '^(tinytest|tinymock)/'
-$nativeCommon = $shared -or $contractsChanged -or $cmetaRuntime -or $componentRuntime -or $componentPluginRuntime -or $platformRuntime -or $harness -or $unicodeRuntime
+$nativeCommon = $shared -or $contractsChanged -or $cmetaRuntime -or $componentRuntime -or $componentPluginRuntime -or $componentRuntimeCandidate -or $platformRuntime -or $harness -or $unicodeRuntime
 $native = $nativeCommon -or $concurrencyRuntime -or $pluginRuntime -or $utilsRuntime -or
   (Test-Changed '^(coroutine/|platform/tests/|plugin/|cmeta/(tests/|benchmarks/))')
 $execution = $nativeCommon -or $utilsRuntime -or $cflowRuntime -or $coroutineRuntime -or
@@ -269,7 +272,7 @@ foreach ($profile in $profiles) {
   # Build throughput binaries only for hosts selected as benchmark producers.
   # Ordinary native/Windows conformance must not compile or run performance suites.
   $entry.benchmarks = if ($work -and $entry.id -in @('linux-release', 'windows-release', 'macos-release')) { 'ON' } else { 'OFF' }
-  $entry.package = ($PrepareRelease -or $release23Push -or $releaseTagPush) -and [bool]$entry.sdk
+  $entry.package = ($PrepareRelease -or $release23Push -or $releaseTagPush -or $installedAbiProbe) -and [bool]$entry.sdk
   $entry.compare = $compare -and $EventName -eq 'pull_request' -and $entry.id -eq 'windows-release'
   $entry.artifact = if ($entry.cross) { $mobile } else { $work -and [bool]$entry.sdk }
   # Full host CTest for an explicit qualification; Linux arm64 runs the

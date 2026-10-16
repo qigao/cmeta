@@ -30,6 +30,13 @@ option(CMETA_BUILD_NATIVE_THUNKS
        "Build opt-in exact x86-64 native specialization" OFF)
 option(SALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE
        "Build isolated Salts Configurator/ServiceHost candidate (no SDK export)" OFF)
+# PR-only experimental export, never enabled for a normal released SDK.
+option(SALTS_ENABLE_COMPONENT_RUNTIME_INSTALLED_ABI_PROBE
+       "PROBE ONLY: install/export Configurator and ServiceHost ABI v1" OFF)
+if(SALTS_ENABLE_COMPONENT_RUNTIME_INSTALLED_ABI_PROBE AND
+   NOT SALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE)
+  message(FATAL_ERROR "Installed ABI probe requires isolated candidate runtime")
+endif()
 
 option(SALTS_ENABLE_EPOLL_READINESS
        "Enable the Linux epoll readiness backend" OFF)
