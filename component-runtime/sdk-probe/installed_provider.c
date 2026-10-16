@@ -10,7 +10,7 @@
 #error unsupported Provider module instance
 #endif
 
-#include "component_plugin_fixture.h"
+#include "service_host_fixture.h"
 #include <salts/plugin_decl.h>
 
 cmeta_component(ComponentPluginFixture,

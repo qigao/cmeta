@@ -1,4 +1,4 @@
-#include "component_plugin_fixture.h"
+#include "service_host_fixture.h"
 #include "tinytest.h"
 
 #include <salts/service_host.h>

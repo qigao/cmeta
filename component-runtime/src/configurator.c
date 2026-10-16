@@ -1,5 +1,4 @@
-/* Isolated Salts runtime candidate; copied from component/src/component.c at c8a1a3d5.
- * See Salts #1154. No changes to the legacy module or provider ABI. */
+/* Canonical Salts Configurator: single bounded static graph/lifecycle owner. */
 #include <salts/configurator.h>
 
 #include <string.h>

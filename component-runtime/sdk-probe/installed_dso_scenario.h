@@ -1,6 +1,6 @@
 #ifndef SALTS_INSTALLED_DSO_SCENARIO_H
 #define SALTS_INSTALLED_DSO_SCENARIO_H
-#include "component_plugin_fixture.h"
+#include "service_host_fixture.h"
 #include <salts/configurator.h>
 #include <salts/service_host.h>
 #include <salts/component_runtime_abi.h>
