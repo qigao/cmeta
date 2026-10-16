@@ -111,8 +111,12 @@ jobs:
           fi
           # Only the isolated Salts #1154 PR opts into the copied runtime.
           # Normal production/default and unrelated PR graphs are unchanged.
-          if [ "${{ github.head_ref }}" = 'feature/component-runtime-isolated' ]; then
+          if [ "${{ github.head_ref }}" = 'feature/component-runtime-isolated' ] ||
+             [ "${{ github.head_ref }}" = 'feature/component-runtime-sdk-abi-probe' ]; then
             set -- "$@" -DSALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE=ON
+          fi
+          if [ "${{ github.head_ref }}" = 'feature/component-runtime-sdk-abi-probe' ]; then
+            set -- "$@" -DSALTS_ENABLE_COMPONENT_RUNTIME_INSTALLED_ABI_PROBE=ON
           fi
           cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }} "$@"
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
@@ -125,7 +129,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DSALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE=${{ github.head_ref == 'feature/component-runtime-isolated' && 'ON' || 'OFF' }}
+          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DCMETA_BUILD_NATIVE_THUNKS=${{ matrix.native_thunks }} -DNATIVE_IO_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCOROUTINE_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCNET_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCFLOW_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DCONCURRENCY_BUILD_BENCHMARKS=${{ matrix.benchmarks }} -DSALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE=${{ (github.head_ref == 'feature/component-runtime-isolated' || github.head_ref == 'feature/component-runtime-sdk-abi-probe') && 'ON' || 'OFF' }} -DSALTS_ENABLE_COMPONENT_RUNTIME_INSTALLED_ABI_PROBE=${{ github.head_ref == 'feature/component-runtime-sdk-abi-probe' && 'ON' || 'OFF' }}
           if errorlevel 1 exit /b 1
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
           if errorlevel 1 exit /b 1
@@ -134,7 +138,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON
+          set --
+          if [ "${{ github.head_ref }}" = 'feature/component-runtime-sdk-abi-probe' ]; then
+            set -- -DSALTS_ENABLE_COMPONENT_RUNTIME_CANDIDATE=ON -DSALTS_ENABLE_COMPONENT_RUNTIME_INSTALLED_ABI_PROBE=ON
+          fi
+          cmake --preset "${{ matrix.preset }}" -DCMAKE_SUPPRESS_REGENERATION=ON "$@"
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
       - name: Run Actor, mailbox and ACE throughput benchmarks (Unix)
         id: actor_bench_unix
