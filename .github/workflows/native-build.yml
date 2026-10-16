@@ -416,7 +416,7 @@ jobs:
           # Installed C11/C++ tests already ran through the parent CTest preset.
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
-          commit=${{ github.sha }}
+          commit=${{ github.head_ref == 'feature/component-runtime-sdk-abi-probe' && github.event.pull_request.head.sha || github.sha }}
           os=linux
           arch=x64
           profile=release
@@ -490,7 +490,7 @@ jobs:
           # Installed C11/C++ tests already ran through the parent CTest preset.
           $manifest = @(
             "version=${{ inputs.version }}"
-            "commit=${{ github.sha }}"
+            "commit=${{ github.head_ref == 'feature/component-runtime-sdk-abi-probe' && github.event.pull_request.head.sha || github.sha }}"
             "os=windows"
             "arch=x64"
             "profile=release"
@@ -548,7 +548,7 @@ jobs:
           # Installed C11/C++ tests already ran through the parent CTest preset.
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
-          commit=${{ github.sha }}
+          commit=${{ github.head_ref == 'feature/component-runtime-sdk-abi-probe' && github.event.pull_request.head.sha || github.sha }}
           os=macos
           arch=$RUNNER_ARCH
           profile=release
@@ -614,7 +614,7 @@ jobs:
           grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ inputs.version }}
-          commit=${{ github.sha }}
+          commit=${{ github.head_ref == 'feature/component-runtime-sdk-abi-probe' && github.event.pull_request.head.sha || github.sha }}
           os=linux
           arch=arm64
           rid=linux-arm64
