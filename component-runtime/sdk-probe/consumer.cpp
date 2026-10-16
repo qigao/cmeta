@@ -7,6 +7,10 @@ static_assert(SALTS_COMPONENT_RUNTIME_ABI_VERSION == 0x00010000u, "unexpected AB
 int main()
 {
     salts_service_host_runtime runtime = SALTS_SERVICE_HOST_RUNTIME_INIT;
+    salts_service_host_abi_v1_0_required();
+    if (salts_configurator_abi_context_size() != sizeof(salts_configurator_context) ||
+        salts_service_host_abi_scope_size() != sizeof(salts_service_host_scope))
+        return 4;
     if (salts_configurator_abi_version() != SALTS_COMPONENT_RUNTIME_ABI_VERSION ||
         salts_service_host_abi_version() != SALTS_COMPONENT_RUNTIME_ABI_VERSION)
         return 1;
