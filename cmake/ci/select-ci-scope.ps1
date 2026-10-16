@@ -35,8 +35,11 @@ if (($AceMatrix -or $AceSan) -and -not $aceBranchPr) {
 if ($AceMatrix -and $AceSan) { throw "ACE-MATRIX and ACE-SAN are exclusive" }
 $componentSanOnly = $EventName -eq 'pull_request' -and -not $PrepareRelease -and
   $HeadBranch -eq 'review/servicehost-fullsource-sanitizers'
+# Branch-only release/tag readiness proof uses genuine six-RID installed SDKs.
+# The same package=true profile is already mandatory on version-tag push and
+# explicit prepare_release; do not accidentally skip installed ABI validation.
 $installedAbiProbe = $EventName -eq 'pull_request' -and -not $PrepareRelease -and
-  $HeadBranch -in @('review/component-runtime-mainline-installed-abi', 'review/servicehost-installed-dso-conformance')
+  $HeadBranch -eq 'review/servicehost-release-tag-gate'
 $unified23Review = ($HeadBranch -eq 'release/salts-2.3-ace-cnet-review' -and
   ($EventName -eq 'pull_request' -or $release23Push) -and -not $PrepareRelease) -or $releaseTagPush
 if ($UnifiedSan -and -not $unified23Review) {

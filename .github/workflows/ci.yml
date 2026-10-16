@@ -150,7 +150,7 @@ jobs:
   servicehost_sdk_abi_probe:
     name: ServiceHost installed ABI / ${{ matrix.rid }}
     needs: [scope, native]
-    if: ${{ github.event_name == 'pull_request' && (github.head_ref == 'feature/servicehost-configurator-canonical-release') && needs.native.result == 'success' }}
+    if: ${{ needs.native.result == 'success' && ((github.event_name == 'pull_request' && github.head_ref == 'review/servicehost-release-tag-gate') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.prepare_release)) }}
     strategy:
       fail-fast: false
       matrix:
@@ -166,7 +166,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
@@ -254,13 +254,13 @@ jobs:
   servicehost_sdk_abi_consistency:
     name: Six-RID ServiceHost ABI identity
     needs: servicehost_sdk_abi_probe
-    if: ${{ github.event_name == 'pull_request' && (github.head_ref == 'feature/servicehost-configurator-canonical-release') && needs.servicehost_sdk_abi_probe.result == 'success' }}
+    if: ${{ needs.servicehost_sdk_abi_probe.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
@@ -270,7 +270,7 @@ jobs:
       - name: Compare exact source, six ABI headers and exported names
         shell: bash
         env:
-          ABI_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          ABI_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$ABI_EXPECTED_HEAD"
@@ -305,8 +305,8 @@ jobs:
 
   publish:
     name: Publish tagged Salts.Native SDK
-    needs: [scope, native, formal, benchmarks, package, result]
-    if: ${{ github.repository == 'qigao/salts' && startsWith(github.ref, 'refs/tags/v') && needs.result.result == 'success' && needs.native.result == 'success' && needs.formal.result == 'success' && needs.benchmarks.result == 'success' && needs.package.result == 'success' }}
+    needs: [scope, native, formal, benchmarks, package, result, servicehost_sdk_abi_probe, servicehost_sdk_abi_consistency]
+    if: ${{ github.repository == 'qigao/salts' && startsWith(github.ref, 'refs/tags/v') && needs.result.result == 'success' && needs.native.result == 'success' && needs.formal.result == 'success' && needs.benchmarks.result == 'success' && needs.package.result == 'success' && needs.servicehost_sdk_abi_probe.result == 'success' && needs.servicehost_sdk_abi_consistency.result == 'success' }}
     permissions:
       contents: write
       packages: write
