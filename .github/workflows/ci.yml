@@ -193,14 +193,29 @@ jobs:
           if ((Get-Content -LiteralPath $header -Raw) -notmatch 'SALTS_COMPONENT_RUNTIME_ABI_VERSION 0x00010000u') {
             throw "Wrong component runtime ABI epoch in ${{ matrix.rid }}"
           }
-      - name: Configure external C11/C++17 installed consumer (native)
-        if: matrix.native
+      - name: Configure external C11/C++17 installed consumer (Unix hosts)
+        if: matrix.native && matrix.rid != 'windows-x64'
         shell: bash
         run: |
           set -euo pipefail
           cmake -S component-runtime/sdk-probe -B build/servicehost-sdk-abi-consumer -DCMAKE_BUILD_TYPE=Release -DSALTS_INSTALLED_ROOT="$GITHUB_WORKSPACE/stage/sdk/${{ matrix.rid }}"
           cmake --build build/servicehost-sdk-abi-consumer --config Release --parallel 2
           ctest --test-dir build/servicehost-sdk-abi-consumer -C Release --output-on-failure --no-tests=error
+      - name: Configure external Windows consumer with the installed MSVC toolset
+        if: matrix.rid == 'windows-x64'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ([string]::IsNullOrWhiteSpace($vsInstall)) { throw 'Missing MSVC C11/C++17 toolchain' }
+          $sdkRoot = Join-Path $env:GITHUB_WORKSPACE 'stage/sdk/windows-x64'
+          $cmd = 'call "' + $vsInstall + '\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul && ' +
+            'cmake -S component-runtime/sdk-probe -B build/servicehost-sdk-abi-consumer -G Ninja -DCMAKE_BUILD_TYPE=Release -DSALTS_INSTALLED_ROOT="' + $sdkRoot + '" && ' +
+            'cmake --build build/servicehost-sdk-abi-consumer --parallel 2 && ' +
+            'ctest --test-dir build/servicehost-sdk-abi-consumer --output-on-failure --no-tests=error'
+          & cmd /d /c $cmd
+          if ($LASTEXITCODE -ne 0) { throw "Installed MSVC consumer failed ($LASTEXITCODE)" }
       - name: Configure and link Android arm64 installed consumer
         if: matrix.rid == 'android-arm64-v8a'
         shell: bash
