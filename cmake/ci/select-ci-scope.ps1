@@ -34,7 +34,7 @@ if (($AceMatrix -or $AceSan) -and -not $aceBranchPr) {
 }
 if ($AceMatrix -and $AceSan) { throw "ACE-MATRIX and ACE-SAN are exclusive" }
 $installedAbiProbe = $EventName -eq 'pull_request' -and -not $PrepareRelease -and
-  $HeadBranch -eq 'review/component-runtime-mainline-installed-abi'
+  $HeadBranch -in @('review/component-runtime-mainline-installed-abi', 'review/servicehost-installed-dso-conformance')
 $unified23Review = ($HeadBranch -eq 'release/salts-2.3-ace-cnet-review' -and
   ($EventName -eq 'pull_request' -or $release23Push) -and -not $PrepareRelease) -or $releaseTagPush
 if ($UnifiedSan -and -not $unified23Review) {
@@ -77,7 +77,7 @@ $contractsChanged = Test-Changed '^\.github/workflows/cmeta-cflow-calculus\.yml$
 $cmetaRuntime = Test-Changed '^cmeta/(include/|src/|native/|CMakeLists\.txt$|tests/CMakeLists\.txt$)'
 $componentRuntime = Test-Changed '^component/(include/|src/|CMakeLists\.txt$|tests/)'
 $componentPluginRuntime = Test-Changed '^component-plugin/(include/|src/|CMakeLists\.txt$|tests/)'
-$componentRuntimeCandidate = Test-Changed '^component-runtime/(include/|src/|tests/|CMakeLists\.txt$)'
+$componentRuntimeCandidate = Test-Changed '^component-runtime/(include/|src/|tests/|sdk-probe/|CMakeLists\.txt$)'
 $platformRuntime = Test-Changed '^platform/(include/|src/|arch/|CMakeLists\.txt$)'
 $concurrencyRuntime = Test-Changed '^concurrency/(include/|src/|CMakeLists\.txt$)'
 $concurrencyQualification = (-not $PrepareRelease) -and ($full -or $concurrencyRuntime -or
