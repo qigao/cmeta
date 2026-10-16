@@ -33,3 +33,28 @@ Configure the existing project preset with `-DSALTS_ENABLE_COMPONENT_RUNTIME_CAN
 Copy/compile baseline -> static C11/C++ tests -> real loaded DSO and N-to-N+1 lifetime tests -> opt-in IDL generated adapter -> *one* downstream consumer per PR -> coordinated #1153 naming/SDK transition. Retire the old runtime only after migration and release gates; do not silently change historical artifacts or claim compatibility with an ABI-incompatible rename.
 
 Status of this checkpoint: **copied source and opt-in CMake integration, no completed runtime CI evidence yet**.
+
+
+## Stacked exact borrowed-Service ABI admission (review-only)
+
+The child branch `review/component-runtime-exact-interface` adds
+`cmeta_interface_borrowed_service_abi_valid()`, a pure CMeta control-plane
+predicate requiring fully reflected FunctionAbi method rows, explicit non-void
+result class, exact carriers, parameter direction, pointer ownership, unique
+method names, and no owning-self operation on a borrowed Interface.
+It retains no module and does not reconstruct native function pointers from
+metadata. Native/metadata correspondence is still proven by the provider's
+compiler-checked vtable and matching Reflection/Plugin epochs.
+
+Only the child candidate ServiceHost's **dynamic DSO** path enforces the new
+gate. Static Configurator and master/public Component/ComponentPlugin behavior
+remain unchanged. The child fixture contains two FR0 services and one R0 legacy
+negative export; negative admission must release the acquired Plugin lease
+before retrying a fully reflected provider. There is no fallback to ABI-only
+dynamic invocation.
+
+This deliberately tightens dynamic Provider admission. Downstream candidate
+services still using R0/R1 methods, including the separate CHttp pilot, must
+migrate their generated interfaces to fully reflected FR declarations and
+requalify before consuming this child. The parent #1155 SHA stays fixed.
+No SDK export, merge or publication is authorized by this proof.

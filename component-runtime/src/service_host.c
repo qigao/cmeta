@@ -160,6 +160,21 @@ static salts_service_host_status acquire_module(
     return SALTS_SERVICE_HOST_OK;
 }
 
+/* Dynamic Provider admission has stricter native ABI requirements than a
+ * local static Configurator graph. This runs while the Plugin lease is live,
+ * before any create/activate callback and before publication. */
+static bool service_host_dynamic_component_abi_valid(
+    const cmeta_component_desc *component) {
+    size_t i;
+    if (!cmeta_component_desc_valid(component))
+        return false;
+    for (i = 0u; i < component->capability_count; ++i)
+        if (!cmeta_interface_borrowed_service_abi_valid(
+                component->capabilities[i].interface_desc))
+            return false;
+    return true;
+}
+
 static salts_service_host_status admit_dynamic_source(
     salts_service_host_generation *generation,
     size_t source_index,
@@ -204,6 +219,8 @@ static salts_service_host_status admit_dynamic_source(
 
     binding = salts_component_provider_get_binding(provider);
     if (!salts_component_provider_binding_valid(binding))
+        return generation_fail_provider(generation, source_index);
+    if (!service_host_dynamic_component_abi_valid(binding->component))
         return generation_fail_provider(generation, source_index);
 
     out_deployment->provider = binding;

@@ -20,6 +20,25 @@
 CMETA_INTERFACE(component_storage, COMPONENT_STORAGE_METHODS);
 CMETA_INTERFACE(component_logger, COMPONENT_LOGGER_METHODS);
 
+/* Opt-in dynamic-service checks are stricter than ordinary static metadata. */
+#define COMPONENT_EXACT_METHODS(X, I) \
+    X(I, FR1, int, get, value, &cmeta_type_int, CMETA_ABI_SCALAR, \
+      CMETA_RESULT_VALUE, (int, input, CMETA_PARAM_IN, \
+      &cmeta_type_int, CMETA_ABI_SCALAR))
+#define COMPONENT_EXACT_POINTER_METHODS(X, I) \
+    X(I, FR1, int, consume, value, &cmeta_type_int, CMETA_ABI_SCALAR, \
+      CMETA_RESULT_VALUE, (void *, input, \
+      CMETA_PARAM_IN | CMETA_PARAM_BORROWED, &cmeta_type_void_ptr, \
+      CMETA_ABI_OBJECT_POINTER))
+#define COMPONENT_LEGACY_METHODS(X, I) X(I, R0, int, get, _)
+#define COMPONENT_OWNING_METHODS(X, I) \
+    X(I, FD0, void, destroy, stateful, &cmeta_type_void, CMETA_ABI_VOID)
+
+CMETA_INTERFACE(component_exact, COMPONENT_EXACT_METHODS);
+CMETA_INTERFACE(component_exact_pointer, COMPONENT_EXACT_POINTER_METHODS);
+CMETA_INTERFACE(component_legacy, COMPONENT_LEGACY_METHODS);
+CMETA_INTERFACE(component_owning, COMPONENT_OWNING_METHODS);
+
 cmeta_component(PatternStorage,
     cmeta_provides(component_storage)
     cmeta_requires(component_logger));
@@ -239,6 +258,85 @@ suite("CMeta component declarations") {
         check_equal(component->capability_count, COMPONENT_SIZE(0u));
         check_null(component->capabilities);
     }
+    it("admits an exact borrowed Interface contract under C11 and C++17") {
+        check_true(cmeta_interface_borrowed_service_abi_valid(
+            component_exact_interface()));
+        check_true(cmeta_interface_borrowed_service_abi_valid(
+            component_exact_pointer_interface()));
+        check_true(cmeta_interface_borrowed_service_abi_valid(
+            component_logger_interface()));
+    }
+
+    it("rejects legacy, unknown-result, and owning-self service methods") {
+        check_true(cmeta_interface_desc_valid(component_legacy_interface()));
+        check_false(cmeta_interface_borrowed_service_abi_valid(
+            component_legacy_interface()));
+        check_true(cmeta_interface_desc_valid(component_storage_interface()));
+        check_false(cmeta_interface_borrowed_service_abi_valid(
+            component_storage_interface()));
+        check_true(cmeta_interface_desc_valid(component_owning_interface()));
+        check_false(cmeta_interface_borrowed_service_abi_valid(
+            component_owning_interface()));
+    }
+
+    it("rejects unspecified ABI and missing parameter direction") {
+        const cmeta_interface_desc *canonical = component_exact_interface();
+        cmeta_interface_method_desc method = canonical->methods[0];
+        cmeta_function_desc function = *method.function;
+        cmeta_param_desc param = function.params[0];
+        cmeta_function_abi_desc abi = *method.abi;
+        cmeta_interface_desc candidate = *canonical;
+        const cmeta_abi_carrier unspecified[1] = {CMETA_ABI_UNSPECIFIED};
+
+        method.function = &function;
+        method.abi = &abi;
+        function.params = &param;
+        abi.function = &function;
+        candidate.methods = &method;
+        check_true(cmeta_interface_borrowed_service_abi_valid(&candidate));
+
+        param.flags = CMETA_PARAM_UNKNOWN;
+        check_true(cmeta_interface_desc_valid(&candidate));
+        check_false(cmeta_interface_borrowed_service_abi_valid(&candidate));
+        param.flags = CMETA_PARAM_IN;
+
+        abi.param_carriers = unspecified;
+        check_false(cmeta_interface_borrowed_service_abi_valid(&candidate));
+        abi = *canonical->methods[0].abi;
+        abi.function = &function;
+        check_true(cmeta_interface_borrowed_service_abi_valid(&candidate));
+
+        abi.return_carrier = CMETA_ABI_UNSPECIFIED;
+        check_false(cmeta_interface_borrowed_service_abi_valid(&candidate));
+    }
+
+    it("rejects omitted pointer ownership and duplicate method names") {
+        const cmeta_interface_desc *canonical = component_exact_pointer_interface();
+        cmeta_interface_method_desc method = canonical->methods[0];
+        cmeta_function_desc function = *method.function;
+        cmeta_param_desc param = function.params[0];
+        cmeta_function_abi_desc abi = *method.abi;
+        cmeta_interface_desc candidate = *canonical;
+        cmeta_interface_method_desc duplicate[2];
+
+        method.function = &function;
+        method.abi = &abi;
+        function.params = &param;
+        abi.function = &function;
+        candidate.methods = &method;
+        check_true(cmeta_interface_borrowed_service_abi_valid(&candidate));
+        param.flags = CMETA_PARAM_IN;
+        check_true(cmeta_interface_desc_valid(&candidate));
+        check_false(cmeta_interface_borrowed_service_abi_valid(&candidate));
+
+        duplicate[0] = canonical->methods[0];
+        duplicate[1] = canonical->methods[0];
+        candidate.methods = duplicate;
+        candidate.method_count = COMPONENT_SIZE(2u);
+        check_true(cmeta_interface_desc_valid(&candidate));
+        check_false(cmeta_interface_borrowed_service_abi_valid(&candidate));
+    }
+
 }
 
 #undef COMPONENT_SIZE

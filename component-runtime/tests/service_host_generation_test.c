@@ -101,6 +101,44 @@ suite("ComponentPlugin candidate generation") {
         check_equal(info.active_leases, (size_t)0u);
     }
 
+    it("rejects an ABI-only real DSO service and unwinds its Plugin lease") {
+        const salts_service_host_generation_storage storage = {
+            deployments, 1u,
+            instances, 1u,
+            dependencies, 1u,
+            activation_order, 1u,
+            modules, 1u
+        };
+        const salts_service_host_source legacy = {
+            ref, COMPONENT_PROVIDER_LEGACY_EXPORT_ID, NULL, NULL
+        };
+        const salts_service_host_source exact = {
+            ref, COMPONENT_PROVIDER_EXPORT_ID, NULL, NULL
+        };
+        cmeta_plugin_lifecycle_info info;
+
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(1), &registry, &storage,
+            NULL, 0u, &legacy, 1u, NULL, 0u),
+            SALTS_SERVICE_HOST_PROVIDER_ERROR);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_equal(generation.failure.source_index, (size_t)0u);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+
+        /* Failure must not publish a graph or poison this candidate bundle. */
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(2), &registry, &storage,
+            NULL, 0u, &exact, 1u, NULL, 0u),
+            SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_generation_discard(
+            &generation), SALTS_SERVICE_HOST_OK);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+    }
+
     it("releases candidate leases when provider admission fails") {
         const salts_service_host_generation_storage storage = {
             deployments, 1u,

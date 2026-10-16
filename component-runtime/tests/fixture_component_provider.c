@@ -7,6 +7,9 @@ cmeta_component(ComponentPluginFixture,
 cmeta_component(ComponentPluginAuxFixture,
     cmeta_provides(component_plugin_aux));
 
+cmeta_component(ComponentPluginLegacyFixture,
+    cmeta_provides(component_plugin_legacy));
+
 static int fixture_value = COMPONENT_PROVIDER_VALUE;
 static int fixture_aux_value = COMPONENT_PROVIDER_AUX_VALUE;
 
@@ -102,6 +105,19 @@ static const salts_component_provider_binding fixture_aux_binding = {
     NULL
 };
 
+/* ProviderBinding is structurally valid; its borrowed service method is not
+ * fully reflected. Dynamic admission must reject without calling create(). */
+static const salts_component_provider_binding fixture_legacy_binding = {
+    sizeof(salts_component_provider_binding),
+    SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION,
+    cmeta_component_meta(ComponentPluginLegacyFixture),
+    &fixture_value,
+    &fixture_interfaces,
+    fixture_create,
+    NULL,
+    NULL
+};
+
 static const salts_component_provider_binding *fixture_get_binding(void *self) {
     return (const salts_component_provider_binding *)self;
 }
@@ -122,12 +138,20 @@ static salts_component_provider fixture_aux_component_provider = {
     &fixture_component_provider_impl_vtable
 };
 
+static salts_component_provider fixture_legacy_component_provider = {
+    (void *)&fixture_legacy_binding,
+    &fixture_component_provider_impl_vtable
+};
+
 #define COMPONENT_PROVIDER_EXPORTS(X) \
     X(interface, (salts_component_provider, &fixture_component_provider), \
       COMPONENT_PROVIDER_EXPORT_ID, SALTS_COMPONENT_PROVIDER_CONTRACT_ID, \
       SALTS_COMPONENT_PROVIDER_CONTRACT_VERSION, 0) \
     X(interface, (salts_component_provider, &fixture_aux_component_provider), \
       COMPONENT_PROVIDER_AUX_EXPORT_ID, SALTS_COMPONENT_PROVIDER_CONTRACT_ID, \
+      SALTS_COMPONENT_PROVIDER_CONTRACT_VERSION, 0) \
+    X(interface, (salts_component_provider, &fixture_legacy_component_provider), \
+      COMPONENT_PROVIDER_LEGACY_EXPORT_ID, SALTS_COMPONENT_PROVIDER_CONTRACT_ID, \
       SALTS_COMPONENT_PROVIDER_CONTRACT_VERSION, 0)
 
 CMETA_PLUGIN_DECLARE(
