@@ -146,7 +146,81 @@ static void sack_before_data_and_bad_order(void) {
   assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
 }
+/* The emitted bundle has 3 chunks, but the one-Owner T3 schedule keeps
+ * three separately retransmittable single-DATA tickets when it is lost. */
+static void outbound_bundle_and_per_tsn_t3(void) {
+  pair p;
+  cnet_sctp_data_bundle_item items[5] = {0};
+  const uint8_t payload[5] = {'a', 'b', 'c', 'd', 'e'};
+  uint8_t combined[CNET_SCTP_DATA_MTU], single[CNET_SCTP_DATA_MTU];
+  uint8_t sack[CNET_SCTP_DATA_MTU], response[CNET_SCTP_DATA_MTU];
+  uint8_t body[8];
+  size_t n = 0u, ns = 0u, nr = 0u, nm = 0u, i;
+  uint64_t due = 0u;
+  int has_due = 0;
+  cnet_sctp_data before;
+  cnet_sctp_data_message meta = {0};
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk chunk = {0};
+  init(&p);
+  for (i = 0u; i < 5u; ++i) {
+    items[i].stream_id = 0u;
+    items[i].ppid = 53u;
+    items[i].payload = &payload[i];
+    items[i].payload_size = 1u;
+  }
+  memcpy(&before, &p.a, sizeof(before));
+  assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 5u,
+      combined, sizeof(combined), &n) == CNET_SCTP_DATA_CAPACITY);
+  assert(n == 0u && memcmp(&before, &p.a, sizeof(before)) == 0);
+  assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 3u,
+      combined, 10u, &n) == CNET_SCTP_DATA_CAPACITY);
+  assert(n == 0u && memcmp(&before, &p.a, sizeof(before)) == 0);
+  p.admitted = 0;
+  assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 3u,
+      combined, sizeof(combined), &n) == CNET_SCTP_DATA_OWNER);
+  p.admitted = 1;
+  assert(memcmp(&before, &p.a, sizeof(before)) == 0);
+  assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 3u,
+      combined, sizeof(combined), &n) == CNET_SCTP_DATA_OK);
+  assert(n > 0u && p.a.next_tsn == 103u && p.a.in_flight == 3u);
+  assert(cnet_sctp_wire_decode(combined, n, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == 3u);
+  for (i = 0u; i < 3u; ++i) {
+    assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+    assert(chunk.type == 0u && chunk.value_size == 13u &&
+        chunk.value[3] == (uint8_t)(100u + i));
+  }
+  /* Drop the complete outbound bundle: T3 MUST resend original TSNs
+   * separately, not replay the combined packet or duplicate any ticket. */
+  for (i = 0u; i < 3u; ++i) {
+    assert(cnet_sctp_data_deadline(&p.a, &due, &has_due) == CNET_SCTP_DATA_OK);
+    assert(has_due);
+    assert(cnet_sctp_data_advance(&p.a, due, single,
+        sizeof(single), &nr) == CNET_SCTP_DATA_OK);
+    chunk = one(single, nr, 0u);
+    assert(chunk.value_size == 13u &&
+        chunk.value[3] == (uint8_t)(100u + i));
+    assert(cnet_sctp_data_input(&p.b, due + 1u, single, nr,
+        sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+    assert(cnet_sctp_data_input(&p.a, due + 2u, sack, ns,
+        response, sizeof(response), &n) == CNET_SCTP_DATA_OK);
+    assert(n == 0u && p.a.in_flight == 2u - i);
+  }
+  assert(p.a.next_tsn == 103u && p.a.t3_deadline_ms == 0u);
+  for (i = 0u; i < 3u; ++i) {
+    assert(cnet_sctp_data_take(&p.b, &meta, body,
+        sizeof(body), &nm) == CNET_SCTP_DATA_OK);
+    assert(nm == 1u && body[0] == payload[i] &&
+        meta.stream_sequence == (uint16_t)i);
+  }
+  assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
+}
 int main(void) {
+  outbound_bundle_and_per_tsn_t3();
   multi_data_atomicity();
   sack_before_data_and_bad_order();
   puts("C11 SCTP bounded bundled DATA / leading SACK atomicity PASS");
