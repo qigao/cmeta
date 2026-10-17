@@ -649,6 +649,34 @@ static void multi_loss_single_cwnd_reduction(void) {
   finished(&f);
 }
 
+
+/* The first retransmission may reduce cwnd below existing flight. A second
+ * already-pending TSN must still recover without creating new flight. */
+static void fast_pending_below_cwnd(void) {
+  fixture f;
+  uint8_t out[CNET_SCTP_DATA_MTU];
+  size_t n, flight;
+  uint32_t reduced;
+  unsigned int i;
+  init(&f, 100u);
+  for (i = 0u; i < 8u; ++i) send(&f, i, 64u + i);
+  for (i = 3u; i < 8u; ++i) gap(&f, i, 80u + i * 2u);
+  assert(ticket(&f, 0u)->pending_retransmit);
+  assert(ticket(&f, 1u)->pending_retransmit);
+  flight = f.a.in_flight;
+  assert(cnet_sctp_data_advance(&f.a, 100u, out,
+      sizeof(out), &n) == CNET_SCTP_DATA_OK);
+  assert(n == f.size[0]);
+  reduced = f.a.cwnd;
+  assert(flight > 0u);
+  assert(cnet_sctp_data_advance(&f.a, 101u, out,
+      sizeof(out), &n) == CNET_SCTP_DATA_OK);
+  assert(n == f.size[1] && memcmp(out, f.packet[1], n) == 0);
+  assert(f.a.cwnd == reduced && f.a.in_flight == flight);
+  assert_flight_invariant(&f.a);
+  finished(&f);
+}
+
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
     {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
@@ -659,6 +687,7 @@ int main(int argc, char **argv) {
     {"duplicate_sack_no_false_fast", duplicate_sack_no_false_fast},
     {"reneging_reack_pending", reneging_reack_pending},
     {"multi_loss_single_cwnd_reduction", multi_loss_single_cwnd_reduction},
+    {"fast_pending_below_cwnd", fast_pending_below_cwnd},
     {"reneging_flight_accounting", reneging_flight_accounting},
     {"timer_restart", timer_restart}, {"partial_recovery", partial_recovery},
     {"ordinary_htna", ordinary_htna}, {"reneging_streak", reneging_streak},
