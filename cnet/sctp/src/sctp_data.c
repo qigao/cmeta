@@ -622,7 +622,7 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
       memcpy(out, fast->packet, fast->packet_size);
       *written = fast->packet_size;
       fast->fast_retransmitted = 1u;
-      ++fast->retransmits;
+      if (fast->retransmits < UINT8_MAX) ++fast->retransmits;
       d->ssthresh = d->cwnd / 2u;
       if (d->ssthresh < 4u * CNET_SCTP_DATA_MTU)
         d->ssthresh = 4u * CNET_SCTP_DATA_MTU;
