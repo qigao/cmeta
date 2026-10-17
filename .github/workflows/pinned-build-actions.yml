@@ -32,7 +32,7 @@ jobs:
           set -euo pipefail
           python3 cmake/ci/verify-pinned-vcpkg-actions.py --repo . \
             | tee "$RUNNER_TEMP/pinned-build-actions.json"
-          grep -F 'd4afc8cd2f5ed3585c1e26469e379a087ce9ecf3' \
+          grep -F '2e214ae44a3e3244eded5db6361194576356fc9e' \
             "$RUNNER_TEMP/pinned-build-actions.json"
 
       - name: Preserve exact action identity inventory
