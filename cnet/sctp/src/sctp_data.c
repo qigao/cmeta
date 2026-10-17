@@ -707,11 +707,11 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
         fast = slot;
     }
     if (fast) {
-      /* Only the initial fast-retransmit packet may bypass cwnd (7.2.4).
-       * Count every retained unacknowledged chunk conservatively until the
-       * separate pending-retransmission/flight-state scheduler is qualified. */
-      if (d->recovery_active && flight_bytes(d) > d->cwnd)
-        return CNET_SCTP_DATA_CAPACITY;
+      /* Pending loss recovery must not be stranded merely because cwnd
+       * shrank below the already-transmitted flight. This ticket already
+       * owns its wire bytes and flight credit; retransmitting it does not
+       * admit new DATA or create additional flight. The bounded one-packet
+       * Owner advance remains the only retransmission emission point. */
       /* 7.2.4(4): restart only when retransmitting the first outstanding
        * DATA chunk (or starting a stopped timer). Later losses must not
        * postpone that chunk's deadline. Preflight before any TX mutation. */
