@@ -421,7 +421,59 @@ static void post_handshake_webrtc_empty_ppids(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* Window updates are also delivered over the established, private
+ * Association boundary: one Owner, CRC-correct DATA and returned SACKs. */
+static void post_handshake_window_update(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  uint8_t body[1024] = {0};
+  uint8_t wire[1200], sack[1200], response[1200];
+  cnet_sctp_data_message meta = {0};
+  size_t nw = 0u, ns = 0u, nr = 0u;
+  unsigned int i;
+  ready_pair(&a, &b, &ca, &cb);
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
+    const uint64_t now = 6u + i;
+    assert(cnet_sctp_assoc_send_message(&a, now, 0u, 53u, 0,
+        body, sizeof(body), wire, sizeof(wire), &nw) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_input(&b, now, wire, nw,
+        sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_input(&a, now, sack, ns,
+        response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+    assert(nr == 0u);
+  }
+  assert(b.data.buffered_rx == CNET_SCTP_DATA_RECEIVE_CEILING);
+  assert(a.data.peer_rwnd == 0u && b.data.last_advertised_rwnd == 0u);
+  assert(cnet_sctp_assoc_take_message(&b, &meta, body,
+      sizeof(body), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == sizeof(body) && b.data.window_update_pending);
+  cb.owner = 0;
+  assert(cnet_sctp_assoc_window_update(&b, 40u, sack,
+      sizeof(sack), &ns) == CNET_SCTP_ASSOC_OWNER);
+  cb.owner = 1;
+  {
+    cnet_sctp_data old;
+    memcpy(&old, &b.data, sizeof(old));
+    assert(cnet_sctp_assoc_window_update(&b, 40u, sack,
+        0u, &ns) == CNET_SCTP_ASSOC_CAPACITY);
+    assert(ns == 0u && memcmp(&old, &b.data, sizeof(old)) == 0);
+  }
+  assert(cnet_sctp_assoc_window_update(&b, 40u, sack,
+      sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(!b.data.window_update_pending);
+  assert(cnet_sctp_assoc_input(&a, 40u, sack, ns,
+      response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(a.data.peer_rwnd == CNET_SCTP_DATA_PAYLOAD_MAX);
+  assert(cnet_sctp_assoc_window_update(&b, 40u, sack,
+      sizeof(sack), &ns) == CNET_SCTP_ASSOC_EMPTY);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
+  post_handshake_window_update();
   real_assoc_send_sack_and_t3();
   post_handshake_dcep_wire();
   post_handshake_twenty_kib_fragments();

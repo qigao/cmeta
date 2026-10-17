@@ -1,6 +1,6 @@
 # RFC-first SCTP conformance matrix — Salts #1181
 
-Evidence is scoped narrowly: **M1 wire = tested framing**, **M2 research = synthetic two-engine handshake with a non-cryptographic test MAC**. Neither milestone establishes secure RFC compatibility or WebRTC interoperability.
+Evidence is scoped narrowly: **M1 wire = tested framing**; **M2 private = Owner-driven handshake plus bounded DATA/SACK/T3/Fast Recovery and receive-window tests**; **M3 private subset = DATA fragments and DCEP/PPID**. Unit tests use noncryptographic handshake fixtures except the separate real GmSSL HMAC/CSPRNG job. None establishes production security, full RFC conformance or browser interoperability.
 
 | RFC requirement | State | Still required for conformance |
 | --- | --- | --- |
@@ -13,12 +13,12 @@ Evidence is scoped narrowly: **M1 wire = tested framing**, **M2 research = synth
 | RFC 9260 §5.2.4 expired duplicate Cookie | **Authenticated same-Association re-ACK** after TTL, preserving Peer Tag/TSN and rejecting identity changes | Stale Cookie ERROR cause for unrelated associations, complete TCB collision/restart state, overlap key lifetime |
 | RFC 9260 §5 INIT / INIT ACK / COOKIE ECHO / COOKIE ACK and T1 | **M2 isolated state machine + Owner-injected CSPRNG/Tag/TSN** | Complete INIT parameters/negotiation, provider lifecycle, restart/tie tags, source binding, independent browser peer |
 | RFC 9260 §5.1.3/§5.1.5 cookie authentication | **Private GmSSL HMAC-SM3 + two bounded key epochs**; prior-key in-flight Cookie test | Integrate real CNet Owner/DTLS Generation drain, enforce previous-key retirement deadline, replay/collision security and independent browser interoperability |
-| RFC 9260 §§3.3,6,7 DATA, TSN/SACK, congestion, retransmission, RTO | **Private single-path C11 DATA/Gap-SACK/T3 prototype**, 16 bounded TX/32 RX, TSN wrap, ordered/unordered, limited slow-start and explicit T3 virtual-clock tests | Full RFC congestion/fast retransmit, a_rwnd recovery/zero-window probes, PMTU, multi-path, complete SACK/T3 lifecycle and independent peer |
+| RFC 9260 §§3.3,6,7 DATA, TSN/SACK, congestion, retransmission, RTO | **Private DATA/Gap-SACK/T3/Fast Recovery**, 16 retained TX/32 RX, TSN wrap, ordered/unordered, multi-TSN loss, actual flight vs pending intent, bounded RTT/backoff, exact TSN priority, zero-window DATA probe/reopened-window SACK with virtual-clock tests | Full RFC congestion/PMTU/multipath, broader receive-window and shutdown edge cases, PR-SCTP and independent peer |
 | RFC 9260 §9 SHUTDOWN/ABORT | **Not implemented** | Full close states, pending DATA, simultaneous shutdown, correct ABORT |
 | RFC 8261 SCTP over DTLS | **Not implemented** | Existing GmSSL DTLS plaintext ingress/egress with real browser |
 | RFC 3758 / RFC 7496 PR-SCTP | **Not implemented** | Timed/max-retransmits, FORWARD-TSN, independent peer |
 | RFC 6525 / RFC 5061 stream reset | **Not implemented** | Reset/reuse and collisions |
-| RFC 9260 DATA B/E fragmentation/reassembly | **Private 24 KiB queued message**, 1,024-byte fragments, common SID/SSN/PPID/U, strictly sequential TSNs; 20 KiB lost-first-fragment recovery via SACK/T3 | Full browser-negotiated message limits, partial delivery, reassembly congestion/rwnd and independent peer validation |
+| RFC 9260 DATA B/E fragmentation/reassembly | **Private 24 KiB queued message**, 1,024-byte fragments, common SID/SSN/PPID/U, strictly sequential TSNs; 20 KiB lost-first-fragment recovery via Fast Retransmit or T3 | Full browser-negotiated message limits, partial delivery, reassembly congestion/rwnd and independent peer validation |
 | RFC 8260 I-DATA interleaving | **Not implemented** | Negotiation, FSN/MID and I-FORWARD-TSN; fragmented legacy DATA cannot interleave messages |
 | RFC 8831 / RFC 8832 DataChannel/DCEP | **Private RFC 8832 DCEP OPEN/ACK** transmitted on SCTP ordered PPID 50 with DTLS-role SID parity; RFC 8831 PPID 51/53 and one-zero-byte PPID 56/57 empty messages | RFC 3758 partial reliability, DCEP channel close/reuse, full UTF-8/datachannel lifetime and independent browser peer |
 | RFC 8841 SDP | **Not implemented** | Browser-facing SDP matrix |
