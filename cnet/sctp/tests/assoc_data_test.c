@@ -811,7 +811,7 @@ static void post_cookie_bundled_data(void) {
   for (i = 0u; i < 3u; ++i) {
     assert(cnet_sctp_assoc_take_message(&b, &meta, body,
         sizeof(body), &nr) == CNET_SCTP_ASSOC_OK);
-    assert(nr == 1u && body[0] == bytes[i] && meta.stream_sequence == i);
+    assert(nr == 1u && body[0] == bytes[i] && meta.stream_sequence == (uint16_t)i);
   }
   assert(cnet_sctp_assoc_input(&a, 11u, sack, ns,
       response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);

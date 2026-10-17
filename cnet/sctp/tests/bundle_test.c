@@ -101,7 +101,7 @@ static void multi_data_atomicity(void) {
     assert(cnet_sctp_data_take(&p.b, &meta, body,
         sizeof(body), &nm) == CNET_SCTP_DATA_OK);
     assert(nm == 1u && body[0] == payload[i] &&
-        meta.stream_sequence == i);
+        meta.stream_sequence == (uint16_t)i);
   }
   assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
