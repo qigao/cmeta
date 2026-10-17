@@ -472,7 +472,154 @@ static void post_handshake_window_update(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* RFC 9260 9.2 private shutdown tests use a real two-sided
+ * INIT/COOKIE association.  No direct injection of shutdown states. */
+static uint8_t shutdown_chunk_type(const uint8_t *wire, size_t bytes) {
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk chunk = {0};
+  assert(cnet_sctp_wire_decode(wire, bytes, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == 1u);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  return chunk.type;
+}
+static void shutdown_no_inflight_and_t2(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  uint8_t req[1200], ack[1200], complete[1200], retry[1200];
+  size_t nq = 0u, na = 0u, nc = 0u, nr = 0u;
+  uint64_t deadline = 0u, saved_deadline;
+  int has_deadline = 0;
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_shutdown(&a, 6u, req, 10u, &nq) ==
+      CNET_SCTP_ASSOC_CAPACITY);
+  assert(nq == 0u && a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_shutdown(&a, 6u, req, sizeof(req), &nq) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(nq == 20u && shutdown_chunk_type(req, nq) == 7u);
+  assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
+      CNET_SCTP_ASSOC_OK && has_deadline && deadline == 106u);
+  assert(cnet_sctp_assoc_advance(&a, 105u, retry,
+      sizeof(retry), &nr) == CNET_SCTP_ASSOC_OK && nr == 0u);
+  assert(cnet_sctp_assoc_advance(&a, 106u, retry,
+      sizeof(retry), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == nq && memcmp(req, retry, nr) == 0 &&
+      a.deadline_ms == 306u);
+  assert(cnet_sctp_assoc_input(&b, 107u, req, nq,
+      ack, 10u, &na) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(na == 0u && b.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_input(&b, 107u, req, nq,
+      ack, sizeof(ack), &na) == CNET_SCTP_ASSOC_OK);
+  assert(na == 16u && shutdown_chunk_type(ack, na) == 8u);
+  assert(b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT);
+  saved_deadline = b.deadline_ms;
+  assert(cnet_sctp_assoc_input(&b, 108u, retry, nr,
+      complete, sizeof(complete), &nc) == CNET_SCTP_ASSOC_OK);
+  assert(nc == na && memcmp(complete, ack, na) == 0 &&
+      b.deadline_ms == saved_deadline);
+  assert(cnet_sctp_assoc_input(&a, 109u, ack, na,
+      complete, 10u, &nc) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(nc == 0u && a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+  assert(cnet_sctp_assoc_input(&a, 109u, ack, na,
+      complete, sizeof(complete), &nc) == CNET_SCTP_ASSOC_OK);
+  assert(nc == 16u && shutdown_chunk_type(complete, nc) == 14u);
+  assert(a.state == CNET_SCTP_ASSOC_STOPPED && cnet_sctp_assoc_drained(&a));
+  assert(cnet_sctp_assoc_advance(&b, saved_deadline, retry,
+      sizeof(retry), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == na && memcmp(retry, ack, na) == 0);
+  assert(cnet_sctp_assoc_input(&b, saved_deadline + 1u,
+      complete, nc, retry, sizeof(retry), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == 0u && b.state == CNET_SCTP_ASSOC_STOPPED &&
+      cnet_sctp_assoc_drained(&b));
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+static void shutdown_pending_data_and_cumulative_ack(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  const uint8_t one[] = {0x32u};
+  uint8_t wire[1200], sack[1200], response[1200], ack[1200];
+  size_t nw = 0u, ns = 0u, nr = 0u, na = 0u;
+  uint64_t deadline = 0u;
+  int has_deadline = 0;
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_send_message(&a, 6u, 0u, 53u, 0,
+      one, sizeof(one), wire, sizeof(wire), &nw) == CNET_SCTP_ASSOC_OK);
+  assert(a.data.in_flight == 1u);
+  assert(cnet_sctp_assoc_shutdown(&a, 7u, response,
+      sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == 0u && a.state == CNET_SCTP_ASSOC_SHUTDOWN_PENDING);
+  assert(cnet_sctp_assoc_send_message(&a, 8u, 0u, 53u, 0,
+      one, sizeof(one), response, sizeof(response), &nr) ==
+      CNET_SCTP_ASSOC_CLOSED_ERROR);
+  assert(cnet_sctp_assoc_input(&b, 8u, wire, nw,
+      sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 9u, sack, ns,
+      response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(a.data.in_flight == 0u);
+  assert(cnet_sctp_assoc_send_message(&b, 9u, 0u, 53u, 0,
+      one, sizeof(one), wire, sizeof(wire), &nw) == CNET_SCTP_ASSOC_OK);
+  assert(b.data.in_flight == 1u);
+  assert(cnet_sctp_assoc_input(&a, 10u, wire, nw,
+      sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
+      CNET_SCTP_ASSOC_OK && has_deadline && deadline == a.last_time_ms);
+  assert(cnet_sctp_assoc_advance(&a, 11u, response, 10u, &nr) ==
+      CNET_SCTP_ASSOC_CAPACITY);
+  assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_PENDING);
+  assert(cnet_sctp_assoc_advance(&a, 11u,
+      response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == 20u && shutdown_chunk_type(response, nr) == 7u);
+  assert(cnet_sctp_assoc_input(&b, 12u, response, nr,
+      ack, sizeof(ack), &na) == CNET_SCTP_ASSOC_OK);
+  assert(b.data.in_flight == 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT);
+  assert(na == 16u && shutdown_chunk_type(ack, na) == 8u);
+  assert(cnet_sctp_assoc_input(&a, 13u, ack, na,
+      response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == 16u && shutdown_chunk_type(response, nr) == 14u);
+  assert(cnet_sctp_assoc_input(&b, 14u, response, nr,
+      wire, sizeof(wire), &nw) == CNET_SCTP_ASSOC_OK);
+  assert(a.state == CNET_SCTP_ASSOC_STOPPED &&
+      b.state == CNET_SCTP_ASSOC_STOPPED);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+static void shutdown_simultaneous(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  uint8_t aq[1200], bq[1200], aa[1200], ba[1200], out[1200];
+  size_t na = 0u, nb = 0u, naa = 0u, nba = 0u, nc = 0u;
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_shutdown(&a, 6u, aq, sizeof(aq), &na) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_shutdown(&b, 6u, bq, sizeof(bq), &nb) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 7u, bq, nb,
+      aa, sizeof(aa), &naa) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 7u, aq, na,
+      ba, sizeof(ba), &nba) == CNET_SCTP_ASSOC_OK);
+  assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT &&
+      b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT);
+  assert(shutdown_chunk_type(aa, naa) == 8u &&
+      shutdown_chunk_type(ba, nba) == 8u);
+  assert(cnet_sctp_assoc_input(&a, 8u, ba, nba,
+      out, sizeof(out), &nc) == CNET_SCTP_ASSOC_OK);
+  assert(shutdown_chunk_type(out, nc) == 14u &&
+      a.state == CNET_SCTP_ASSOC_STOPPED);
+  assert(cnet_sctp_assoc_input(&b, 8u, aa, naa,
+      out, sizeof(out), &nc) == CNET_SCTP_ASSOC_OK);
+  assert(shutdown_chunk_type(out, nc) == 14u &&
+      b.state == CNET_SCTP_ASSOC_STOPPED);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
+  shutdown_no_inflight_and_t2();
+  shutdown_pending_data_and_cumulative_ack();
+  shutdown_simultaneous();
   post_handshake_window_update();
   real_assoc_send_sack_and_t3();
   post_handshake_dcep_wire();
