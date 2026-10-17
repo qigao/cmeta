@@ -136,10 +136,10 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now_ms,
     const void *bytes, size_t length, void *output, size_t output_capacity,
     size_t *written);
 
-/* Input: exactly one DATA or SACK chunk on a CRC-checked wire packet.
- * DATA returns a complete SACK packet via output, SACK returns 0 bytes.
- * No application callback runs; take() copies ready records explicitly.
- */
+/* Input: one or more DATA chunks, optionally preceded by one SACK, on
+ * a CRC-checked packet bounded to the private 1200-byte path MTU. Bundles
+ * commit atomically after all semantic and response-capacity checks;
+ * DATA returns one final cumulative SACK. No application callback runs. */
 /* One fragmented user message may be queued at a time. A copied, bounded
  * pending buffer owns all bytes. pump() emits at most one DATA fragment per
  * call (B|E flags and TSNs strictly sequential, fixed SSN, no interleaving).

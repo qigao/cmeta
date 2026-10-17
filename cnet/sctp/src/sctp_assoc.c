@@ -701,21 +701,26 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       CNET_SCTP_WIRE_OK) return CNET_SCTP_ASSOC_PROTOCOL;
   if (header.source_port != s->config.remote_port ||
       header.destination_port != s->config.local_port ||
-      header.chunk_count > 2u ||
       cnet_sctp_wire_next_chunk(&decoder, &chunk) != CNET_SCTP_WIRE_OK)
     return CNET_SCTP_ASSOC_PROTOCOL;
-  if (header.chunk_count == 2u) {
-    /* COOKIE ECHO may be bundled with an advisory ERROR; INIT/INIT ACK
-     * remain standalone. Malformed ERROR cannot trigger Cookie admission. */
-    if (chunk.type != SCTP_TYPE_COOKIE_ECHO ||
-        cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
+  if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_COOKIE_ECHO) {
+    /* COOKIE ECHO + advisory ERROR has its own bounded handshake rule. */
+    if (cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
         !valid_cookie_echo_error(&second))
       return CNET_SCTP_ASSOC_PROTOCOL;
+  } else if (header.chunk_count > 1u &&
+             chunk.type != 0u && chunk.type != 3u) {
+    /* No arbitrary control chunks can be bundled with INIT, Cookie,
+     * SHUTDOWN or ABORT in the private Association profile. */
+    return CNET_SCTP_ASSOC_PROTOCOL;
   }
   switch (chunk.type) {
     case 0u: /* DATA */
     case 3u: /* SACK */
-      if (!s->data_ready || header.chunk_count != 1u)
+      if (!s->data_ready ||
+          (header.chunk_count != 1u &&
+           s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
+           s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING))
         return CNET_SCTP_ASSOC_PROTOCOL;
       if (chunk.type == 0u) {
         if (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&

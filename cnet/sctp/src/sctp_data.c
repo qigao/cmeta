@@ -738,14 +738,53 @@ cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now,
       header.source_port != d->config.remote_port ||
       header.destination_port != d->config.local_port ||
       header.verification_tag != d->config.local_tag ||
-      header.chunk_count != 1u ||
       cnet_sctp_wire_next_chunk(&parser, &chunk) != CNET_SCTP_WIRE_OK)
     return CNET_SCTP_DATA_PROTOCOL;
-  if (chunk.type == CHUNK_DATA)
-    return input_data(d, now, &chunk, out, cap, written);
-  if (chunk.type == CHUNK_SACK)
-    return input_sack(d, now, &chunk);
-  return CNET_SCTP_DATA_PROTOCOL;
+  if (header.chunk_count == 1u) {
+    if (chunk.type == CHUNK_DATA)
+      return input_data(d, now, &chunk, out, cap, written);
+    if (chunk.type == CHUNK_SACK)
+      return input_sack(d, now, &chunk);
+    return CNET_SCTP_DATA_PROTOCOL;
+  }
+  /* RFC 9260 6.9: receive multiple DATA chunks and at most one
+   * leading SACK. The sender need not bundle; the receiver must process
+   * legal bundling. Keep the existing 1200-byte private path MTU.
+   * Every chunk is validated on a bounded state snapshot, including the
+   * later fragments; an invalid final chunk or too-small SACK output
+   * cannot partially admit any preceding DATA or settle TX tickets. */
+  if (packet_size > CNET_SCTP_DATA_MTU)
+    return CNET_SCTP_DATA_CAPACITY;
+  {
+    cnet_sctp_data staged;
+    uint8_t response[CNET_SCTP_DATA_MTU];
+    size_t reply_size = 0u, i;
+    memcpy(&staged, d, sizeof(staged));
+    for (i = 0u; i < header.chunk_count; ++i) {
+      if (i != 0u &&
+          cnet_sctp_wire_next_chunk(&parser, &chunk) != CNET_SCTP_WIRE_OK)
+        return CNET_SCTP_DATA_PROTOCOL;
+      if (chunk.type == CHUNK_SACK) {
+        /* Control chunks precede DATA. A second SACK is not a legal
+         * extension of this single-path private profile. */
+        if (i != 0u) return CNET_SCTP_DATA_PROTOCOL;
+        status = input_sack(&staged, now, &chunk);
+      } else if (chunk.type == CHUNK_DATA) {
+        size_t packet_bytes = 0u;
+        status = input_data(&staged, now, &chunk,
+            response, sizeof(response), &packet_bytes);
+        if (status == CNET_SCTP_DATA_OK) reply_size = packet_bytes;
+      } else {
+        return CNET_SCTP_DATA_PROTOCOL;
+      }
+      if (status != CNET_SCTP_DATA_OK) return status;
+    }
+    if (reply_size > cap) return CNET_SCTP_DATA_CAPACITY;
+    if (reply_size != 0u) memcpy(out, response, reply_size);
+    memcpy(d, &staged, sizeof(staged));
+    *written = reply_size;
+    return CNET_SCTP_DATA_OK;
+  }
 }
 
 static cnet_sctp_data_rx *find_rx_tsn(cnet_sctp_data *d, uint32_t tsn) {
