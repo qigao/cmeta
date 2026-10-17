@@ -110,7 +110,31 @@ static cnet_sctp_data_tx *ticket(fixture *f, unsigned int i) {
       return &f->a.tx[j];
   assert(0); return NULL;
 }
+/* Flight accounting and retransmission intent must remain independent. */
+static void assert_flight_invariant(const cnet_sctp_data *d) {
+  size_t actual = 0u;
+  unsigned int i;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    const cnet_sctp_data_tx *tx = &d->tx[i];
+    if (!tx->used) {
+      assert(!tx->flight_accounted && !tx->pending_retransmit);
+      continue;
+    }
+    if (tx->flight_accounted) {
+      assert(!tx->gap_acked);
+      actual += tx->packet_size - 12u;
+    }
+    if (tx->pending_retransmit) {
+      assert(!tx->gap_acked && !tx->fast_retransmitted);
+      assert(tx->missing_reports >= 3u);
+    }
+  }
+  /* Application payload accounting is distinct from padded DATA flight. */
+  assert(actual <= CNET_SCTP_DATA_TX_SLOTS * CNET_SCTP_DATA_MTU);
+}
+
 static void finished(fixture *f) {
+  assert_flight_invariant(&f->a);
   assert(cnet_sctp_data_stop(&f->a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&f->b) == CNET_SCTP_DATA_OK);
 }
