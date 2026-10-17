@@ -7,9 +7,9 @@
 
 /* PRIVATE C11 SCTP DATA/SACK transport core. No heap, worker, socket or lock.
  * The one CNet Owner drives send, input, take, T3 and stop; no copied pointer
- * may outlive a call. The prototype only accepts complete unfragmented DATA
- * chunks (B|E), RFC 9260 gap/duplicate SACKs and fixed path/stream ceilings.
- * PR-SCTP, fragmentation/interleaving, shutdown and complete RFC 7 cwnd
+ * may outlive a call. The prototype supports bounded legacy DATA
+ * fragmentation, RFC 9260 gap/duplicate SACKs and fixed path/stream ceilings.
+ * PR-SCTP, interleaving, shutdown and complete RFC 7 cwnd
  * conformance remain separate mandatory gates before browser compatibility.
  */
 #define CNET_SCTP_DATA_MTU 1200u
@@ -53,6 +53,10 @@ typedef struct cnet_sctp_data_tx {
   size_t user_size;
   uint32_t tsn;
   uint8_t retransmits;
+  /* Gap ACK is revocable: retain the owned wire packet until cumulative ACK.
+   * ack_counted prevents repeated gap/revoke/re-ACK from growing cwnd. */
+  uint8_t gap_acked;
+  uint8_t ack_counted;
   uint8_t used;
 } cnet_sctp_data_tx;
 

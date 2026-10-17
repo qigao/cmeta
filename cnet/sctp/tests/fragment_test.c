@@ -55,7 +55,7 @@ static void test_twenty_kib_loss_gap_ack_reassembly(void) {
   cnet_sctp_wire_chunk ch = {0};
   cnet_sctp_data_message message = {0};
   size_t n = 0u, ns = 0u, nr = 0u;
-  uint64_t now, deadline = 0u;
+  uint64_t now = 2u, deadline = 0u;
   int has_deadline = 0;
   unsigned int i;
   const uint32_t first_tsn = UINT32_C(0xfffffff8);
@@ -76,9 +76,36 @@ static void test_twenty_kib_loss_gap_ack_reassembly(void) {
   assert(cnet_sctp_wire_next_chunk(&decoder, &ch) == CNET_SCTP_WIRE_OK);
   assert(ch.type == 0u && ch.flags == 2u); /* first B=1 E=0 */
   assert(be32(ch.value) == first_tsn);
-  /* First fragment lost. Deliver all other fragments with SACKs. */
+  /* First fragment lost. Gap ACKs keep all 16 owned TX tickets until
+   * cumulative ACK; recover the missing first fragment before pumping more. */
   for (i = 1u; i < FRAGMENTS; ++i) {
-    now = 2u + 3u * i;
+    now += 3u;
+    if (i == CNET_SCTP_DATA_TX_SLOTS) {
+      const size_t offset = a.pending.offset;
+      assert(cnet_sctp_data_pump(&a, now, packet, sizeof(packet), &n) ==
+             CNET_SCTP_DATA_CAPACITY);
+      assert(n == 0u && a.pending.offset == offset &&
+             offset == CNET_SCTP_DATA_TX_SLOTS * CNET_SCTP_DATA_PAYLOAD_MAX);
+      assert(a.next_tsn == first_tsn + i && a.tx_ssn[0] == 0u);
+      assert(a.in_flight == CNET_SCTP_DATA_PAYLOAD_MAX);
+      assert(cnet_sctp_data_deadline(&a, &deadline, &has_deadline) ==
+             CNET_SCTP_DATA_OK);
+      assert(has_deadline && deadline == 102u); /* Gap ACKs did not defer T3. */
+      assert(cnet_sctp_data_advance(&a, deadline, packet, sizeof(packet), &n) ==
+             CNET_SCTP_DATA_OK);
+      assert(cnet_sctp_wire_decode(packet, n, &header, &decoder) == CNET_SCTP_WIRE_OK);
+      assert(cnet_sctp_wire_next_chunk(&decoder, &ch) == CNET_SCTP_WIRE_OK);
+      assert(ch.flags == 2u && be32(ch.value) == first_tsn);
+      assert(cnet_sctp_data_input(&b, deadline + 1u, packet, n,
+          sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+      assert(cnet_sctp_data_input(&a, deadline + 2u, sack, ns,
+          reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+      assert(a.in_flight == 0u && a.t3_deadline_ms == 0u);
+      assert(b.buffered_rx == CNET_SCTP_DATA_TX_SLOTS * CNET_SCTP_DATA_PAYLOAD_MAX);
+      assert(cnet_sctp_data_take(&b, &message, decoded, sizeof(decoded), &nr) ==
+             CNET_SCTP_DATA_EMPTY); /* No E fragment yet; never partial delivery. */
+      now = deadline + 3u;
+    }
     assert(cnet_sctp_data_pump(&a, now, packet,
                                sizeof(packet), &n) == CNET_SCTP_DATA_OK);
     assert(cnet_sctp_wire_decode(packet, n, &header, &decoder) == CNET_SCTP_WIRE_OK);
@@ -94,23 +121,17 @@ static void test_twenty_kib_loss_gap_ack_reassembly(void) {
     assert(cnet_sctp_data_input(&a, now + 2u, sack, ns,
                                 reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
     assert(nr == 0u);
-    assert(cnet_sctp_data_take(&b, &message, decoded,
-                               sizeof(decoded), &nr) == CNET_SCTP_DATA_EMPTY);
+    if (i + 1u < FRAGMENTS)
+      assert(cnet_sctp_data_take(&b, &message, decoded,
+                                 sizeof(decoded), &nr) == CNET_SCTP_DATA_EMPTY);
   }
   assert(!a.pending.active && a.next_tsn == first_tsn + FRAGMENTS);
   assert(cnet_sctp_data_pump(&a, now + 3u, packet, sizeof(packet), &n) ==
          CNET_SCTP_DATA_EMPTY);
-  assert(n == 0u && a.in_flight == CNET_SCTP_DATA_PAYLOAD_MAX);
-  assert(b.buffered_rx == MESSAGE_SIZE - CNET_SCTP_DATA_PAYLOAD_MAX);
+  assert(n == 0u && a.in_flight == 0u);
+  assert(b.buffered_rx == MESSAGE_SIZE);
   assert(cnet_sctp_data_deadline(&a, &deadline, &has_deadline) == CNET_SCTP_DATA_OK);
-  assert(has_deadline);
-  assert(cnet_sctp_data_advance(&a, deadline, packet,
-                                sizeof(packet), &n) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_wire_decode(packet, n, &header, &decoder) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &ch) == CNET_SCTP_WIRE_OK);
-  assert(ch.flags == 2u && be32(ch.value) == first_tsn);
-  assert(cnet_sctp_data_input(&b, deadline + 1u, packet, n,
-                              sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  assert(!has_deadline);
   assert(cnet_sctp_data_take(&b, &message, decoded, 1024u, &nr) ==
          CNET_SCTP_DATA_CAPACITY);
   assert(b.buffered_rx == MESSAGE_SIZE && nr == 0u);
@@ -122,8 +143,6 @@ static void test_twenty_kib_loss_gap_ack_reassembly(void) {
          !message.unordered);
   assert(memcmp(decoded, expected, MESSAGE_SIZE) == 0);
   assert(b.buffered_rx == 0u && b.rx_ssn[0] == 1u);
-  assert(cnet_sctp_data_input(&a, deadline + 2u, sack, ns,
-                              reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
   assert(a.in_flight == 0u && a.t3_deadline_ms == 0u);
   assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);

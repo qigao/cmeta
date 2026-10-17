@@ -41,11 +41,17 @@ static cnet_sctp_data_status guard(cnet_sctp_data *d) {
 static cnet_sctp_data_status clock_check(const cnet_sctp_data *d, uint64_t now) {
   return now < d->last_time_ms ? CNET_SCTP_DATA_CLOCK : CNET_SCTP_DATA_OK;
 }
-static unsigned int tx_count(const cnet_sctp_data *d) {
-  unsigned int i, count = 0u;
-  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
-    if (d->tx[i].used) ++count;
-  return count;
+/* Retained gap-acknowledged tickets are not outstanding for T3/rwnd.
+ * They still occupy their original bounded TX slots until cumulative ACK. */
+static cnet_sctp_data_tx *oldest_outstanding(cnet_sctp_data *d) {
+  cnet_sctp_data_tx *oldest = NULL;
+  unsigned int i;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    cnet_sctp_data_tx *slot = &d->tx[i];
+    if (slot->used && !slot->gap_acked &&
+        (!oldest || ahead(oldest->tsn, slot->tsn))) oldest = slot;
+  }
+  return oldest;
 }
 static size_t rx_available(const cnet_sctp_data *d) {
   size_t by_bytes = CNET_SCTP_DATA_RECEIVE_CEILING - d->buffered_rx;
@@ -136,6 +142,8 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
   slot->user_size = n;
   slot->tsn = d->next_tsn++;
   slot->retransmits = 0u;
+  slot->gap_acked = 0u;
+  slot->ack_counted = 0u;
   slot->used = 1u;
   d->in_flight += n;
   if (d->t3_deadline_ms == 0u) d->t3_deadline_ms = now + d->rto_ms;
@@ -327,9 +335,14 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
 
 static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
     const cnet_sctp_wire_chunk *ch) {
-  uint32_t cumulative, last_tsn, peer_window;
+  uint32_t cumulative, peer_window, progress, sent_span;
   uint16_t blocks, duplicates, prev_end = 0u;
-  size_t i, acked_bytes = 0u;
+  /* 0=outstanding, 1=revocable gap ACK, 2=cumulative ACK (release). */
+  uint8_t coverage[CNET_SCTP_DATA_TX_SLOTS] = {0};
+  cnet_sctp_data_tx *oldest;
+  size_t i, acked_bytes = 0u, outstanding_bytes = 0u;
+  uint64_t deadline;
+  int earliest_acked = 0;
   if (ch->flags != 0u || ch->value_size < 12u)
     return CNET_SCTP_DATA_PROTOCOL;
   cumulative = rd32(ch->value);
@@ -339,49 +352,74 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
   if (blocks > 16u || duplicates > CNET_SCTP_DATA_RX_SLOTS ||
       ch->value_size != 12u + 4u * ((size_t)blocks + duplicates))
     return CNET_SCTP_DATA_PROTOCOL;
-  last_tsn = d->next_tsn - 1u;
-  if (ahead(cumulative, last_tsn) || ahead(d->last_ack, cumulative))
-    return CNET_SCTP_DATA_PROTOCOL;
+  progress = cumulative - d->last_ack;
+  /* RFC 9260 6.2.1 D(i): an older SACK is dropped, not a transport error.
+   * Exactly half a sequence space has no ordering and is rejected. */
+  if (progress == UINT32_C(0x80000000)) return CNET_SCTP_DATA_PROTOCOL;
+  if (progress > UINT32_C(0x80000000)) return CNET_SCTP_DATA_OK;
+  sent_span = (d->next_tsn - 1u) - d->last_ack;
+  if (progress > sent_span) return CNET_SCTP_DATA_PROTOCOL;
   for (i = 0u; i < blocks; ++i) {
     const uint8_t *p = ch->value + 12u + 4u * i;
     uint16_t first = rd16(p), end = rd16(p + 2u);
     if (!first || first <= prev_end || end < first ||
-        ahead(cumulative + end, last_tsn))
+        (uint32_t)end > sent_span - progress)
       return CNET_SCTP_DATA_PROTOCOL;
     prev_end = end;
   }
-  /* Validate all gap blocks and rescheduling overflow BEFORE changing
-   * outstanding tickets. A bad SACK cannot partially settle the sender. */
-  if (now > UINT64_MAX - d->config.t3_max_ms)
-    return CNET_SCTP_DATA_CLOCK;
+  oldest = oldest_outstanding(d);
+  /* Preview all ticket states and the new timer before mutating anything.
+   * Invalid SACKs and timer-overflow refusals cannot partially settle TX. */
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    const cnet_sctp_data_tx *slot = &d->tx[i];
+    uint32_t offset;
+    size_t j;
+    if (!slot->used) continue;
+    if (slot->tsn - d->last_ack <= progress) coverage[i] = 2u;
+    offset = slot->tsn - cumulative;
+    for (j = 0u; !coverage[i] && j < blocks; ++j) {
+      const uint8_t *p = ch->value + 12u + 4u * j;
+      if (offset >= rd16(p) && offset <= rd16(p + 2u)) coverage[i] = 1u;
+    }
+    if (coverage[i]) {
+      if (!slot->ack_counted) acked_bytes += slot->user_size;
+      if (slot == oldest) earliest_acked = 1;
+    } else {
+      /* Also restores bytes previously gap-acked but now omitted (reneged). */
+      outstanding_bytes += slot->user_size;
+    }
+  }
+  deadline = d->t3_deadline_ms;
+  if (outstanding_bytes == 0u) {
+    deadline = 0u; /* RFC 9260 6.3.2 R2, even if gap tickets are retained. */
+  } else if (deadline == 0u || earliest_acked) {
+    /* R3: restart only for the earliest outstanding TSN, not any later ACK.
+     * R4: a retracted Gap ACK restarts a stopped timer. Preserve RTO backoff;
+     * an ACK alone is NOT an unambiguous RTT sample (6.3.1 C5 / 6.3.3). */
+    if (now > UINT64_MAX - d->rto_ms) return CNET_SCTP_DATA_CLOCK;
+    deadline = now + d->rto_ms;
+  }
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
     cnet_sctp_data_tx *slot = &d->tx[i];
-    size_t j;
-    int covered;
     if (!slot->used) continue;
-    covered = !ahead(slot->tsn, cumulative);
-    for (j = 0u; !covered && j < blocks; ++j) {
-      const uint8_t *p = ch->value + 12u + 4u * j;
-      const uint32_t start = cumulative + rd16(p);
-      const uint32_t end = cumulative + rd16(p + 2u);
-      if (!ahead(start, slot->tsn) && !ahead(slot->tsn, end))
-        covered = 1;
-    }
-    if (covered) {
-      acked_bytes += slot->user_size;
-      d->in_flight -= slot->user_size;
+    if (coverage[i] == 2u) {
       memset(slot, 0, sizeof(*slot));
+    } else {
+      slot->gap_acked = coverage[i];
+      if (coverage[i]) slot->ack_counted = 1u;
     }
   }
   d->last_ack = cumulative;
   d->peer_rwnd = peer_window;
-  if (acked_bytes) {
+  d->in_flight = outstanding_bytes;
+  d->t3_deadline_ms = deadline;
+  /* Keep the existing bounded growth model; full RFC 7.2 remains open.
+   * Gap-only SACKs and repeated gap/revoke/re-ACK cannot inflate cwnd. */
+  if (acked_bytes && progress != 0u) {
     const uint32_t increment = acked_bytes > CNET_SCTP_DATA_MTU ?
         CNET_SCTP_DATA_MTU : (uint32_t)acked_bytes;
     d->cwnd = d->cwnd + increment > 16u * CNET_SCTP_DATA_MTU ?
         16u * CNET_SCTP_DATA_MTU : d->cwnd + increment;
-    d->rto_ms = d->config.t3_initial_ms;
-    d->t3_deadline_ms = tx_count(d) ? now + d->rto_ms : 0u;
   }
   d->last_time_ms = now;
   return CNET_SCTP_DATA_OK;
@@ -492,8 +530,7 @@ cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
 cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
     void *out, size_t cap, size_t *written) {
   cnet_sctp_data_status status = guard(d);
-  cnet_sctp_data_tx *oldest = NULL;
-  unsigned int i;
+  cnet_sctp_data_tx *oldest;
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!out || !written) return CNET_SCTP_DATA_INVALID;
   *written = 0u;
@@ -502,11 +539,12 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
     d->last_time_ms = now;
     return CNET_SCTP_DATA_OK;
   }
-  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
-    if (d->tx[i].used && (!oldest ||
-        ahead(oldest->tsn, d->tx[i].tsn))) oldest = &d->tx[i];
+  oldest = oldest_outstanding(d);
+  if (!oldest) {
+    d->t3_deadline_ms = 0u;
+    d->last_time_ms = now;
+    return CNET_SCTP_DATA_OK;
   }
-  if (!oldest) { d->t3_deadline_ms = 0u; return CNET_SCTP_DATA_OK; }
   if (oldest->retransmits >= d->config.max_retransmits) {
     d->closed = 1u; /* terminal is observable, no background retry */
     return CNET_SCTP_DATA_EXPIRED;
