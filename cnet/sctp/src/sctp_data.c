@@ -617,12 +617,18 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
         fast = slot;
     }
     if (fast) {
+      /* Fast retransmission consumes the same bounded retransmit budget as
+       * T3; exhaustion must not silently emit an additional packet. */
+      if (fast->retransmits >= d->config.max_retransmits) {
+        d->closed = 1u;
+        return CNET_SCTP_DATA_EXPIRED;
+      }
       if (fast->packet_size > cap) return CNET_SCTP_DATA_CAPACITY;
       if (now > UINT64_MAX - d->rto_ms) return CNET_SCTP_DATA_CLOCK;
       memcpy(out, fast->packet, fast->packet_size);
       *written = fast->packet_size;
       fast->fast_retransmitted = 1u;
-      if (fast->retransmits < UINT8_MAX) ++fast->retransmits;
+      ++fast->retransmits;
       d->ssthresh = d->cwnd / 2u;
       if (d->ssthresh < 4u * CNET_SCTP_DATA_MTU)
         d->ssthresh = 4u * CNET_SCTP_DATA_MTU;
