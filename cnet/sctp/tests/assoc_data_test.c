@@ -272,10 +272,10 @@ static void post_handshake_twenty_kib_fragments(void) {
   cnet_sctp_assoc a, b;
   test_context ca = {0}, cb = {0};
   uint8_t original[MESSAGE], expected[MESSAGE], reassembled[MESSAGE];
-  uint8_t wire[1200], sack[1200], response[1200];
+  uint8_t wire[1200], sack[1200], response[1200], first_wire[1200];
   cnet_sctp_data_message metadata = {0};
-  size_t nw = 0u, ns = 0u, nr = 0u;
-  uint64_t now = 0u, deadline = 0u;
+  size_t nw = 0u, ns = 0u, nr = 0u, first_size = 0u;
+  uint64_t now = 7u, deadline = 0u;
   int has_deadline = 0;
   unsigned int i;
   ready_pair(&a, &b, &ca, &cb);
@@ -290,29 +290,66 @@ static void post_handshake_twenty_kib_fragments(void) {
   assert(nw == 0u && a.data.pending.offset == 0u);
   assert(cnet_sctp_assoc_pump_message(&a, 7u, wire,
                                     sizeof(wire), &nw) == CNET_SCTP_ASSOC_OK);
-  /* Drop first B-flag fragment. Sender must retain it as a T3 ticket. */
+  first_size = nw;
+  memcpy(first_wire, wire, nw);
+  /* Drop first B-flag fragment. All subsequent Gap ACKs are revocable:
+   * keep their tickets and exercise backpressure through the Association. */
   for (i = 1u; i < FRAGMENTS; ++i) {
-    now = 7u + (uint64_t)i * 3u;
+    now += 3u;
+    if (i == CNET_SCTP_DATA_TX_SLOTS) {
+      cnet_sctp_data before;
+      const uint64_t owner_time = a.last_time_ms;
+      unsigned int j, retained = 0u, gap_acked = 0u;
+      memcpy(&before, &a.data, sizeof(before));
+      assert(cnet_sctp_assoc_pump_message(&a, now, wire, sizeof(wire), &nw) ==
+             CNET_SCTP_ASSOC_CAPACITY);
+      assert(nw == 0u && memcmp(&before, &a.data, sizeof(before)) == 0);
+      assert(a.last_time_ms == owner_time);
+      assert(a.data.pending.offset == i * CNET_SCTP_DATA_PAYLOAD_MAX);
+      assert(a.data.next_tsn == ca.tsn + i && a.data.tx_ssn[2u] == 0u);
+      for (j = 0u; j < CNET_SCTP_DATA_TX_SLOTS; ++j) {
+        if (a.data.tx[j].used) ++retained;
+        if (a.data.tx[j].used && a.data.tx[j].gap_acked) ++gap_acked;
+      }
+      assert(retained == CNET_SCTP_DATA_TX_SLOTS && gap_acked == retained - 1u);
+      assert(a.data.in_flight == CNET_SCTP_DATA_PAYLOAD_MAX);
+      assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
+             CNET_SCTP_ASSOC_OK);
+      assert(has_deadline && deadline == 107u); /* No Gap-SACK timer deferral. */
+      assert(cnet_sctp_assoc_advance(&a, deadline, wire,
+                                     sizeof(wire), &nw) == CNET_SCTP_ASSOC_OK);
+      assert(nw == first_size && memcmp(wire, first_wire, nw) == 0);
+      assert(cnet_sctp_assoc_input(&b, deadline + 1u, wire, nw,
+                                   sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+      assert(cnet_sctp_assoc_input(&a, deadline + 2u, sack, ns,
+          response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+      assert(nr == 0u && a.data.in_flight == 0u && a.data.t3_deadline_ms == 0u);
+      for (j = 0u; j < CNET_SCTP_DATA_TX_SLOTS; ++j) assert(!a.data.tx[j].used);
+      assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED && a.data_ready);
+      assert(b.state == CNET_SCTP_ASSOC_ESTABLISHED && b.data_ready);
+      assert(b.data.buffered_rx == i * CNET_SCTP_DATA_PAYLOAD_MAX);
+      assert(cnet_sctp_assoc_take_message(&b, &metadata, reassembled,
+          sizeof(reassembled), &nr) == CNET_SCTP_ASSOC_EMPTY);
+      assert(nr == 0u); /* Still no E fragment: never expose partial data. */
+      now = deadline + 3u;
+    }
     assert(cnet_sctp_assoc_pump_message(&a, now, wire, sizeof(wire), &nw) ==
            CNET_SCTP_ASSOC_OK);
     assert(cnet_sctp_assoc_input(&b, now + 1u, wire, nw,
                                  sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
-    assert(cnet_sctp_assoc_take_message(&b, &metadata, reassembled,
-                                        sizeof(reassembled), &nr) ==
-           CNET_SCTP_ASSOC_EMPTY);
+    if (i + 1u < FRAGMENTS)
+      assert(cnet_sctp_assoc_take_message(&b, &metadata, reassembled,
+                                          sizeof(reassembled), &nr) ==
+             CNET_SCTP_ASSOC_EMPTY);
     assert(cnet_sctp_assoc_input(&a, now + 2u, sack, ns,
                                  response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
     assert(nr == 0u);
   }
   assert(!a.data.pending.active && a.data.tx_ssn[2u] == 1u);
-  assert(b.data.buffered_rx == MESSAGE - CNET_SCTP_DATA_PAYLOAD_MAX);
+  assert(b.data.buffered_rx == MESSAGE);
   assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
          CNET_SCTP_ASSOC_OK);
-  assert(has_deadline);
-  assert(cnet_sctp_assoc_advance(&a, deadline, wire,
-                                 sizeof(wire), &nw) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, deadline + 1u, wire, nw,
-                               sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(!has_deadline && a.data.in_flight == 0u);
   assert(cnet_sctp_assoc_take_message(&b, &metadata, reassembled,
                                       1024u, &nr) == CNET_SCTP_ASSOC_CAPACITY);
   assert(nr == 0u && b.data.buffered_rx == MESSAGE);
@@ -320,14 +357,16 @@ static void post_handshake_twenty_kib_fragments(void) {
                                       sizeof(reassembled), &nr) == CNET_SCTP_ASSOC_OK);
   assert(nr == MESSAGE && metadata.size == MESSAGE);
   assert(metadata.stream_id == 2u && metadata.ppid == 53u &&
-         metadata.stream_sequence == 0u && !metadata.unordered);
+         metadata.stream_sequence == 0u && !metadata.unordered &&
+         metadata.tsn == ca.tsn);
   assert(memcmp(reassembled, expected, MESSAGE) == 0);
-  assert(cnet_sctp_assoc_input(&a, deadline + 2u, sack, ns,
-                               response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
-  assert(a.data.in_flight == 0u);
+  assert(cnet_sctp_assoc_take_message(&b, &metadata, reassembled,
+                                      sizeof(reassembled), &nr) == CNET_SCTP_ASSOC_EMPTY);
+  assert(nr == 0u && b.data.buffered_rx == 0u && b.data.rx_ssn[2u] == 1u);
   assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
   assert(!a.data_ready && !b.data_ready);
+  assert(cnet_sctp_assoc_drained(&a) && cnet_sctp_assoc_drained(&b));
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
