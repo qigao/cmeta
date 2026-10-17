@@ -141,52 +141,6 @@ jobs:
           set -euo pipefail
           cmake --preset "${{ matrix.preset }}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SUPPRESS_REGENERATION=ON
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
-      # Only the Draft production POLICY candidate runs these explicit
-      # installed-SDK source tests. Original immutable release tags/packages,
-      # all other PRs and the existing native graph stay unchanged.
-      - name: Checkout pinned independent CFlow DLL/dylib consumer fixture
-        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/static-cstl-cflow-private-owner-1180' && (matrix.id == 'windows-release' || matrix.id == 'macos-release') }}
-        uses: actions/checkout@v4
-        with:
-          repository: qigao/salts
-          ref: d938a9843d9db4cbbb1d6db3e1546b82df4a602b
-          path: build/private-owner-fixtures/cflow
-          persist-credentials: false
-      - name: Checkout pinned independent CSTL DLL/dylib consumer fixture
-        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/static-cstl-cflow-private-owner-1180' && (matrix.id == 'windows-release' || matrix.id == 'macos-release') }}
-        uses: actions/checkout@v4
-        with:
-          repository: qigao/salts
-          ref: 579de3d85050799c5f93d19b92e3dbda7d58181f
-          path: build/private-owner-fixtures/cstl
-          persist-credentials: false
-      - name: Qualify real producer static owners via installed Windows C11 SDK
-        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/static-cstl-cflow-private-owner-1180' && matrix.id == 'windows-release' }}
-        shell: cmd
-        env:
-          EXPECTED_PRIVATE_OWNER_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          python cmake/ci/private-static-owner/verify_installed.py --platform windows --build build/Msvc-Release
-          if errorlevel 1 exit /b 1
-      - name: Qualify real producer static owners via installed macOS ARM64 C11 SDK
-        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/static-cstl-cflow-private-owner-1180' && matrix.id == 'macos-release' }}
-        shell: bash
-        env:
-          EXPECTED_PRIVATE_OWNER_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          python3 cmake/ci/private-static-owner/verify_installed.py \
-            --platform macos --build build/mac-arm64-appleclang-package-release
-      - name: Preserve private owner candidate original object and DSO evidence
-        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'feature/static-cstl-cflow-private-owner-1180' && (matrix.id == 'windows-release' || matrix.id == 'macos-release') && always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: salts-private-static-owner-${{ matrix.id }}
-          path: ${{ runner.temp }}/salts-private-owner-candidate-*
-          if-no-files-found: warn
-          retention-days: 14
       # ACE/Actor and CNet progress sampling is owned by the separate benchmark
       # consumer, using the exact native producer SHA; never delay native CI.
       # Unicode conformance must execute (not merely compile) on each native OS.
@@ -208,25 +162,6 @@ jobs:
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R "^(test_salts_(unicode|idna)($|_)|cnet_name_lookup(_dns)?_test$)"
-          if errorlevel 1 exit /b 1
-      # PR 1085 isolated SG runtime gate.
-      - name: Qualify SG Owner tests (Unix)
-        if: ${{ !cancelled() && github.head_ref == 'feature/cnet-sg-host-policy-composition' && steps.build_unix.outcome == 'success' && matrix.execution && (matrix.family == 'linux' || matrix.family == 'mac') }}
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          set -euo pipefail
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 90 -R 'cnet_sg_(hosted_gateway|handoff_owner)_test'
-      - name: Qualify SG Owner tests (Windows)
-        if: ${{ !cancelled() && github.head_ref == 'feature/cnet-sg-host-policy-composition' && steps.build_windows.outcome == 'success' && matrix.execution && matrix.family == 'windows' }}
-        timeout-minutes: 10
-        shell: cmd
-        run: |
-          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 90 -R "cnet_sg_(hosted_gateway|handoff_owner)_test"
           if errorlevel 1 exit /b 1
       # Branch-only conformance of original #1234 FR Provider DSO and strict
       # borrowed service admission against #1235 already merged into master.
@@ -315,15 +250,6 @@ jobs:
           ctest --preset "${{ matrix.preset }}" \
             --no-tests=error --output-on-failure --timeout 90 \
             -R '^(cmeta_native_component_(test|cpp_test|plugin_(abi_test|abi_cpp_test|dso_test|generation_test|scope_cpp_test|publication_test|act_native_io_test|runtime_failure_test|concurrency_test))|cmeta_fastpath_(component|pattern)(_cpp)?_test|cmeta_ace_sync(_cpp)?_test|cmeta_ace_leader_followers_contract(_cpp)?_test|platform_ace_leader_followers(_cpp)?_test|native_io_readiness_(lifetime|accept)_test|native_io_header_cpp_test|thread_pool_test|thread_pool_lf_test|disruptor_test|concurrency_header_cpp_test|cflow_reactive_test|cflow_actor_test|cflow_ace_pipes_filters_test|cflow_ace_half_sync_async_test|cnet_ace_acceptor_connector_test|cnet_tcp_endpoint_test|cnet_(progress_strategy|owner_placement|destination_policy|client_pool|recovery_policy|managed_dial|handoff|manager|event|dispatcher|sg_hosted_gateway|sg_handoff_owner|external_gateway_owner|native_io_sharded_ownership|shards_multi_owner)_test)$'
-      - name: Repeat #1105 Actor worker/foreign-stop under source sanitizers
-        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.sanitizer != '' && (github.head_ref == 'fix/cflow-1105-cross-thread-stop' || github.head_ref == 'integrate/cflow-1107-master') }}
-        timeout-minutes: 20
-        shell: bash
-        run: |
-          set -euo pipefail
-          ctest --preset "${{ matrix.preset }}" \
-            --no-tests=error --output-on-failure --timeout 90 \
-            --repeat until-fail:50 -R '^cflow_actor_test$'
       # Full functional qualification and performance sampling are different
       # gates. CNet enables separately labeled benchmark CTests when native
       # benchmark binaries are built for downstream measurement. The host

@@ -23,7 +23,6 @@ OFFICIAL = re.compile(r"^2[.]3[.]0(?:-rc[.][1-9][0-9]*)?$")
 RC_MARKER = "sdk"
 PUBLISHING = ".github/workflows/native-sdk-rc-release.yml"
 CANDIDATES = (
-    ".github/workflows/candidate-native-sdk.yml",
     ".github/workflows/ace-candidate-native-sdk.yml",
 )
 REQUIRED_TAG_CHECKS = (

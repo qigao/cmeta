@@ -31,10 +31,7 @@ MIGRATED_FILES = (
     "native-build.yml",
     "cnet-tongsuo-rfc8998.yml",
     "cnet-module-once-tsan.yml",
-    "cflow-1105-consumer-tsan.yml",
-    "cstl-dso-odr-conformance.yml",
     "cnet-module-once-mixed-sdk-tsan.yml",
-    "candidate-native-sdk.yml",
     "ace-candidate-native-sdk.yml",
 )
 
@@ -56,7 +53,7 @@ def check(lines: dict[str, str]) -> dict:
             if filename in MIGRATED_FILES:
                 expected = (
                     EXISTING_CANDIDATE_VCPKG_PIN
-                    if filename in ("candidate-native-sdk.yml", "ace-candidate-native-sdk.yml")
+                    if filename == "ace-candidate-native-sdk.yml"
                     and name == "setup-vcpkg-cache"
                     else PIN
                 )
@@ -78,8 +75,11 @@ def check(lines: dict[str, str]) -> dict:
                 f"{filename}: expected one exact vcpkg and one exact re2c Action")
     migrated_count = sum(
         x["workflow"] in MIGRATED_FILES and x["commit"] == PIN for x in rows)
-    if migrated_count != 14:
-        raise ValueError(f"expected 14 newly fixed refs, got {migrated_count}")
+    # Each retained workflow has two provider actions; ACE keeps its vcpkg pin.
+    expected_migrated_count = 2 * len(MIGRATED_FILES) - 1
+    if migrated_count != expected_migrated_count:
+        raise ValueError(
+            f"expected {expected_migrated_count} reviewed refs, got {migrated_count}")
     if not any(x["workflow"] == "native-build.yml" for x in rows):
         raise ValueError("main native producer workflow has no pinned provider")
     return {
@@ -100,9 +100,9 @@ def self_test() -> dict:
     for filename in MIGRATED_FILES:
         fixture[filename] = "\n".join(
             f"      - uses: qigao/vcpkg-cache/.github/actions/{kind}@"
-            + (EXISTING_CANDIDATE_VCPKG_PIN if filename in (
-                "candidate-native-sdk.yml", "ace-candidate-native-sdk.yml"
-            ) and kind == "setup-vcpkg-cache" else PIN)
+            + (EXISTING_CANDIDATE_VCPKG_PIN
+               if filename == "ace-candidate-native-sdk.yml"
+               and kind == "setup-vcpkg-cache" else PIN)
             for kind in ("setup-re2c-tools", "setup-vcpkg-cache"))
     report = check(fixture)
     if report["status"] != "PASS":
@@ -119,7 +119,7 @@ def self_test() -> dict:
             raise ValueError(f"invalid provider action ref was accepted: {invalid}")
     return {
         "status": "PASS",
-        "positive": "14 new SHA pins plus 2 preserved candidate vcpkg pins",
+        "positive": f"{report['migrated_actions']} reviewed SHA pins plus 1 preserved ACE vcpkg pin",
         "rejected": ["master", "main", "v1", "short SHA", "nonhex SHA"],
     }
 

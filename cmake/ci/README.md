@@ -1,4 +1,19 @@
-# Benchmark 报告
+# CI 辅助脚本
+
+`select-ci-scope.ps1` 为 `ci.yml` 选择构建与测试；`verify-installed-consumer.cmake`
+仍由 CMeta、Component、CFlow 和 Concurrency 的正式 CTest 调用。
+
+已完成的 Component 候选包、CFlow #1105 消费者复现、CNet #1150 候选包，以及
+固定 `2.3.0-rc.15` 的 CFlow/CSTL DSO 实验 workflow 和专用脚本已移除，历史实现
+保留在 Git 中。静态 owner 的旧分支专用步骤也已移除；当前 native CI 继续执行
+`salts_static_owner_exports_test`、`cflow_executor_dso_test` 及其他正式测试。
+旧 Android runtime workflow 遗留的两个无调用脚本已移除，设备测试入口仍为
+[`tools/android-test.ps1`](../../tools/android-test.ps1)。
+
+ACE 长期 PR 的候选 SDK、当前源码的 CNet TSan、DataBind ASan、RFC8998 互操作，
+以及 NuGet feed 维护仍有独立用途，保留对应 workflow。
+
+## Benchmark 报告
 
 `native-io-benchmarks.yml` 通过 CTest 执行 benchmark 和既有 verifier。
 详细 CSV、Markdown、日志保留在 `io-benchmark-*` artifact，保留 30 天；

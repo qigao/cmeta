@@ -23,11 +23,7 @@ $full = ($EventName -eq "workflow_dispatch") -or $release23Push -or $releaseTagP
 # Normal ACE development runs full Linux CTest. An explicit [ACE-MATRIX]
 # marker on the same long-lived Draft PR runs host-complete integration tests
 # and cross-builds; the marker is removable after the qualification checkpoint.
-$cflow1105Qualification = $HeadBranch -in @(
-  'fix/cflow-1105-cross-thread-stop', 'integrate/cflow-1107-master') -and
-  $EventName -eq 'pull_request' -and -not $PrepareRelease
-$aceBranchPr = ($HeadBranch -eq 'feature/cmeta-ace-patterns' -or
-  ($cflow1105Qualification -and $AceSan)) -and
+$aceBranchPr = $HeadBranch -eq 'feature/cmeta-ace-patterns' -and
   $EventName -eq 'pull_request' -and -not $PrepareRelease
 if (($AceMatrix -or $AceSan) -and -not $aceBranchPr) {
   throw "ACE qualification is restricted to its long-lived PR"
@@ -48,15 +44,13 @@ if ($UnifiedSan -and -not $unified23Review) {
 if ($UnifiedSan -and ($AceMatrix -or $AceSan)) {
   throw "2.3-SAN and ACE qualifiers cannot be combined"
 }
-$acePatternsDevelopment = $aceBranchPr -and -not $AceMatrix -and -not $cflow1105Qualification
+$acePatternsDevelopment = $aceBranchPr -and -not $AceMatrix
 # All 2.3 combined source host profiles must run their complete CTest, not
 # only native/execution projection subsets that can miss CNet/ACE composition.
-$aceFullMatrixQualification = ($aceBranchPr -and $AceMatrix) -or $unified23Review -or $cflow1105Qualification
+$aceFullMatrixQualification = ($aceBranchPr -and $AceMatrix) -or $unified23Review
 $aceSanitizerQualification = $aceBranchPr -and $AceSan
 $unifiedSanitizerQualification = $unified23Review -and ($UnifiedSan -or $release23Push -or $releaseTagPush)
-# Preserve the historical integration branch's complete Linux coverage.
-$componentIntegration = ($HeadBranch -eq 'feature/cmeta-pattern-component-runtime' -and
-  -not $PrepareRelease) -or $aceBranchPr -or $unified23Review
+$componentIntegration = $aceBranchPr -or $unified23Review
 $changed = @()
 if (-not $full) {
   if ([string]::IsNullOrWhiteSpace($BaseRef)) { throw "Missing comparison base for $EventName" }
@@ -76,7 +70,7 @@ function Test-Changed([string]$Pattern) {
 
 # Shared build inputs invalidate all native suites. Formal checks only depend
 # on the Lean package, checked-in generated outputs, and their workflow.
-$shared = $full -or (Test-Changed '^(CMakeLists\.txt|CMakeOptions\.cmake|CMake(User)?Presets\.json|vcpkg(-configuration)?\.json|presets/|vendor/|\.github/actions/|\.github/workflows/(ci|native-build|sdk-package|sdk-tests)\.yml|cmake/(?!ci/)|cmake/ci/select-ci-scope\.ps1)')
+$shared = $full -or (Test-Changed '^(CMakeLists\.txt|CMakeOptions\.cmake|CMake(User)?Presets\.json|vcpkg(-configuration)?\.json|presets/|vendor/|\.github/actions/|\.github/workflows/(ci|native-build|sdk-package)\.yml|cmake/(?!ci/)|cmake/ci/select-ci-scope\.ps1)')
 $mobile = $shared -or (Test-Changed '^(tools|tinytest|platform|concurrency|coroutine|native-io|uri|cmeta|component|component-plugin|plugin|simd|tinymock|cflow|cstl|cnet|cserde|utils|unicode|idna)/')
 $contractsChanged = Test-Changed '^\.github/workflows/cmeta-cflow-calculus\.yml$'
 $cmetaRuntime = Test-Changed '^cmeta/(include/|src/|native/|CMakeLists\.txt$|tests/CMakeLists\.txt$)'
@@ -251,13 +245,6 @@ foreach ($profile in $profiles) {
   if ($unifiedSanitizerQualification -and -not $release23Push -and -not $releaseTagPush -and
       $profile.id -ne 'linux-release' -and
       -not $profile.ContainsKey('sanitizer')) { continue }
-  # #1105 runs existing Linux sanitizer profiles and the full host test matrix,
-  # not cross-compilation/package jobs. This cannot affect the long-lived ACE PR.
-  if ($cflow1105Qualification -and $profile.id -notin @(
-      'linux-release', 'windows-release', 'macos-release',
-      'macos-clang-release', 'linux-ace-asan-ubsan', 'linux-ace-tsan')) {
-    continue
-  }
   # Keep regular ACE PRs on Linux only, but do not discard the explicit
   # ASan+UBSan/TSan Debug profiles supplied for an [ACE-SAN] qualification.
   if ($acePatternsDevelopment -and $profile.id -ne 'linux-release' -and
@@ -265,8 +252,6 @@ foreach ($profile in $profiles) {
   # Clang profiles qualify the same portable/native contracts in isolated trees;
   # they do not produce additional release packages.
   $profile.clang = $profile.id -in @('linux-clang-release', 'macos-clang-release')
-  # The connection-manager integration branch uses GCC for Linux and macOS.
-  if ($HeadBranch -eq 'codex/cnet-manager-1001' -and $profile.clang) { continue }
   $entry = $profile.Clone()
   if (-not $entry.ContainsKey('sanitizer')) { $entry.sanitizer = '' }
   $entry.cross = $entry.family -in @('android', 'ios')
