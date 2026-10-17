@@ -313,8 +313,8 @@ cnet_sctp_data_status cnet_sctp_data_send_bundle(cnet_sctp_data *d,
   *written = 0u;
   if (count > CNET_SCTP_DATA_BUNDLE_MAX) return CNET_SCTP_DATA_CAPACITY;
   if (count > CNET_SCTP_DATA_TX_SLOTS - d->tx_count ||
-      count > d->config.peer_receive_window / 1u ||
-      d->in_flight > d->config.peer_receive_window - count)
+      d->in_flight > d->config.peer_receive_window ||
+      count > d->config.peer_receive_window - d->in_flight)
     return CNET_SCTP_DATA_CAPACITY;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
   memcpy(&staged, d, sizeof(staged));
