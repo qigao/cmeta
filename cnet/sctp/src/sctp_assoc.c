@@ -777,7 +777,6 @@ cnet_sctp_assoc_status cnet_sctp_assoc_advance(cnet_sctp_assoc *s,
   if (!output || !written) return CNET_SCTP_ASSOC_INVALID;
   *written = 0u;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
-  s->last_time_ms = now;
   if (s->state == CNET_SCTP_ASSOC_STOPPED || s->state == CNET_SCTP_ASSOC_FAILED)
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
   if ((s->state == CNET_SCTP_ASSOC_SHUTDOWN_PENDING ||
@@ -793,6 +792,8 @@ cnet_sctp_assoc_status cnet_sctp_assoc_advance(cnet_sctp_assoc *s,
     cnet_sctp_assoc_status mapped = data_result(
         cnet_sctp_data_advance(&s->data, now, output, cap, written));
     if (mapped == CNET_SCTP_ASSOC_EXPIRED) s->state = CNET_SCTP_ASSOC_FAILED;
+    if (mapped == CNET_SCTP_ASSOC_OK ||
+        mapped == CNET_SCTP_ASSOC_EXPIRED) s->last_time_ms = now;
     return mapped;
   }
   if (s->state != CNET_SCTP_ASSOC_COOKIE_WAIT &&
@@ -821,9 +822,28 @@ cnet_sctp_assoc_status cnet_sctp_assoc_advance(cnet_sctp_assoc *s,
     next_rto *= 2u;
   if (next_rto > s->config.t1_max_ms) next_rto = s->config.t1_max_ms;
   if (now > UINT64_MAX - next_rto) return CNET_SCTP_ASSOC_CLOCK;
-  if (s->saved_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
-  memcpy(output, s->saved_packet, s->saved_size);
-  *written = s->saved_size;
+  if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT) {
+    /* RFC 9260 9.2: a repeated SHUTDOWN carries the latest cumulatively
+     * received peer TSN, not the stale value saved when T2 was started.
+     * Encode into local scratch before output-capacity admission. */
+    uint8_t updated[CNET_SCTP_ASSOC_MAX_PACKET];
+    uint8_t value[4];
+    size_t packet_size = 0u;
+    cnet_sctp_assoc_status result;
+    wr32(value, s->data.cumulative_rx);
+    result = encode_one(s, s->peer_tag, SCTP_TYPE_SHUTDOWN,
+        value, sizeof(value), updated, sizeof(updated), &packet_size);
+    if (result != CNET_SCTP_ASSOC_OK) return result;
+    if (packet_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+    memcpy(output, updated, packet_size);
+    *written = packet_size;
+    memcpy(s->saved_packet, updated, packet_size);
+    s->saved_size = packet_size;
+  } else {
+    if (s->saved_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+    memcpy(output, s->saved_packet, s->saved_size);
+    *written = s->saved_size;
+  }
   s->current_rto_ms = next_rto;
   s->deadline_ms = now + next_rto;
   ++s->retransmits;

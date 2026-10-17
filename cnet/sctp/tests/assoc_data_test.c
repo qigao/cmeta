@@ -586,6 +586,56 @@ static void shutdown_pending_data_and_cumulative_ack(void) {
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
+/* A late peer DATA arriving while SHUTDOWN-SENT advances our receive TSN.
+ * The T2 retransmitted SHUTDOWN must carry the updated cumulative value.
+ * Output-capacity failure may not mutate the saved packet/deadline/clock. */
+static void shutdown_t2_refreshes_cumulative(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  const uint8_t user[] = {'x'};
+  uint8_t initial[1200], data[1200], sack[1200], update[1200];
+  uint8_t ack[1200], complete[1200];
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk chunk = {0};
+  size_t ninit = 0u, nd = 0u, ns = 0u, nu = 0u, na = 0u, nc = 0u;
+  uint64_t old_deadline;
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_shutdown(&a, 6u, initial,
+      sizeof(initial), &ninit) == CNET_SCTP_ASSOC_OK);
+  assert(ninit == 20u && shutdown_chunk_type(initial, ninit) == 7u);
+  assert(cnet_sctp_assoc_send_message(&b, 7u, 0u, 53u, 0,
+      user, sizeof(user), data, sizeof(data), &nd) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 8u, data, nd,
+      sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(a.data.cumulative_rx == cb.tsn);
+  old_deadline = a.deadline_ms;
+  assert(cnet_sctp_assoc_advance(&a, old_deadline, update,
+      10u, &nu) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(nu == 0u && a.deadline_ms == old_deadline &&
+      a.last_time_ms == 8u && a.saved_size == ninit &&
+      memcmp(a.saved_packet, initial, ninit) == 0);
+  assert(cnet_sctp_assoc_advance(&a, old_deadline, update,
+      sizeof(update), &nu) == CNET_SCTP_ASSOC_OK);
+  assert(nu == ninit && memcmp(update, initial, ninit) != 0);
+  assert(cnet_sctp_wire_decode(update, nu, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
+  assert(chunk.type == 7u && chunk.value_size == 4u);
+  assert(chunk.value[0] == 0u && chunk.value[1] == 0u &&
+      chunk.value[2] == (uint8_t)(cb.tsn >> 8) &&
+      chunk.value[3] == (uint8_t)cb.tsn);
+  assert(cnet_sctp_assoc_input(&b, old_deadline + 1u, update, nu,
+      ack, sizeof(ack), &na) == CNET_SCTP_ASSOC_OK);
+  assert(b.data.in_flight == 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT);
+  assert(cnet_sctp_assoc_input(&a, old_deadline + 2u, ack, na,
+      complete, sizeof(complete), &nc) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, old_deadline + 3u,
+      complete, nc, data, sizeof(data), &nd) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_drained(&a) && cnet_sctp_assoc_drained(&b));
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
 static void shutdown_simultaneous(void) {
   cnet_sctp_assoc a, b;
   test_context ca = {0}, cb = {0};
@@ -619,6 +669,7 @@ static void shutdown_simultaneous(void) {
 int main(void) {
   shutdown_no_inflight_and_t2();
   shutdown_pending_data_and_cumulative_ack();
+  shutdown_t2_refreshes_cumulative();
   shutdown_simultaneous();
   post_handshake_window_update();
   real_assoc_send_sack_and_t3();
