@@ -453,6 +453,31 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
     if (outstanding_bytes && (earliest_acked || deadline == 0u))
       deadline = now + d->rto_ms;
   }
+  /* RFC 9260 fast-retransmit evidence: a newly acknowledged higher TSN
+   * reports lower outstanding TSNs as missing. Duplicate SACKs and
+   * repeated Gap ACKs do not create additional evidence. This stage only
+   * records bounded evidence; packet emission remains Owner-driven. */
+  {
+    uint32_t highest_new = 0u;
+    int has_higher = 0;
+    for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+      const cnet_sctp_data_tx *slot = &d->tx[i];
+      if (!slot->used || !coverage[i] || slot->ack_counted) continue;
+      if (!has_higher || ahead(slot->tsn, highest_new)) {
+        highest_new = slot->tsn;
+        has_higher = 1;
+      }
+    }
+    if (has_higher) {
+      for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+        cnet_sctp_data_tx *slot = &d->tx[i];
+        if (slot->used && coverage[i] == 0u &&
+            ahead(highest_new, slot->tsn) &&
+            slot->missing_reports < 3u)
+          ++slot->missing_reports;
+      }
+    }
+  }
   d->last_ack = cumulative;
   d->peer_rwnd = peer_window;
   d->in_flight = outstanding_bytes;
