@@ -35,11 +35,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Restore shared vcpkg binary cache
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@2e214ae44a3e3244eded5db6361194576356fc9e
         with:
           mode: read
       - name: Restore re2c tools
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@2e214ae44a3e3244eded5db6361194576356fc9e
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
