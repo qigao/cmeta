@@ -109,6 +109,7 @@ typedef struct cnet_sctp_data {
   uint64_t probe_deadline_ms, probe_interval_ms;
   uint32_t probe_tsn;
   uint8_t probe_active;
+  uint8_t probe_unanswered; /* silence, not a peer-advertised closed window */
   uint64_t srtt_x8_ms, rttvar_x4_ms;
   uint32_t recovery_exit_tsn;
   uint32_t t3_wait_tsn;

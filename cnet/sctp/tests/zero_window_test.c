@@ -76,6 +76,9 @@ static void zero_probe_backoff_recovery(void) {
       sizeof(message)) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_deadline(&a, &due, &has_due) == CNET_SCTP_DATA_OK);
   assert(has_due && due == 111u);
+  ack(&a, 12u, 99u, 0u); /* duplicate SACK cannot postpone first probe */
+  assert(cnet_sctp_data_deadline(&a, &due, &has_due) == CNET_SCTP_DATA_OK);
+  assert(has_due && due == 111u);
   assert(cnet_sctp_data_advance(&a, 110u, out, sizeof(out), &n) ==
       CNET_SCTP_DATA_OK);
   assert(n == 0u && a.next_tsn == 100u);
@@ -100,7 +103,9 @@ static void zero_probe_backoff_recovery(void) {
   assert(n == nfirst && memcmp(out, first, n) == 0);
   assert(a.cwnd == cwnd && a.probe_deadline_ms == 711u &&
       a.tx[0].retransmits == 0u && a.tx[0].probe_retransmitted);
+  assert(a.probe_unanswered == 1u);
   ack(&a, 312u, 99u, 0u);
+  assert(a.probe_unanswered == 0u);
   assert(cnet_sctp_data_deadline(&a, &due, &has_due) == CNET_SCTP_DATA_OK);
   assert(has_due && due == 711u);
   ack(&a, 400u, 100u, 1024u); /* accepted probe, reopened peer window */
@@ -114,6 +119,30 @@ static void zero_probe_backoff_recovery(void) {
   assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
 }
 
+static void unresponsive_probe_expires(void) {
+  cnet_sctp_data a;
+  int owner;
+  const uint8_t byte = 'z';
+  uint8_t out[CNET_SCTP_DATA_MTU];
+  size_t n = 0u;
+  init(&a, &owner, 0);
+  ack(&a, 10u, 99u, 0u);
+  assert(cnet_sctp_data_queue_message(&a, 11u, 0u, 53u, 0,
+      &byte, 1u) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_advance(&a, 111u, out, sizeof(out), &n) ==
+      CNET_SCTP_DATA_OK);
+  assert(n != 0u && a.probe_active);
+  assert(cnet_sctp_data_advance(&a, 311u, out, sizeof(out), &n) ==
+      CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_advance(&a, 711u, out, sizeof(out), &n) ==
+      CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_advance(&a, 1111u, out, sizeof(out), &n) ==
+      CNET_SCTP_DATA_OK);
+  assert(a.probe_unanswered == 3u && !a.closed);
+  assert(cnet_sctp_data_advance(&a, 1511u, out, sizeof(out), &n) ==
+      CNET_SCTP_DATA_EXPIRED);
+  assert(n == 0u && a.closed);
+}
 static void receiver_zero_window_sacks_dropped_data(void) {
   cnet_sctp_data a, b;
   int oa, ob;
@@ -164,6 +193,7 @@ static void receiver_zero_window_sacks_dropped_data(void) {
 }
 int main(void) {
   zero_probe_backoff_recovery();
+  unresponsive_probe_expires();
   receiver_zero_window_sacks_dropped_data();
   puts("SCTP zero-window Owner-driven DATA probe and recovery PASS");
   return 0;

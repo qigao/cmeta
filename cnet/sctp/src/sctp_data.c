@@ -656,10 +656,19 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
   d->in_flight = outstanding_bytes;
   d->t3_deadline_ms = deadline;
   if (peer_window == 0u) {
-    if (probe_cumul_acked) d->probe_active = 0u;
+    if (was_probing) d->probe_unanswered = 0u;
+    if (probe_cumul_acked) {
+      d->probe_active = 0u;
+      d->probe_deadline_ms = 0u;
+      d->probe_interval_ms = 0u;
+    }
     if (!d->probe_active && d->pending.active && retained_after == 0u) {
-      d->probe_interval_ms = d->rto_ms;
-      d->probe_deadline_ms = now + d->rto_ms;
+      /* Identical zero-window SACKs must NOT indefinitely postpone the
+       * first probe. Restart only after a cumulatively ACKed probe. */
+      if (d->probe_deadline_ms == 0u) {
+        d->probe_interval_ms = d->rto_ms;
+        d->probe_deadline_ms = now + d->rto_ms;
+      }
     } else if (!d->probe_active) {
       d->probe_interval_ms = 0u;
       d->probe_deadline_ms = 0u;
@@ -670,6 +679,7 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
     d->probe_active = 0u;
     d->probe_deadline_ms = 0u;
     d->probe_interval_ms = 0u;
+    d->probe_unanswered = 0u;
     if (was_probing && retained_after != 0u)
       d->t3_deadline_ms = now + d->rto_ms;
   }
@@ -803,12 +813,20 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
       if (d->probe_active) {
         cnet_sctp_data_tx *probe = find_retained(d, d->probe_tsn);
         if (!probe) return CNET_SCTP_DATA_PROTOCOL;
+        /* If NO SACK arrives across bounded retries, the peer may be
+         * dead rather than persistently window-closed.  Responsive peers
+         * reset this counter on every accepted SACK, even with rwnd=0. */
+        if (d->probe_unanswered >= d->config.max_retransmits) {
+          d->closed = 1u;
+          return CNET_SCTP_DATA_EXPIRED;
+        }
         if (probe->packet_size > cap) return CNET_SCTP_DATA_CAPACITY;
         memcpy(out, probe->packet, probe->packet_size);
         *written = probe->packet_size;
         /* Retried zero-window probes are Karn-ambiguous without consuming
          * ordinary loss/error retransmission budget. */
         probe->probe_retransmitted = 1u;
+        ++d->probe_unanswered;
         d->probe_interval_ms = interval;
         d->probe_deadline_ms = now + interval;
         d->last_time_ms = now;
@@ -825,6 +843,7 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
         if (status != CNET_SCTP_DATA_OK) return status;
         d->probe_tsn = d->next_tsn - 1u;
         d->probe_active = 1u;
+        d->probe_unanswered = 0u;
         ++d->pending.offset;
         if (d->pending.offset == d->pending.size) {
           if (!d->pending.unordered) ++d->tx_ssn[d->pending.stream_id];
@@ -987,6 +1006,7 @@ cnet_sctp_data_status cnet_sctp_data_stop(cnet_sctp_data *d) {
   d->probe_deadline_ms = 0u;
   d->probe_interval_ms = 0u;
   d->probe_active = 0u;
+  d->probe_unanswered = 0u;
   d->closed = 1u;
   return CNET_SCTP_DATA_OK;
 }
