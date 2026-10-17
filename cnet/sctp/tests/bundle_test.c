@@ -174,9 +174,11 @@ static void outbound_bundle_and_per_tsn_t3(void) {
   assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 5u,
       combined, sizeof(combined), &n) == CNET_SCTP_DATA_CAPACITY);
   assert(n == 0u && memcmp(&before, &p.a, sizeof(before)) == 0);
+  memset(combined, 0xA5, sizeof(combined));
   assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 3u,
       combined, 10u, &n) == CNET_SCTP_DATA_CAPACITY);
-  assert(n == 0u && memcmp(&before, &p.a, sizeof(before)) == 0);
+  assert(n == 0u && combined[0] == 0xA5 &&
+      memcmp(&before, &p.a, sizeof(before)) == 0);
   p.admitted = 0;
   assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 3u,
       combined, sizeof(combined), &n) == CNET_SCTP_DATA_OWNER);

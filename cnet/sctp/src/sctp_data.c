@@ -312,6 +312,10 @@ cnet_sctp_data_status cnet_sctp_data_send_bundle(cnet_sctp_data *d,
     return CNET_SCTP_DATA_INVALID;
   *written = 0u;
   if (count > CNET_SCTP_DATA_BUNDLE_MAX) return CNET_SCTP_DATA_CAPACITY;
+  if (count > CNET_SCTP_DATA_TX_SLOTS - d->tx_count ||
+      count > d->config.peer_receive_window / 1u ||
+      d->in_flight > d->config.peer_receive_window - count)
+    return CNET_SCTP_DATA_CAPACITY;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
   memcpy(&staged, d, sizeof(staged));
   for (i = 0u; i < count; ++i) {
@@ -330,12 +334,18 @@ cnet_sctp_data_status cnet_sctp_data_send_bundle(cnet_sctp_data *d,
       return CNET_SCTP_DATA_PROTOCOL;
   }
   packet_cap = cap < CNET_SCTP_DATA_MTU ? cap : CNET_SCTP_DATA_MTU;
+  /* Avoid leaving bytes in caller memory on any failure. Encode into a
+   * private packet and publish only after the state candidate is accepted. */
   {
+    uint8_t packet[CNET_SCTP_DATA_MTU];
+    size_t packet_size = 0u;
     cnet_sctp_wire_status result = cnet_sctp_wire_encode(
         d->config.local_port, d->config.remote_port, d->config.peer_tag,
-        chunks, count, output, packet_cap, written);
+        chunks, count, packet, packet_cap, &packet_size);
     if (result == CNET_SCTP_WIRE_CAPACITY) return CNET_SCTP_DATA_CAPACITY;
     if (result != CNET_SCTP_WIRE_OK) return CNET_SCTP_DATA_PROTOCOL;
+    memcpy(output, packet, packet_size);
+    *written = packet_size;
   }
   memcpy(d, &staged, sizeof(staged));
   return CNET_SCTP_DATA_OK;
