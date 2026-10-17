@@ -52,6 +52,7 @@ typedef struct cnet_sctp_data_tx {
   size_t packet_size;
   size_t user_size;
   uint32_t tsn;
+  uint64_t first_sent_ms;
   uint8_t retransmits;
   /* Gap ACK is revocable: retain the owned wire packet until cumulative ACK.
    * ack_counted prevents repeated gap/revoke/re-ACK from growing cwnd. */
@@ -96,6 +97,8 @@ typedef struct cnet_sctp_data {
   uint32_t peer_rwnd, cwnd, ssthresh;
   size_t in_flight, buffered_rx;
   uint64_t last_time_ms, t3_deadline_ms, rto_ms;
+  uint64_t srtt_x8_ms, rttvar_x4_ms;
+  uint8_t rtt_valid;
   uint8_t closed;
   uint32_t magic;
 } cnet_sctp_data;
