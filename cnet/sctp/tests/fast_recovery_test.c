@@ -203,7 +203,12 @@ static void partial_one(uint32_t first, int enter_recovery) {
   uint64_t srtt, variance, rto, deadline;
   init(&f, first);
   for (i = 0u; i < 7u; ++i) send(&f, i, 64u + i);
-  for (i = 1u; i < 4u; ++i) gap(&f, i, 78u + 2u * i);
+  for (i = 1u; i < 4u; ++i) {
+    /* For ordinary HTNA, enqueue the tail before the third Gap ACK
+     * creates the retransmission obligation. */
+    if (!enter_recovery && i == 3u) send(&f, 7u, 84u);
+    gap(&f, i, 78u + 2u * i + (!enter_recovery && i == 3u ? 1u : 0u));
+  }
   if (enter_recovery) {
     const uint32_t old_window = f.a.cwnd;
     assert(cnet_sctp_data_advance(&f.a, 90u, fast, sizeof(fast), &nfast) ==
@@ -212,7 +217,8 @@ static void partial_one(uint32_t first, int enter_recovery) {
     assert(f.a.cwnd == old_window / 2u && f.a.recovery_active);
     assert(f.a.recovery_exit_tsn == first + 6u);
   }
-  send(&f, 7u, 91u); /* must not move the original recovery exit point */
+  if (enter_recovery)
+    send(&f, 7u, 91u); /* recovery exit point remains unchanged */
   gap(&f, 5u, 92u); gap(&f, 6u, 94u);
   assert(ticket(&f, 4u)->missing_reports == 2u);
   assert(ticket(&f, 7u)->missing_reports == 0u);

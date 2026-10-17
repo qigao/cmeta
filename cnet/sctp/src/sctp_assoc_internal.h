@@ -36,7 +36,8 @@ typedef enum cnet_sctp_assoc_status {
   CNET_SCTP_ASSOC_CLOSED_ERROR = -7,
   CNET_SCTP_ASSOC_BUSY = -8,
   CNET_SCTP_ASSOC_EXPIRED = -9,
-  CNET_SCTP_ASSOC_ENTROPY = -10
+  CNET_SCTP_ASSOC_ENTROPY = -10,
+  CNET_SCTP_ASSOC_RETRANSMIT_PENDING = -11
 } cnet_sctp_assoc_status;
 
 typedef int (*cnet_sctp_assoc_owner_fn)(void *context);

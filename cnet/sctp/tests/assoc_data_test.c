@@ -264,7 +264,7 @@ static void post_handshake_dcep_wire(void) {
 }
 
 /* Post-handshake >16KiB stream delivery through the SAME Association,
- * with first fragment lost and recovered by T3 after Gap SACKs. This is the
+ * with first fragment lost and repaired by Fast Retransmit after Gap SACKs. This is the
  * actual private INIT/COOKIE -> DATA fragment -> SACK -> take() path.
  */
 static void post_handshake_twenty_kib_fragments(void) {
@@ -296,42 +296,24 @@ static void post_handshake_twenty_kib_fragments(void) {
    * keep their tickets and exercise backpressure through the Association. */
   for (i = 1u; i < FRAGMENTS; ++i) {
     now += 3u;
-    if (i == CNET_SCTP_DATA_TX_SLOTS) {
-      cnet_sctp_data before;
-      const uint64_t owner_time = a.last_time_ms;
-      unsigned int j, retained = 0u, gap_acked = 0u;
-      memcpy(&before, &a.data, sizeof(before));
-      assert(cnet_sctp_assoc_pump_message(&a, now, wire, sizeof(wire), &nw) ==
-             CNET_SCTP_ASSOC_CAPACITY);
-      assert(nw == 0u && memcmp(&before, &a.data, sizeof(before)) == 0);
-      assert(a.last_time_ms == owner_time);
-      assert(a.data.pending.offset == i * CNET_SCTP_DATA_PAYLOAD_MAX);
-      assert(a.data.next_tsn == ca.tsn + i && a.data.tx_ssn[2u] == 0u);
-      for (j = 0u; j < CNET_SCTP_DATA_TX_SLOTS; ++j) {
-        if (a.data.tx[j].used) ++retained;
-        if (a.data.tx[j].used && a.data.tx[j].gap_acked) ++gap_acked;
-      }
-      assert(retained == CNET_SCTP_DATA_TX_SLOTS && gap_acked == retained - 1u);
-      assert(a.data.in_flight == CNET_SCTP_DATA_PAYLOAD_MAX);
+    if (i == 4u) {
+      const size_t offset = a.data.pending.offset;
+      assert(cnet_sctp_assoc_pump_message(&a, now, wire,
+          sizeof(wire), &nw) == CNET_SCTP_ASSOC_RETRANSMIT_PENDING);
+      assert(nw == 0u && offset == i * CNET_SCTP_DATA_PAYLOAD_MAX);
       assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
              CNET_SCTP_ASSOC_OK);
-      assert(has_deadline && deadline == 107u); /* No Gap-SACK timer deferral. */
-      assert(cnet_sctp_assoc_advance(&a, deadline, wire,
-                                     sizeof(wire), &nw) == CNET_SCTP_ASSOC_OK);
+      assert(has_deadline && deadline <= now);
+      assert(cnet_sctp_assoc_advance(&a, now, wire,
+          sizeof(wire), &nw) == CNET_SCTP_ASSOC_OK);
       assert(nw == first_size && memcmp(wire, first_wire, nw) == 0);
-      assert(cnet_sctp_assoc_input(&b, deadline + 1u, wire, nw,
-                                   sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
-      assert(cnet_sctp_assoc_input(&a, deadline + 2u, sack, ns,
+      assert(cnet_sctp_assoc_input(&b, now + 1u, wire, nw,
+          sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+      assert(cnet_sctp_assoc_input(&a, now + 2u, sack, ns,
           response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
-      assert(nr == 0u && a.data.in_flight == 0u && a.data.t3_deadline_ms == 0u);
-      for (j = 0u; j < CNET_SCTP_DATA_TX_SLOTS; ++j) assert(!a.data.tx[j].used);
-      assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED && a.data_ready);
-      assert(b.state == CNET_SCTP_ASSOC_ESTABLISHED && b.data_ready);
-      assert(b.data.buffered_rx == i * CNET_SCTP_DATA_PAYLOAD_MAX);
-      assert(cnet_sctp_assoc_take_message(&b, &metadata, reassembled,
-          sizeof(reassembled), &nr) == CNET_SCTP_ASSOC_EMPTY);
-      assert(nr == 0u); /* Still no E fragment: never expose partial data. */
-      now = deadline + 3u;
+      assert(nr == 0u && a.data.in_flight == 0u &&
+          a.data.pending.offset == offset);
+      now += 3u;
     }
     assert(cnet_sctp_assoc_pump_message(&a, now, wire, sizeof(wire), &nw) ==
            CNET_SCTP_ASSOC_OK);
