@@ -319,7 +319,7 @@ static void distinct_gap_sack_missing_evidence(void) {
     assert(cnet_sctp_data_input(&a, 20u + i, sack, ns,
         reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
     assert(a.tx[0].missing_reports == i);
-    assert(cnet_sctp_data_input(&a, 24u + i, sack, ns,
+    assert(cnet_sctp_data_input(&a, 20u + i, sack, ns,
         reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
     assert(a.tx[0].missing_reports == i);
   }
