@@ -301,7 +301,34 @@ static void rtt_deadline_overflow_atomicity(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
+static void distinct_gap_sack_missing_evidence(void) {
+  cnet_sctp_data a, b;
+  test_owner oa = {0}, ob = {0};
+  uint8_t packets[4][1200], sack[1200], reply[1200];
+  const uint8_t payload = 'g';
+  size_t np[4] = {0}, ns = 0u, nr = 0u;
+  unsigned int i;
+  pair_init(&a, &b, &oa, &ob, 100u, 300u);
+  for (i = 0u; i < 4u; ++i)
+    assert(cnet_sctp_data_send(&a, 1u + i, 0u, 51u, 0,
+        &payload, 1u, packets[i], sizeof(packets[i]), &np[i]) ==
+        CNET_SCTP_DATA_OK);
+  for (i = 1u; i < 4u; ++i) {
+    assert(cnet_sctp_data_input(&b, 10u + i, packets[i], np[i],
+        sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+    assert(cnet_sctp_data_input(&a, 20u + i, sack, ns,
+        reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+    assert(a.tx[0].missing_reports == i);
+    assert(cnet_sctp_data_input(&a, 24u + i, sack, ns,
+        reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+    assert(a.tx[0].missing_reports == i);
+  }
+  assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
+}
+
 int main(void) {
+  distinct_gap_sack_missing_evidence();
   rtt_deadline_overflow_atomicity();
   karn_rtt_first_sample();
   ambiguous_half_wrap_tsn();
