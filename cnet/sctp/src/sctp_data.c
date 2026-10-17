@@ -474,7 +474,10 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
       if (offset >= rd16(p) && offset <= rd16(p + 2u)) coverage[i] = 1u;
     }
     if (coverage[i]) {
-      if (d->t3_wait_ack && slot->tsn == d->t3_wait_tsn)
+      /* A revocable Gap ACK cannot release post-T3 send suppression.
+       * Wait for irrevocable cumulative confirmation of the retransmit. */
+      if (d->t3_wait_ack && coverage[i] == 2u &&
+          slot->tsn == d->t3_wait_tsn)
         t3_acknowledged = 1;
       if (!has_rtt_sample && coverage[i] == 2u && !slot->gap_acked &&
           !slot->ack_counted && slot->retransmits == 0u &&
