@@ -156,7 +156,8 @@ static void receiver_zero_window_sacks_dropped_data(void) {
   assert(b.buffered_rx == 30u * 1024u);
   assert(cnet_sctp_data_input(&b, 3u, frame, n,
       sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
-  assert(rd32(sack + 16u) == 132u && rd32(sack + 20u) > 0u);
+  /* One consumed RX slot remains free after accepting the probe. */
+  assert(rd32(sack + 16u) == 132u && rd32(sack + 20u) == 1024u);
   assert(b.buffered_rx == 30u * 1024u + 1u);
   assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);

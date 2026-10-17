@@ -146,6 +146,24 @@ static size_t rx_available(const cnet_sctp_data *d) {
     by_bytes = free_slots * CNET_SCTP_DATA_PAYLOAD_MAX;
   return by_bytes;
 }
+/* The prospective SACK rwnd must count the RX ticket consumed by this
+ * DATA chunk, not merely subtract its user bytes.  A one-byte DATA still
+ * occupies an entire bounded receive slot until take(). */
+static size_t rx_window_after_admit(const cnet_sctp_data *d, size_t bytes) {
+  size_t free_slots = 0u, space;
+  unsigned int i;
+  if (bytes > CNET_SCTP_DATA_RECEIVE_CEILING - d->buffered_rx) return 0u;
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i)
+    if (!d->rx[i].used) ++free_slots;
+  if (bytes != 0u) {
+    if (free_slots == 0u) return 0u;
+    --free_slots;
+  }
+  space = CNET_SCTP_DATA_RECEIVE_CEILING - d->buffered_rx - bytes;
+  if (space > free_slots * CNET_SCTP_DATA_PAYLOAD_MAX)
+    space = free_slots * CNET_SCTP_DATA_PAYLOAD_MAX;
+  return space;
+}
 static cnet_sctp_data_status encode_one(cnet_sctp_data *d, uint8_t type,
     uint8_t flags, const uint8_t *value, size_t value_size,
     void *output, size_t cap, size_t *written) {
@@ -430,7 +448,7 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
     }
   }
   status = sack_packet(d, prospective_cum, mask,
-      rx_available(d) - (duplicate ? 0u : bytes), duplicate, tsn,
+      rx_window_after_admit(d, duplicate ? 0u : bytes), duplicate, tsn,
       out, cap, written);
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!duplicate) {
