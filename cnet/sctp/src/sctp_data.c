@@ -278,7 +278,8 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
   if (!ahead(tsn, prospective_cum)) duplicate = 1;
   else if (tsn - prospective_cum > 32u) return CNET_SCTP_DATA_CAPACITY;
   distance = duplicate ? 0 : (int32_t)(tsn - prospective_cum);
-  else if ((mask & (UINT32_C(1) << ((unsigned int)distance - 1u))) != 0u)
+  if (!duplicate &&
+      (mask & (UINT32_C(1) << ((unsigned int)distance - 1u))) != 0u)
     duplicate = 1;
   if (!duplicate) {
     if (bytes > rx_available(d)) return CNET_SCTP_DATA_CAPACITY;
