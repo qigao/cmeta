@@ -14,9 +14,12 @@ $nl = [Environment]::NewLine
 [System.IO.File]::WriteAllText($source, ('#include "probe.h"' + $nl + 'int clcache_probe(void) {return VALUE;}' + $nl), $utf8)
 [System.IO.File]::WriteAllText($header, ('#define VALUE 17' + $nl), $utf8)
 $env:CLCACHE_TRACE = '1'
+# CMake/Ninja emits /Fd<directory>\ even in /Z7 builds. This trailing
+# backslash must not swallow the closing quote or the source filename.
+$fdArg = '/Fd' + $dir + [IO.Path]::DirectorySeparatorChar
 
 function Compile([bool] $expectSuccess) {
-    $logLines = @(& $cache $compiler /nologo /c /TC /Z7 "/I$dir" "/Fo$obj" /showIncludes $source 2>&1)
+    $logLines = @(& $cache $compiler /nologo /c /TC /Z7 "/I$dir" "/Fo$obj" $fdArg /FS /showIncludes $source 2>&1)
     $code = $LASTEXITCODE
     $output = ($logLines | Out-String)
     if ($expectSuccess -and $code -ne 0) { throw ('MSVC probe failed: exit ' + $code + ' ' + $output) }
