@@ -182,11 +182,33 @@ static void receiver_zero_window_sacks_dropped_data(void) {
         CNET_SCTP_DATA_OK);
     assert(nw == sizeof(body));
   }
-  assert(b.buffered_rx == 30u * 1024u);
-  assert(cnet_sctp_data_input(&b, 3u, frame, n,
-      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
-  /* One consumed RX slot remains free after accepting the probe. */
-  assert(rd32(sack + 16u) == 132u && rd32(sack + 20u) == 1024u);
+  assert(b.buffered_rx == 30u * 1024u && b.window_update_pending);
+  {
+    cnet_sctp_data snapshot;
+    memcpy(&snapshot, &b, sizeof(snapshot));
+    assert(cnet_sctp_data_window_update(&b, 3u, sack, 0u, &ns) ==
+        CNET_SCTP_DATA_CAPACITY);
+    assert(ns == 0u && memcmp(&snapshot, &b, sizeof(snapshot)) == 0);
+  }
+  assert(cnet_sctp_data_window_update(&b, 3u, sack,
+      sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  assert(rd32(sack + 16u) == 131u && rd32(sack + 20u) == 2048u);
+  assert(!b.window_update_pending);
+  assert(cnet_sctp_data_window_update(&b, 3u, sack,
+      sizeof(sack), &nw) == CNET_SCTP_DATA_EMPTY);
+  assert(cnet_sctp_data_input(&a, 3u, sack, ns,
+      out, sizeof(out), &nw) == CNET_SCTP_DATA_OK);
+  assert(a.peer_rwnd == 2048u);
+  {
+    const uint8_t byte = 'Z';
+    assert(cnet_sctp_data_send(&a, 4u, 0u, 53u, 0,
+        &byte, 1u, frame, sizeof(frame), &n) == CNET_SCTP_DATA_OK);
+    assert(cnet_sctp_data_input(&b, 4u, frame, n,
+        sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+    assert(rd32(sack + 16u) == 132u && rd32(sack + 20u) == 1024u);
+    assert(cnet_sctp_data_input(&a, 4u, sack, ns,
+        out, sizeof(out), &nw) == CNET_SCTP_DATA_OK);
+  }
   assert(b.buffered_rx == 30u * 1024u + 1u);
   assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);

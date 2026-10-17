@@ -138,6 +138,10 @@ cnet_sctp_assoc_status cnet_sctp_assoc_queue_message(cnet_sctp_assoc *a,
 cnet_sctp_assoc_status cnet_sctp_assoc_pump_message(cnet_sctp_assoc *a,
     uint64_t now_ms, void *output, size_t capacity, size_t *written);
 
+/* Owner-pulled SACK after application receive capacity reopens. */
+cnet_sctp_assoc_status cnet_sctp_assoc_window_update(cnet_sctp_assoc *s,
+    uint64_t now_ms, void *output, size_t capacity, size_t *written);
+
 cnet_sctp_assoc_status cnet_sctp_assoc_stop(cnet_sctp_assoc *association);
 cnet_sctp_assoc_status cnet_sctp_assoc_destroy(cnet_sctp_assoc *association);
 

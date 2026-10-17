@@ -201,6 +201,7 @@ cnet_sctp_data_status cnet_sctp_data_init(cnet_sctp_data *d,
   d->last_ack = cfg->local_initial_tsn - 1u;
   d->cumulative_rx = cfg->peer_initial_tsn - 1u;
   d->peer_rwnd = cfg->peer_receive_window;
+  d->last_advertised_rwnd = CNET_SCTP_DATA_RECEIVE_CEILING;
   /* No IP-family metadata is admitted by this plaintext prototype yet.
    * Use the lower IPv6 initial bound for both families (7.2.1). */
   d->cwnd = 4u * CC_QUANTUM < 4344u ? 4u * CC_QUANTUM : 4344u;
@@ -424,7 +425,11 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
        * receive TSN, but answered by a current-window SACK. */
       status = sack_packet(d, d->cumulative_rx, d->rx_gaps,
           rx_available(d), 0, 0u, out, cap, written);
-      if (status == CNET_SCTP_DATA_OK) d->last_time_ms = now;
+      if (status == CNET_SCTP_DATA_OK) {
+        d->last_advertised_rwnd = (uint32_t)rx_available(d);
+        d->window_update_pending = 0u;
+        d->last_time_ms = now;
+      }
       return status;
     }
     for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
@@ -447,9 +452,10 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
       mask >>= 1u;
     }
   }
+  const size_t offered = rx_window_after_admit(
+      d, duplicate ? 0u : bytes);
   status = sack_packet(d, prospective_cum, mask,
-      rx_window_after_admit(d, duplicate ? 0u : bytes), duplicate, tsn,
-      out, cap, written);
+      offered, duplicate, tsn, out, cap, written);
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!duplicate) {
     memcpy(slot->payload, ch->value + DATA_HEADER, bytes);
@@ -465,6 +471,8 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
     d->cumulative_rx = prospective_cum;
     d->rx_gaps = mask;
   }
+  d->last_advertised_rwnd = (uint32_t)offered;
+  d->window_update_pending = 0u;
   d->last_time_ms = now;
   return CNET_SCTP_DATA_OK;
 }
@@ -785,10 +793,38 @@ cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
       meta->unordered = unordered;
       *written = copied;
       if (!unordered) ++d->rx_ssn[stream_id];
+      /* ULP released RX tickets: schedule an explicit SACK when a closed
+       * advertised window has reopened by at least one full payload slot. */
+      if (d->last_advertised_rwnd == 0u &&
+          rx_available(d) >= CNET_SCTP_DATA_PAYLOAD_MAX)
+        d->window_update_pending = 1u;
     }
     return CNET_SCTP_DATA_OK;
   }
   return CNET_SCTP_DATA_EMPTY;
+}
+
+/* RFC 9260 6.2: Owner explicitly emits a reopened-window SACK, not a
+ * timer/callback. Capacity refusal must preserve all receive state. */
+cnet_sctp_data_status cnet_sctp_data_window_update(cnet_sctp_data *d,
+    uint64_t now, void *out, size_t cap, size_t *written) {
+  cnet_sctp_data_status status = guard(d);
+  size_t available;
+  if (status != CNET_SCTP_DATA_OK) return status;
+  if (!out || !written) return CNET_SCTP_DATA_INVALID;
+  *written = 0u;
+  if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  if (!d->window_update_pending) return CNET_SCTP_DATA_EMPTY;
+  available = rx_available(d);
+  if (available < CNET_SCTP_DATA_PAYLOAD_MAX)
+    return CNET_SCTP_DATA_EMPTY;
+  status = sack_packet(d, d->cumulative_rx, d->rx_gaps, available,
+      0, 0u, out, cap, written);
+  if (status != CNET_SCTP_DATA_OK) return status;
+  d->last_advertised_rwnd = (uint32_t)available;
+  d->window_update_pending = 0u;
+  d->last_time_ms = now;
+  return CNET_SCTP_DATA_OK;
 }
 
 cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
@@ -1002,6 +1038,8 @@ cnet_sctp_data_status cnet_sctp_data_stop(cnet_sctp_data *d) {
   d->partial_bytes_acked = 0u;
   d->buffered_rx = 0u;
   d->rx_gaps = 0u;
+  d->last_advertised_rwnd = 0u;
+  d->window_update_pending = 0u;
   d->t3_deadline_ms = 0u;
   d->probe_deadline_ms = 0u;
   d->probe_interval_ms = 0u;

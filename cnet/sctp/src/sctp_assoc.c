@@ -780,6 +780,21 @@ cnet_sctp_assoc_status cnet_sctp_assoc_pump_message(cnet_sctp_assoc *s,
   return status;
 }
 
+cnet_sctp_assoc_status cnet_sctp_assoc_window_update(cnet_sctp_assoc *s,
+    uint64_t now, void *out, size_t cap, size_t *written) {
+  cnet_sctp_assoc_status status = guard(s);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (!out || !written) return CNET_SCTP_ASSOC_INVALID;
+  *written = 0u;
+  if (s->state != CNET_SCTP_ASSOC_ESTABLISHED || !s->data_ready)
+    return CNET_SCTP_ASSOC_CLOSED_ERROR;
+  if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
+  status = data_result(cnet_sctp_data_window_update(
+      &s->data, now, out, cap, written));
+  if (status == CNET_SCTP_ASSOC_OK) s->last_time_ms = now;
+  return status;
+}
+
 cnet_sctp_assoc_status cnet_sctp_assoc_stop(cnet_sctp_assoc *s) {
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
