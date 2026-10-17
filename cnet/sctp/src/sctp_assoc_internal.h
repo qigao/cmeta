@@ -148,7 +148,10 @@ cnet_sctp_assoc_status cnet_sctp_assoc_window_update(cnet_sctp_assoc *s,
 
 /* RFC 9260 9.2 graceful shutdown request.  New application sends are
  * refused, but existing owned DATA may drain before SHUTDOWN/T2 starts.
- * On completion, callers receive a STOPPED, drained private association. */
+ * On wire completion STOPPED rejects further network I/O. Buffered incoming
+ * ULP records remain accessible through take_message(); drained()/destroy()
+ * refuse completion until the Owner consumes them or explicitly calls stop().
+ * No owned RX packet silently disappears during graceful close. */
 cnet_sctp_assoc_status cnet_sctp_assoc_shutdown(cnet_sctp_assoc *association,
     uint64_t now_ms, void *output, size_t capacity, size_t *written);
 

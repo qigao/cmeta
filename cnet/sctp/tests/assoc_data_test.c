@@ -583,6 +583,24 @@ static void shutdown_pending_data_and_cumulative_ack(void) {
       wire, sizeof(wire), &nw) == CNET_SCTP_ASSOC_OK);
   assert(a.state == CNET_SCTP_ASSOC_STOPPED &&
       b.state == CNET_SCTP_ASSOC_STOPPED);
+  /* Each side still owns one byte acknowledged before wire termination. */
+  assert(!cnet_sctp_assoc_drained(&a) && !cnet_sctp_assoc_drained(&b));
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_BUSY);
+  {
+    cnet_sctp_data_message meta = {0};
+    uint8_t received[8] = {0};
+    size_t bytes = 0u;
+    assert(cnet_sctp_assoc_take_message(&a, &meta,
+        received, 0u, &bytes) == CNET_SCTP_ASSOC_CAPACITY);
+    assert(bytes == 0u && !cnet_sctp_assoc_drained(&a));
+    assert(cnet_sctp_assoc_take_message(&a, &meta,
+        received, sizeof(received), &bytes) == CNET_SCTP_ASSOC_OK);
+    assert(bytes == 1u && received[0] == one[0]);
+    assert(cnet_sctp_assoc_take_message(&b, &meta,
+        received, sizeof(received), &bytes) == CNET_SCTP_ASSOC_OK);
+    assert(bytes == 1u && received[0] == one[0]);
+  }
+  assert(cnet_sctp_assoc_drained(&a) && cnet_sctp_assoc_drained(&b));
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
@@ -632,6 +650,15 @@ static void shutdown_t2_refreshes_cumulative(void) {
       complete, sizeof(complete), &nc) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_input(&b, old_deadline + 3u,
       complete, nc, data, sizeof(data), &nd) == CNET_SCTP_ASSOC_OK);
+  assert(!cnet_sctp_assoc_drained(&a) && cnet_sctp_assoc_drained(&b));
+  {
+    cnet_sctp_data_message meta = {0};
+    uint8_t payload[8] = {0};
+    size_t bytes = 0u;
+    assert(cnet_sctp_assoc_take_message(&a, &meta, payload,
+        sizeof(payload), &bytes) == CNET_SCTP_ASSOC_OK);
+    assert(bytes == 1u && payload[0] == user[0]);
+  }
   assert(cnet_sctp_assoc_drained(&a) && cnet_sctp_assoc_drained(&b));
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
@@ -689,6 +716,19 @@ static void shutdown_received_waits_for_final_sack(void) {
       first, sizeof(first), &nf) == CNET_SCTP_ASSOC_OK);
   assert(a.state == CNET_SCTP_ASSOC_STOPPED &&
       b.state == CNET_SCTP_ASSOC_STOPPED);
+  assert(!cnet_sctp_assoc_drained(&a) && cnet_sctp_assoc_drained(&b));
+  {
+    cnet_sctp_data_message meta = {0};
+    uint8_t payload[8] = {0};
+    size_t bytes = 0u;
+    assert(cnet_sctp_assoc_take_message(&a, &meta, payload,
+        sizeof(payload), &bytes) == CNET_SCTP_ASSOC_OK);
+    assert(bytes == 1u && payload[0] == body[0] && meta.stream_sequence == 0u);
+    assert(cnet_sctp_assoc_take_message(&a, &meta, payload,
+        sizeof(payload), &bytes) == CNET_SCTP_ASSOC_OK);
+    assert(bytes == 1u && payload[0] == body[0] && meta.stream_sequence == 1u);
+  }
+  assert(cnet_sctp_assoc_drained(&a));
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }

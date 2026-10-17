@@ -609,8 +609,11 @@ static cnet_sctp_assoc_status begin_shutdown_control(cnet_sctp_assoc *s,
       acknowledgement ? CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT :
           CNET_SCTP_ASSOC_SHUTDOWN_SENT, out, cap, written);
 }
+/* A graceful terminal retains bounded RX tickets until the Owner takes
+ * every fully received ULP record. STOPPED blocks further transport I/O,
+ * but drained()/destroy() remain BUSY until those bytes are delivered. */
 static void finish_shutdown(cnet_sctp_assoc *s) {
-  if (s->data_ready) {
+  if (s->data_ready && s->data.buffered_rx == 0u) {
     (void)cnet_sctp_data_stop(&s->data);
     memset(&s->data, 0, sizeof(s->data));
     s->data_ready = 0u;
@@ -903,10 +906,19 @@ cnet_sctp_assoc_status cnet_sctp_assoc_take_message(cnet_sctp_assoc *s,
   if ((s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
        s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
        s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
-       s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED) || !s->data_ready)
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED &&
+       s->state != CNET_SCTP_ASSOC_STOPPED) || !s->data_ready)
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
-  return data_result(cnet_sctp_data_take(&s->data, message,
-                                        payload, cap, written));
+  status = data_result(cnet_sctp_data_take(&s->data, message,
+      payload, cap, written));
+  if (status == CNET_SCTP_ASSOC_OK &&
+      s->state == CNET_SCTP_ASSOC_STOPPED &&
+      s->data.buffered_rx == 0u) {
+    (void)cnet_sctp_data_stop(&s->data);
+    memset(&s->data, 0, sizeof(s->data));
+    s->data_ready = 0u;
+  }
+  return status;
 }
 
 cnet_sctp_assoc_status cnet_sctp_assoc_queue_message(cnet_sctp_assoc *s,
@@ -995,7 +1007,8 @@ cnet_sctp_assoc_status cnet_sctp_assoc_stop(cnet_sctp_assoc *s) {
 cnet_sctp_assoc_status cnet_sctp_assoc_destroy(cnet_sctp_assoc *s) {
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
-  if (s->state != CNET_SCTP_ASSOC_STOPPED) return CNET_SCTP_ASSOC_BUSY;
+  if (s->state != CNET_SCTP_ASSOC_STOPPED || s->data_ready)
+    return CNET_SCTP_ASSOC_BUSY;
   memset(s, 0, sizeof(*s));
   return CNET_SCTP_ASSOC_OK;
 }
@@ -1006,5 +1019,6 @@ cnet_sctp_assoc_state cnet_sctp_assoc_state_get(const cnet_sctp_assoc *s) {
 
 int cnet_sctp_assoc_drained(const cnet_sctp_assoc *s) {
   return s && s->magic == SCTP_ASSOC_MAGIC &&
-      s->state == CNET_SCTP_ASSOC_STOPPED && !s->in_progress;
+      s->state == CNET_SCTP_ASSOC_STOPPED &&
+      !s->data_ready && !s->in_progress;
 }
