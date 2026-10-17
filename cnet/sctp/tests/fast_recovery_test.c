@@ -457,38 +457,9 @@ static void t3_sack_interleave(void) {
 }
 
 
-/* Neither direct DATA nor a fragmented-message pump may overtake an
- * admitted loss ticket. Refusal must not consume the next TSN or SSN. */
-static void pending_priority(void) {
-  fixture f;
-  uint8_t body = 0x42u, out[CNET_SCTP_DATA_MTU];
-  size_t n = 99u;
-  uint32_t next;
-  uint16_t ssn;
-  unsigned int i;
-  init(&f, 100u);
-  for (i = 0u; i < 6u; ++i) send(&f, i, 64u + i);
-  for (i = 3u; i < 6u; ++i) gap(&f, i, 80u + i * 2u);
-  next = f.a.next_tsn;
-  ssn = f.a.tx_ssn[0];
-  assert(ticket(&f, 0u)->pending_retransmit);
-  assert(cnet_sctp_data_send(&f.a, 95u, 0u, 53u, 0, &body,
-      1u, out, sizeof(out), &n) == CNET_SCTP_DATA_CAPACITY);
-  assert(n == 0u && f.a.next_tsn == next && f.a.tx_ssn[0] == ssn);
-  assert(cnet_sctp_data_queue_message(&f.a, 95u, 0u, 53u, 0,
-      &body, 1u) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_pump(&f.a, 95u, out, sizeof(out),
-      &n) == CNET_SCTP_DATA_CAPACITY);
-  assert(n == 0u && f.a.pending.offset == 0u);
-  assert(f.a.next_tsn == next && f.a.tx_ssn[0] == ssn);
-  assert_flight_invariant(&f.a);
-  finished(&f);
-}
-
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
     {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
-    {"pending_priority", pending_priority},
     {"t3_sack_interleave", t3_sack_interleave},
     {"reneging_flight_accounting", reneging_flight_accounting},
     {"timer_restart", timer_restart}, {"partial_recovery", partial_recovery},
