@@ -419,9 +419,47 @@ static void reneging_flight_accounting(void) {
   finished(&f);
 }
 
+
+/* T3 output is a real retransmission, but a later cumulative SACK must
+ * release its wait barrier and must not let the superseded deadline resend
+ * the acknowledged TSN. Keep another outstanding TSN to exercise R3. */
+static void t3_sack_interleave(void) {
+  fixture f;
+  uint8_t output[CNET_SCTP_DATA_MTU], sack[CNET_SCTP_DATA_MTU];
+  size_t n, ns;
+  uint64_t due, renewed;
+  init(&f, 100u);
+  send(&f, 0u, 64u);
+  send(&f, 1u, 65u);
+  due = f.a.t3_deadline_ms;
+  assert(cnet_sctp_data_advance(&f.a, due, output,
+      sizeof(output), &n) == CNET_SCTP_DATA_OK);
+  assert(n == f.size[0] && memcmp(output, f.packet[0], n) == 0);
+  assert(f.a.t3_wait_ack && f.a.t3_wait_tsn == f.first);
+  assert(ticket(&f, 0u)->flight_accounted);
+  assert_flight_invariant(&f.a);
+  ns = peer_sack(&f, f.first, 0u, 0u, sack);
+  ack(&f, due + 1u, sack, ns);
+  assert(!f.a.t3_wait_ack);
+  assert(f.a.last_ack == f.first);
+  assert(f.a.in_flight == 1u);
+  renewed = f.a.t3_deadline_ms;
+  assert(renewed > due + 1u);
+  assert_flight_invariant(&f.a);
+  assert(cnet_sctp_data_advance(&f.a, due + 2u, output,
+      sizeof(output), &n) == CNET_SCTP_DATA_OK);
+  assert(n == 0u);
+  assert(cnet_sctp_data_advance(&f.a, renewed, output,
+      sizeof(output), &n) == CNET_SCTP_DATA_OK);
+  assert(n == f.size[1] && memcmp(output, f.packet[1], n) == 0);
+  assert_flight_invariant(&f.a);
+  finished(&f);
+}
+
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
     {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
+    {"t3_sack_interleave", t3_sack_interleave},
     {"reneging_flight_accounting", reneging_flight_accounting},
     {"timer_restart", timer_restart}, {"partial_recovery", partial_recovery},
     {"ordinary_htna", ordinary_htna}, {"reneging_streak", reneging_streak},
