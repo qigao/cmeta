@@ -360,9 +360,13 @@ static void fast_retransmit_once(void) {
   /* A cumulative ACK through the recovery point exits exactly once. */
   assert(cnet_sctp_data_input(&b, 26u, packets[0], np[0],
       sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
-  assert(cnet_sctp_data_input(&a, 27u, sack, ns,
-      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
-  assert(!a.recovery_active && a.in_flight == 0u);
+  {
+    const uint32_t recovery_cwnd = a.cwnd;
+    assert(cnet_sctp_data_input(&a, 27u, sack, ns,
+        reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+    assert(!a.recovery_active && a.in_flight == 0u);
+    assert(a.cwnd == recovery_cwnd); /* exit ACK is not a growth ACK */
+  }
   assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
