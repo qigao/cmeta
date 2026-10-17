@@ -141,6 +141,7 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
   slot->packet_size = packet_bytes;
   slot->user_size = n;
   slot->tsn = d->next_tsn++;
+  slot->first_sent_ms = now;
   slot->retransmits = 0u;
   slot->gap_acked = 0u;
   slot->ack_counted = 0u;
@@ -333,6 +334,30 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
   return CNET_SCTP_DATA_OK;
 }
 
+/* RFC 6298-style fixed-point estimator; Karn excludes retransmissions
+ * and previously gap-acknowledged tickets. All arithmetic is bounded. */
+static void update_rtt(cnet_sctp_data *d, uint64_t sample) {
+  uint64_t srtt, variation, delta, rto;
+  if (sample == 0u) sample = 1u;
+  if (sample > d->config.t3_max_ms) sample = d->config.t3_max_ms;
+  if (!d->rtt_valid) {
+    d->srtt_x8_ms = sample * 8u;
+    d->rttvar_x4_ms = sample * 2u;
+    d->rtt_valid = 1u;
+  } else {
+    srtt = d->srtt_x8_ms / 8u;
+    delta = srtt > sample ? srtt - sample : sample - srtt;
+    d->rttvar_x4_ms = (3u * d->rttvar_x4_ms + 4u * delta) / 4u;
+    d->srtt_x8_ms = (7u * d->srtt_x8_ms + 8u * sample) / 8u;
+  }
+  srtt = d->srtt_x8_ms / 8u;
+  variation = d->rttvar_x4_ms;
+  rto = srtt + (variation > 1u ? variation : 1u);
+  if (rto < d->config.t3_initial_ms) rto = d->config.t3_initial_ms;
+  if (rto > d->config.t3_max_ms) rto = d->config.t3_max_ms;
+  d->rto_ms = rto;
+}
+
 static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
     const cnet_sctp_wire_chunk *ch) {
   uint32_t cumulative, peer_window, progress, sent_span;
@@ -343,6 +368,8 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
   size_t i, acked_bytes = 0u, outstanding_bytes = 0u;
   uint64_t deadline;
   int earliest_acked = 0;
+  uint64_t rtt_sample = 0u;
+  int has_rtt_sample = 0;
   if (ch->flags != 0u || ch->value_size < 12u)
     return CNET_SCTP_DATA_PROTOCOL;
   cumulative = rd32(ch->value);
@@ -382,6 +409,12 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
       if (offset >= rd16(p) && offset <= rd16(p + 2u)) coverage[i] = 1u;
     }
     if (coverage[i]) {
+      if (!has_rtt_sample && coverage[i] == 2u && !slot->gap_acked &&
+          !slot->ack_counted && slot->retransmits == 0u &&
+          now >= slot->first_sent_ms) {
+        rtt_sample = now - slot->first_sent_ms;
+        has_rtt_sample = 1;
+      }
       if (!slot->ack_counted) acked_bytes += slot->user_size;
       if (slot == oldest) earliest_acked = 1;
     } else {
@@ -408,6 +441,11 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
       slot->gap_acked = coverage[i];
       if (coverage[i]) slot->ack_counted = 1u;
     }
+  }
+  if (has_rtt_sample) {
+    update_rtt(d, rtt_sample);
+    if (outstanding_bytes && (earliest_acked || deadline == 0u))
+      deadline = now + d->rto_ms;
   }
   d->last_ack = cumulative;
   d->peer_rwnd = peer_window;
