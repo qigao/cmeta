@@ -104,6 +104,10 @@ typedef struct cnet_sctp_data {
   uint32_t partial_bytes_acked; /* padded DATA bytes, not application bytes */
   size_t in_flight, buffered_rx;
   uint64_t last_time_ms, t3_deadline_ms, rto_ms;
+  /* RFC 9260 zero-window probe timer; at most one retained DATA TSN. */
+  uint64_t probe_deadline_ms, probe_interval_ms;
+  uint32_t probe_tsn;
+  uint8_t probe_active;
   uint64_t srtt_x8_ms, rttvar_x4_ms;
   uint32_t recovery_exit_tsn;
   uint32_t t3_wait_tsn;
@@ -136,7 +140,8 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now_ms,
  * pending buffer owns all bytes. pump() emits at most one DATA fragment per
  * call (B|E flags and TSNs strictly sequential, fixed SSN, no interleaving).
  * Backpressure/CWND/T3, retransmission priority and output-capacity
- * failures do not advance offset.
+ * failures do not advance offset. Queue copies bytes for an explicit
+ * one-byte zero-window probe from advance(); direct send stays blocked.
  * Every sender call and deadline remains driven by the original Owner.
  */
 cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,

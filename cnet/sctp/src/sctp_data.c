@@ -72,6 +72,24 @@ static int has_pending_retransmit(const cnet_sctp_data *d) {
   }
   return 0;
 }
+static int has_retained_tx(const cnet_sctp_data *d) {
+  unsigned int i;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+    if (d->tx[i].used) return 1;
+  return 0;
+}
+static cnet_sctp_data_tx *find_retained(cnet_sctp_data *d, uint32_t tsn) {
+  unsigned int i;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+    if (d->tx[i].used && d->tx[i].tsn == tsn) return &d->tx[i];
+  return NULL;
+}
+static uint64_t next_probe_interval(const cnet_sctp_data *d) {
+  const uint64_t prior = d->probe_interval_ms ?
+      d->probe_interval_ms : d->rto_ms;
+  return prior >= d->config.t3_max_ms / 2u ?
+      d->config.t3_max_ms : prior * 2u;
+}
 static size_t flight_bytes(const cnet_sctp_data *d) {
   size_t bytes = 0u;
   unsigned int i;
@@ -181,7 +199,7 @@ cnet_sctp_data_status cnet_sctp_data_init(cnet_sctp_data *d,
 static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
     uint16_t stream, uint16_t ssn, uint32_t ppid, uint8_t flags,
     const uint8_t *payload, size_t n, void *output, size_t cap,
-    size_t *written) {
+    size_t *written, int zero_probe) {
   cnet_sctp_data_tx *slot = NULL;
   uint8_t value[DATA_HEADER + CNET_SCTP_DATA_PAYLOAD_MAX];
   size_t packet_bytes = 0u, i;
@@ -192,9 +210,16 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
    * was below it. Each supported DATA chunk is <= CC_QUANTUM, so this
    * admits at most cwnd + CC_QUANTUM - 1 padded bytes, never another packet.
    * The receiver-window check remains independent and is never overbooked. */
-  if (d->t3_wait_ack || n > d->peer_rwnd ||
-      d->in_flight > d->peer_rwnd - n || flight_bytes(d) >= d->cwnd)
+  if (d->t3_wait_ack || flight_bytes(d) >= d->cwnd)
     return CNET_SCTP_DATA_CAPACITY;
+  /* One-byte DATA is the only exception to a closed receive window,
+   * and only if no previous ticket is retained (RFC 9260 6.1(A)). */
+  if (zero_probe) {
+    if (n != 1u || d->peer_rwnd != 0u || has_retained_tx(d))
+      return CNET_SCTP_DATA_CAPACITY;
+  } else if (n > d->peer_rwnd || d->in_flight > d->peer_rwnd - n) {
+    return CNET_SCTP_DATA_CAPACITY;
+  }
   /* RFC 9260 6.1(C): first run Owner advance() for queued loss repair.
    * Both direct sends and fragmented pump() share this admission point. */
   if (has_pending_retransmit(d))
@@ -245,7 +270,7 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now,
   seq = unordered ? 0u : d->tx_ssn[stream];
   status = send_frame(d, now, stream, seq, ppid,
       (uint8_t)(DATA_B | DATA_E | (unordered ? DATA_U : 0u)),
-      (const uint8_t *)payload, n, output, cap, written);
+      (const uint8_t *)payload, n, output, cap, written, 0);
   if (status == CNET_SCTP_DATA_OK && !unordered) ++d->tx_ssn[stream];
   return status;
 }
@@ -260,6 +285,10 @@ cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
   if (d->pending.active || n > CNET_SCTP_DATA_MESSAGE_MAX)
     return CNET_SCTP_DATA_CAPACITY;
+  /* A queued COPY supplies bytes for a later probe. Direct send remains
+   * backpressured at rwnd=0; no raw input pointer is retained. */
+  if (d->peer_rwnd == 0u && !has_retained_tx(d) &&
+      now > UINT64_MAX - d->rto_ms) return CNET_SCTP_DATA_CLOCK;
   /* The entire user message is owned locally before any fragment leaves.
    * Caller may immediately free/reuse its input buffer. */
   memcpy(d->pending.bytes, payload, n);
@@ -270,6 +299,10 @@ cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,
   d->pending.ppid = ppid;
   d->pending.unordered = unordered != 0;
   d->pending.active = 1u;
+  if (d->peer_rwnd == 0u && !has_retained_tx(d)) {
+    d->probe_interval_ms = d->rto_ms;
+    d->probe_deadline_ms = now + d->rto_ms;
+  }
   d->last_time_ms = now;
   return CNET_SCTP_DATA_OK;
 }
@@ -291,7 +324,7 @@ cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d,
       (d->pending.unordered ? DATA_U : 0u));
   status = send_frame(d, now, d->pending.stream_id, d->pending.ssn,
       d->pending.ppid, flags, d->pending.bytes + d->pending.offset,
-      n, output, cap, written);
+      n, output, cap, written, 0);
   if (status != CNET_SCTP_DATA_OK) return status;
   d->pending.offset += n;
   if (d->pending.offset == d->pending.size) {
@@ -368,7 +401,14 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
       (mask & (UINT32_C(1) << ((unsigned int)distance - 1u))) != 0u)
     duplicate = 1;
   if (!duplicate) {
-    if (bytes > rx_available(d)) return CNET_SCTP_DATA_CAPACITY;
+    if (bytes > rx_available(d)) {
+      /* RFC 9260 6.2: zero-window DATA is dropped without advancing the
+       * receive TSN, but answered by a current-window SACK. */
+      status = sack_packet(d, d->cumulative_rx, d->rx_gaps,
+          rx_available(d), 0, 0u, out, cap, written);
+      if (status == CNET_SCTP_DATA_OK) d->last_time_ms = now;
+      return status;
+    }
     for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
       if (!d->rx[i].used) {
         if (!slot) slot = &d->rx[i];
@@ -447,12 +487,15 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
   uint8_t coverage[CNET_SCTP_DATA_TX_SLOTS] = {0};
   cnet_sctp_data_tx *oldest;
   size_t i, acked_bytes = 0u, outstanding_bytes = 0u;
+  size_t retained_after = 0u;
   const size_t previous_flight = flight_bytes(d);
   uint64_t deadline;
   int earliest_acked = 0;
   uint64_t rtt_sample = 0u;
   int has_rtt_sample = 0;
   int t3_acknowledged = 0;
+  int probe_cumul_acked = 0;
+  const int was_probing = d->probe_active != 0u;
   if (ch->flags != 0u || ch->value_size < 12u)
     return CNET_SCTP_DATA_PROTOCOL;
   cumulative = rd32(ch->value);
@@ -491,6 +534,9 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
       const uint8_t *p = ch->value + 12u + 4u * j;
       if (offset >= rd16(p) && offset <= rd16(p + 2u)) coverage[i] = 1u;
     }
+    if (coverage[i] != 2u) ++retained_after;
+    if (coverage[i] == 2u && d->probe_active &&
+        slot->tsn == d->probe_tsn) probe_cumul_acked = 1;
     if (coverage[i]) {
       /* A revocable Gap ACK cannot release post-T3 send suppression.
        * Wait for irrevocable cumulative confirmation of the retransmit. */
@@ -510,6 +556,11 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
       outstanding_bytes += slot->user_size;
     }
   }
+  /* Check deadline arithmetic before committing ANY SACK state. */
+  if (((peer_window == 0u && d->pending.active && retained_after == 0u) ||
+       (peer_window != 0u && was_probing && retained_after != 0u)) &&
+      now > UINT64_MAX - d->config.t3_max_ms)
+    return CNET_SCTP_DATA_CLOCK;
   deadline = d->t3_deadline_ms;
   if (outstanding_bytes == 0u) {
     deadline = 0u; /* RFC 9260 6.3.2 R2, even if gap tickets are retained. */
@@ -586,6 +637,24 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
   d->peer_rwnd = peer_window;
   d->in_flight = outstanding_bytes;
   d->t3_deadline_ms = deadline;
+  if (peer_window == 0u) {
+    if (probe_cumul_acked) d->probe_active = 0u;
+    if (!d->probe_active && d->pending.active && retained_after == 0u) {
+      d->probe_interval_ms = d->rto_ms;
+      d->probe_deadline_ms = now + d->rto_ms;
+    } else if (!d->probe_active) {
+      d->probe_interval_ms = 0u;
+      d->probe_deadline_ms = 0u;
+    }
+  } else {
+    /* Window reopening while a probe is unacknowledged returns the same
+     * retained TSN to ordinary T3; no extra DATA flight is allocated. */
+    d->probe_active = 0u;
+    d->probe_deadline_ms = 0u;
+    d->probe_interval_ms = 0u;
+    if (was_probing && retained_after != 0u)
+      d->t3_deadline_ms = now + d->rto_ms;
+  }
   congestion_ack(d, previous_flight, acked_bytes, outstanding_bytes,
                  progress, was_recovering);
   d->last_time_ms = now;
@@ -702,6 +771,52 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
   if (!out || !written) return CNET_SCTP_DATA_INVALID;
   *written = 0u;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  /* RFC 9260 6.1(A): Owner-driven zero-window probing after one RTO,
+   * exponentially bounded. No T3 cwnd reduction or retransmit-budget
+   * consumption while the peer continues advertising rwnd=0. */
+  if (d->peer_rwnd == 0u && d->probe_deadline_ms != 0u) {
+    if (now < d->probe_deadline_ms) {
+      d->last_time_ms = now;
+      return CNET_SCTP_DATA_OK;
+    }
+    {
+      const uint64_t interval = next_probe_interval(d);
+      if (now > UINT64_MAX - interval) return CNET_SCTP_DATA_CLOCK;
+      if (d->probe_active) {
+        cnet_sctp_data_tx *probe = find_retained(d, d->probe_tsn);
+        if (!probe) return CNET_SCTP_DATA_PROTOCOL;
+        if (probe->packet_size > cap) return CNET_SCTP_DATA_CAPACITY;
+        memcpy(out, probe->packet, probe->packet_size);
+        *written = probe->packet_size;
+        d->probe_interval_ms = interval;
+        d->probe_deadline_ms = now + interval;
+        d->last_time_ms = now;
+        return CNET_SCTP_DATA_OK;
+      }
+      if (d->pending.active && !has_retained_tx(d)) {
+        const uint8_t flags = (uint8_t)(
+            (d->pending.offset == 0u ? DATA_B : 0u) |
+            (d->pending.offset + 1u == d->pending.size ? DATA_E : 0u) |
+            (d->pending.unordered ? DATA_U : 0u));
+        status = send_frame(d, now, d->pending.stream_id, d->pending.ssn,
+            d->pending.ppid, flags, d->pending.bytes + d->pending.offset,
+            1u, out, cap, written, 1);
+        if (status != CNET_SCTP_DATA_OK) return status;
+        d->probe_tsn = d->next_tsn - 1u;
+        d->probe_active = 1u;
+        ++d->pending.offset;
+        if (d->pending.offset == d->pending.size) {
+          if (!d->pending.unordered) ++d->tx_ssn[d->pending.stream_id];
+          memset(&d->pending, 0, sizeof(d->pending));
+        }
+        d->probe_interval_ms = interval;
+        d->probe_deadline_ms = now + interval;
+        return CNET_SCTP_DATA_OK;
+      }
+      d->probe_deadline_ms = 0u;
+      d->probe_interval_ms = 0u;
+    }
+  }
   /* A due T3 timeout owns congestion recovery. Do not allow a newly
    * eligible fast retransmission to postpone an already-expired T3. */
   if (d->t3_deadline_ms && now >= d->t3_deadline_ms)
@@ -819,6 +934,11 @@ cnet_sctp_data_status cnet_sctp_data_deadline(cnet_sctp_data *d,
   if (!deadline || !has_deadline) return CNET_SCTP_DATA_INVALID;
   *has_deadline = d->t3_deadline_ms != 0u;
   *deadline = d->t3_deadline_ms;
+  if (d->peer_rwnd == 0u && d->probe_deadline_ms &&
+      (d->probe_active || !has_retained_tx(d))) {
+    *has_deadline = 1;
+    *deadline = d->probe_deadline_ms;
+  }
   /* A pending fast retransmission is runnable now under the existing Owner,
    * unless recovery cwnd actually prevents emission.  The application
    * need not wait for T3 before it calls advance(). */
@@ -843,6 +963,9 @@ cnet_sctp_data_status cnet_sctp_data_stop(cnet_sctp_data *d) {
   d->buffered_rx = 0u;
   d->rx_gaps = 0u;
   d->t3_deadline_ms = 0u;
+  d->probe_deadline_ms = 0u;
+  d->probe_interval_ms = 0u;
+  d->probe_active = 0u;
   d->closed = 1u;
   return CNET_SCTP_DATA_OK;
 }
