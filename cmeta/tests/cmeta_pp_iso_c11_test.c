@@ -35,8 +35,6 @@ _Static_assert(map_sum_sixteen == 136, "finite map supports the documented 16-it
 _Static_assert(map_zero_is_empty == 7, "explicit zero-item map emits no tokens");
 _Static_assert(sizeof(map_values) / sizeof(map_values[0]) == 3,
                "comma map emits exactly one element per input");
-_Static_assert(map_values[0] == 4 && map_values[1] == 5 && map_values[2] == 6,
-               "comma map preserves input order");
 
 enum { first_single = CMETA_PP_FIRST(7) };
 enum { first_many = CMETA_PP_FIRST(3, 5, 7) };
@@ -54,5 +52,6 @@ _Static_assert(sizeof(pp_multi_result) == sizeof(float), "multi-row TypeFunction
 
 int main(void)
 {
-    return 0;
+    return (map_values[0] == 4 && map_values[1] == 5 && map_values[2] == 6)
+        ? 0 : 1;
 }
