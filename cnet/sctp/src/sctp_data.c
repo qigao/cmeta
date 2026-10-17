@@ -673,6 +673,13 @@ t3_due:
   memcpy(out, oldest->packet, oldest->packet_size);
   *written = oldest->packet_size;
   ++oldest->retransmits;
+  /* Timeout starts a new loss epoch. Old SACK-derived evidence cannot
+   * trigger a second fast retransmission without fresh higher-TSN ACKs. */
+  {
+    unsigned int i;
+    for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+      if (d->tx[i].used) d->tx[i].missing_reports = 0u;
+  }
   d->ssthresh = d->cwnd / 2u;
   if (d->ssthresh < 4u * CNET_SCTP_DATA_MTU)
     d->ssthresh = 4u * CNET_SCTP_DATA_MTU;
