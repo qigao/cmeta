@@ -16,6 +16,7 @@
 #define CNET_SCTP_DATA_PAYLOAD_MAX 1024u
 #define CNET_SCTP_DATA_MESSAGE_MAX 24576u /* 24 KiB, >16 KiB WebRTC gate */
 #define CNET_SCTP_DATA_TX_SLOTS 16u
+#define CNET_SCTP_DATA_BUNDLE_MAX 4u
 #define CNET_SCTP_DATA_RX_SLOTS 32u
 #define CNET_SCTP_DATA_STREAMS 16u
 #define CNET_SCTP_DATA_RECEIVE_CEILING \
@@ -148,6 +149,21 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now_ms,
  * one-byte zero-window probe from advance(); direct send stays blocked.
  * Every sender call and deadline remains driven by the original Owner.
  */
+/* Optional RFC 9260 DATA bundling: up to four independent user records
+ * in one bounded packet. Each TSN retains its OWN single-DATA wire ticket
+ * so Fast Retransmit and T3 remain Owner-driven, independently reusable.
+ * No input pointers are retained after return. Entire batch is atomic. */
+typedef struct cnet_sctp_data_bundle_item {
+  uint16_t stream_id;
+  uint32_t ppid;
+  int unordered;
+  const void *payload;
+  size_t payload_size;
+} cnet_sctp_data_bundle_item;
+cnet_sctp_data_status cnet_sctp_data_send_bundle(cnet_sctp_data *d,
+    uint64_t now_ms, const cnet_sctp_data_bundle_item *items, size_t count,
+    void *output, size_t output_capacity, size_t *written);
+
 cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,
     uint64_t now_ms, uint16_t stream_id, uint32_t ppid, int unordered,
     const void *bytes, size_t length);

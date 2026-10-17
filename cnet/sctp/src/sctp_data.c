@@ -294,6 +294,53 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now,
   return status;
 }
 
+/* Aggregate up to four DATA chunks without introducing any new lifetime
+ * or retransmission ownership: each fragment is first admitted using the
+ * ordinary per-TSN send path on a private bounded candidate.  The actual
+ * output is committed as one CRC-correct wire packet only after all four
+ * potential tickets and the final destination capacity have been checked. */
+cnet_sctp_data_status cnet_sctp_data_send_bundle(cnet_sctp_data *d,
+    uint64_t now, const cnet_sctp_data_bundle_item *items, size_t count,
+    void *output, size_t cap, size_t *written) {
+  cnet_sctp_data_status status = guard(d);
+  cnet_sctp_data staged;
+  uint8_t singles[CNET_SCTP_DATA_BUNDLE_MAX][CNET_SCTP_DATA_MTU];
+  cnet_sctp_wire_chunk chunks[CNET_SCTP_DATA_BUNDLE_MAX];
+  size_t i, packet_cap;
+  if (status != CNET_SCTP_DATA_OK) return status;
+  if (!items || !output || !written || count == 0u)
+    return CNET_SCTP_DATA_INVALID;
+  *written = 0u;
+  if (count > CNET_SCTP_DATA_BUNDLE_MAX) return CNET_SCTP_DATA_CAPACITY;
+  if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  memcpy(&staged, d, sizeof(staged));
+  for (i = 0u; i < count; ++i) {
+    cnet_sctp_wire_header h = {0};
+    cnet_sctp_wire_decoder decoder = {0};
+    size_t packet_size = 0u;
+    status = cnet_sctp_data_send(&staged, now, items[i].stream_id,
+        items[i].ppid, items[i].unordered, items[i].payload,
+        items[i].payload_size, singles[i], sizeof(singles[i]),
+        &packet_size);
+    if (status != CNET_SCTP_DATA_OK) return status;
+    if (cnet_sctp_wire_decode(singles[i], packet_size,
+        &h, &decoder) != CNET_SCTP_WIRE_OK || h.chunk_count != 1u ||
+        cnet_sctp_wire_next_chunk(&decoder, &chunks[i]) != CNET_SCTP_WIRE_OK ||
+        chunks[i].type != CHUNK_DATA)
+      return CNET_SCTP_DATA_PROTOCOL;
+  }
+  packet_cap = cap < CNET_SCTP_DATA_MTU ? cap : CNET_SCTP_DATA_MTU;
+  {
+    cnet_sctp_wire_status result = cnet_sctp_wire_encode(
+        d->config.local_port, d->config.remote_port, d->config.peer_tag,
+        chunks, count, output, packet_cap, written);
+    if (result == CNET_SCTP_WIRE_CAPACITY) return CNET_SCTP_DATA_CAPACITY;
+    if (result != CNET_SCTP_WIRE_OK) return CNET_SCTP_DATA_PROTOCOL;
+  }
+  memcpy(d, &staged, sizeof(staged));
+  return CNET_SCTP_DATA_OK;
+}
+
 cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,
     uint64_t now, uint16_t stream, uint32_t ppid, int unordered,
     const void *payload, size_t n) {

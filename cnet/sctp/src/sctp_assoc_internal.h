@@ -136,6 +136,12 @@ cnet_sctp_assoc_status cnet_sctp_assoc_take_message(cnet_sctp_assoc *a,
  * complete SCTP wire packet per call, respecting cwnd/rwnd and T3 state.
  * No implicit background scheduler, non-owned buffer or application retry.
  */
+/* Private RFC 9260 DATA bundle. Each source record receives its own TSN
+ * and retained single-DATA retransmit ticket, even when emitted together. */
+cnet_sctp_assoc_status cnet_sctp_assoc_send_bundle(cnet_sctp_assoc *association,
+    uint64_t now_ms, const cnet_sctp_data_bundle_item *items, size_t count,
+    void *output, size_t capacity, size_t *written);
+
 cnet_sctp_assoc_status cnet_sctp_assoc_queue_message(cnet_sctp_assoc *a,
     uint64_t now_ms, uint16_t sid, uint32_t ppid, int unordered,
     const void *payload, size_t length);
