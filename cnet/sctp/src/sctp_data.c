@@ -438,10 +438,12 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
       (earliest_acked || deadline == 0u) &&
       now > UINT64_MAX - d->config.t3_max_ms)
     return CNET_SCTP_DATA_CLOCK;
-  /* RFC 9260 fast-retransmit evidence: a newly acknowledged higher TSN
-   * reports lower outstanding TSNs as missing. Duplicate SACKs and
-   * repeated Gap ACKs do not create additional evidence. This stage only
-   * records bounded evidence; packet emission remains Owner-driven. */
+  /* RFC 9260 7.2.4: HTNA normally supplies miss indications. During
+   * Fast Recovery, a cumulative advance also reports every remaining hole
+   * below this SACK's highest Gap ACK, even without a newly ACKed higher
+   * TSN. Do not infer loss for an unreported tail beyond all Gap ACKs.
+   * 6.2.1 D(iii): withdrawing a previous Gap ACK is one miss indication.
+   * Evaluate old ticket state before committing any ACK flags. */
   {
     uint32_t highest_new = 0u;
     int has_higher = 0;
@@ -453,14 +455,15 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
         has_higher = 1;
       }
     }
-    if (has_higher) {
-      for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
-        cnet_sctp_data_tx *slot = &d->tx[i];
-        if (slot->used && coverage[i] == 0u &&
-            ahead(highest_new, slot->tsn) &&
-            slot->missing_reports < 3u)
-          ++slot->missing_reports;
-      }
+    for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+      cnet_sctp_data_tx *slot = &d->tx[i];
+      const int recovery_hole = d->recovery_active && progress != 0u &&
+          blocks != 0u && ahead(cumulative + prev_end, slot->tsn);
+      if (slot->used && coverage[i] == 0u &&
+          (slot->gap_acked || recovery_hole ||
+           (has_higher && ahead(highest_new, slot->tsn))) &&
+          slot->missing_reports < 3u)
+        ++slot->missing_reports;
     }
   }
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
@@ -470,7 +473,10 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
       memset(slot, 0, sizeof(*slot));
     } else {
       slot->gap_acked = coverage[i];
-      if (coverage[i]) slot->ack_counted = 1u;
+      if (coverage[i]) {
+        slot->ack_counted = 1u;
+        slot->missing_reports = 0u; /* a received TSN breaks the miss streak */
+      }
     }
   }
   /* RTT observations from ACKs during fast recovery must not inflate
@@ -626,6 +632,11 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
         fast = slot;
     }
     if (fast) {
+      /* 7.2.4(4): restart only when retransmitting the first outstanding
+       * DATA chunk (or starting a stopped timer). Later losses must not
+       * postpone that chunk's deadline. Preflight before any TX mutation. */
+      const int restart_t3 = !d->t3_deadline_ms ||
+          fast == oldest_outstanding(d);
       /* Fast retransmission consumes the same bounded retransmit budget as
        * T3; exhaustion must not silently emit an additional packet. */
       if (fast->retransmits >= d->config.max_retransmits) {
@@ -633,7 +644,8 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
         return CNET_SCTP_DATA_EXPIRED;
       }
       if (fast->packet_size > cap) return CNET_SCTP_DATA_CAPACITY;
-      if (now > UINT64_MAX - d->rto_ms) return CNET_SCTP_DATA_CLOCK;
+      if (restart_t3 && now > UINT64_MAX - d->rto_ms)
+        return CNET_SCTP_DATA_CLOCK;
       memcpy(out, fast->packet, fast->packet_size);
       *written = fast->packet_size;
       fast->fast_retransmitted = 1u;
@@ -648,7 +660,7 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
         d->recovery_exit_tsn = d->next_tsn - 1u;
         d->recovery_active = 1u;
       }
-      if (!d->t3_deadline_ms) d->t3_deadline_ms = now + d->rto_ms;
+      if (restart_t3) d->t3_deadline_ms = now + d->rto_ms;
       d->last_time_ms = now;
       return CNET_SCTP_DATA_OK;
     }
