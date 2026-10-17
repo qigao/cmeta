@@ -609,6 +609,10 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
   if (!out || !written) return CNET_SCTP_DATA_INVALID;
   *written = 0u;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  /* A due T3 timeout owns congestion recovery. Do not allow a newly
+   * eligible fast retransmission to postpone an already-expired T3. */
+  if (d->t3_deadline_ms && now >= d->t3_deadline_ms)
+    goto t3_due;
   /* Fast retransmit is emitted only by the Owner's explicit advance().
    * No hidden send, callback, or additional retransmit buffer is created. */
   {
@@ -653,6 +657,7 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
     d->last_time_ms = now;
     return CNET_SCTP_DATA_OK;
   }
+t3_due:
   oldest = oldest_outstanding(d);
   if (!oldest) {
     d->t3_deadline_ms = 0u;
