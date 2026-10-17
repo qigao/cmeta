@@ -321,3 +321,18 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 add_test(NAME cmeta_field_type_contract_cpp_test
   COMMAND cmeta_field_type_contract_cpp_test)
+
+# #1244: Enum() metadata is TU-local; compare canonical contents, never address identity.
+add_executable(cmeta_enum_tu_contract_test
+  cmeta_enum_tu_contract_test.c
+  cmeta_enum_tu_contract_peer.c)
+target_link_libraries(cmeta_enum_tu_contract_test PRIVATE Salts::CMeta)
+set_target_properties(cmeta_enum_tu_contract_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+  FOLDER "cmeta/tests")
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_enum_tu_contract_test PRIVATE
+    -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME cmeta_enum_tu_contract_test
+  COMMAND cmeta_enum_tu_contract_test)
