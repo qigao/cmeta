@@ -463,7 +463,39 @@ static void karn_fast_retransmit_exclusion(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
+/* A TSN previously acknowledged through a revocable Gap ACK cannot
+ * later provide a Karn RTT sample when the cumulative ACK catches up. */
+static void karn_gap_ack_then_cumulative(void) {
+  cnet_sctp_data a, b;
+  test_owner oa = {0}, ob = {0};
+  uint8_t packets[2][1200], sack[1200], reply[1200];
+  const uint8_t payload = 'g';
+  size_t np[2] = {0}, ns = 0u, nr = 0u;
+  unsigned int i;
+  pair_init(&a, &b, &oa, &ob, 100u, 300u);
+  for (i = 0u; i < 2u; ++i)
+    assert(cnet_sctp_data_send(&a, 1u + i, 0u, 51u, 0,
+        &payload, 1u, packets[i], sizeof(packets[i]), &np[i]) ==
+        CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&b, 10u, packets[1], np[1],
+      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&a, 11u, sack, ns,
+      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(a.tx[1].gap_acked && a.tx[1].ack_counted && !a.rtt_valid);
+  /* Exclude TSN 100 from sampling so only the previously gap-acked
+   * TSN 101 could contribute an RTT sample on cumulative confirmation. */
+  a.tx[0].retransmits = 1u;
+  assert(cnet_sctp_data_input(&b, 12u, packets[0], np[0],
+      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&a, 13u, sack, ns,
+      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(!a.rtt_valid && a.in_flight == 0u);
+  assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
+}
+
 int main(void) {
+  karn_gap_ack_then_cumulative();
   karn_fast_retransmit_exclusion();
   t3_precedes_fast_retransmit();
   fast_retransmit_budget_exhaustion();
