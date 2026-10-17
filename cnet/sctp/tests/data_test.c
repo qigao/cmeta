@@ -540,7 +540,49 @@ static void karn_gap_reneging_restore(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
+/* Two missing TSNs must not cause repeated congestion-window reductions
+ * inside the same recovery epoch. Each retransmit remains Owner-driven. */
+static void multi_loss_one_recovery_epoch(void) {
+  cnet_sctp_data a, b;
+  test_owner oa = {0}, ob = {0};
+  uint8_t packets[5][1200], sack[1200], reply[1200];
+  const uint8_t payload = 'm';
+  size_t np[5] = {0}, ns = 0u, nr = 0u;
+  uint32_t reduced_cwnd;
+  unsigned int i;
+  pair_init(&a, &b, &oa, &ob, 100u, 300u);
+  for (i = 0u; i < 5u; ++i)
+    assert(cnet_sctp_data_send(&a, 1u + i, 0u, 51u, 0,
+        &payload, 1u, packets[i], sizeof(packets[i]), &np[i]) ==
+        CNET_SCTP_DATA_OK);
+  /* Lose TSN 100 and 101; three higher Gap ACKs provide evidence. */
+  for (i = 2u; i < 5u; ++i) {
+    assert(cnet_sctp_data_input(&b, 10u + i, packets[i], np[i],
+        sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+    assert(cnet_sctp_data_input(&a, 20u + i, sack, ns,
+        reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  }
+  assert(a.tx[0].missing_reports == 3u);
+  assert(a.tx[1].missing_reports == 3u);
+  assert(cnet_sctp_data_advance(&a, 25u, reply, sizeof(reply), &nr) ==
+         CNET_SCTP_DATA_OK);
+  assert(nr == np[0] && memcmp(reply, packets[0], nr) == 0);
+  assert(a.recovery_active && a.recovery_exit_tsn == 104u);
+  reduced_cwnd = a.cwnd;
+  assert(cnet_sctp_data_advance(&a, 26u, reply, sizeof(reply), &nr) ==
+         CNET_SCTP_DATA_OK);
+  assert(nr == np[1] && memcmp(reply, packets[1], nr) == 0);
+  assert(a.cwnd == reduced_cwnd && a.recovery_active);
+  assert(a.tx[0].fast_retransmitted && a.tx[1].fast_retransmitted);
+  assert(cnet_sctp_data_advance(&a, 27u, reply, sizeof(reply), &nr) ==
+         CNET_SCTP_DATA_OK);
+  assert(nr == 0u && a.cwnd == reduced_cwnd);
+  assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
+}
+
 int main(void) {
+  multi_loss_one_recovery_epoch();
   karn_gap_reneging_restore();
   karn_gap_ack_then_cumulative();
   karn_fast_retransmit_exclusion();
