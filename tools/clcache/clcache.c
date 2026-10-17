@@ -1891,6 +1891,56 @@ static struct string_list ExtractIncludedFilesFromCompilerOutput(struct string T
 	return FullPathList;
 }
 
+// Cache entries are published via same-directory atomic renames. The "dep"
+// record is the commit marker and must be published AFTER all payload files.
+static BOOL MakeCacheTempFile(LPCWSTR Target, WCHAR Temp[MAX_PATH])
+{
+	struct string Parent = PathWithoutFileName(StringFromWchar(Target));
+	if(Parent.Length == 0 || Parent.Length >= MAX_PATH)
+		return FALSE;
+	WCHAR Directory[MAX_PATH];
+	CopyMemory(Directory, Parent.Data, Parent.Length * sizeof(WCHAR));
+	Directory[Parent.Length] = '\0';
+	return GetTempFileNameW(Directory, L"cch", 0, Temp) != 0;
+}
+
+static BOOL AtomicCopyCacheFile(LPCWSTR Source, LPCWSTR Target)
+{
+	WCHAR Temp[MAX_PATH];
+	if(!MakeCacheTempFile(Target, Temp))
+		return FALSE;
+	BOOL OK = CopyFileW(Source, Temp, FALSE) &&
+	          MoveFileExW(Temp, Target, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+	if(!OK)
+		DeleteFileW(Temp);
+	return OK;
+}
+
+static BOOL AtomicWriteCacheFile(LPCWSTR Target, const void* Data, size_t Size)
+{
+	WCHAR Temp[MAX_PATH];
+	if(!MakeCacheTempFile(Target, Temp))
+		return FALSE;
+	WriteDataToFile(Temp, Data, Size);
+	BOOL OK = MoveFileExW(Temp, Target, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+	if(!OK)
+		DeleteFileW(Temp);
+	return OK;
+}
+
+static BOOL AtomicWriteCacheDeps(LPCWSTR Target, const struct dependency_info* Deps,
+                                struct memory_arena* Arena)
+{
+	WCHAR Temp[MAX_PATH];
+	if(!MakeCacheTempFile(Target, Temp))
+		return FALSE;
+	WriteDepFile(Temp, Deps, Arena);
+	BOOL OK = MoveFileExW(Temp, Target, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+	if(!OK)
+		DeleteFileW(Temp);
+	return OK;
+}
+
 static BOOL CacheTraceEnabled(void)
 {
 	WCHAR Value[4] = {0};
@@ -1984,43 +2034,19 @@ static int InvokeCompiler(LPWSTR CmdLine, const struct cl_command_info* Command,
 		size_t CachePathLength = CachePathBuffer->Used;
 		MakePath(MakeString(CachePathBuffer->Data, CachePathBuffer->Used));
 
-		// Generate dep file
-
+		// Build dependency data before publishing any cache artifacts.
 		struct dependency_info Deps = GenerateDeps(Command, IncludedFiles, Arena);
-		// __TIME__, __DATE__ and __TIMESTAMP__ have time-dependent semantics.
 		if(g_VolatileMacroSeen)
 			return ExitCode;
-		CachePathBuffer->Used = CachePathLength;
-		PushString(STR("dep"), CachePathBuffer);
-		WriteDepFile(CachePathBuffer->Data, &Deps, Arena);
 
-		// Write stdout to file
-
-		if(StdoutContent.Length > 0)
-		{
-			CachePathBuffer->Used = CachePathLength;
-			PushString(STR("out"), CachePathBuffer);
-			WriteDataToFile(CachePathBuffer->Data, StdoutContent.Data, StdoutContent.Length);
-		}
-
-		// Write stderr to file
-
-		if(StderrContent.Length > 0)
-		{
-			CachePathBuffer->Used = CachePathLength;
-			PushString(STR("err"), CachePathBuffer);
-			WriteDataToFile(CachePathBuffer->Data, StderrContent.Data, StderrContent.Length);
-		}
-
-		// Copy obj to cache
-
+		// Publish all cache payloads first. Concurrent readers can only
+		// observe a complete entry after the "dep" marker is committed.
 		CopyMemory(TempPath, Command->ObjFile.Data, Command->ObjFile.Length * sizeof(WCHAR));
 		TempPath[Command->ObjFile.Length] = '\0';
 		CachePathBuffer->Used = CachePathLength;
 		PushString(STR("obj"), CachePathBuffer);
-		CopyFileW(TempPath, CachePathBuffer->Data, FALSE);
-
-		// Copy pdb to cache
+		if(!AtomicCopyCacheFile(TempPath, CachePathBuffer->Data))
+			return ExitCode;
 
 		if(Command->GeneratesPdb)
 		{
@@ -2028,8 +2054,25 @@ static int InvokeCompiler(LPWSTR CmdLine, const struct cl_command_info* Command,
 			TempPath[Command->PdbFile.Length] = '\0';
 			CachePathBuffer->Used = CachePathLength;
 			PushString(STR("pdb"), CachePathBuffer);
-			CopyFileW(TempPath, CachePathBuffer->Data, FALSE);
+			if(!AtomicCopyCacheFile(TempPath, CachePathBuffer->Data))
+				return ExitCode;
 		}
+
+		CachePathBuffer->Used = CachePathLength;
+		PushString(STR("out"), CachePathBuffer);
+		if(!AtomicWriteCacheFile(CachePathBuffer->Data, StdoutContent.Data, StdoutContent.Length))
+			return ExitCode;
+
+		CachePathBuffer->Used = CachePathLength;
+		PushString(STR("err"), CachePathBuffer);
+		if(!AtomicWriteCacheFile(CachePathBuffer->Data, StderrContent.Data, StderrContent.Length))
+			return ExitCode;
+
+		CachePathBuffer->Used = CachePathLength;
+		PushString(STR("dep"), CachePathBuffer);
+		if(!AtomicWriteCacheDeps(CachePathBuffer->Data, &Deps, Arena))
+			return ExitCode;
+
 	}
 
 	return ExitCode;
