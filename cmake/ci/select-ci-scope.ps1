@@ -35,7 +35,9 @@ $componentSanOnly = $EventName -eq 'pull_request' -and -not $PrepareRelease -and
 # The same package=true profile is already mandatory on version-tag push and
 # explicit prepare_release; do not accidentally skip installed ABI validation.
 $installedAbiProbe = $EventName -eq 'pull_request' -and -not $PrepareRelease -and
-  $HeadBranch -eq 'review/servicehost-release-tag-gate'
+  $HeadBranch -in @(
+    'review/servicehost-release-tag-gate',
+    'review/servicehost-canonical-release-preflight')
 $unified23Review = ($HeadBranch -eq 'release/salts-2.3-ace-cnet-review' -and
   ($EventName -eq 'pull_request' -or $release23Push) -and -not $PrepareRelease) -or $releaseTagPush
 if ($UnifiedSan -and -not $unified23Review) {
