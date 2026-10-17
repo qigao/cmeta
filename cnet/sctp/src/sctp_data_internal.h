@@ -97,10 +97,13 @@ typedef struct cnet_sctp_data {
   uint16_t tx_ssn[CNET_SCTP_DATA_STREAMS], rx_ssn[CNET_SCTP_DATA_STREAMS];
   uint32_t next_tsn, last_ack, cumulative_rx, rx_gaps;
   uint32_t peer_rwnd, cwnd, ssthresh;
+  uint32_t partial_bytes_acked; /* padded DATA bytes, not application bytes */
   size_t in_flight, buffered_rx;
   uint64_t last_time_ms, t3_deadline_ms, rto_ms;
   uint64_t srtt_x8_ms, rttvar_x4_ms;
   uint32_t recovery_exit_tsn;
+  uint32_t t3_wait_tsn;
+  uint8_t t3_wait_ack; /* no additional packet until this retransmit is ACKed */
   uint8_t recovery_active;
   uint8_t rtt_valid;
   uint8_t closed;

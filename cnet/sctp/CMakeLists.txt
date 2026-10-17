@@ -174,6 +174,18 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME cnet_sctp_fast_recovery_test COMMAND cnet_sctp_fast_recovery_test)
 
+  add_executable(cnet_sctp_congestion_test tests/congestion_test.c)
+  target_link_libraries(cnet_sctp_congestion_test PRIVATE cnet_sctp_data_proto)
+  target_include_directories(cnet_sctp_congestion_test PRIVATE src)
+  set_target_properties(cnet_sctp_congestion_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  if(MSVC)
+    target_compile_options(cnet_sctp_congestion_test PRIVATE /W4 /WX)
+  else()
+    target_compile_options(cnet_sctp_congestion_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME cnet_sctp_congestion_test COMMAND cnet_sctp_congestion_test)
+
   add_executable(cnet_sctp_fragment_test tests/fragment_test.c)
   target_link_libraries(cnet_sctp_fragment_test PRIVATE cnet_sctp_data_proto)
   target_include_directories(cnet_sctp_fragment_test PRIVATE src)

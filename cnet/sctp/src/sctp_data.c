@@ -53,6 +53,59 @@ static cnet_sctp_data_tx *oldest_outstanding(cnet_sctp_data *d) {
   }
   return oldest;
 }
+/* The private one-chunk packet profile has a 12-byte common header.
+ * rwnd/in_flight account for user-buffer bytes; congestion control accounts
+ * for DATA header + payload + padding (RFC 9260 7.2). Derive this from the
+ * retained wire tickets, avoiding another counter that can drift on reneging.
+ * PMTU/DTLS negotiation and retransmission scheduling remain separate gates. */
+#define CC_QUANTUM (CNET_SCTP_DATA_MTU - 12u)
+#define CC_LIMIT (16u * CNET_SCTP_DATA_MTU)
+static size_t flight_bytes(const cnet_sctp_data *d) {
+  size_t bytes = 0u;
+  unsigned int i;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+    if (d->tx[i].used && !d->tx[i].gap_acked)
+      bytes += d->tx[i].packet_size - 12u;
+  return bytes;
+}
+
+/* L=1 slow start and bounded congestion-avoidance byte credit. No credit
+ * is taken for duplicate TSN reports or re-ACKs: this is deliberately more
+ * conservative than the optional duplicate-byte credit in 7.2.2. Preserve
+ * the existing no-gap-only-growth and recovery-exit-ACK protections. */
+static void congestion_ack(cnet_sctp_data *d, size_t before,
+    size_t newly_acked, size_t outstanding, uint32_t progress,
+    int was_recovering) {
+  uint32_t increment = 0u;
+  if (!was_recovering) {
+    if (d->cwnd <= d->ssthresh) {
+      d->partial_bytes_acked = 0u;
+      if (progress && before >= d->cwnd)
+        increment = newly_acked < CC_QUANTUM ?
+            (uint32_t)newly_acked : CC_QUANTUM;
+    } else {
+      /* Fixed 16-ticket ceiling bounds one ACK to 16 * 1040 bytes.
+       * Cap retained credit as well, including gap-only ACK sequences. */
+      /* Only cumulative TSN progress contributes CA byte credit.
+       * Revocable Gap ACKs must not prepay future cwnd growth. */
+      if (progress) d->partial_bytes_acked += (uint32_t)newly_acked;
+      if (d->partial_bytes_acked > 2u * CC_LIMIT)
+        d->partial_bytes_acked = 2u * CC_LIMIT;
+      if (before < d->cwnd && d->partial_bytes_acked > d->cwnd)
+        d->partial_bytes_acked = d->cwnd;
+      if (progress && newly_acked && before >= d->cwnd &&
+          d->partial_bytes_acked >= d->cwnd) {
+        d->partial_bytes_acked -= d->cwnd;
+        increment = CC_QUANTUM;
+      }
+    }
+    if (d->cwnd >= CC_LIMIT) increment = 0u;
+    else if (increment > CC_LIMIT - d->cwnd) increment = CC_LIMIT - d->cwnd;
+    d->cwnd += increment;
+  }
+  if (!outstanding) d->partial_bytes_acked = 0u;
+}
+
 static size_t rx_available(const cnet_sctp_data *d) {
   size_t by_bytes = CNET_SCTP_DATA_RECEIVE_CEILING - d->buffered_rx;
   size_t free_slots = 0u;
@@ -100,7 +153,9 @@ cnet_sctp_data_status cnet_sctp_data_init(cnet_sctp_data *d,
   d->last_ack = cfg->local_initial_tsn - 1u;
   d->cumulative_rx = cfg->peer_initial_tsn - 1u;
   d->peer_rwnd = cfg->peer_receive_window;
-  d->cwnd = 4u * CNET_SCTP_DATA_MTU; /* bounded first-path slow start */
+  /* No IP-family metadata is admitted by this plaintext prototype yet.
+   * Use the lower IPv6 initial bound for both families (7.2.1). */
+  d->cwnd = 4u * CC_QUANTUM < 4344u ? 4u * CC_QUANTUM : 4344u;
   d->ssthresh = 16u * CNET_SCTP_DATA_MTU;
   d->rto_ms = cfg->t3_initial_ms;
   d->last_time_ms = now;
@@ -121,8 +176,12 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
   cnet_sctp_data_status status;
   if (n == 0u || n > CNET_SCTP_DATA_PAYLOAD_MAX)
     return CNET_SCTP_DATA_INVALID;
-  if (n > d->peer_rwnd || d->in_flight > d->peer_rwnd - n ||
-      n > d->cwnd || d->in_flight > d->cwnd - n)
+  /* RFC 9260 6.1(B): one new packet may cross cwnd only while flight
+   * was below it. Each supported DATA chunk is <= CC_QUANTUM, so this
+   * admits at most cwnd + CC_QUANTUM - 1 padded bytes, never another packet.
+   * The receiver-window check remains independent and is never overbooked. */
+  if (d->t3_wait_ack || n > d->peer_rwnd ||
+      d->in_flight > d->peer_rwnd - n || flight_bytes(d) >= d->cwnd)
     return CNET_SCTP_DATA_CAPACITY;
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
     if (!d->tx[i].used) { slot = &d->tx[i]; break; }
@@ -340,6 +399,10 @@ static void update_rtt(cnet_sctp_data *d, uint64_t sample) {
   uint64_t srtt, variation, delta, rto;
   if (sample == 0u) sample = 1u;
   if (sample > d->config.t3_max_ms) sample = d->config.t3_max_ms;
+  /* 7*SRTT_x8 + 8*sample must fit uint64_t on every C11 target.
+   * A 64th of UINT64_MAX still exceeds any practical transport RTO.
+   * Clamp before the first sample and before fixed-point updates. */
+  if (sample > UINT64_MAX / 64u) sample = UINT64_MAX / 64u;
   if (!d->rtt_valid) {
     d->srtt_x8_ms = sample * 8u;
     d->rttvar_x4_ms = sample * 2u;
@@ -366,10 +429,12 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
   uint8_t coverage[CNET_SCTP_DATA_TX_SLOTS] = {0};
   cnet_sctp_data_tx *oldest;
   size_t i, acked_bytes = 0u, outstanding_bytes = 0u;
+  const size_t previous_flight = flight_bytes(d);
   uint64_t deadline;
   int earliest_acked = 0;
   uint64_t rtt_sample = 0u;
   int has_rtt_sample = 0;
+  int t3_acknowledged = 0;
   if (ch->flags != 0u || ch->value_size < 12u)
     return CNET_SCTP_DATA_PROTOCOL;
   cumulative = rd32(ch->value);
@@ -409,13 +474,15 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
       if (offset >= rd16(p) && offset <= rd16(p + 2u)) coverage[i] = 1u;
     }
     if (coverage[i]) {
+      if (d->t3_wait_ack && slot->tsn == d->t3_wait_tsn)
+        t3_acknowledged = 1;
       if (!has_rtt_sample && coverage[i] == 2u && !slot->gap_acked &&
           !slot->ack_counted && slot->retransmits == 0u &&
           now >= slot->first_sent_ms) {
         rtt_sample = now - slot->first_sent_ms;
         has_rtt_sample = 1;
       }
-      if (!slot->ack_counted) acked_bytes += slot->user_size;
+      if (!slot->ack_counted) acked_bytes += slot->packet_size - 12u;
       if (slot == oldest) earliest_acked = 1;
     } else {
       /* Also restores bytes previously gap-acked but now omitted (reneged). */
@@ -487,20 +554,15 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
     if (outstanding_bytes && (earliest_acked || deadline == 0u))
       deadline = now + d->rto_ms;
   }
+  if (t3_acknowledged) d->t3_wait_ack = 0u;
   d->last_ack = cumulative;
   if (d->recovery_active && !ahead(d->recovery_exit_tsn, cumulative))
     d->recovery_active = 0u;
   d->peer_rwnd = peer_window;
   d->in_flight = outstanding_bytes;
   d->t3_deadline_ms = deadline;
-  /* Keep the existing bounded growth model; full RFC 7.2 remains open.
-   * Gap-only SACKs and repeated gap/revoke/re-ACK cannot inflate cwnd. */
-  if (acked_bytes && progress != 0u && !was_recovering) {
-    const uint32_t increment = acked_bytes > CNET_SCTP_DATA_MTU ?
-        CNET_SCTP_DATA_MTU : (uint32_t)acked_bytes;
-    d->cwnd = d->cwnd + increment > 16u * CNET_SCTP_DATA_MTU ?
-        16u * CNET_SCTP_DATA_MTU : d->cwnd + increment;
-  }
+  congestion_ack(d, previous_flight, acked_bytes, outstanding_bytes,
+                 progress, was_recovering);
   d->last_time_ms = now;
   return CNET_SCTP_DATA_OK;
 }
@@ -619,6 +681,10 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
    * eligible fast retransmission to postpone an already-expired T3. */
   if (d->t3_deadline_ms && now >= d->t3_deadline_ms)
     goto t3_due;
+  if (d->t3_wait_ack) {
+    d->last_time_ms = now;
+    return CNET_SCTP_DATA_OK;
+  }
   /* Fast retransmit is emitted only by the Owner's explicit advance().
    * No hidden send, callback, or additional retransmit buffer is created. */
   {
@@ -632,6 +698,11 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
         fast = slot;
     }
     if (fast) {
+      /* Only the initial fast-retransmit packet may bypass cwnd (7.2.4).
+       * Count every retained unacknowledged chunk conservatively until the
+       * separate pending-retransmission/flight-state scheduler is qualified. */
+      if (d->recovery_active && flight_bytes(d) > d->cwnd)
+        return CNET_SCTP_DATA_CAPACITY;
       /* 7.2.4(4): restart only when retransmitting the first outstanding
        * DATA chunk (or starting a stopped timer). Later losses must not
        * postpone that chunk's deadline. Preflight before any TX mutation. */
@@ -657,6 +728,7 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
         if (d->ssthresh < 4u * CNET_SCTP_DATA_MTU)
           d->ssthresh = 4u * CNET_SCTP_DATA_MTU;
         d->cwnd = d->ssthresh;
+        d->partial_bytes_acked = 0u;
         d->recovery_exit_tsn = d->next_tsn - 1u;
         d->recovery_active = 1u;
       }
@@ -685,6 +757,8 @@ t3_due:
   memcpy(out, oldest->packet, oldest->packet_size);
   *written = oldest->packet_size;
   ++oldest->retransmits;
+  d->t3_wait_tsn = oldest->tsn;
+  d->t3_wait_ack = 1u;
   /* Timeout starts a new loss epoch. Old SACK-derived evidence cannot
    * trigger a second fast retransmission without fresh higher-TSN ACKs. */
   {
@@ -697,6 +771,7 @@ t3_due:
     d->ssthresh = 4u * CNET_SCTP_DATA_MTU;
   d->cwnd = CNET_SCTP_DATA_MTU; /* timeout recovery, not a full cwnd model */
   d->recovery_active = 0u; /* T3 owns the next congestion response. */
+  d->partial_bytes_acked = 0u;
   d->rto_ms = d->rto_ms > d->config.t3_max_ms / 2u ?
       d->config.t3_max_ms : d->rto_ms * 2u;
   d->t3_deadline_ms = now + d->rto_ms;
@@ -721,6 +796,8 @@ cnet_sctp_data_status cnet_sctp_data_stop(cnet_sctp_data *d) {
   memset(d->rx, 0, sizeof(d->rx));
   memset(&d->pending, 0, sizeof(d->pending));
   d->in_flight = 0u;
+  d->t3_wait_ack = 0u;
+  d->partial_bytes_acked = 0u;
   d->buffered_rx = 0u;
   d->rx_gaps = 0u;
   d->t3_deadline_ms = 0u;

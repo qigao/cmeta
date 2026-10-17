@@ -37,8 +37,8 @@ static cnet_sctp_data_config config(fixture *f, int initiator) {
   c.remote_port = initiator ? 5001u : 5000u;
   c.local_tag = initiator ? 111u : 222u;
   c.peer_tag = initiator ? 222u : 111u;
-  c.local_initial_tsn = initiator ? f->first - 6u : 900u;
-  c.peer_initial_tsn = initiator ? 900u : f->first - 6u;
+  c.local_initial_tsn = initiator ? f->first - 32u : 900u;
+  c.peer_initial_tsn = initiator ? 900u : f->first - 32u;
   c.outbound_streams = c.inbound_streams = 4u;
   c.peer_receive_window = CNET_SCTP_DATA_RECEIVE_CEILING;
   c.t3_initial_ms = 100u; c.t3_max_ms = 400u;
@@ -61,22 +61,33 @@ static void deliver(fixture *f, uint64_t now, const void *p, size_t n,
 static void init(fixture *f, uint32_t first) {
   cnet_sctp_data_config a, b;
   uint8_t body[CNET_SCTP_DATA_PAYLOAD_MAX] = {0};
-  uint8_t p[CNET_SCTP_DATA_MTU], sack[CNET_SCTP_DATA_MTU];
+  uint8_t p[16][CNET_SCTP_DATA_MTU], sack[CNET_SCTP_DATA_MTU];
   cnet_sctp_data_message m = {0};
-  size_t n, ns, nm;
-  unsigned int i;
+  size_t n[16], ns, nm;
+  unsigned int sent = 0u, done = 0u;
   memset(f, 0, sizeof(*f)); f->admitted = 1; f->first = first;
   a = config(f, 1); b = config(f, 0);
   assert(cnet_sctp_data_init(&f->a, &a, 0u) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_init(&f->b, &b, 0u) == CNET_SCTP_DATA_OK);
-  for (i = 0u; i < 6u; ++i) {
-    assert(cnet_sctp_data_send(&f->a, 1u + 4u * i, 0u, 53u, 0,
-        body, sizeof(body), p, sizeof(p), &n) == CNET_SCTP_DATA_OK);
-    deliver(f, 2u + 4u * i, p, n, sack, &ns);
-    ack(f, 3u + 4u * i, sack, ns);
+  /* Stop-and-wait is application limited and must no longer warm cwnd.
+   * Keep a bounded wire pipeline full, then drain every packet through the
+   * receiver. A single virtual instant keeps the original test clock range. */
+  while (done < 32u) {
+    while (sent < 32u && sent - done < 16u) {
+      const cnet_sctp_data_status status = cnet_sctp_data_send(&f->a, 1u,
+          0u, 53u, 0, body, sizeof(body), p[sent % 16u],
+          sizeof(p[0]), &n[sent % 16u]);
+      if (status == CNET_SCTP_DATA_CAPACITY) break;
+      assert(status == CNET_SCTP_DATA_OK);
+      ++sent;
+    }
+    assert(done < sent);
+    deliver(f, 1u, p[done % 16u], n[done % 16u], sack, &ns);
+    ack(f, 1u, sack, ns);
     assert(cnet_sctp_data_take(&f->b, &m, body, sizeof(body), &nm) ==
            CNET_SCTP_DATA_OK);
     assert(nm == sizeof(body));
+    ++done;
   }
   assert(f->a.next_tsn == first && f->a.in_flight == 0u);
   assert(f->a.cwnd > 8u * CNET_SCTP_DATA_MTU);
@@ -216,7 +227,7 @@ static void partial_one(uint32_t first, int enter_recovery) {
     assert(cnet_sctp_data_take(&f.b, &m, body, sizeof(body), &nm) ==
            CNET_SCTP_DATA_OK);
     assert(nm == 1u && body[0] == i && m.tsn == first + i);
-    assert(m.stream_sequence == 6u + i && m.ppid == 53u && !m.unordered);
+    assert(m.stream_sequence == 32u + i && m.ppid == 53u && !m.unordered);
   }
   assert(cnet_sctp_data_take(&f.b, &m, body, sizeof(body), &nm) ==
          CNET_SCTP_DATA_EMPTY);
