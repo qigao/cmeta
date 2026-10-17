@@ -43,9 +43,14 @@ runs:
         "CCACHE_MAXSIZE=512M" >> $env:GITHUB_ENV
         "CCACHE_COMPILERCHECK=content" >> $env:GITHUB_ENV
         "CCACHE_BASEDIR=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
-        "CCACHE_NODIRECT=true" >> $env:GITHUB_ENV
         if ($env:RUNNER_OS -eq "Windows") {
+          # MSVC can use ccache's manifest-based direct mode.  Forcing
+          # NODIRECT makes every cache hit run cl.exe /E first.
+          "CCACHE_NODIRECT=false" >> $env:GITHUB_ENV
           "CCACHE_COMPILERTYPE=msvc" >> $env:GITHUB_ENV
+        } else {
+          # Preserve the previously qualified non-Windows cache policy.
+          "CCACHE_NODIRECT=true" >> $env:GITHUB_ENV
         }
         "CMAKE_C_COMPILER_LAUNCHER=$ccache" >> $env:GITHUB_ENV
         "CMAKE_CXX_COMPILER_LAUNCHER=$ccache" >> $env:GITHUB_ENV
@@ -57,6 +62,14 @@ runs:
         key: salts-ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.profile }}-${{ env.VCPKG_CACHE_CONTRACT_VERSION }}-${{ env.VCPKG_CACHE_REVISION }}-${{ hashFiles('CMakeUserPresets.json', 'presets/*.json', 'CMakeOptions.cmake', 'cmake/Sanitizers.cmake', 'vcpkg.json', 'vcpkg-configuration.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
           salts-ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.profile }}-${{ env.VCPKG_CACHE_CONTRACT_VERSION }}-${{ env.VCPKG_CACHE_REVISION }}-${{ hashFiles('CMakeUserPresets.json', 'presets/*.json', 'CMakeOptions.cmake', 'cmake/Sanitizers.cmake', 'vcpkg.json', 'vcpkg-configuration.json') }}-
+
+    - name: Reset restored MSVC cache counters for this job
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        ccache --zero-stats
+        if ($LASTEXITCODE -ne 0) { throw "Failed to reset MSVC ccache stats" }
 
     - name: Report ccache statistics
       if: always()
