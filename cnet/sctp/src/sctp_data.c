@@ -697,6 +697,31 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
   return CNET_SCTP_DATA_OK;
 }
 
+/* RFC 9260 SHUTDOWN carries the peer's cumulative TSN acknowledgement.
+ * Reuse exactly the validated SACK settlement/reneging/T3 path without
+ * allocating a second TX owner or fabricating a new packet on the wire. */
+cnet_sctp_data_status cnet_sctp_data_shutdown_cumack(cnet_sctp_data *d,
+    uint64_t now, uint32_t cumulative) {
+  cnet_sctp_data_status status = guard(d);
+  cnet_sctp_wire_chunk sack = {0};
+  uint8_t fields[12] = {0};
+  if (status != CNET_SCTP_DATA_OK) return status;
+  if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  wr32(fields, cumulative);
+  wr32(fields + 4u, d->peer_rwnd);
+  sack.type = CHUNK_SACK;
+  sack.value = fields;
+  sack.value_size = sizeof(fields);
+  return input_sack(d, now, &sack);
+}
+int cnet_sctp_data_outbound_drained(const cnet_sctp_data *d) {
+  unsigned int i;
+  if (!d || d->magic != DATA_MAGIC || d->pending.active) return 0;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+    if (d->tx[i].used) return 0;
+  return 1;
+}
+
 cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now,
     const void *packet, size_t packet_size, void *out, size_t cap,
     size_t *written) {

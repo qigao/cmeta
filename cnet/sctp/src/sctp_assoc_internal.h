@@ -21,7 +21,11 @@ typedef enum cnet_sctp_assoc_state {
   CNET_SCTP_ASSOC_COOKIE_ECHOED = 2,
   CNET_SCTP_ASSOC_ESTABLISHED = 3,
   CNET_SCTP_ASSOC_FAILED = 4,
-  CNET_SCTP_ASSOC_STOPPED = 5
+  CNET_SCTP_ASSOC_STOPPED = 5,
+  CNET_SCTP_ASSOC_SHUTDOWN_PENDING = 6,
+  CNET_SCTP_ASSOC_SHUTDOWN_SENT = 7,
+  CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED = 8,
+  CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT = 9
 } cnet_sctp_assoc_state;
 
 typedef enum cnet_sctp_assoc_status {
@@ -140,6 +144,12 @@ cnet_sctp_assoc_status cnet_sctp_assoc_pump_message(cnet_sctp_assoc *a,
 
 /* Owner-pulled SACK after application receive capacity reopens. */
 cnet_sctp_assoc_status cnet_sctp_assoc_window_update(cnet_sctp_assoc *s,
+    uint64_t now_ms, void *output, size_t capacity, size_t *written);
+
+/* RFC 9260 9.2 graceful shutdown request.  New application sends are
+ * refused, but existing owned DATA may drain before SHUTDOWN/T2 starts.
+ * On completion, callers receive a STOPPED, drained private association. */
+cnet_sctp_assoc_status cnet_sctp_assoc_shutdown(cnet_sctp_assoc *association,
     uint64_t now_ms, void *output, size_t capacity, size_t *written);
 
 cnet_sctp_assoc_status cnet_sctp_assoc_stop(cnet_sctp_assoc *association);

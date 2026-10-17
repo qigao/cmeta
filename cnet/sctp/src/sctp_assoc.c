@@ -13,6 +13,9 @@ enum {
   SCTP_TYPE_ERROR = 9,
   SCTP_TYPE_COOKIE_ECHO = 10,
   SCTP_TYPE_COOKIE_ACK = 11,
+  SCTP_TYPE_SHUTDOWN = 7,
+  SCTP_TYPE_SHUTDOWN_ACK = 8,
+  SCTP_TYPE_SHUTDOWN_COMPLETE = 14,
   SCTP_PARAM_COOKIE = 7,
   SCTP_PARAM_UNRECOGNIZED = 8,
   SCTP_ERROR_UNRECOGNIZED = 8,
@@ -586,6 +589,93 @@ static cnet_sctp_assoc_status handle_cookie_ack(cnet_sctp_assoc *s,
   return CNET_SCTP_ASSOC_OK;
 }
 
+/* T2 uses the existing bounded Owner clock/RTO envelope.  This is
+ * a private one-path shutdown subset, not a second scheduler/timer thread. */
+static cnet_sctp_assoc_status begin_shutdown_control(cnet_sctp_assoc *s,
+    uint64_t now, int acknowledgement, uint8_t *out, size_t cap,
+    size_t *written) {
+  uint8_t scratch[CNET_SCTP_ASSOC_MAX_PACKET];
+  uint8_t value[4] = {0};
+  size_t n = 0u;
+  cnet_sctp_assoc_status status;
+  if (now > UINT64_MAX - s->config.t1_ms) return CNET_SCTP_ASSOC_CLOCK;
+  if (!acknowledgement) wr32(value, s->data.cumulative_rx);
+  status = encode_one(s, s->peer_tag,
+      acknowledgement ? SCTP_TYPE_SHUTDOWN_ACK : SCTP_TYPE_SHUTDOWN,
+      acknowledgement ? NULL : value, acknowledgement ? 0u : sizeof(value),
+      scratch, sizeof(scratch), &n);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  return begin_packet(s, now, scratch, n,
+      acknowledgement ? CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT :
+          CNET_SCTP_ASSOC_SHUTDOWN_SENT, out, cap, written);
+}
+static void finish_shutdown(cnet_sctp_assoc *s) {
+  if (s->data_ready) {
+    (void)cnet_sctp_data_stop(&s->data);
+    memset(&s->data, 0, sizeof(s->data));
+    s->data_ready = 0u;
+  }
+  s->state = CNET_SCTP_ASSOC_STOPPED;
+  s->deadline_ms = 0u;
+  s->saved_size = 0u;
+  s->current_rto_ms = 0u;
+  s->retransmits = 0u;
+  memset(s->saved_packet, 0, sizeof(s->saved_packet));
+}
+/* SHUTDOWN cumulatively acknowledges peer DATA.  Preview all mutation on
+ * a bounded stack-owned candidate before emitting SHUTDOWN ACK, so an
+ * undersized output buffer cannot half-retire a sender's TX tickets. */
+static cnet_sctp_assoc_status handle_shutdown(cnet_sctp_assoc *s,
+    uint64_t now, const cnet_sctp_wire_header *header,
+    const cnet_sctp_wire_chunk *chunk, uint8_t *out, size_t cap,
+    size_t *written) {
+  cnet_sctp_data candidate;
+  cnet_sctp_assoc_status status;
+  if (header->verification_tag != s->local_tag || chunk->flags != 0u ||
+      chunk->value_size != 4u || !s->data_ready)
+    return CNET_SCTP_ASSOC_PROTOCOL;
+  if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT)
+    return publish_packet(out, cap, written, s->saved_packet, s->saved_size);
+  if (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
+      s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
+      s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED &&
+      s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT)
+    return CNET_SCTP_ASSOC_PROTOCOL;
+  memcpy(&candidate, &s->data, sizeof(candidate));
+  status = data_result(cnet_sctp_data_shutdown_cumack(&candidate,
+      now, rd32(chunk->value)));
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (!cnet_sctp_data_outbound_drained(&candidate)) {
+    if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT)
+      return CNET_SCTP_ASSOC_PROTOCOL;
+    memcpy(&s->data, &candidate, sizeof(candidate));
+    s->state = CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED;
+    s->last_time_ms = now;
+    return CNET_SCTP_ASSOC_OK;
+  }
+  status = begin_shutdown_control(s, now, 1, out, cap, written);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  memcpy(&s->data, &candidate, sizeof(candidate));
+  return CNET_SCTP_ASSOC_OK;
+}
+static cnet_sctp_assoc_status handle_shutdown_ack(cnet_sctp_assoc *s,
+    uint64_t now, const cnet_sctp_wire_header *header,
+    const cnet_sctp_wire_chunk *chunk, uint8_t *out, size_t cap,
+    size_t *written) {
+  cnet_sctp_assoc_status status;
+  if (header->verification_tag != s->local_tag ||
+      chunk->flags != 0u || chunk->value_size != 0u ||
+      (s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT))
+    return CNET_SCTP_ASSOC_PROTOCOL;
+  status = encode_one(s, s->peer_tag, SCTP_TYPE_SHUTDOWN_COMPLETE,
+      NULL, 0u, out, cap, written);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  finish_shutdown(s);
+  s->last_time_ms = now;
+  return CNET_SCTP_ASSOC_OK;
+}
+
 cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     uint64_t now, const uint8_t *packet, size_t packet_size,
     uint8_t *output, size_t cap, size_t *written) {
@@ -622,8 +712,16 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   switch (chunk.type) {
     case 0u: /* DATA */
     case 3u: /* SACK */
-      if (s->state != CNET_SCTP_ASSOC_ESTABLISHED || !s->data_ready ||
-          header.chunk_count != 1u)
+      if (!s->data_ready || header.chunk_count != 1u)
+        return CNET_SCTP_ASSOC_PROTOCOL;
+      if (chunk.type == 0u) {
+        if (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
+            s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
+            s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT)
+          return CNET_SCTP_ASSOC_PROTOCOL;
+      } else if (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
+                 s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
+                 s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED)
         return CNET_SCTP_ASSOC_PROTOCOL;
       return data_result(cnet_sctp_data_input(&s->data, now, packet,
           packet_size, output, cap, written));
@@ -651,8 +749,23 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       return CNET_SCTP_ASSOC_OK;
     case SCTP_TYPE_COOKIE_ACK:
       return handle_cookie_ack(s, now, &header, &chunk);
+    case SCTP_TYPE_SHUTDOWN:
+      if (header.chunk_count != 1u) return CNET_SCTP_ASSOC_PROTOCOL;
+      return handle_shutdown(s, now, &header, &chunk, output, cap, written);
+    case SCTP_TYPE_SHUTDOWN_ACK:
+      if (header.chunk_count != 1u) return CNET_SCTP_ASSOC_PROTOCOL;
+      return handle_shutdown_ack(s, now, &header, &chunk, output, cap, written);
+    case SCTP_TYPE_SHUTDOWN_COMPLETE:
+      if (header.chunk_count != 1u ||
+          header.verification_tag != s->local_tag || chunk.flags != 0u ||
+          chunk.value_size != 0u ||
+          s->state != CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT)
+        return CNET_SCTP_ASSOC_PROTOCOL;
+      finish_shutdown(s);
+      s->last_time_ms = now;
+      return CNET_SCTP_ASSOC_OK;
     default:
-      return CNET_SCTP_ASSOC_PROTOCOL; /* DATA, shutdown, SACK not implemented */
+      return CNET_SCTP_ASSOC_PROTOCOL; /* unsupported control chunk */
   }
 }
 
@@ -667,14 +780,25 @@ cnet_sctp_assoc_status cnet_sctp_assoc_advance(cnet_sctp_assoc *s,
   s->last_time_ms = now;
   if (s->state == CNET_SCTP_ASSOC_STOPPED || s->state == CNET_SCTP_ASSOC_FAILED)
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
-  if (s->state == CNET_SCTP_ASSOC_ESTABLISHED && s->data_ready) {
+  if ((s->state == CNET_SCTP_ASSOC_SHUTDOWN_PENDING ||
+       s->state == CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED) &&
+      s->data_ready && cnet_sctp_data_outbound_drained(&s->data)) {
+    return begin_shutdown_control(s, now,
+        s->state == CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED,
+        output, cap, written);
+  }
+  if ((s->state == CNET_SCTP_ASSOC_ESTABLISHED ||
+       s->state == CNET_SCTP_ASSOC_SHUTDOWN_PENDING ||
+       s->state == CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED) && s->data_ready) {
     cnet_sctp_assoc_status mapped = data_result(
         cnet_sctp_data_advance(&s->data, now, output, cap, written));
     if (mapped == CNET_SCTP_ASSOC_EXPIRED) s->state = CNET_SCTP_ASSOC_FAILED;
     return mapped;
   }
   if (s->state != CNET_SCTP_ASSOC_COOKIE_WAIT &&
-      s->state != CNET_SCTP_ASSOC_COOKIE_ECHOED) {
+      s->state != CNET_SCTP_ASSOC_COOKIE_ECHOED &&
+      s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+      s->state != CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT) {
     s->last_time_ms = now;
     return CNET_SCTP_ASSOC_OK;
   }
@@ -712,11 +836,22 @@ cnet_sctp_assoc_status cnet_sctp_assoc_next_deadline(cnet_sctp_assoc *s,
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (!deadline_ms || !has_deadline) return CNET_SCTP_ASSOC_INVALID;
-  if (s->state == CNET_SCTP_ASSOC_ESTABLISHED && s->data_ready)
+  if ((s->state == CNET_SCTP_ASSOC_SHUTDOWN_PENDING ||
+       s->state == CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED) &&
+      s->data_ready && cnet_sctp_data_outbound_drained(&s->data)) {
+    *has_deadline = 1;
+    *deadline_ms = s->last_time_ms;
+    return CNET_SCTP_ASSOC_OK;
+  }
+  if ((s->state == CNET_SCTP_ASSOC_ESTABLISHED ||
+       s->state == CNET_SCTP_ASSOC_SHUTDOWN_PENDING ||
+       s->state == CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED) && s->data_ready)
     return data_result(cnet_sctp_data_deadline(&s->data,
                                               deadline_ms, has_deadline));
   *has_deadline = s->state == CNET_SCTP_ASSOC_COOKIE_WAIT ||
-      s->state == CNET_SCTP_ASSOC_COOKIE_ECHOED;
+      s->state == CNET_SCTP_ASSOC_COOKIE_ECHOED ||
+      s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT ||
+      s->state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT;
   *deadline_ms = *has_deadline ? s->deadline_ms : 0u;
   return CNET_SCTP_ASSOC_OK;
 }
@@ -745,7 +880,10 @@ cnet_sctp_assoc_status cnet_sctp_assoc_take_message(cnet_sctp_assoc *s,
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (!message || !payload || !written) return CNET_SCTP_ASSOC_INVALID;
   *written = 0u;
-  if (s->state != CNET_SCTP_ASSOC_ESTABLISHED || !s->data_ready)
+  if ((s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED) || !s->data_ready)
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
   return data_result(cnet_sctp_data_take(&s->data, message,
                                         payload, cap, written));
@@ -772,12 +910,33 @@ cnet_sctp_assoc_status cnet_sctp_assoc_pump_message(cnet_sctp_assoc *s,
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (!out || !written) return CNET_SCTP_ASSOC_INVALID;
   *written = 0u;
-  if (s->state != CNET_SCTP_ASSOC_ESTABLISHED || !s->data_ready)
+  if ((s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED) || !s->data_ready)
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
   status = data_result(cnet_sctp_data_pump(&s->data, now, out, cap, written));
   if (status == CNET_SCTP_ASSOC_OK) s->last_time_ms = now;
   return status;
+}
+
+/* Initiate a graceful close only after the old TX tickets and pending
+ * copied message drain. No new application data is admitted afterward. */
+cnet_sctp_assoc_status cnet_sctp_assoc_shutdown(cnet_sctp_assoc *s,
+    uint64_t now, void *out, size_t cap, size_t *written) {
+  cnet_sctp_assoc_status status = guard(s);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (!out || !written) return CNET_SCTP_ASSOC_INVALID;
+  *written = 0u;
+  if (s->state != CNET_SCTP_ASSOC_ESTABLISHED || !s->data_ready)
+    return CNET_SCTP_ASSOC_CLOSED_ERROR;
+  if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
+  if (!cnet_sctp_data_outbound_drained(&s->data)) {
+    s->state = CNET_SCTP_ASSOC_SHUTDOWN_PENDING;
+    s->last_time_ms = now;
+    return CNET_SCTP_ASSOC_OK;
+  }
+  return begin_shutdown_control(s, now, 0, out, cap, written);
 }
 
 cnet_sctp_assoc_status cnet_sctp_assoc_window_update(cnet_sctp_assoc *s,
@@ -786,7 +945,10 @@ cnet_sctp_assoc_status cnet_sctp_assoc_window_update(cnet_sctp_assoc *s,
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (!out || !written) return CNET_SCTP_ASSOC_INVALID;
   *written = 0u;
-  if (s->state != CNET_SCTP_ASSOC_ESTABLISHED || !s->data_ready)
+  if ((s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED) || !s->data_ready)
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
   status = data_result(cnet_sctp_data_window_update(

@@ -154,6 +154,12 @@ cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,
 cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d, uint64_t now_ms,
     void *packet, size_t packet_capacity, size_t *packet_bytes);
 
+/* SHUTDOWN's cumulative ACK uses the same guarded SACK accounting.
+ * Polling drain must see retained revocable Gap ACK tickets. */
+cnet_sctp_data_status cnet_sctp_data_shutdown_cumack(cnet_sctp_data *d,
+    uint64_t now_ms, uint32_t cumulative);
+int cnet_sctp_data_outbound_drained(const cnet_sctp_data *d);
+
 cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now_ms,
     const void *packet, size_t packet_size,
     void *output, size_t output_capacity, size_t *written);
