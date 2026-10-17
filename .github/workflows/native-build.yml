@@ -719,10 +719,14 @@ jobs:
           retention-days: 7
           compression-level: 1
 
-      - name: Report ccache compilation statistics
+      - name: Report native compiler cache
         if: ${{ always() && steps.compiler_cache.outcome == 'success' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          ccache --show-stats
+          if ($env:RUNNER_OS -eq "Windows") {
+            & $env:CLCACHE_EXE -i
+          } else {
+            ccache --show-stats
+          }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
