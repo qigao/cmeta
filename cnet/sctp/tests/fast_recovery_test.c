@@ -584,6 +584,38 @@ static void duplicate_sack_no_false_fast(void) {
   finished(&f);
 }
 
+
+/* A reneged Gap ACK restores flight exactly once. Repeating the withdrawn
+ * SACK cannot add another miss; re-ACKing the TSN cancels pending intent. */
+static void reneging_reack_pending(void) {
+  fixture f;
+  uint8_t sack[CNET_SCTP_DATA_MTU], withdrawn[CNET_SCTP_DATA_MTU];
+  size_t ns, nw, before;
+  init(&f, 100u);
+  send(&f, 0u, 64u);
+  send(&f, 1u, 65u);
+  send(&f, 2u, 66u);
+  gap(&f, 1u, 80u);
+  assert(ticket(&f, 1u)->gap_acked);
+  assert(!ticket(&f, 1u)->flight_accounted);
+  nw = peer_sack(&f, f.first - 1u, 3u, 3u, withdrawn);
+  ack(&f, 85u, withdrawn, nw);
+  assert(ticket(&f, 1u)->flight_accounted);
+  assert(ticket(&f, 1u)->missing_reports == 1u);
+  before = f.a.in_flight;
+  ack(&f, 86u, withdrawn, nw);
+  assert(f.a.in_flight == before);
+  assert(ticket(&f, 1u)->missing_reports == 1u);
+  ns = peer_sack(&f, f.first - 1u, 2u, 3u, sack);
+  ack(&f, 87u, sack, ns);
+  assert(ticket(&f, 1u)->gap_acked);
+  assert(!ticket(&f, 1u)->flight_accounted);
+  assert(!ticket(&f, 1u)->pending_retransmit);
+  assert(ticket(&f, 1u)->missing_reports == 0u);
+  assert_flight_invariant(&f.a);
+  finished(&f);
+}
+
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
     {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
@@ -592,6 +624,7 @@ int main(int argc, char **argv) {
     {"t3_preempts_pending_fast", t3_preempts_pending_fast},
     {"t3_ack_then_fresh_loss", t3_ack_then_fresh_loss},
     {"duplicate_sack_no_false_fast", duplicate_sack_no_false_fast},
+    {"reneging_reack_pending", reneging_reack_pending},
     {"reneging_flight_accounting", reneging_flight_accounting},
     {"timer_restart", timer_restart}, {"partial_recovery", partial_recovery},
     {"ordinary_htna", ordinary_htna}, {"reneging_streak", reneging_streak},
