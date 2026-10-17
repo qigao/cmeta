@@ -420,7 +420,11 @@ static void t3_precedes_fast_retransmit(void) {
          CNET_SCTP_DATA_OK);
   assert(nr == np[0] && memcmp(reply, packets[0], nr) == 0);
   assert(a.tx[0].retransmits == 1u && !a.tx[0].fast_retransmitted);
+  assert(a.tx[0].missing_reports == 0u);
   assert(!a.recovery_active && a.cwnd == CNET_SCTP_DATA_MTU);
+  assert(cnet_sctp_data_advance(&a, a.last_time_ms + 1u,
+      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(nr == 0u && a.tx[0].retransmits == 1u);
   assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
