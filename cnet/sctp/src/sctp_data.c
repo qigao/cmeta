@@ -180,13 +180,6 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
    * was below it. Each supported DATA chunk is <= CC_QUANTUM, so this
    * admits at most cwnd + CC_QUANTUM - 1 padded bytes, never another packet.
    * The receiver-window check remains independent and is never overbooked. */
-  /* A queued fragmented message must not overtake loss recovery either. */
-  {
-    unsigned int i;
-    for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
-      if (d->tx[i].used && d->tx[i].pending_retransmit)
-        return CNET_SCTP_DATA_CAPACITY;
-  }
   if (d->t3_wait_ack || n > d->peer_rwnd ||
       d->in_flight > d->peer_rwnd - n || flight_bytes(d) >= d->cwnd)
     return CNET_SCTP_DATA_CAPACITY;
@@ -232,14 +225,6 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now,
   *written = 0u;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
   if (d->pending.active) return CNET_SCTP_DATA_CAPACITY;
-  /* Recovery work already admitted to bounded TX slots has priority over
-   * new DATA. Never advance TSN/SSN while retransmission is pending. */
-  {
-    unsigned int i;
-    for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
-      if (d->tx[i].used && d->tx[i].pending_retransmit)
-        return CNET_SCTP_DATA_CAPACITY;
-  }
   if (n > CNET_SCTP_DATA_PAYLOAD_MAX) return CNET_SCTP_DATA_CAPACITY;
   seq = unordered ? 0u : d->tx_ssn[stream];
   status = send_frame(d, now, stream, seq, ppid,
