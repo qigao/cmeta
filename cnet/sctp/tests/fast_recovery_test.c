@@ -489,11 +489,44 @@ static void t3_capacity_then_sack(void) {
   finished(&f);
 }
 
+
+/* The T3 deadline outranks pending fast retransmissions. After timeout,
+ * stale missing reports must not trigger another fast send in that epoch.
+ * This checks the actual scheduler without manually changing TX state. */
+static void t3_preempts_pending_fast(void) {
+  fixture f;
+  uint8_t out[CNET_SCTP_DATA_MTU];
+  size_t n;
+  uint64_t due;
+  unsigned int i;
+  init(&f, 100u);
+  for (i = 0u; i < 6u; ++i) send(&f, i, 64u + i);
+  for (i = 3u; i < 6u; ++i) gap(&f, i, 80u + i * 2u);
+  assert(ticket(&f, 0u)->pending_retransmit);
+  assert(ticket(&f, 1u)->pending_retransmit);
+  due = f.a.t3_deadline_ms;
+  assert(cnet_sctp_data_advance(&f.a, due, out, sizeof(out), &n)
+      == CNET_SCTP_DATA_OK);
+  assert(n == f.size[0] && memcmp(out, f.packet[0], n) == 0);
+  assert(f.a.t3_wait_ack && f.a.t3_wait_tsn == f.first);
+  assert(f.a.cwnd == CNET_SCTP_DATA_MTU);
+  for (i = 0u; i < 3u; ++i) {
+    assert(!ticket(&f, i)->pending_retransmit);
+    assert(ticket(&f, i)->missing_reports == 0u);
+  }
+  assert(cnet_sctp_data_advance(&f.a, due + 1u, out,
+      sizeof(out), &n) == CNET_SCTP_DATA_OK);
+  assert(n == 0u);
+  assert_flight_invariant(&f.a);
+  finished(&f);
+}
+
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
     {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
     {"t3_sack_interleave", t3_sack_interleave},
     {"t3_capacity_then_sack", t3_capacity_then_sack},
+    {"t3_preempts_pending_fast", t3_preempts_pending_fast},
     {"reneging_flight_accounting", reneging_flight_accounting},
     {"timer_restart", timer_restart}, {"partial_recovery", partial_recovery},
     {"ordinary_htna", ordinary_htna}, {"reneging_streak", reneging_streak},
