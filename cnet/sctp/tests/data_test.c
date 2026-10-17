@@ -277,7 +277,32 @@ static void karn_rtt_first_sample(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
+/* A cumulative ACK that samples RTT must not commit any ticket if its
+ * newly computed RTO deadline could overflow the caller's clock. */
+static void rtt_deadline_overflow_atomicity(void) {
+  cnet_sctp_data a, b;
+  test_owner oa = {0}, ob = {0};
+  uint8_t packet[1200], sack[1200], reply[1200];
+  const uint8_t payload = 'o';
+  size_t np = 0u, ns = 0u, nr = 0u;
+  const uint64_t near_end = UINT64_MAX - 200u;
+  pair_init(&a, &b, &oa, &ob, 100u, 300u);
+  assert(cnet_sctp_data_send(&a, 1u, 0u, 51u, 0, &payload, 1u,
+      packet, sizeof(packet), &np) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_send(&a, 2u, 0u, 51u, 0, &payload, 1u,
+      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&b, 3u, packet, np,
+      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&a, near_end, sack, ns,
+      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_CLOCK);
+  assert(a.last_ack == 99u && a.in_flight == 2u);
+  assert(a.tx[0].used && a.tx[1].used && !a.rtt_valid);
+  assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
+}
+
 int main(void) {
+  rtt_deadline_overflow_atomicity();
   karn_rtt_first_sample();
   ambiguous_half_wrap_tsn();
   gap_sack_wrap_t3_ordering();
