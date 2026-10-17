@@ -353,9 +353,16 @@ static void fast_retransmit_once(void) {
          CNET_SCTP_DATA_OK);
   assert(nr == np[0] && memcmp(reply, packets[0], nr) == 0);
   assert(a.tx[0].fast_retransmitted && a.tx[0].retransmits == 1u);
+  assert(a.recovery_active && a.recovery_exit_tsn == 103u);
   assert(cnet_sctp_data_advance(&a, 25u, reply, sizeof(reply), &nr) ==
          CNET_SCTP_DATA_OK);
   assert(nr == 0u);
+  /* A cumulative ACK through the recovery point exits exactly once. */
+  assert(cnet_sctp_data_input(&b, 26u, packets[0], np[0],
+      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&a, 27u, sack, ns,
+      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(!a.recovery_active && a.in_flight == 0u);
   assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
