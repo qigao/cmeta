@@ -64,6 +64,4 @@ if ($changedHash -eq $firstHash) {
     throw 'Header mutation did not invalidate the cached object'
 }
 
-Write-Host "MSVC ccache: direct hit proven (+$($afterDirect - $beforeDirect));" \
-    "byte-identical object verified; header invalidation verified;" \
-    "replay time = $($watch.ElapsedMilliseconds) ms"
+Write-Host "MSVC ccache: direct hit proven (+$($afterDirect - $beforeDirect)); byte-identical object verified; header invalidation verified; replay time = $($watch.ElapsedMilliseconds) ms"
