@@ -282,6 +282,30 @@ static void t3_single_packet(void) {
   stop(&l);
 }
 
+/* A Gap ACK of the T3 retransmitted TSN is revocable; it must not
+ * lift the one-packet post-timeout send gate before cumulative progress. */
+static void t3_gap_ack_keeps_gate(void) {
+  link l; packet first, later, sack, out;
+  cnet_sctp_data before;
+  init(&l, 100u, 32768u);
+  assert(send(&l, &first, 1u) == CNET_SCTP_DATA_OK);
+  assert(send(&l, &later, 1u) == CNET_SCTP_DATA_OK);
+  l.now = l.a.t3_deadline_ms;
+  assert(cnet_sctp_data_advance(&l.a, l.now++, out.bytes,
+      sizeof(out.bytes), &out.n) == CNET_SCTP_DATA_OK);
+  assert(out.n == first.n && l.a.t3_wait_ack);
+  sack = peer_sack(&l, 99u, 1u, 1u);
+  ack(&l, &sack);
+  assert(l.a.t3_wait_ack);
+  memcpy(&before, &l.a, sizeof(before));
+  assert(send(&l, &out, 1u) == CNET_SCTP_DATA_CAPACITY);
+  assert(memcmp(&before, &l.a, sizeof(before)) == 0);
+  sack = peer_sack(&l, 100u, 0u, 0u);
+  ack(&l, &sack);
+  assert(!l.a.t3_wait_ack);
+  stop(&l);
+}
+
 static void later_retransmit_window(void) {
   link l; packet p[8], s, out, first; cnet_sctp_data before;
   unsigned int i; uint32_t window;
@@ -366,6 +390,7 @@ int main(int argc, char **argv) {
     {"gap_restore_accounting", gap_restore_accounting},
     {"refusal_atomicity", refusal_atomicity},
     {"t3_single_packet", t3_single_packet},
+    {"t3_gap_ack_keeps_gate", t3_gap_ack_keeps_gate},
     {"later_retransmit_window", later_retransmit_window},
     {"huge_rtt_arithmetic", huge_rtt_arithmetic},
     {"gap_only_no_ca_credit", gap_only_no_ca_credit}
