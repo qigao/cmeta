@@ -11,7 +11,14 @@ int main(void) {
         sizeof(cmeta_param_desc), "value", &cmeta_type_int, CMETA_PARAM_IN
     };
     const cmeta_param_desc valid_params[] = { valid_param };
+    const cmeta_param_desc two_params[] = {
+        valid_param,
+        { sizeof(cmeta_param_desc), "other", &cmeta_type_int, CMETA_PARAM_IN }
+    };
     const cmeta_abi_carrier valid_carriers[] = { CMETA_ABI_SCALAR };
+    const cmeta_abi_carrier two_carriers[] = {
+        CMETA_ABI_SCALAR, CMETA_ABI_SCALAR
+    };
     cmeta_function_desc function = {
         sizeof(cmeta_function_desc), "contract_probe", &cmeta_type_int,
         valid_params, 1u, CMETA_EFFECT_PURE, CMETA_PROP_NONE, CMETA_RESULT_VALUE
@@ -50,6 +57,20 @@ int main(void) {
     bad_function.params = NULL;
     REQUIRE(!cmeta_function_desc_valid(&bad_function));
     bad_function = function;
+    bad_function.params = two_params;
+    bad_function.param_count = 2u;
+    REQUIRE(cmeta_function_desc_valid(&bad_function));
+    {
+        cmeta_param_desc duplicate_params[] = { two_params[0], two_params[1] };
+        duplicate_params[1].name = duplicate_params[0].name;
+        bad_function.params = duplicate_params;
+        REQUIRE(!cmeta_function_desc_valid(&bad_function));
+        duplicate_params[1] = two_params[1];
+        duplicate_params[1].flags |= CMETA_PARAM_RECEIVER;
+        bad_function.params = duplicate_params;
+        REQUIRE(!cmeta_function_desc_valid(&bad_function));
+    }
+    bad_function = function;
     bad_function.result_flags = CMETA_RESULT_VALUE | CMETA_RESULT_OWNED;
     REQUIRE(!cmeta_function_desc_valid(&bad_function));
     bad_function = function;
@@ -76,6 +97,22 @@ int main(void) {
     bad_abi = abi;
     bad_abi.return_carrier = CMETA_ABI_OBJECT_POINTER;
     REQUIRE(!cmeta_function_abi_desc_valid(&bad_abi));
+    bad_abi = abi;
+    {
+        cmeta_abi_carrier wrong_param_carriers[] = { CMETA_ABI_OBJECT_POINTER };
+        bad_abi.param_carriers = wrong_param_carriers;
+        REQUIRE(!cmeta_function_abi_desc_valid(&bad_abi));
+    }
+    bad_abi = abi;
+    {
+        cmeta_function_desc two_param_function = function;
+        two_param_function.params = two_params;
+        two_param_function.param_count = 2u;
+        bad_abi.function = &two_param_function;
+        bad_abi.param_count = 2u;
+        bad_abi.param_carriers = two_carriers;
+        REQUIRE(cmeta_function_abi_desc_valid(&bad_abi));
+    }
 
     return 0;
 }
