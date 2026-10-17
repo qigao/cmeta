@@ -1,5 +1,5 @@
 name: Set up native compiler cache
-description: Configure ccache for C/C++ builds on Windows, Linux and macOS.
+description: Configure audited MSVC clcache on Windows and ccache on Linux/macOS.
 
 inputs:
   profile:
@@ -63,9 +63,6 @@ runs:
         "CCACHE_COMPILERCHECK=content" >> $env:GITHUB_ENV
         "CCACHE_BASEDIR=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
         "CCACHE_NODIRECT=true" >> $env:GITHUB_ENV
-        if ($env:RUNNER_OS -eq "Windows") {
-          "CCACHE_COMPILERTYPE=msvc" >> $env:GITHUB_ENV
-        }
         "CMAKE_C_COMPILER_LAUNCHER=$ccache" >> $env:GITHUB_ENV
         "CMAKE_CXX_COMPILER_LAUNCHER=$ccache" >> $env:GITHUB_ENV
 
@@ -93,6 +90,19 @@ runs:
         key: salts-clcache-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.profile }}-${{ env.VCPKG_CACHE_CONTRACT_VERSION }}-${{ env.VCPKG_CACHE_REVISION }}-${{ hashFiles('tools/clcache/clcache.c', 'vcpkg.json', 'vcpkg-configuration.json', 'CMakeUserPresets.json', 'presets/*.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
           salts-clcache-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.profile }}-${{ env.VCPKG_CACHE_CONTRACT_VERSION }}-${{ env.VCPKG_CACHE_REVISION }}-${{ hashFiles('tools/clcache/clcache.c', 'vcpkg.json', 'vcpkg-configuration.json', 'CMakeUserPresets.json', 'presets/*.json') }}-
+
+    - name: Verify clcache object replay and dependency invalidation
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+        $vs = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
+        $vsdevcmd = Join-Path $vs 'Common7/Tools/VsDevCmd.bat'
+        $probe = Join-Path $env:GITHUB_WORKSPACE 'cmake/ci/verify-msvc-clcache.ps1'
+        $command = 'call "' + $vsdevcmd + '" -arch=x64 -host_arch=x64 >nul && pwsh -NoProfile -File "' + $probe + '"'
+        cmd.exe /d /s /c $command
+        if ($LASTEXITCODE -ne 0) { throw 'MSVC clcache correctness probe failed' }
 
     - name: Restore ccache compiler objects
       if: runner.os != 'Windows'
