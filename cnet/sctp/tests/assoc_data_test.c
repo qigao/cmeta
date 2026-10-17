@@ -762,7 +762,68 @@ static void shutdown_simultaneous(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* RFC 9260 6.9 multi-chunk traffic through the actual authenticated
+ * INIT/COOKIE Association, including TSN wrap and all-or-none refusal. */
+static void post_cookie_bundled_data(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  uint8_t frames[3][1200], combined[1200], sack[1200], response[1200];
+  const uint8_t bytes[3] = {'u', 'v', 'w'};
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk chunks[3], broken[3];
+  cnet_sctp_data_message meta = {0};
+  uint8_t body[8] = {0};
+  size_t sizes[3], n = 0u, ns = 0u, nr = 0u, i;
+  ready_pair(&a, &b, &ca, &cb);
+  for (i = 0u; i < 3u; ++i) {
+    assert(cnet_sctp_assoc_send_message(&a, 6u + i, 0u, 53u, 0,
+        &bytes[i], 1u, frames[i], sizeof(frames[i]), &sizes[i]) ==
+        CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_wire_decode(frames[i], sizes[i], &header,
+        &decoder) == CNET_SCTP_WIRE_OK);
+    assert(header.chunk_count == 1u);
+    assert(cnet_sctp_wire_next_chunk(&decoder, &chunks[i]) ==
+        CNET_SCTP_WIRE_OK);
+    assert(chunks[i].type == 0u);
+  }
+  assert(a.data.next_tsn == ca.tsn + 3u); /* rollover: fffffffe -> 1 */
+  memcpy(broken, chunks, sizeof(broken));
+  broken[2].flags = 0x80u;
+  assert(cnet_sctp_wire_encode(a.config.local_port,
+      a.config.remote_port, a.peer_tag, broken, 3u,
+      combined, sizeof(combined), &n) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_assoc_input(&b, 10u, combined, n,
+      sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_PROTOCOL);
+  assert(ns == 0u && b.data.buffered_rx == 0u &&
+      b.data.cumulative_rx == ca.tsn - 1u);
+  assert(cnet_sctp_wire_encode(a.config.local_port,
+      a.config.remote_port, a.peer_tag, chunks, 3u,
+      combined, sizeof(combined), &n) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_assoc_input(&b, 10u, combined, n,
+      sack, 8u, &ns) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(ns == 0u && b.data.buffered_rx == 0u);
+  assert(cnet_sctp_assoc_input(&b, 10u, combined, n,
+      sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(shutdown_chunk_type(sack, ns) == 3u);
+  assert(b.data.cumulative_rx == ca.tsn + 2u &&
+      b.data.buffered_rx == 3u);
+  for (i = 0u; i < 3u; ++i) {
+    assert(cnet_sctp_assoc_take_message(&b, &meta, body,
+        sizeof(body), &nr) == CNET_SCTP_ASSOC_OK);
+    assert(nr == 1u && body[0] == bytes[i] && meta.stream_sequence == i);
+  }
+  assert(cnet_sctp_assoc_input(&a, 11u, sack, ns,
+      response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == 0u && a.data.in_flight == 0u);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
+  post_cookie_bundled_data();
   shutdown_no_inflight_and_t2();
   shutdown_pending_data_and_cumulative_ack();
   shutdown_t2_refreshes_cumulative();
