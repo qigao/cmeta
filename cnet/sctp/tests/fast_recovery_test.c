@@ -391,9 +391,38 @@ static void multi_tsn_fast_recovery(void) {
   finished(&f);
 }
 
+
+/* A SACK can revoke a prior Gap ACK. The retained ticket must reenter
+ * flight accounting without pretending that its packet was retransmitted. */
+static void reneging_flight_accounting(void) {
+  fixture f;
+  uint8_t sack[CNET_SCTP_DATA_MTU], withdrawn[CNET_SCTP_DATA_MTU];
+  size_t ns, nw;
+  init(&f, 100u);
+  send(&f, 0u, 64u);
+  send(&f, 1u, 65u);
+  send(&f, 2u, 66u);
+  gap(&f, 1u, 80u);
+  assert(ticket(&f, 1u)->gap_acked);
+  assert(!ticket(&f, 1u)->flight_accounted);
+  assert_flight_invariant(&f.a);
+  nw = peer_sack(&f, f.first - 1u, 3u, 3u, withdrawn);
+  ack(&f, 85u, withdrawn, nw);
+  assert(ticket(&f, 1u)->flight_accounted);
+  assert(!ticket(&f, 1u)->gap_acked);
+  assert(ticket(&f, 1u)->retransmits == 0u);
+  assert_flight_invariant(&f.a);
+  ns = peer_sack(&f, f.first + 2u, 0u, 0u, sack);
+  ack(&f, 86u, sack, ns);
+  assert(f.a.in_flight == 0u);
+  assert_flight_invariant(&f.a);
+  finished(&f);
+}
+
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
     {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
+    {"reneging_flight_accounting", reneging_flight_accounting},
     {"timer_restart", timer_restart}, {"partial_recovery", partial_recovery},
     {"ordinary_htna", ordinary_htna}, {"reneging_streak", reneging_streak},
     {"t3_after_fast", t3_after_fast},
