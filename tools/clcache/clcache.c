@@ -334,40 +334,39 @@ static struct string PushString(struct string Str, struct string_buffer* Buffer)
 	return Result;
 }
 
-static void PushStringWithEscapedQuotes(struct string Str, struct string_buffer* Buffer)
+// Windows CommandLineToArgvW parsing: a backslash immediately before a
+// quotation mark is an escape. Closing quotes also require doubling any
+// trailing backslashes (notably CMake/Ninja /Fd<dir>\ and /I<dir>\).
+static void PushQuotedArgumentPart(struct string Part, size_t* Slashes, struct string_buffer* Buffer)
 {
-	struct string Temp = Str;
-	Temp.Length = 0;
-
-	for(size_t i = 0; i < Str.Length; ++i)
+	for(size_t i = 0; i < Part.Length; ++i)
 	{
-		if(Str.Data[i] == '\"')
+		WCHAR C = Part.Data[i];
+		if(C == '\\')
 		{
-			PushString(Temp, Buffer);
-			PushString(STR("\\\""), Buffer);
-			Temp = MakeString(Str.Data + i + 1, 0);
+			++*Slashes;
+			continue;
 		}
-		else
-		{
-			++Temp.Length;
-		}
+		size_t NumSlashes = (*Slashes * (C == '\"' ? 2 : 1)) + (C == '\"' ? 1 : 0);
+		WCHAR* Out = PushChars(NumSlashes + 1, Buffer);
+		for(size_t j = 0; j < NumSlashes; ++j)
+			Out[j] = '\\';
+		Out[NumSlashes] = C;
+		*Slashes = 0;
 	}
-
-	PushString(Temp, Buffer);
 }
 
 static void PushCmdLineArg(struct string Flag, struct string Arg, struct string_buffer* Buffer)
 {
-	if(Buffer->Used > 0 && !IsWhitespace(Buffer->Data[Buffer->Used]))
-		PushString(STR(" \""), Buffer);
-	else
-		PushString(STR("\""), Buffer);
-
-	PushStringWithEscapedQuotes(Flag, Buffer);
-
-	if(Arg.Length > 0)
-		PushStringWithEscapedQuotes(Arg, Buffer);
-
+	if(Buffer->Used > 0)
+		PushString(STR(" "), Buffer);
+	PushString(STR("\""), Buffer);
+	size_t Slashes = 0;
+	PushQuotedArgumentPart(Flag, &Slashes, Buffer);
+	PushQuotedArgumentPart(Arg, &Slashes, Buffer);
+	WCHAR* Escaped = PushChars(Slashes * 2, Buffer);
+	for(size_t i = 0; i < Slashes * 2; ++i)
+		Escaped[i] = '\\';
 	PushString(STR("\""), Buffer);
 }
 
