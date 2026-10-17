@@ -64,6 +64,7 @@ typedef struct cnet_sctp_data_tx {
   uint8_t fast_retransmitted;
   uint8_t flight_accounted; /* actual transmitted and not gap-ACKed */
   uint8_t pending_retransmit; /* loss intent, never flight credit */
+  uint8_t probe_retransmitted; /* suppress ambiguous zero-window RTT samples */
   uint8_t used;
 } cnet_sctp_data_tx;
 

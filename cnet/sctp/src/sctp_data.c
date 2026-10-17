@@ -545,7 +545,7 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
         t3_acknowledged = 1;
       if (!has_rtt_sample && coverage[i] == 2u && !slot->gap_acked &&
           !slot->ack_counted && slot->retransmits == 0u &&
-          now >= slot->first_sent_ms) {
+          !slot->probe_retransmitted && now >= slot->first_sent_ms) {
         rtt_sample = now - slot->first_sent_ms;
         has_rtt_sample = 1;
       }
@@ -788,6 +788,9 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
         if (probe->packet_size > cap) return CNET_SCTP_DATA_CAPACITY;
         memcpy(out, probe->packet, probe->packet_size);
         *written = probe->packet_size;
+        /* Retried zero-window probes are Karn-ambiguous without consuming
+         * ordinary loss/error retransmission budget. */
+        probe->probe_retransmitted = 1u;
         d->probe_interval_ms = interval;
         d->probe_deadline_ms = now + interval;
         d->last_time_ms = now;
