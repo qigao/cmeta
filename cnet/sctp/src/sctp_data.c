@@ -432,6 +432,12 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
     if (now > UINT64_MAX - d->rto_ms) return CNET_SCTP_DATA_CLOCK;
     deadline = now + d->rto_ms;
   }
+  /* A newly sampled RTT can raise RTO after the earlier timer preview.
+   * Reserve the maximum permitted deadline before settling any tickets. */
+  if (has_rtt_sample && outstanding_bytes &&
+      (earliest_acked || deadline == 0u) &&
+      now > UINT64_MAX - d->config.t3_max_ms)
+    return CNET_SCTP_DATA_CLOCK;
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
     cnet_sctp_data_tx *slot = &d->tx[i];
     if (!slot->used) continue;
