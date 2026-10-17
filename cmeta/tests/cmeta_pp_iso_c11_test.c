@@ -17,6 +17,19 @@ static const int map_values[] = {
     CMETA_PP_MAP_COMMA(PP_MAP_VALUE, ~, 4, 5, 6)
 };
 
+
+#define PP_NESTED_C(item_, context_) + ((item_) * (context_))
+#define PP_NESTED_B(item_, context_) \
+    CMETA_PP_FOR_EACH_C(PP_NESTED_C, item_, 1, 2)
+#define PP_NESTED_A(item_, context_) \
+    CMETA_PP_FOR_EACH_B(PP_NESTED_B, item_, 1, 2)
+
+enum {
+    nested_abc_sum = 0 CMETA_PP_FOR_EACH_A(PP_NESTED_A, ~, 5, 6)
+};
+_Static_assert(nested_abc_sum == 18,
+               "separate A/B/C families support bounded nested expansion");
+
 _Static_assert(map_sum_three == 6, "inferred map expands each item once");
 _Static_assert(map_sum_sixteen == 136, "finite map supports the documented 16-item bound");
 _Static_assert(map_zero_is_empty == 7, "explicit zero-item map emits no tokens");
