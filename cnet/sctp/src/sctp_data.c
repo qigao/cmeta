@@ -707,11 +707,12 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
         fast = slot;
     }
     if (fast) {
-      /* Pending loss recovery must not be stranded merely because cwnd
-       * shrank below the already-transmitted flight. This ticket already
-       * owns its wire bytes and flight credit; retransmitting it does not
-       * admit new DATA or create additional flight. The bounded one-packet
-       * Owner advance remains the only retransmission emission point. */
+      /* RFC 9260 7.2.4 permits the first fast retransmission to cross
+       * the reduced cwnd, but subsequent retransmissions must wait until
+       * the actual outstanding flight has drained to the new window.
+       * Pending loss intent does not itself grant congestion credit. */
+      if (d->recovery_active && flight_bytes(d) > d->cwnd)
+        return CNET_SCTP_DATA_CAPACITY;
       /* 7.2.4(4): restart only when retransmitting the first outstanding
        * DATA chunk (or starting a stopped timer). Later losses must not
        * postpone that chunk's deadline. Preflight before any TX mutation. */
