@@ -293,3 +293,31 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 add_test(NAME cmeta_function_desc_contract_test
   COMMAND cmeta_function_desc_contract_test)
+
+# #1244: exact field-type proofs must agree between strict C11 _Generic and
+# C++17 decltype, including qualifiers, array extent, pointers and callbacks.
+add_executable(cmeta_field_type_contract_test
+  cmeta_field_type_contract_test.c)
+target_link_libraries(cmeta_field_type_contract_test PRIVATE Salts::CMeta)
+set_target_properties(cmeta_field_type_contract_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+  FOLDER "cmeta/tests")
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_field_type_contract_test PRIVATE
+    -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME cmeta_field_type_contract_test
+  COMMAND cmeta_field_type_contract_test)
+
+add_executable(cmeta_field_type_contract_cpp_test
+  cmeta_field_type_contract_cpp_test.cpp)
+target_link_libraries(cmeta_field_type_contract_cpp_test PRIVATE Salts::CMeta)
+set_target_properties(cmeta_field_type_contract_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF
+  FOLDER "cmeta/tests")
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_field_type_contract_cpp_test PRIVATE
+    -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME cmeta_field_type_contract_cpp_test
+  COMMAND cmeta_field_type_contract_cpp_test)
