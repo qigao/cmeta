@@ -24,15 +24,34 @@ runs:
         set -euo pipefail
         brew install ccache
 
-    - name: Install ccache on Windows
+    - name: Fetch pinned upstream clcache build inputs
+      if: runner.os == 'Windows'
+      uses: actions/checkout@v7
+      with:
+        repository: leon-bckl/clcache
+        ref: bfdc1c6989b6a36c46e8fdc621a7b3c35f4416ac
+        path: .ci-tooling/clcache-upstream
+        persist-credentials: false
+
+    - name: Build reviewed native C clcache for MSVC
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
-        choco install ccache --yes --no-progress
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $upstream = Join-Path $env:GITHUB_WORKSPACE '.ci-tooling/clcache-upstream'
+        $audited = Join-Path $env:GITHUB_WORKSPACE 'tools/clcache/clcache.c'
+        Copy-Item -LiteralPath $audited -Destination (Join-Path $upstream 'clcache.c') -Force
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+        $vs = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
+        if ($LASTEXITCODE -ne 0 -or !$vs) { throw "MSVC toolset unavailable" }
+        $vsdevcmd = Join-Path $vs 'Common7/Tools/VsDevCmd.bat'
+        $command = 'call "' + $vsdevcmd + '" -arch=x64 -host_arch=x64 >nul && cd /d "' + $upstream + '" && call build.bat release'
+        cmd.exe /d /s /c $command
+        if ($LASTEXITCODE -ne 0) { throw "Native clcache build failed" }
+        if (!(Test-Path (Join-Path $upstream 'clcache.exe'))) { throw "clcache.exe absent" }
 
     - name: Configure ccache launcher and storage
+      if: runner.os != 'Windows'
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
@@ -50,7 +69,33 @@ runs:
         "CMAKE_C_COMPILER_LAUNCHER=$ccache" >> $env:GITHUB_ENV
         "CMAKE_CXX_COMPILER_LAUNCHER=$ccache" >> $env:GITHUB_ENV
 
+    - name: Configure clcache launcher and storage
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        $exe = Join-Path $env:GITHUB_WORKSPACE '.ci-tooling/clcache-upstream/clcache.exe'
+        $parent = Join-Path $env:RUNNER_TEMP 'salts-msvc-objects'
+        & $exe "-p$parent"
+        if ($LASTEXITCODE -ne 0) { throw "clcache cache directory setup failed" }
+        & $exe -m1
+        if ($LASTEXITCODE -ne 0) { throw "clcache cache size setup failed" }
+        "CMAKE_C_COMPILER_LAUNCHER=$exe" >> $env:GITHUB_ENV
+        "CMAKE_CXX_COMPILER_LAUNCHER=$exe" >> $env:GITHUB_ENV
+        "CLCACHE_EXE=$exe" >> $env:GITHUB_ENV
+        "VSLANG=1033" >> $env:GITHUB_ENV
+
+    - name: Restore Windows MSVC clcache objects
+      if: runner.os == 'Windows'
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/salts-msvc-objects/.clcache
+        key: salts-clcache-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.profile }}-${{ env.VCPKG_CACHE_CONTRACT_VERSION }}-${{ env.VCPKG_CACHE_REVISION }}-${{ hashFiles('tools/clcache/clcache.c', 'vcpkg.json', 'vcpkg-configuration.json', 'CMakeUserPresets.json', 'presets/*.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          salts-clcache-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.profile }}-${{ env.VCPKG_CACHE_CONTRACT_VERSION }}-${{ env.VCPKG_CACHE_REVISION }}-${{ hashFiles('tools/clcache/clcache.c', 'vcpkg.json', 'vcpkg-configuration.json', 'CMakeUserPresets.json', 'presets/*.json') }}-
+
     - name: Restore ccache compiler objects
+      if: runner.os != 'Windows'
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/salts-compiler-cache
@@ -59,8 +104,15 @@ runs:
           salts-ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.profile }}-${{ env.VCPKG_CACHE_CONTRACT_VERSION }}-${{ env.VCPKG_CACHE_REVISION }}-${{ hashFiles('CMakeUserPresets.json', 'presets/*.json', 'CMakeOptions.cmake', 'cmake/Sanitizers.cmake', 'vcpkg.json', 'vcpkg-configuration.json') }}-
 
     - name: Report ccache statistics
-      if: always()
+      if: runner.os != 'Windows' && always()
       shell: pwsh
       run: |
         $ccache = Get-Command ccache -ErrorAction SilentlyContinue
         if ($ccache) { & $ccache.Source --show-stats }
+
+    - name: Report Windows clcache configuration
+      if: runner.os == 'Windows' && always()
+      shell: pwsh
+      run: |
+        $exe = Join-Path $env:GITHUB_WORKSPACE '.ci-tooling/clcache-upstream/clcache.exe'
+        if (Test-Path $exe) { & $exe -i }
