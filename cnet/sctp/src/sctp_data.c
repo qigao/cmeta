@@ -604,6 +604,34 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
   if (!out || !written) return CNET_SCTP_DATA_INVALID;
   *written = 0u;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  /* Fast retransmit is emitted only by the Owner's explicit advance().
+   * No hidden send, callback, or additional retransmit buffer is created. */
+  {
+    cnet_sctp_data_tx *fast = NULL;
+    unsigned int i;
+    for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+      cnet_sctp_data_tx *slot = &d->tx[i];
+      if (slot->used && !slot->gap_acked && !slot->fast_retransmitted &&
+          slot->missing_reports >= 3u &&
+          (!fast || ahead(fast->tsn, slot->tsn)))
+        fast = slot;
+    }
+    if (fast) {
+      if (fast->packet_size > cap) return CNET_SCTP_DATA_CAPACITY;
+      if (now > UINT64_MAX - d->rto_ms) return CNET_SCTP_DATA_CLOCK;
+      memcpy(out, fast->packet, fast->packet_size);
+      *written = fast->packet_size;
+      fast->fast_retransmitted = 1u;
+      ++fast->retransmits;
+      d->ssthresh = d->cwnd / 2u;
+      if (d->ssthresh < 4u * CNET_SCTP_DATA_MTU)
+        d->ssthresh = 4u * CNET_SCTP_DATA_MTU;
+      d->cwnd = d->ssthresh;
+      if (!d->t3_deadline_ms) d->t3_deadline_ms = now + d->rto_ms;
+      d->last_time_ms = now;
+      return CNET_SCTP_DATA_OK;
+    }
+  }
   if (!d->t3_deadline_ms || now < d->t3_deadline_ms) {
     d->last_time_ms = now;
     return CNET_SCTP_DATA_OK;
