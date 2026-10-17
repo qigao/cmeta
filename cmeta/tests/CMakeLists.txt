@@ -279,3 +279,17 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(cmeta_fastpath_cpp_test PRIVATE
     "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
 endif()
+
+# #1244: malformed canonical FunctionDesc / FunctionAbi must fail closed.
+add_executable(cmeta_function_desc_contract_test
+  cmeta_function_desc_contract_test.c)
+target_link_libraries(cmeta_function_desc_contract_test PRIVATE Salts::CMeta)
+set_target_properties(cmeta_function_desc_contract_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+  FOLDER "cmeta/tests")
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_function_desc_contract_test PRIVATE
+    -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME cmeta_function_desc_contract_test
+  COMMAND cmeta_function_desc_contract_test)
