@@ -416,7 +416,7 @@ static void t3_precedes_fast_retransmit(void) {
         reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
   }
   assert(a.tx[0].missing_reports == 3u);
-  assert(cnet_sctp_data_advance(&a, 101u, reply, sizeof(reply), &nr) ==
+  assert(cnet_sctp_data_advance(&a, a.t3_deadline_ms, reply, sizeof(reply), &nr) ==
          CNET_SCTP_DATA_OK);
   assert(nr == np[0] && memcmp(reply, packets[0], nr) == 0);
   assert(a.tx[0].retransmits == 1u && !a.tx[0].fast_retransmitted);
