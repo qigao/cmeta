@@ -521,12 +521,46 @@ static void t3_preempts_pending_fast(void) {
   finished(&f);
 }
 
+
+/* After T3, a cumulative ACK clears the wait barrier. Fresh higher-TSN
+ * evidence can identify another hole, but stale pre-timeout reports cannot. */
+static void t3_ack_then_fresh_loss(void) {
+  fixture f;
+  uint8_t out[CNET_SCTP_DATA_MTU], sack[CNET_SCTP_DATA_MTU];
+  size_t n, ns;
+  uint64_t due;
+  unsigned int i;
+  init(&f, 100u);
+  for (i = 0u; i < 6u; ++i) send(&f, i, 64u + i);
+  due = f.a.t3_deadline_ms;
+  assert(cnet_sctp_data_advance(&f.a, due, out, sizeof(out), &n)
+      == CNET_SCTP_DATA_OK);
+  assert(n == f.size[0]);
+  assert(f.a.t3_wait_ack);
+  ns = peer_sack(&f, f.first, 0u, 0u, sack);
+  ack(&f, due + 1u, sack, ns);
+  assert(!f.a.t3_wait_ack);
+  assert(f.a.last_ack == f.first);
+  for (i = 1u; i < 6u; ++i)
+    assert(ticket(&f, i)->missing_reports == 0u);
+  /* New higher TSNs provide fresh evidence about TSN first+1. */
+  for (i = 3u; i < 6u; ++i) {
+    ns = peer_sack(&f, f.first, (uint16_t)i,
+                   (uint16_t)i, sack);
+    ack(&f, due + 2u + i, sack, ns);
+  }
+  assert(ticket(&f, 1u)->pending_retransmit);
+  assert_flight_invariant(&f.a);
+  finished(&f);
+}
+
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
     {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
     {"t3_sack_interleave", t3_sack_interleave},
     {"t3_capacity_then_sack", t3_capacity_then_sack},
     {"t3_preempts_pending_fast", t3_preempts_pending_fast},
+    {"t3_ack_then_fresh_loss", t3_ack_then_fresh_loss},
     {"reneging_flight_accounting", reneging_flight_accounting},
     {"timer_restart", timer_restart}, {"partial_recovery", partial_recovery},
     {"ordinary_htna", ordinary_htna}, {"reneging_streak", reneging_streak},
