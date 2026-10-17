@@ -64,7 +64,7 @@ static size_t flight_bytes(const cnet_sctp_data *d) {
   size_t bytes = 0u;
   unsigned int i;
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
-    if (d->tx[i].used && !d->tx[i].gap_acked)
+    if (d->tx[i].used && d->tx[i].flight_accounted)
       bytes += d->tx[i].packet_size - 12u;
   return bytes;
 }
