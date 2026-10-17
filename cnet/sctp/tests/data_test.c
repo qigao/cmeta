@@ -221,7 +221,35 @@ static void invalid_sack_and_t3_budget(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
+/* Half-range TSN difference has no ordering under RFC serial arithmetic.
+ * Treat it as non-admissible instead of depending on signed narrowing. */
+static void ambiguous_half_wrap_tsn(void) {
+  cnet_sctp_data a, b;
+  test_owner oa = {0}, ob = {0};
+  uint8_t packet[1200], sack[1200], message[8];
+  const uint8_t value = 'h';
+  cnet_sctp_data_message info = {0};
+  cnet_sctp_wire_chunk chunk = {0};
+  size_t np = 0u, ns = 0u, nm = 0u;
+  pair_init(&a, &b, &oa, &ob, 100u, 200u);
+  /* Deliberately inject an invalid half-wrap receiver baseline. */
+  b.cumulative_rx = a.next_tsn - UINT32_C(0x80000000);
+  assert(cnet_sctp_data_send(&a, 1u, 0u, 51u, 0, &value, 1u,
+                             packet, sizeof(packet), &np) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&b, 2u, packet, np,
+                              sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  inspect(sack, ns, 3u, a.config.local_tag, &chunk);
+  assert(rd16(chunk.value + 10u) == 1u);
+  assert(rd32(chunk.value + 12u) == 100u);
+  assert(b.buffered_rx == 0u && b.rx_gaps == 0u);
+  assert(cnet_sctp_data_take(&b, &info, message, sizeof(message), &nm) ==
+         CNET_SCTP_DATA_EMPTY);
+  assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
+}
+
 int main(void) {
+  ambiguous_half_wrap_tsn();
   gap_sack_wrap_t3_ordering();
   unordered_priority_and_capacity();
   invalid_sack_and_t3_budget();
