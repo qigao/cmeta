@@ -203,6 +203,8 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
   slot->first_sent_ms = now;
   slot->retransmits = 0u;
   slot->gap_acked = 0u;
+  slot->flight_accounted = 1u;
+  slot->pending_retransmit = 0u;
   slot->ack_counted = 0u;
   slot->used = 1u;
   d->in_flight += n;
@@ -539,10 +541,14 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
     cnet_sctp_data_tx *slot = &d->tx[i];
     if (!slot->used) continue;
+    if (!coverage[i] && slot->missing_reports >= 3u &&
+        !slot->fast_retransmitted) slot->pending_retransmit = 1u;
     if (coverage[i] == 2u) {
       memset(slot, 0, sizeof(*slot));
     } else {
       slot->gap_acked = coverage[i];
+      slot->flight_accounted = coverage[i] == 0u;
+      if (coverage[i]) slot->pending_retransmit = 0u;
       if (coverage[i]) {
         slot->ack_counted = 1u;
         slot->missing_reports = 0u; /* a received TSN breaks the miss streak */
@@ -696,7 +702,7 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
     for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
       cnet_sctp_data_tx *slot = &d->tx[i];
       if (slot->used && !slot->gap_acked && !slot->fast_retransmitted &&
-          slot->missing_reports >= 3u &&
+          slot->pending_retransmit &&
           (!fast || ahead(fast->tsn, slot->tsn)))
         fast = slot;
     }
@@ -723,6 +729,8 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
       memcpy(out, fast->packet, fast->packet_size);
       *written = fast->packet_size;
       fast->fast_retransmitted = 1u;
+      fast->pending_retransmit = 0u;
+      fast->flight_accounted = 1u;
       ++fast->retransmits;
       /* Enter one recovery epoch, bounded by the highest TSN already
        * sent. Additional losses in that epoch reuse its window reduction. */
@@ -760,6 +768,8 @@ t3_due:
   memcpy(out, oldest->packet, oldest->packet_size);
   *written = oldest->packet_size;
   ++oldest->retransmits;
+  oldest->pending_retransmit = 0u;
+  oldest->flight_accounted = 1u;
   d->t3_wait_tsn = oldest->tsn;
   d->t3_wait_ack = 1u;
   /* Timeout starts a new loss epoch. Old SACK-derived evidence cannot
@@ -767,7 +777,10 @@ t3_due:
   {
     unsigned int i;
     for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
-      if (d->tx[i].used) d->tx[i].missing_reports = 0u;
+      if (d->tx[i].used) {
+        d->tx[i].missing_reports = 0u;
+        d->tx[i].pending_retransmit = 0u;
+      }
   }
   d->ssthresh = d->cwnd / 2u;
   if (d->ssthresh < 4u * CNET_SCTP_DATA_MTU)
