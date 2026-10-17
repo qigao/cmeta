@@ -479,6 +479,8 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
       deadline = now + d->rto_ms;
   }
   d->last_ack = cumulative;
+  if (d->recovery_active && !ahead(d->recovery_exit_tsn, cumulative))
+    d->recovery_active = 0u;
   d->peer_rwnd = peer_window;
   d->in_flight = outstanding_bytes;
   d->t3_deadline_ms = deadline;
@@ -629,10 +631,16 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
       *written = fast->packet_size;
       fast->fast_retransmitted = 1u;
       ++fast->retransmits;
-      d->ssthresh = d->cwnd / 2u;
-      if (d->ssthresh < 4u * CNET_SCTP_DATA_MTU)
-        d->ssthresh = 4u * CNET_SCTP_DATA_MTU;
-      d->cwnd = d->ssthresh;
+      /* Enter one recovery epoch, bounded by the highest TSN already
+       * sent. Additional losses in that epoch reuse its window reduction. */
+      if (!d->recovery_active) {
+        d->ssthresh = d->cwnd / 2u;
+        if (d->ssthresh < 4u * CNET_SCTP_DATA_MTU)
+          d->ssthresh = 4u * CNET_SCTP_DATA_MTU;
+        d->cwnd = d->ssthresh;
+        d->recovery_exit_tsn = d->next_tsn - 1u;
+        d->recovery_active = 1u;
+      }
       if (!d->t3_deadline_ms) d->t3_deadline_ms = now + d->rto_ms;
       d->last_time_ms = now;
       return CNET_SCTP_DATA_OK;
@@ -661,6 +669,7 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
   if (d->ssthresh < 4u * CNET_SCTP_DATA_MTU)
     d->ssthresh = 4u * CNET_SCTP_DATA_MTU;
   d->cwnd = CNET_SCTP_DATA_MTU; /* timeout recovery, not a full cwnd model */
+  d->recovery_active = 0u; /* T3 owns the next congestion response. */
   d->rto_ms = d->rto_ms > d->config.t3_max_ms / 2u ?
       d->config.t3_max_ms : d->rto_ms * 2u;
   d->t3_deadline_ms = now + d->rto_ms;
