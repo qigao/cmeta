@@ -438,21 +438,6 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
       (earliest_acked || deadline == 0u) &&
       now > UINT64_MAX - d->config.t3_max_ms)
     return CNET_SCTP_DATA_CLOCK;
-  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
-    cnet_sctp_data_tx *slot = &d->tx[i];
-    if (!slot->used) continue;
-    if (coverage[i] == 2u) {
-      memset(slot, 0, sizeof(*slot));
-    } else {
-      slot->gap_acked = coverage[i];
-      if (coverage[i]) slot->ack_counted = 1u;
-    }
-  }
-  if (has_rtt_sample) {
-    update_rtt(d, rtt_sample);
-    if (outstanding_bytes && (earliest_acked || deadline == 0u))
-      deadline = now + d->rto_ms;
-  }
   /* RFC 9260 fast-retransmit evidence: a newly acknowledged higher TSN
    * reports lower outstanding TSNs as missing. Duplicate SACKs and
    * repeated Gap ACKs do not create additional evidence. This stage only
@@ -477,6 +462,21 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
           ++slot->missing_reports;
       }
     }
+  }
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    cnet_sctp_data_tx *slot = &d->tx[i];
+    if (!slot->used) continue;
+    if (coverage[i] == 2u) {
+      memset(slot, 0, sizeof(*slot));
+    } else {
+      slot->gap_acked = coverage[i];
+      if (coverage[i]) slot->ack_counted = 1u;
+    }
+  }
+  if (has_rtt_sample) {
+    update_rtt(d, rtt_sample);
+    if (outstanding_bytes && (earliest_acked || deadline == 0u))
+      deadline = now + d->rto_ms;
   }
   d->last_ack = cumulative;
   d->peer_rwnd = peer_window;
