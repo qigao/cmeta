@@ -486,7 +486,7 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
   d->t3_deadline_ms = deadline;
   /* Keep the existing bounded growth model; full RFC 7.2 remains open.
    * Gap-only SACKs and repeated gap/revoke/re-ACK cannot inflate cwnd. */
-  if (acked_bytes && progress != 0u) {
+  if (acked_bytes && progress != 0u && !d->recovery_active) {
     const uint32_t increment = acked_bytes > CNET_SCTP_DATA_MTU ?
         CNET_SCTP_DATA_MTU : (uint32_t)acked_bytes;
     d->cwnd = d->cwnd + increment > 16u * CNET_SCTP_DATA_MTU ?
