@@ -25,8 +25,12 @@ static void wr32(uint8_t *p, uint32_t n) {
   p[2] = (uint8_t)(n >> 8);
   p[3] = (uint8_t)n;
 }
+/* RFC 9260 serial arithmetic: compare in the unsigned half-range.
+ * Converting wrapped uint32_t subtraction to int32_t is implementation-
+ * defined in C11, so keep this portable across all supported toolchains. */
 static int ahead(uint32_t a, uint32_t b) {
-  return (int32_t)(a - b) > 0;
+  const uint32_t delta = a - b;
+  return delta != 0u && delta < UINT32_C(0x80000000);
 }
 static cnet_sctp_data_status guard(cnet_sctp_data *d) {
   if (!d || d->magic != DATA_MAGIC) return CNET_SCTP_DATA_INVALID;
@@ -270,9 +274,10 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
     return CNET_SCTP_DATA_PROTOCOL;
   mask = d->rx_gaps;
   prospective_cum = d->cumulative_rx;
-  distance = (int32_t)(tsn - prospective_cum);
-  if (distance <= 0) duplicate = 1;
-  else if (distance > 32) return CNET_SCTP_DATA_CAPACITY;
+  /* Unsigned RFC serial arithmetic also rejects the ambiguous half-wrap. */
+  if (!ahead(tsn, prospective_cum)) duplicate = 1;
+  else if (tsn - prospective_cum > 32u) return CNET_SCTP_DATA_CAPACITY;
+  distance = duplicate ? 0 : (int32_t)(tsn - prospective_cum);
   else if ((mask & (UINT32_C(1) << ((unsigned int)distance - 1u))) != 0u)
     duplicate = 1;
   if (!duplicate) {
