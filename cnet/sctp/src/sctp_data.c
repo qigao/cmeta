@@ -60,6 +60,18 @@ static cnet_sctp_data_tx *oldest_outstanding(cnet_sctp_data *d) {
  * PMTU/DTLS negotiation and retransmission scheduling remain separate gates. */
 #define CC_QUANTUM (CNET_SCTP_DATA_MTU - 12u)
 #define CC_LIMIT (16u * CNET_SCTP_DATA_MTU)
+/* A pending Fast Retransmit is an Owner-visible transmission obligation.
+ * Do not allocate a fresh DATA TSN ahead of an eligible retained packet.
+ * Pure intent does not reduce the actual flight or grant cwnd credit. */
+static int has_pending_retransmit(const cnet_sctp_data *d) {
+  unsigned int i;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    const cnet_sctp_data_tx *tx = &d->tx[i];
+    if (tx->used && !tx->gap_acked && !tx->fast_retransmitted &&
+        tx->pending_retransmit) return 1;
+  }
+  return 0;
+}
 static size_t flight_bytes(const cnet_sctp_data *d) {
   size_t bytes = 0u;
   unsigned int i;
@@ -183,6 +195,10 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
   if (d->t3_wait_ack || n > d->peer_rwnd ||
       d->in_flight > d->peer_rwnd - n || flight_bytes(d) >= d->cwnd)
     return CNET_SCTP_DATA_CAPACITY;
+  /* RFC 9260 6.1(C): first run Owner advance() for queued loss repair.
+   * Both direct sends and fragmented pump() share this admission point. */
+  if (has_pending_retransmit(d))
+    return CNET_SCTP_DATA_RETRANSMIT_PENDING;
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
     if (!d->tx[i].used) { slot = &d->tx[i]; break; }
   if (!slot) return CNET_SCTP_DATA_CAPACITY;
@@ -803,6 +819,15 @@ cnet_sctp_data_status cnet_sctp_data_deadline(cnet_sctp_data *d,
   if (!deadline || !has_deadline) return CNET_SCTP_DATA_INVALID;
   *has_deadline = d->t3_deadline_ms != 0u;
   *deadline = d->t3_deadline_ms;
+  /* A pending fast retransmission is runnable now under the existing Owner,
+   * unless recovery cwnd actually prevents emission.  The application
+   * need not wait for T3 before it calls advance(). */
+  if (!d->t3_wait_ack && has_pending_retransmit(d) &&
+      (!d->recovery_active || flight_bytes(d) <= d->cwnd) &&
+      (!*has_deadline || d->last_time_ms < *deadline)) {
+    *has_deadline = 1;
+    *deadline = d->last_time_ms;
+  }
   return CNET_SCTP_DATA_OK;
 }
 

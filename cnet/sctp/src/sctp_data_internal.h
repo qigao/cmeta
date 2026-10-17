@@ -30,7 +30,9 @@ typedef enum cnet_sctp_data_status {
   CNET_SCTP_DATA_PROTOCOL = -4,
   CNET_SCTP_DATA_CLOCK = -5,
   CNET_SCTP_DATA_EXPIRED = -6,
-  CNET_SCTP_DATA_CLOSED = -7
+  CNET_SCTP_DATA_CLOSED = -7,
+  /* Call advance() before a new direct send or pending fragment. */
+  CNET_SCTP_DATA_RETRANSMIT_PENDING = -8
 } cnet_sctp_data_status;
 
 typedef int (*cnet_sctp_data_owner_fn)(void *context);
@@ -133,7 +135,8 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now_ms,
 /* One fragmented user message may be queued at a time. A copied, bounded
  * pending buffer owns all bytes. pump() emits at most one DATA fragment per
  * call (B|E flags and TSNs strictly sequential, fixed SSN, no interleaving).
- * Backpressure/CWND/T3 and output-capacity failures do not advance offset.
+ * Backpressure/CWND/T3, retransmission priority and output-capacity
+ * failures do not advance offset.
  * Every sender call and deadline remains driven by the original Owner.
  */
 cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,

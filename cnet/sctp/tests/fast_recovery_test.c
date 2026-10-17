@@ -651,9 +651,51 @@ static void multi_loss_single_cwnd_reduction(void) {
 
 
 
+/* RFC 9260 6.1(C): loss repair must outrank both direct and queued DATA.
+ * Refusal must retain all caller input state, and deadline() must wake the
+ * Owner instead of leaving the pending loss unseen until T3. */
+static void pending_priority_for_direct_and_pump(void) {
+  fixture f;
+  const uint8_t body[2] = {0x41u, 0x42u};
+  uint8_t out[CNET_SCTP_DATA_MTU];
+  uint32_t next;
+  uint64_t due = 0u;
+  int has_due = 0;
+  size_t n = 123u;
+  unsigned int i;
+  init(&f, 100u);
+  for (i = 0u; i < 6u; ++i) send(&f, i, 64u + i);
+  for (i = 3u; i < 6u; ++i) gap(&f, i, 80u + i * 2u);
+  for (i = 0u; i < 3u; ++i) assert(ticket(&f, i)->pending_retransmit);
+  assert(cnet_sctp_data_deadline(&f.a, &due, &has_due) == CNET_SCTP_DATA_OK);
+  assert(has_due && due == f.a.last_time_ms);
+  next = f.a.next_tsn;
+  assert(cnet_sctp_data_send(&f.a, 94u, 0u, 53u, 0, body,
+      sizeof(body), out, sizeof(out), &n) ==
+      CNET_SCTP_DATA_RETRANSMIT_PENDING);
+  assert(n == 0u && f.a.next_tsn == next);
+  assert(cnet_sctp_data_queue_message(&f.a, 94u, 0u, 53u, 0,
+      body, sizeof(body)) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_pump(&f.a, 94u, out, sizeof(out), &n) ==
+      CNET_SCTP_DATA_RETRANSMIT_PENDING);
+  assert(n == 0u && f.a.pending.active &&
+      f.a.pending.offset == 0u && f.a.next_tsn == next);
+  for (i = 0u; i < 3u; ++i) {
+    assert(cnet_sctp_data_advance(&f.a, 95u + i, out,
+        sizeof(out), &n) == CNET_SCTP_DATA_OK);
+    assert(n == f.size[i] && memcmp(out, f.packet[i], n) == 0);
+  }
+  assert(cnet_sctp_data_pump(&f.a, 99u, out, sizeof(out), &n) ==
+      CNET_SCTP_DATA_OK);
+  assert(n != 0u && !f.a.pending.active && f.a.next_tsn == next + 1u);
+  assert_flight_invariant(&f.a);
+  finished(&f);
+}
+
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
     {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
+    {"pending_priority_for_direct_and_pump", pending_priority_for_direct_and_pump},
     {"t3_sack_interleave", t3_sack_interleave},
     {"t3_capacity_then_sack", t3_capacity_then_sack},
     {"t3_preempts_pending_fast", t3_preempts_pending_fast},
