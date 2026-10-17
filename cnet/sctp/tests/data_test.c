@@ -494,7 +494,54 @@ static void karn_gap_ack_then_cumulative(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
+/* RFC 9260 reneging: a Gap ACK can be withdrawn and later restored.
+ * The retained TX ticket remains owned and must not produce an RTT sample. */
+static void karn_gap_reneging_restore(void) {
+  cnet_sctp_data a, b;
+  test_owner oa = {0}, ob = {0};
+  uint8_t packets[2][1200], sack[1200], reneged[1200], reply[1200];
+  const uint8_t payload = 'n';
+  size_t np[2] = {0}, ns = 0u, nr = 0u, nrn = 0u;
+  cnet_sctp_wire_chunk chunk = {0};
+  unsigned int i;
+  pair_init(&a, &b, &oa, &ob, 100u, 300u);
+  for (i = 0u; i < 2u; ++i)
+    assert(cnet_sctp_data_send(&a, 1u + i, 0u, 51u, 0,
+        &payload, 1u, packets[i], sizeof(packets[i]), &np[i]) ==
+        CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&b, 10u, packets[1], np[1],
+      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&a, 11u, sack, ns,
+      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(a.tx[1].gap_acked && a.tx[1].ack_counted && !a.rtt_valid);
+  /* Produce a CRC-valid SACK with identical cumulative TSN but no gaps. */
+  {
+    uint8_t value[12] = {0};
+    cnet_sctp_wire_chunk outgoing = {0};
+    value[3] = 99u;
+    value[7] = 0x80u; /* advertised receive window = 128 */
+    outgoing.type = 3u;
+    outgoing.flags = 0u;
+    outgoing.value = value;
+    outgoing.value_size = sizeof(value);
+    assert(cnet_sctp_wire_encode(b.config.local_port, b.config.remote_port,
+        a.config.local_tag, &outgoing, 1u, reneged, sizeof(reneged),
+        &nrn) == CNET_SCTP_WIRE_OK);
+    inspect(reneged, nrn, 3u, a.config.local_tag, &chunk);
+  }
+  assert(cnet_sctp_data_input(&a, 12u, reneged, nrn,
+      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(!a.tx[1].gap_acked && a.tx[1].ack_counted);
+  assert(a.in_flight == 2u && !a.rtt_valid);
+  assert(cnet_sctp_data_input(&a, 13u, sack, ns,
+      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(a.tx[1].gap_acked && a.tx[1].ack_counted && !a.rtt_valid);
+  assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
+}
+
 int main(void) {
+  karn_gap_reneging_restore();
   karn_gap_ack_then_cumulative();
   karn_fast_retransmit_exclusion();
   t3_precedes_fast_retransmit();
