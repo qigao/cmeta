@@ -17,13 +17,16 @@ jobs:
     timeout-minutes: 25
     env:
       GH_TOKEN: ${{ github.token }}
-      NUGET_PACKAGES: ${{ runner.temp }}/salts-floating-packages
     steps:
       - name: Checkout exactly the audited Salts feed policy
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Set isolated NuGet package directory
+        shell: bash
+        run: echo "NUGET_PACKAGES=$RUNNER_TEMP/salts-floating-packages" >> "$GITHUB_ENV"
 
       - name: Prove no candidate workflow still pushes to shared feed
         shell: bash

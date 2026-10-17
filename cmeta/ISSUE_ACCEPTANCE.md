@@ -63,7 +63,7 @@
 `正式测试`（已删除） 已设置各平台 dead-strip / section-GC。
 Linux 和 Windows 的 Plugin suite 实际运行 `cmeta_plugin_linker_test` 和
 `cmeta_plugin_scope_cpp_test`。本次 macOS 仅选择 execution / native suites，
-[筛选规则](../.github/workflows/native-tests.yml) 的 native 分支不包含这两项。
+[当时的筛选规则](https://github.com/qigao/salts/blob/8d19c98e1d0d208ae148bd1404fe59eca875f9ce/.github/workflows/native-tests.yml) 的 native 分支不包含这两项。
 macOS build 成功不能证明加载 DSO 后的跨 TU 聚合、片段保留、计数错误拒绝和隔离行为。
 
 **影响：**#977 P4 “qualified ELF/Mach-O/COFF” 只能确认 ELF/COFF 的运行结果。
@@ -167,7 +167,7 @@ ctest --preset win-cmeta-native-release-user --no-tests=error --output-on-failur
 | E8 | [plugin_linker.h](../plugin/include/salts/plugin_linker.h)、[plugin_scope.h](../plugin/include/salts/plugin_scope.h)、[Plugin 契约](../plugin/README.md) | `linker 编排`（已删除）、linker/lease C++：跨 C/C++ TU、GC、DSO 隔离、缺片段计数拒绝、move、exception、borrow 先结束；ELF/COFF 实跑，Mach-O 见 G2；无 constructor/可变 registry/隐式 lease |
 | E9 | [admitted invocation](src/invokable.c)、[admitted field](src/object.c)、[CFlow admission](../cflow/src/function_projection.c)、[CFlow execution](../cflow/src/subscription.c)、[Plugin admission](../plugin/src/plugin.c) | invokable/object/bind、CFlow projection/execution、Plugin contract：raw 入口保留完整验证；已 admission 的 invocation/field 路径不重遍描述符图。CFlow 执行保留有限 callable flags/storage 检查，不把一切检查视为可删除开销；下游宏复用 CMETA_PP_* |
 | E10 | [bind.h](include/cmeta/bind.h)、[Function projection](src/function.c)、`bind tests`（已删除） | C/C++ receiver bind、普通函数非相邻参数 bind、value 快照、borrow、padding、flags/carrier/map 拒绝；capture compile-fail 验证 32-byte 上限及类别，不隐式管理 OWNED/SHARED |
-| E11 | [compiler presets](../presets/Compilers.json)、[CI 选择](../.github/workflows/native-tests.yml)、上文 run/job 链接 | GCC/MSVC C/C++ 有实际执行；macOS 为 GCC；Clang 当前运行资格见 G1，选例覆盖见 G3 |
+| E11 | [compiler presets](../presets/Compilers.json)、[当时的 CI 选择](https://github.com/qigao/salts/blob/8d19c98e1d0d208ae148bd1404fe59eca875f9ce/.github/workflows/native-tests.yml)、上文 run/job 链接 | GCC/MSVC C/C++ 有实际执行；macOS 为 GCC；Clang 当前运行资格见 G1，选例覆盖见 G3 |
 | E12 | `installed CMake graph`（已删除） | Linux 31/31 复用正式测试并链接 Salts imported targets，无 source-tree 公共 include 注入；包括 PP、bind、cleanup、ObjectRef、operation、scope、Function、Plugin linker/lease/declarations、native |
 | E13 | [native 契约](NATIVE_THUNKS.md)、[thunk API](include/cmeta/native/thunk.h)、[native 实现](native/thunk.c)、[code-memory owner](native/code_memory.c)、[Object adapter](native/object.c)、[static-call adapter](include/cmeta/native/static_call.h) | native_thunk C/C++、native_failure、native_object、native_static_call、Plugin native、installed native：Win64/SysV 寄存器映射、leaf tail-jump、负值/边界、重绑定、错误 ABI、预算、OS 失败、异常、先撤销借用后销毁；W^X、有界 caller owner，无隐式 retain |
 | E14 | [native benchmark](benchmarks/cmeta_native_benchmark.c)、[Plugin native test](../plugin/tests/plugin_native_test.c)、[测量契约](NATIVE_THUNKS.md) | 同 TU 目标/相同操作与显式 lease；分别测量调用与创建/重绑定成本。当前 Linux/Windows Release 结果见下表；不以 sanitizer 差异计算生产收益 |

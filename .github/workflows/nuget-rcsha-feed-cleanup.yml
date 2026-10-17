@@ -33,11 +33,13 @@ jobs:
       PACKAGE_VERSION: ${{ inputs.version }}
       ACTION: ${{ inputs.action }}
       CONFIRMATION: ${{ inputs.confirmation }}
-      NUGET_PACKAGES: ${{ runner.temp }}/isolated-salts-nuget-packages
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Set isolated NuGet package directory
+        shell: bash
+        run: echo "NUGET_PACKAGES=$RUNNER_TEMP/isolated-salts-nuget-packages" >> "$GITHUB_ENV"
       - name: Validate exact version and destructive confirmation
         shell: bash
         run: |
