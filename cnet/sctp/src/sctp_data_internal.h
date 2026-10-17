@@ -100,6 +100,8 @@ typedef struct cnet_sctp_data {
   size_t in_flight, buffered_rx;
   uint64_t last_time_ms, t3_deadline_ms, rto_ms;
   uint64_t srtt_x8_ms, rttvar_x4_ms;
+  uint32_t recovery_exit_tsn;
+  uint8_t recovery_active;
   uint8_t rtt_valid;
   uint8_t closed;
   uint32_t magic;
