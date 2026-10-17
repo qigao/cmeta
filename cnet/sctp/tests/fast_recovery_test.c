@@ -365,7 +365,7 @@ static void multi_tsn_fast_recovery(void) {
   fixture f;
   uint8_t output[CNET_SCTP_DATA_MTU];
   size_t n;
-  uint32_t reduced;
+  uint32_t reduced = 0u;
   unsigned int i;
   init(&f, 100u);
   for (i = 0u; i < 6u; ++i) send(&f, i, 64u + i);
