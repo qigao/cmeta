@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import sys
 
-PIN = "d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3"
+PIN = "2e214ae44a3e3244eded5db6361194576356fc9e"
 EXISTING_CANDIDATE_VCPKG_PIN = "fafb1efe5ac2440bfd7a08e493988d0459d89e51"
 PROVIDER_SOURCE_BLOBS = {
     "setup-vcpkg-cache": "0a23ba176cbe8846ca164c2477f9a1e401cdc072",
