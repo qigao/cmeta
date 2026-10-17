@@ -457,10 +457,43 @@ static void t3_sack_interleave(void) {
 }
 
 
+
+/* A capacity failure at an expired T3 is transactional. A cumulative
+ * SACK arriving before the next Owner advance retires the old candidate;
+ * the next timeout must select the remaining outstanding TSN instead. */
+static void t3_capacity_then_sack(void) {
+  fixture f;
+  cnet_sctp_data before;
+  uint8_t output[CNET_SCTP_DATA_MTU], sack[CNET_SCTP_DATA_MTU];
+  size_t n = 0u, ns;
+  uint64_t due, next_due;
+  init(&f, 100u);
+  send(&f, 0u, 64u);
+  send(&f, 1u, 65u);
+  due = f.a.t3_deadline_ms;
+  memcpy(&before, &f.a, sizeof(before));
+  assert(cnet_sctp_data_advance(&f.a, due, output, 0u, &n) ==
+      CNET_SCTP_DATA_CAPACITY);
+  assert(n == 0u && memcmp(&before, &f.a, sizeof(before)) == 0);
+  ns = peer_sack(&f, f.first, 0u, 0u, sack);
+  ack(&f, due + 1u, sack, ns);
+  assert(f.a.last_ack == f.first && !f.a.t3_wait_ack);
+  assert_flight_invariant(&f.a);
+  next_due = f.a.t3_deadline_ms;
+  assert(next_due > due);
+  assert(cnet_sctp_data_advance(&f.a, next_due, output,
+      sizeof(output), &n) == CNET_SCTP_DATA_OK);
+  assert(n == f.size[1] && memcmp(output, f.packet[1], n) == 0);
+  assert(f.a.t3_wait_tsn == f.first + 1u);
+  assert_flight_invariant(&f.a);
+  finished(&f);
+}
+
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
     {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
     {"t3_sack_interleave", t3_sack_interleave},
+    {"t3_capacity_then_sack", t3_capacity_then_sack},
     {"reneging_flight_accounting", reneging_flight_accounting},
     {"timer_restart", timer_restart}, {"partial_recovery", partial_recovery},
     {"ordinary_htna", ordinary_htna}, {"reneging_streak", reneging_streak},
