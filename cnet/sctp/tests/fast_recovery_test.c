@@ -616,6 +616,39 @@ static void reneging_reack_pending(void) {
   finished(&f);
 }
 
+
+/* A single loss epoch reduces cwnd once even when several TSNs become
+ * eligible. The outstanding DATA flight is not retroactively discarded
+ * merely because cwnd fell below it. */
+static void multi_loss_single_cwnd_reduction(void) {
+  fixture f;
+  uint8_t out[CNET_SCTP_DATA_MTU];
+  size_t n, flight_before;
+  uint32_t cwnd_before, reduced;
+  unsigned int i;
+  init(&f, 100u);
+  for (i = 0u; i < 6u; ++i) send(&f, i, 64u + i);
+  for (i = 3u; i < 6u; ++i) gap(&f, i, 80u + i * 2u);
+  cwnd_before = f.a.cwnd;
+  flight_before = f.a.in_flight;
+  assert(cnet_sctp_data_advance(&f.a, 95u, out,
+      sizeof(out), &n) == CNET_SCTP_DATA_OK);
+  assert(n == f.size[0]);
+  reduced = f.a.cwnd;
+  assert(reduced <= cwnd_before);
+  assert(f.a.in_flight == flight_before);
+  assert_flight_invariant(&f.a);
+  for (i = 1u; i < 3u; ++i) {
+    assert(cnet_sctp_data_advance(&f.a, 95u + i, out,
+        sizeof(out), &n) == CNET_SCTP_DATA_OK);
+    assert(n == f.size[i]);
+    assert(f.a.cwnd == reduced);
+    assert(f.a.in_flight == flight_before);
+    assert_flight_invariant(&f.a);
+  }
+  finished(&f);
+}
+
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
     {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
@@ -625,6 +658,7 @@ int main(int argc, char **argv) {
     {"t3_ack_then_fresh_loss", t3_ack_then_fresh_loss},
     {"duplicate_sack_no_false_fast", duplicate_sack_no_false_fast},
     {"reneging_reack_pending", reneging_reack_pending},
+    {"multi_loss_single_cwnd_reduction", multi_loss_single_cwnd_reduction},
     {"reneging_flight_accounting", reneging_flight_accounting},
     {"timer_restart", timer_restart}, {"partial_recovery", partial_recovery},
     {"ordinary_htna", ordinary_htna}, {"reneging_streak", reneging_streak},
