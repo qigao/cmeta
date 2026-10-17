@@ -519,7 +519,7 @@ static void karn_gap_reneging_restore(void) {
     uint8_t value[12] = {0};
     cnet_sctp_wire_chunk outgoing = {0};
     value[3] = 99u;
-    value[7] = 0x80u; /* advertised receive window = 128 */
+    value[6] = 0x80u; /* advertised receive window = 32768 */
     outgoing.type = 3u;
     outgoing.flags = 0u;
     outgoing.value = value;
