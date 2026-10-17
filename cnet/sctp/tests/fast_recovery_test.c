@@ -357,8 +357,43 @@ static void t3_after_fast(void) {
   assert(cnet_sctp_data_stop(&f.b) == CNET_SCTP_DATA_OK);
 }
 
+
+/* Three independent missing TSNs become eligible after three higher DATA
+ * arrivals. Each advance emits one retained ticket in TSN order, without
+ * mistaking pending work for a new DATA flight or cutting cwnd three times. */
+static void multi_tsn_fast_recovery(void) {
+  fixture f;
+  uint8_t output[CNET_SCTP_DATA_MTU];
+  size_t n;
+  uint32_t reduced;
+  unsigned int i;
+  init(&f, 100u);
+  for (i = 0u; i < 6u; ++i) send(&f, i, 64u + i);
+  for (i = 3u; i < 6u; ++i) gap(&f, i, 80u + i * 2u);
+  for (i = 0u; i < 3u; ++i) {
+    assert(ticket(&f, i)->pending_retransmit);
+    assert(ticket(&f, i)->flight_accounted);
+  }
+  assert_flight_invariant(&f.a);
+  for (i = 0u; i < 3u; ++i) {
+    assert(cnet_sctp_data_advance(&f.a, 95u + i, output,
+        sizeof(output), &n) == CNET_SCTP_DATA_OK);
+    assert(n == f.size[i] && memcmp(output, f.packet[i], n) == 0);
+    assert(!ticket(&f, i)->pending_retransmit);
+    assert(ticket(&f, i)->retransmits == 1u);
+    if (i == 0u) reduced = f.a.cwnd;
+    else assert(f.a.cwnd == reduced);
+    assert_flight_invariant(&f.a);
+  }
+  assert(cnet_sctp_data_advance(&f.a, 99u, output,
+      sizeof(output), &n) == CNET_SCTP_DATA_OK);
+  assert(n == 0u);
+  finished(&f);
+}
+
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
+    {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
     {"timer_restart", timer_restart}, {"partial_recovery", partial_recovery},
     {"ordinary_htna", ordinary_htna}, {"reneging_streak", reneging_streak},
     {"t3_after_fast", t3_after_fast},
