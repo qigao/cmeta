@@ -554,6 +554,36 @@ static void t3_ack_then_fresh_loss(void) {
   finished(&f);
 }
 
+
+/* An identical SACK must not create three independent missing reports.
+ * A new higher-TSN acknowledgement is needed for each new indication. */
+static void duplicate_sack_no_false_fast(void) {
+  fixture f;
+  uint8_t sack[CNET_SCTP_DATA_MTU], out[CNET_SCTP_DATA_MTU];
+  size_t ns, n;
+  uint8_t misses;
+  uint64_t deadline;
+  unsigned int i;
+  init(&f, 100u);
+  for (i = 0u; i < 5u; ++i) send(&f, i, 64u + i);
+  ns = peer_sack(&f, f.first - 1u, 4u, 4u, sack);
+  ack(&f, 80u, sack, ns);
+  misses = ticket(&f, 0u)->missing_reports;
+  deadline = f.a.t3_deadline_ms;
+  assert(misses == 1u);
+  for (i = 0u; i < 5u; ++i) {
+    ack(&f, 81u + i, sack, ns);
+    assert(ticket(&f, 0u)->missing_reports == misses);
+    assert(!ticket(&f, 0u)->pending_retransmit);
+    assert(f.a.t3_deadline_ms == deadline);
+  }
+  assert(cnet_sctp_data_advance(&f.a, 90u, out,
+      sizeof(out), &n) == CNET_SCTP_DATA_OK);
+  assert(n == 0u);
+  assert_flight_invariant(&f.a);
+  finished(&f);
+}
+
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
     {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
@@ -561,6 +591,7 @@ int main(int argc, char **argv) {
     {"t3_capacity_then_sack", t3_capacity_then_sack},
     {"t3_preempts_pending_fast", t3_preempts_pending_fast},
     {"t3_ack_then_fresh_loss", t3_ack_then_fresh_loss},
+    {"duplicate_sack_no_false_fast", duplicate_sack_no_false_fast},
     {"reneging_flight_accounting", reneging_flight_accounting},
     {"timer_restart", timer_restart}, {"partial_recovery", partial_recovery},
     {"ordinary_htna", ordinary_htna}, {"reneging_streak", reneging_streak},
