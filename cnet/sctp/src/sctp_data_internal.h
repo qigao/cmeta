@@ -58,6 +58,8 @@ typedef struct cnet_sctp_data_tx {
    * ack_counted prevents repeated gap/revoke/re-ACK from growing cwnd. */
   uint8_t gap_acked;
   uint8_t ack_counted;
+  uint8_t missing_reports;
+  uint8_t fast_retransmitted;
   uint8_t used;
 } cnet_sctp_data_tx;
 
