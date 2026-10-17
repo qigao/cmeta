@@ -125,6 +125,10 @@ jobs:
         id: build_windows
         if: matrix.family == 'windows'
         shell: cmd
+        env:
+          # Capture actual whole-build cache outcomes; the smoke test alone is not
+          # evidence of project-wide reuse. This is scoped to Windows/MSVC only.
+          CLCACHE_TRACE: '1'
         run: |
           set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
