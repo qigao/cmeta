@@ -248,7 +248,37 @@ static void ambiguous_half_wrap_tsn(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
+static void karn_rtt_first_sample(void) {
+  cnet_sctp_data a, b;
+  test_owner oa = {0}, ob = {0};
+  uint8_t packet[1200], sack[1200], reply[1200];
+  const uint8_t payload = 'r';
+  size_t np = 0u, ns = 0u, nr = 0u;
+  pair_init(&a, &b, &oa, &ob, 100u, 300u);
+  assert(cnet_sctp_data_send(&a, 1u, 0u, 51u, 0, &payload, 1u,
+      packet, sizeof(packet), &np) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&b, 51u, packet, np,
+      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&a, 51u, sack, ns,
+      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(a.rtt_valid && a.srtt_x8_ms == 400u);
+  assert(a.rto_ms == 150u);
+  assert(cnet_sctp_data_send(&a, 52u, 0u, 51u, 0, &payload, 1u,
+      packet, sizeof(packet), &np) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_advance(&a, 202u, reply,
+      sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(a.tx[0].retransmits == 1u);
+  assert(cnet_sctp_data_input(&b, 203u, packet, np,
+      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&a, 204u, sack, ns,
+      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(a.srtt_x8_ms == 400u); /* Karn: retransmitted TSN excluded */
+  assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
+}
+
 int main(void) {
+  karn_rtt_first_sample();
   ambiguous_half_wrap_tsn();
   gap_sack_wrap_t3_ordering();
   unordered_priority_and_capacity();
