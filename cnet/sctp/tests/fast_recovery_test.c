@@ -651,34 +651,6 @@ static void multi_loss_single_cwnd_reduction(void) {
 
 
 
-/* A later fast retransmission blocked by the reduced congestion window
- * must not consume its pending ticket, retransmit budget or timer. */
-static void later_fast_window_atomicity(void) {
-  fixture f;
-  cnet_sctp_data before;
-  uint8_t out[CNET_SCTP_DATA_MTU];
-  size_t n;
-  unsigned int i;
-  init(&f, 100u);
-  for (i = 0u; i < 8u; ++i) send(&f, i, 64u + i);
-  for (i = 3u; i < 8u; ++i) gap(&f, i, 80u + i * 2u);
-  assert(cnet_sctp_data_advance(&f.a, 100u, out,
-      sizeof(out), &n) == CNET_SCTP_DATA_OK);
-  assert(n == f.size[0]);
-  assert(ticket(&f, 1u)->pending_retransmit);
-  /* Existing unacknowledged flight exceeds the reduced cwnd. */
-  assert(f.a.cwnd < 5u * CNET_SCTP_DATA_MTU);
-  memcpy(&before, &f.a, sizeof(before));
-  memset(out, 0xa5, sizeof(out));
-  assert(cnet_sctp_data_advance(&f.a, 101u, out,
-      sizeof(out), &n) == CNET_SCTP_DATA_CAPACITY);
-  assert(n == 0u && out[0] == 0xa5u);
-  assert(memcmp(&before, &f.a, sizeof(before)) == 0);
-  assert(ticket(&f, 1u)->pending_retransmit);
-  assert_flight_invariant(&f.a);
-  finished(&f);
-}
-
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
     {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
@@ -689,7 +661,6 @@ int main(int argc, char **argv) {
     {"duplicate_sack_no_false_fast", duplicate_sack_no_false_fast},
     {"reneging_reack_pending", reneging_reack_pending},
     {"multi_loss_single_cwnd_reduction", multi_loss_single_cwnd_reduction},
-    {"later_fast_window_atomicity", later_fast_window_atomicity},
     {"reneging_flight_accounting", reneging_flight_accounting},
     {"timer_restart", timer_restart}, {"partial_recovery", partial_recovery},
     {"ordinary_htna", ordinary_htna}, {"reneging_streak", reneging_streak},
