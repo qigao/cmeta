@@ -642,8 +642,14 @@ static void shutdown_sent_accepts_bundled_data(void) {
       CNET_SCTP_WIRE_OK);
   assert(cnet_sctp_assoc_input(&a, 9u, combined, ncombined,
       sack, sizeof(sack), &nsack) == CNET_SCTP_ASSOC_OK);
-  assert(shutdown_chunk_type(sack, nsack) == 3u &&
-      a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+  assert(cnet_sctp_wire_decode(sack, nsack, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK && header.chunk_count == 2u);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunks[0]) ==
+      CNET_SCTP_WIRE_OK && chunks[0].type == 7u);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunks[1]) ==
+      CNET_SCTP_WIRE_OK && chunks[1].type == 3u);
+  assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+      a.deadline_ms == 9u + a.current_rto_ms && a.retransmits == 0u &&
       a.data.buffered_rx == 2u && a.data.cumulative_rx == cb.tsn + 1u);
   for (i = 0u; i < 2u; ++i) {
     assert(cnet_sctp_assoc_take_message(&a, &meta, body,
