@@ -116,6 +116,55 @@ jobs:
           test "$cmake_hash" = "$turbo_hash"
           echo "Real Salts target object matches exactly."
 
+      - name: Configure a multi-source Salts platform target from CMake File API
+        shell: bash
+        env:
+          TURBO_BUILD_CLI: ${{ steps.turbo-build.outputs.cli-path }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/cmake-platform-graph/.cmake/api/v1/query
+          : > build/cmake-platform-graph/.cmake/api/v1/query/codemodel-v2
+          cmake -S pilot/turbo-build/cmake-graph/platform -B build/cmake-platform-graph \
+            -DSALTS_SOURCE_DIR="$GITHUB_WORKSPACE" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON 2>&1 | tee build/cmake-platform-graph-configure.log
+          cmake --build build/cmake-platform-graph --target cmeta_platform --parallel 2 2>&1 | tee build/cmake-platform-graph-build.log
+          python3 pilot/turbo-build/export_cmake_compile_actions.py \
+            --source-root "$GITHUB_WORKSPACE" \
+            --build-dir "$GITHUB_WORKSPACE/build/cmake-platform-graph" \
+            --target cmeta_platform
+          "$TURBO_BUILD_CLI" validate build/cmake-platform-graph/turbo-build-qualification/buildfile.json
+
+      - name: Rebuild every platform compile action through TurboBuild and compare object hashes
+        shell: bash
+        env:
+          TURBO_BUILD_CLI: ${{ steps.turbo-build.outputs.cli-path }}
+        run: |
+          set -euo pipefail
+          evidence=build/cmake-platform-graph/turbo-build-qualification
+          "$TURBO_BUILD_CLI" build --jobs 4 --state "$evidence/state.bin" "$evidence/buildfile.json" 2>&1 | tee "$evidence/turbo-build.log"
+          python3 - "$evidence/graph-report.json" "$evidence/object-sha256.txt" <<'PYTHON'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          lines = []
+          for entry in report["compileCommands"]:
+              original = Path(entry["originalObject"])
+              rebuilt = Path(entry["turboBuildObject"])
+              if not original.is_file() or not rebuilt.is_file():
+                  raise SystemExit(f"missing object: CMake={original} TurboBuild={rebuilt}")
+              original_hash = hashlib.sha256(original.read_bytes()).hexdigest()
+              rebuilt_hash = hashlib.sha256(rebuilt.read_bytes()).hexdigest()
+              lines.append(f"{entry['source']}\n  CMake:      {original_hash}\n  TurboBuild: {rebuilt_hash}")
+              if original_hash != rebuilt_hash:
+                  raise SystemExit(f"object fingerprint mismatch for {entry['source']}")
+          Path(sys.argv[2]).write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print(f"All {len(lines)} platform object hashes match.")
+          PYTHON
+
       - name: Upload pilot evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -136,3 +185,8 @@ jobs:
             build/cmake-graph/compile_commands.json
             build/cmake-graph/.cmake/api/v1/reply/**
             build/cmake-graph/turbo-build-qualification/**
+            build/cmake-platform-graph-configure.log
+            build/cmake-platform-graph-build.log
+            build/cmake-platform-graph/compile_commands.json
+            build/cmake-platform-graph/.cmake/api/v1/reply/**
+            build/cmake-platform-graph/turbo-build-qualification/**
