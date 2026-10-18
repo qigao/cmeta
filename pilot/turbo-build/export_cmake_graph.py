@@ -96,8 +96,8 @@ def main() -> int:
         fail(f"expected exactly one CMake target named {args.target}, found {len(target_refs)}")
     target_ref = target_refs[0]
     target_json = read_json(reply_dir / target_ref["jsonFile"])
-    if target_ref.get("type") != "OBJECT_LIBRARY":
-        fail(f"expected {args.target} to be OBJECT_LIBRARY, got {target_ref.get('type')!r}")
+    if target_json.get("type") != "OBJECT_LIBRARY":
+        fail(f"expected {args.target} to be OBJECT_LIBRARY, got {target_json.get('type')!r}")
 
     target_sources = [
         resolve_report_path(item["path"], source_root, build_dir)
@@ -209,7 +209,7 @@ def main() -> int:
         "target": {
             "name": target_ref.get("name"),
             "id": target_ref.get("id"),
-            "type": target_ref.get("type"),
+            "type": target_json.get("type"),
             "sourceFiles": [str(path) for path in target_sources],
             "dependencies": target_dependencies,
         },
