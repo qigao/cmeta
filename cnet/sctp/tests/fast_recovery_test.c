@@ -725,6 +725,12 @@ static void t3_resets_fast_retransmit_epoch(void) {
   deliver(&f, due + 1u, out, n, sack, &ns);
   ack(&f, due + 1u, sack, ns);
   assert(!f.a.t3_wait_ack);
+  /* Replaying pre-timeout gap evidence cannot start another fast recovery
+   * epoch; only newly acknowledged higher TSNs may add missing reports. */
+  ns = peer_sack(&f, f.first - 1u, 4u, 6u, sack);
+  ack(&f, due + 2u, sack, ns);
+  assert(ticket(&f, 1u)->missing_reports == 0u);
+  assert(!ticket(&f, 1u)->pending_retransmit);
   for (i = 6u; i < 9u; ++i) {
     const uint64_t step = (uint64_t)(i - 6u) * 4u;
     send(&f, i, due + 2u + step);
