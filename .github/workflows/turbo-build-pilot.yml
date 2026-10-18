@@ -77,6 +77,45 @@ jobs:
           set -euo pipefail
           bash pilot/turbo-build/qualify.sh "$TURBO_BUILD_CLI"
 
+      - name: Configure the real Salts wsparser target with CMake File API
+        shell: bash
+        env:
+          TURBO_BUILD_CLI: ${{ steps.turbo-build.outputs.cli-path }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/cmake-graph/.cmake/api/v1/query
+          : > build/cmake-graph/.cmake/api/v1/query/codemodel-v2
+          cmake -S pilot/turbo-build/cmake-graph -B build/cmake-graph \
+            -DSALTS_SOURCE_DIR="$GITHUB_WORKSPACE" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON 2>&1 | tee build/cmake-graph-configure.log
+          cmake --build build/cmake-graph --target cmeta_wsparser --parallel 2 2>&1 | tee build/cmake-graph-build.log
+          python3 pilot/turbo-build/export_cmake_graph.py \
+            --source-root "$GITHUB_WORKSPACE" \
+            --build-dir "$GITHUB_WORKSPACE/build/cmake-graph" \
+            --target cmeta_wsparser
+          "$TURBO_BUILD_CLI" validate build/cmake-graph/turbo-build-qualification/buildfile.json
+
+      - name: Build the exported CMake compile action through TurboBuild
+        shell: bash
+        env:
+          TURBO_BUILD_CLI: ${{ steps.turbo-build.outputs.cli-path }}
+        run: |
+          set -euo pipefail
+          evidence=build/cmake-graph/turbo-build-qualification
+          "$TURBO_BUILD_CLI" build --jobs 1 --state "$evidence/state.bin" "$evidence/buildfile.json" 2>&1 | tee "$evidence/turbo-build.log"
+          report="$evidence/graph-report.json"
+          cmake_object="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["compileCommand"]["originalObject"])' "$report")"
+          turbo_object="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["compileCommand"]["turboBuildObject"])' "$report")"
+          cmake_hash="$(sha256sum "$cmake_object" | cut -d ' ' -f1)"
+          turbo_hash="$(sha256sum "$turbo_object" | cut -d ' ' -f1)"
+          {
+            printf 'CMake object SHA-256: %s\n' "$cmake_hash"
+            printf 'TurboBuild object SHA-256: %s\n' "$turbo_hash"
+          } | tee "$evidence/object-sha256.txt"
+          test "$cmake_hash" = "$turbo_hash"
+          echo "Real Salts target object matches exactly."
+
       - name: Upload pilot evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -92,3 +131,8 @@ jobs:
             build/output-sha256.txt
             build/turbo-build-pilot/state.bin
             build/turbo-build-qualification/**
+            build/cmake-graph-configure.log
+            build/cmake-graph-build.log
+            build/cmake-graph/compile_commands.json
+            build/cmake-graph/.cmake/api/v1/reply/**
+            build/cmake-graph/turbo-build-qualification/**
