@@ -781,6 +781,63 @@ static void shutdown_received_waits_for_final_sack(void) {
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
+/* RFC 9260 §9.2: SHUTDOWN-SENT ignores a peer SHUTDOWN if its
+ * cumulative TSN leaves local DATA outstanding; the partial ACK must not
+ * mutate tickets. A later SACK drains DATA and permits shutdown to finish. */
+static void shutdown_sent_ignores_peer_shutdown_with_outstanding_data(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  const uint8_t first_body[] = {0x31u};
+  const uint8_t second_body[] = {0x32u};
+  uint8_t first[1200], second[1200], sack[1200];
+  uint8_t b_shutdown[1200], a_shutdown[1200], ack[1200], complete[1200];
+  size_t nfirst = 0u, nsecond = 0u, ns = 0u, nbs = 0u;
+  size_t nas = 0u, na = 0u, nc = 0u;
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_send_message(&a, 6u, 0u, 53u, 0,
+      first_body, sizeof(first_body), first, sizeof(first), &nfirst) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_send_message(&a, 7u, 0u, 53u, 0,
+      second_body, sizeof(second_body), second, sizeof(second), &nsecond) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 8u, first, nfirst,
+      sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(ns != 0u && b.data.cumulative_rx == ca.tsn);
+  assert(cnet_sctp_assoc_shutdown(&b, 9u, b_shutdown,
+      sizeof(b_shutdown), &nbs) == CNET_SCTP_ASSOC_OK);
+  assert(b.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+  assert(cnet_sctp_assoc_shutdown(&a, 10u, a_shutdown,
+      sizeof(a_shutdown), &nas) == CNET_SCTP_ASSOC_OK);
+  assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+      a.data.in_flight == 2u);
+  /* Peer cumulative TSN covers only the first DATA. Ignore the SHUTDOWN and
+   * preserve both local tickets until a complete SACK arrives. */
+  assert(cnet_sctp_assoc_input(&a, 11u, b_shutdown, nbs,
+      ack, sizeof(ack), &na) == CNET_SCTP_ASSOC_OK);
+  assert(na == 0u && a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+      a.data.in_flight == 2u);
+  assert(cnet_sctp_assoc_input(&b, 12u, second, nsecond,
+      sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(ns != 0u && b.data.cumulative_rx == ca.tsn + 1u);
+  assert(cnet_sctp_assoc_input(&a, 13u, sack, ns,
+      ack, sizeof(ack), &na) == CNET_SCTP_ASSOC_OK);
+  assert(na == 0u && a.data.in_flight == 0u &&
+      a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+  assert(cnet_sctp_assoc_input(&b, 14u, a_shutdown, nas,
+      ack, sizeof(ack), &na) == CNET_SCTP_ASSOC_OK);
+  assert(b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT &&
+      shutdown_chunk_type(ack, na) == 8u);
+  assert(cnet_sctp_assoc_input(&a, 15u, ack, na,
+      complete, sizeof(complete), &nc) == CNET_SCTP_ASSOC_OK);
+  assert(a.state == CNET_SCTP_ASSOC_STOPPED &&
+      shutdown_chunk_type(complete, nc) == 14u);
+  assert(cnet_sctp_assoc_input(&b, 16u, complete, nc,
+      first, sizeof(first), &nfirst) == CNET_SCTP_ASSOC_OK);
+  assert(b.state == CNET_SCTP_ASSOC_STOPPED);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void shutdown_simultaneous(void) {
   cnet_sctp_assoc a, b;
   test_context ca = {0}, cb = {0};
@@ -955,6 +1012,7 @@ int main(void) {
   shutdown_t2_refreshes_cumulative();
   shutdown_sent_accepts_bundled_data();
   shutdown_received_waits_for_final_sack();
+  shutdown_sent_ignores_peer_shutdown_with_outstanding_data();
   shutdown_simultaneous();
   post_handshake_window_update();
   real_assoc_send_sack_and_t3();
