@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "actions": [
+    {
+      "name": "compile-probe",
+      "executable": "cc",
+      "args": [
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-pedantic",
+        "-O2",
+        "-Ipilot/turbo-build",
+        "pilot/turbo-build/probe.c",
+        "-o",
+        "build/turbo-build-pilot/probe"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "pilot/turbo-build/probe.c",
+        "pilot/turbo-build/probe.h"
+      ],
+      "outputs": [
+        "build/turbo-build-pilot/probe"
+      ],
+      "toolchain": "ubuntu-latest-cc-c11-pilot",
+      "inputs_complete": false,
+      "environment_complete": false,
+      "toolchain_complete": false,
+      "paths_normalized": true
+    }
+  ]
+}
