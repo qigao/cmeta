@@ -81,9 +81,10 @@ def main() -> int:
         fail(f"expected exactly one CMake link.txt for {args.target}, found {list(map(str, link_files))}")
     link_file = link_files[0]
     link_cwd = link_file.parent.parent.parent.resolve()
-    commands = [part.strip() for part in link_file.read_text(encoding="utf-8").split("&&") if part.strip()]
+    link_text = link_file.read_text(encoding="utf-8")
+    commands = [part.strip() for line in link_text.splitlines() for part in line.split("&&") if part.strip()]
     if len(commands) != 2:
-        fail(f"expected one archiver and one ranlib command in {link_file}; found {len(commands)}")
+        fail(f"expected one archiver and one ranlib command in {link_file}; found {len(commands)} commands: {commands!r}")
     try:
         ar_argv = shlex.split(commands[0], posix=True)
         ranlib_argv = shlex.split(commands[1], posix=True)
