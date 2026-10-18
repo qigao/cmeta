@@ -1073,6 +1073,7 @@ int main(void) {
   shutdown_t2_refreshes_cumulative();
   shutdown_sent_accepts_bundled_data();
   shutdown_sent_does_not_process_sack();
+  shutdown_sent_bundles_gap_sack();
   shutdown_received_waits_for_final_sack();
   shutdown_simultaneous();
   post_handshake_window_update();
