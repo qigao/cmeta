@@ -149,6 +149,11 @@ def main() -> int:
     ar_version = subprocess.run([ar_exe, "--version"], check=False, capture_output=True, text=True)
     ar_version_line = (ar_version.stdout or ar_version.stderr).splitlines()
     ar_label = ar_version_line[0] if ar_version_line else Path(ar_exe).name
+    archive_runner = source_root / "pilot/turbo-build/run_archive_command.py"
+    if not archive_runner.is_file():
+        fail(f"archive runner script not found: {archive_runner}")
+    python_exe = str(Path(sys.executable).resolve())
+
     archive_action_name = f"archive-{args.target}"
     actions = buildfile.get("actions")
     if not isinstance(actions, list):
@@ -159,12 +164,21 @@ def main() -> int:
     actions.append({
         "name": archive_action_name,
         "depends": action_names,
-        "executable": ar_exe,
-        "args": rewritten_ar_args,
+        "executable": python_exe,
+        "args": [
+            str(archive_runner),
+            str(raw_archive),
+            str(link_cwd),
+            json.dumps([ar_exe, *rewritten_ar_args]),
+        ],
         "cwd": str(link_cwd),
-        "inputs": [str(object_map[original]) for original in sorted(object_map, key=str)],
+        "inputs": [
+            *[str(object_map[original]) for original in sorted(object_map, key=str)],
+            str(archive_runner),
+            ar_exe,
+        ],
         "outputs": [str(raw_archive)],
-        "toolchain": f"cmake-archive/{Path(ar_exe).name}/{ar_label}",
+        "toolchain": f"cmake-archive-runner/{Path(python_exe).name}/{Path(ar_exe).name}/{ar_label}",
         "inputs_complete": False,
         "environment_complete": False,
         "toolchain_complete": False,
@@ -174,7 +188,6 @@ def main() -> int:
     finalizer = source_root / "pilot/turbo-build/finalize_archive.py"
     if not finalizer.is_file():
         fail(f"archive finalizer script not found: {finalizer}")
-    python_exe = str(Path(sys.executable).resolve())
     actions.append({
         "name": f"finalize-{args.target}-archive",
         "depends": [archive_action_name],
