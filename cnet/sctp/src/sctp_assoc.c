@@ -740,7 +740,6 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
           return CNET_SCTP_ASSOC_PROTOCOL;
       } else if (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
                  s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
-                 s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
                  s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED)
         return CNET_SCTP_ASSOC_PROTOCOL;
       return data_result(cnet_sctp_data_input(&s->data, now, packet,
