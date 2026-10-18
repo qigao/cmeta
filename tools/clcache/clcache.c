@@ -924,9 +924,9 @@ static BOOL ReadResponseFile(LPCWSTR Path, struct memory_arena* Arena, LPWSTR* C
 		size_t WideLength = PayloadBytes / sizeof(WCHAR);
 		LPWSTR Wide = PushMem(Arena, (WideLength + 1) * sizeof(WCHAR));
 		CopyMemory(Wide, Bytes + 2, PayloadBytes);
-		Wide[WideLength] = L'\\0';
+		Wide[WideLength] = L'\0';
 		for(size_t i = 0; i < WideLength; ++i)
-			if(Wide[i] == L'\\0')
+			if(Wide[i] == L'\0')
 				return FALSE;
 
 		*Content = Wide;
@@ -960,9 +960,9 @@ static BOOL ReadResponseFile(LPCWSTR Path, struct memory_arena* Arena, LPWSTR* C
 	   MultiByteToWideChar(CodePage, Flags, (LPCCH)(Bytes + Offset), ByteLength, Wide, WideLength) != WideLength)
 		return FALSE;
 
-	Wide[WideLength] = L'\\0';
+	Wide[WideLength] = L'\0';
 	for(int i = 0; i < WideLength; ++i)
-		if(Wide[i] == L'\\0')
+		if(Wide[i] == L'\0')
 			return FALSE;
 
 	*Content = Wide;
@@ -1385,7 +1385,7 @@ static BOOL ExpandResponseFiles(int argc, LPWSTR* argv, struct memory_arena* Are
 	BOOL HasResponseFile = FALSE;
 	for(int i = 2; i < argc; ++i)
 	{
-		if(argv[i][0] == '@' && argv[i][1] != L'\\0')
+		if(argv[i][0] == '@' && argv[i][1] != L'\0')
 		{
 			HasResponseFile = TRUE;
 			break;
@@ -1406,7 +1406,7 @@ static BOOL ExpandResponseFiles(int argc, LPWSTR* argv, struct memory_arena* Are
 
 	for(int i = 2; i < argc; ++i)
 	{
-		if(argv[i][0] != '@' || argv[i][1] == L'\\0')
+		if(argv[i][0] != '@' || argv[i][1] == L'\0')
 		{
 			if(Count >= MAX_COMMAND_LINE_LENGTH)
 				return FALSE;
@@ -1420,7 +1420,7 @@ static BOOL ExpandResponseFiles(int argc, LPWSTR* argv, struct memory_arena* Are
 
 		while(IsWhitespace(*ResponseText))
 			++ResponseText;
-		if(*ResponseText == L'\\0')
+		if(*ResponseText == L'\0')
 			continue;
 
 		int ResponseArgc = 0;
@@ -1438,7 +1438,7 @@ static BOOL ExpandResponseFiles(int argc, LPWSTR* argv, struct memory_arena* Are
 			for(size_t k = 0; k < Arg.Length; ++k)
 			{
 				// A quote spanning physical lines is outside the qualified command-file subset.
-				if(Arg.Data[k] == L'\\r' || Arg.Data[k] == L'\\n')
+				if(Arg.Data[k] == L'\r' || Arg.Data[k] == L'\n')
 				{
 					LocalFree(ResponseArgv);
 					return FALSE;
@@ -1460,7 +1460,7 @@ static BOOL ExpandResponseFiles(int argc, LPWSTR* argv, struct memory_arena* Are
 
 			LPWSTR Copy = PushMem(Arena, (Arg.Length + 1) * sizeof(WCHAR));
 			CopyMemory(Copy, Arg.Data, Arg.Length * sizeof(WCHAR));
-			Copy[Arg.Length] = L'\\0';
+			Copy[Arg.Length] = L'\0';
 			Expanded[Count++] = Copy;
 		}
 
