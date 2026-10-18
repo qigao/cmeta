@@ -147,6 +147,12 @@ jobs:
           set -euo pipefail
           evidence=build/cmake-platform-graph/turbo-build-qualification
           "$TURBO_BUILD_CLI" build --jobs 4 --state "$evidence/state.bin" "$evidence/buildfile.json" 2>&1 | tee "$evidence/turbo-build.log"
+          grep -F "Build complete: 8 executed, 0 skipped" "$evidence/turbo-build.log"
+          # Run the same graph again with the same state file. Because the
+          # action completeness declarations remain false, no action may skip.
+          # The archive runner must recreate the archive instead of appending.
+          "$TURBO_BUILD_CLI" build --jobs 4 --state "$evidence/state.bin" "$evidence/buildfile.json" 2>&1 | tee "$evidence/turbo-build-second-pass.log"
+          grep -F "Build complete: 8 executed, 0 skipped" "$evidence/turbo-build-second-pass.log"
           python3 - "$evidence/graph-report.json" "$evidence/object-sha256.txt" <<'PYTHON'
           import hashlib
           import json
