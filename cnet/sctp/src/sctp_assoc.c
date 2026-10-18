@@ -637,8 +637,18 @@ static cnet_sctp_assoc_status handle_shutdown(cnet_sctp_assoc *s,
   if (header->verification_tag != s->local_tag || chunk->flags != 0u ||
       chunk->value_size != 4u || !s->data_ready)
     return CNET_SCTP_ASSOC_PROTOCOL;
-  if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT)
-    return publish_packet(out, cap, written, s->saved_packet, s->saved_size);
+  if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT) {
+    /* RFC 9260 §9.2: a duplicate SHUTDOWN requires retransmitting the
+     * saved SHUTDOWN ACK and restarting T2. Publish first so a short output
+     * buffer cannot move the timer or consume retry budget. */
+    if (now > UINT64_MAX - s->current_rto_ms)
+      return CNET_SCTP_ASSOC_CLOCK;
+    status = publish_packet(out, cap, written,
+        s->saved_packet, s->saved_size);
+    if (status != CNET_SCTP_ASSOC_OK) return status;
+    s->deadline_ms = now + s->current_rto_ms;
+    return CNET_SCTP_ASSOC_OK;
+  }
   if (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
       s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
       s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED &&
