@@ -644,20 +644,23 @@ static void shutdown_sent_accepts_bundled_data(void) {
   assert(cnet_sctp_wire_encode(b.config.local_port, b.config.remote_port,
       b.peer_tag, chunks, 2u, combined, sizeof(combined), &ncombined) ==
       CNET_SCTP_WIRE_OK);
+  deadline_before = a.deadline_ms;
+  assert(cnet_sctp_assoc_advance(&a, deadline_before, shutdown,
+      sizeof(shutdown), &nshutdown) == CNET_SCTP_ASSOC_OK);
+  assert(a.retransmits == 1u && a.deadline_ms > deadline_before);
   memcpy(&before, &a.data, sizeof(before));
   memcpy(saved_before, a.saved_packet, sizeof(saved_before));
   saved_size_before = a.saved_size;
-  deadline_before = a.deadline_ms;
   retries_before = a.retransmits;
   nsack = 99u;
-  assert(cnet_sctp_assoc_input(&a, 9u, combined, ncombined,
+  assert(cnet_sctp_assoc_input(&a, deadline_before + 1u, combined, ncombined,
       sack, 1u, &nsack) == CNET_SCTP_ASSOC_CAPACITY);
   assert(nsack == 0u && memcmp(&before, &a.data, sizeof(before)) == 0 &&
       a.saved_size == saved_size_before &&
       memcmp(saved_before, a.saved_packet, sizeof(saved_before)) == 0 &&
       a.deadline_ms == deadline_before && a.retransmits == retries_before);
-  assert(cnet_sctp_assoc_input(&a, 10u, combined, ncombined,
-      sack, sizeof(sack), &nsack) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, deadline_before + 2u, combined,
+      ncombined, sack, sizeof(sack), &nsack) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_wire_decode(sack, nsack, &header, &decoder) ==
       CNET_SCTP_WIRE_OK && header.chunk_count == 2u);
   assert(cnet_sctp_wire_next_chunk(&decoder, &chunks[0]) ==
@@ -665,7 +668,7 @@ static void shutdown_sent_accepts_bundled_data(void) {
   assert(cnet_sctp_wire_next_chunk(&decoder, &chunks[1]) ==
       CNET_SCTP_WIRE_OK && chunks[1].type == 3u);
   assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
-      a.deadline_ms == 10u + a.current_rto_ms && a.retransmits == 0u &&
+      a.deadline_ms == deadline_before + 2u + a.current_rto_ms && a.retransmits == 0u &&
       a.data.buffered_rx == 2u && a.data.cumulative_rx == cb.tsn + 1u);
   for (i = 0u; i < 2u; ++i) {
     assert(cnet_sctp_assoc_take_message(&a, &meta, body,
