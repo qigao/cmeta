@@ -839,10 +839,10 @@ static void shutdown_sent_bundles_gap_sack(void) {
     size_t bytes = 0u;
     assert(cnet_sctp_assoc_take_message(&a, &meta, payload,
         sizeof(payload), &bytes) == CNET_SCTP_ASSOC_OK);
-    assert(bytes == 1u && payload[0] == payloads[1]);
+    assert(bytes == 1u && payload[0] == payloads[0]);
     assert(cnet_sctp_assoc_take_message(&a, &meta, payload,
         sizeof(payload), &bytes) == CNET_SCTP_ASSOC_OK);
-    assert(bytes == 1u && payload[0] == payloads[0]);
+    assert(bytes == 1u && payload[0] == payloads[1]);
     assert(cnet_sctp_assoc_drained(&a) && cnet_sctp_assoc_drained(&b));
   }
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
