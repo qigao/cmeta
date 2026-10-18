@@ -659,12 +659,8 @@ static cnet_sctp_assoc_status handle_shutdown(cnet_sctp_assoc *s,
       now, rd32(chunk->value)));
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (!cnet_sctp_data_outbound_drained(&candidate)) {
-    if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT) {
-      /* RFC 9260 §9.2: in SHUTDOWN-SENT, ignore a peer SHUTDOWN while
-       * local DATA remains unacknowledged. Do not retire even the peer's
-       * partial cumulative ACK until the association can answer shutdown. */
-      return CNET_SCTP_ASSOC_OK;
-    }
+    if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT)
+      return CNET_SCTP_ASSOC_PROTOCOL;
     memcpy(&s->data, &candidate, sizeof(candidate));
     s->state = CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED;
     s->last_time_ms = now;
