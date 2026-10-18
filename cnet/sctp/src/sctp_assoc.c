@@ -704,6 +704,7 @@ static cnet_sctp_assoc_status handle_shutdown_sent_data(
   uint8_t shutdown_value[4], saved_shutdown[CNET_SCTP_ASSOC_MAX_PACKET];
   uint8_t response[CNET_SCTP_ASSOC_MAX_PACKET];
   size_t sack_size = 0u, saved_size = 0u, response_size = 0u;
+  size_t response_count = 1u;
   cnet_sctp_assoc_status status;
   cnet_sctp_wire_status wire_status;
   if (!s->data_ready || s->current_rto_ms == 0u ||
@@ -718,8 +719,12 @@ static cnet_sctp_assoc_status handle_shutdown_sent_data(
           &sack_decoder) != CNET_SCTP_WIRE_OK ||
       sack_header.chunk_count != 1u ||
       cnet_sctp_wire_next_chunk(&sack_decoder, &sack_chunk) !=
-          CNET_SCTP_WIRE_OK || sack_chunk.type != 3u)
+          CNET_SCTP_WIRE_OK || sack_chunk.type != 3u ||
+      sack_chunk.value_size < 12u)
     return CNET_SCTP_ASSOC_PROTOCOL;
+  /* SHUTDOWN cumulatively acknowledges all contiguous DATA. Bundle a SACK
+   * only when it carries gap/duplicate evidence that SHUTDOWN cannot convey. */
+  if (sack_chunk.value_size > 12u) response_count = 2u;
   wr32(shutdown_value, candidate.cumulative_rx);
   response_chunks[0].type = SCTP_TYPE_SHUTDOWN;
   response_chunks[0].flags = 0u;
@@ -727,7 +732,7 @@ static cnet_sctp_assoc_status handle_shutdown_sent_data(
   response_chunks[0].value_size = sizeof(shutdown_value);
   response_chunks[1] = sack_chunk;
   wire_status = cnet_sctp_wire_encode(s->config.local_port,
-      s->config.remote_port, s->peer_tag, response_chunks, 2u,
+      s->config.remote_port, s->peer_tag, response_chunks, response_count,
       response, sizeof(response), &response_size);
   if (wire_status != CNET_SCTP_WIRE_OK)
     return wire_status == CNET_SCTP_WIRE_CAPACITY ?
