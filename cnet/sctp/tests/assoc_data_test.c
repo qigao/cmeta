@@ -623,7 +623,7 @@ static void shutdown_sent_accepts_bundled_data(void) {
   cnet_sctp_data before;
   uint8_t body[8] = {0}, saved_before[CNET_SCTP_ASSOC_MAX_PACKET];
   size_t saved_size_before;
-  uint64_t deadline_before;
+  uint64_t deadline_before, deadline_after_retry;
   uint32_t retries_before;
   size_t nshutdown = 0u, np[2] = {0u, 0u}, ncombined = 0u;
   size_t nsack = 0u, nbody = 0u, i;
@@ -648,6 +648,7 @@ static void shutdown_sent_accepts_bundled_data(void) {
   assert(cnet_sctp_assoc_advance(&a, deadline_before, shutdown,
       sizeof(shutdown), &nshutdown) == CNET_SCTP_ASSOC_OK);
   assert(a.retransmits == 1u && a.deadline_ms > deadline_before);
+  deadline_after_retry = a.deadline_ms;
   memcpy(&before, &a.data, sizeof(before));
   memcpy(saved_before, a.saved_packet, sizeof(saved_before));
   saved_size_before = a.saved_size;
@@ -658,7 +659,7 @@ static void shutdown_sent_accepts_bundled_data(void) {
   assert(nsack == 0u && memcmp(&before, &a.data, sizeof(before)) == 0 &&
       a.saved_size == saved_size_before &&
       memcmp(saved_before, a.saved_packet, sizeof(saved_before)) == 0 &&
-      a.deadline_ms == deadline_before && a.retransmits == retries_before);
+      a.deadline_ms == deadline_after_retry && a.retransmits == retries_before);
   assert(cnet_sctp_assoc_input(&a, deadline_before + 2u, combined,
       ncombined, sack, sizeof(sack), &nsack) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_wire_decode(sack, nsack, &header, &decoder) ==
