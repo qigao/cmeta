@@ -790,7 +790,8 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
           (header.chunk_count != 1u &&
            s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
            s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
-           s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT))
+           s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+           s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED))
         return CNET_SCTP_ASSOC_PROTOCOL;
       if (chunk.type == 0u) {
         if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT) {
