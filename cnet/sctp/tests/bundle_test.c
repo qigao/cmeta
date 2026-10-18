@@ -232,7 +232,9 @@ static void outbound_bundle_respects_peer_window(void) {
   items[0].ppid = items[1].ppid = 53u;
   items[0].payload = &body[0]; items[1].payload = &body[1];
   items[0].payload_size = items[1].payload_size = 1u;
-  p.a.config.peer_receive_window = 1u;
+  /* The configured value seeds the initial rwnd; the live advertised
+   * peer window is the state used by sender admission after initialization. */
+  p.a.peer_rwnd = 1u;
   assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 1u,
       packet, sizeof(packet), &written) == CNET_SCTP_DATA_OK);
   assert(written > 0u && p.a.in_flight == 1u);
