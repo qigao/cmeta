@@ -113,7 +113,7 @@ function(cmake_add_grammar TARGET_NAME)
     endif()
     add_custom_command(
       OUTPUT "${LEXER_GEN}"
-      COMMAND "${ARG_RE2C_EXECUTABLE}" -o "${LEXER_GEN}" "${ARG_LEXER_RE}"
+      COMMAND "${ARG_RE2C_EXECUTABLE}" --no-generation-date -o "${LEXER_GEN}" "${ARG_LEXER_RE}"
       DEPENDS ${lexer_depends}
       COMMENT "Generating ${TARGET_NAME} lexer with re2c"
       VERBATIM)
