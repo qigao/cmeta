@@ -625,7 +625,7 @@ static void shutdown_sent_accepts_bundled_data(void) {
   uint8_t body[8] = {0};
   size_t nprior = 0u, nprior_sack = 0u, nshutdown = 0u;
   size_t np[2] = {0u, 0u}, ncombined = 0u;
-  size_t nsack = 0u, nbody = 0u, nresponse = 0u, i;
+  size_t nsack = 0u, nbody = 0u, i;
   ready_pair(&a, &b, &ca, &cb);
   /* Capture a real SACK from B and settle it at A first. Reuse that valid
    * duplicate SACK as the leading chunk of a later SACK + DATA + DATA packet. */
