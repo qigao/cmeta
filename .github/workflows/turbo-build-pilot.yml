@@ -147,6 +147,11 @@ jobs:
           set -euo pipefail
           evidence=build/cmake-platform-graph/turbo-build-qualification
           "$TURBO_BUILD_CLI" build --jobs 4 --state "$evidence/state.bin" "$evidence/buildfile.json" 2>&1 | tee "$evidence/turbo-build.log"
+          grep -F "Build complete: 8 executed, 0 skipped" "$evidence/turbo-build.log"
+          # Repeat with the same state file. Incomplete declarations must not
+          # skip actions, and the archive action must not append stale members.
+          "$TURBO_BUILD_CLI" build --jobs 4 --state "$evidence/state.bin" "$evidence/buildfile.json" 2>&1 | tee "$evidence/turbo-build-second-pass.log"
+          grep -F "Build complete: 8 executed, 0 skipped" "$evidence/turbo-build-second-pass.log"
           python3 - "$evidence/graph-report.json" "$evidence/object-sha256.txt" <<'PYTHON'
           import hashlib
           import json
@@ -179,7 +184,7 @@ jobs:
           if cmake_archive_hash != turbo_archive_hash:
               raise SystemExit(f"archive fingerprint mismatch: CMake={cmake_archive_hash} TurboBuild={turbo_archive_hash}")
           Path(sys.argv[2]).write_text("\n".join(lines) + "\n", encoding="utf-8")
-          print(f"All {len(report['compileCommands'])} platform object hashes and the static archive hash match.")
+          print(f"All {len(report['compileCommands'])} platform object hashes and the static archive hash match after both passes.")
           PYTHON
 
       - name: Upload pilot evidence
