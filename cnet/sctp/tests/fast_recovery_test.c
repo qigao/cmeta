@@ -722,12 +722,13 @@ static void t3_resets_fast_retransmit_epoch(void) {
       CNET_SCTP_DATA_OK);
   assert(n == f.size[0] && f.a.t3_wait_ack);
   assert(!ticket(&f, 1u)->fast_retransmitted);
-  ns = peer_sack(&f, f.first, 0u, 0u, sack);
+  deliver(&f, due + 1u, out, n, sack, &ns);
   ack(&f, due + 1u, sack, ns);
   assert(!f.a.t3_wait_ack);
   for (i = 6u; i < 9u; ++i) {
-    send(&f, i, due + 2u + i);
-    gap(&f, i, due + 3u + i * 2u);
+    const uint64_t step = (uint64_t)(i - 6u) * 4u;
+    send(&f, i, due + 2u + step);
+    gap(&f, i, due + 3u + step);
   }
   assert(ticket(&f, 1u)->pending_retransmit);
   assert_flight_invariant(&f.a);
