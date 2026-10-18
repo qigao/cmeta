@@ -44,6 +44,27 @@ Assert-Log $hot 'including file:' 'Ninja dependency lines (hit)'
 $hash2 = (Get-FileHash -LiteralPath $obj -Algorithm SHA256).Hash
 if ($hash1 -ne $hash2) { throw 'Cached object differs from original object' }
 
+# Toolchain identity is more than the cl.exe file version. Relevant Visual
+# Studio / Windows SDK environment values must participate in the cache key.
+$originalVCToolsVersion = [Environment]::GetEnvironmentVariable('VCToolsVersion', 'Process')
+try {
+    $env:VCToolsVersion = 'clcache-smoke-different-toolset-fingerprint'
+    Remove-Item -LiteralPath $obj -Force
+    $toolsetChanged = Compile $true
+    Assert-Log $toolsetChanged 'clcache: MISS' 'Toolset-version cache key'
+    $hashToolsetChanged = (Get-FileHash -LiteralPath $obj -Algorithm SHA256).Hash
+    if ($hash1 -ne $hashToolsetChanged) { throw 'Toolset fingerprint probe changed compiled object bytes' }
+}
+finally {
+    [Environment]::SetEnvironmentVariable('VCToolsVersion', $originalVCToolsVersion, 'Process')
+}
+
+Remove-Item -LiteralPath $obj -Force
+$restoredToolset = Compile $true
+Assert-Log $restoredToolset 'clcache: HIT' 'Original toolset identity restored'
+$hashRestoredToolset = (Get-FileHash -LiteralPath $obj -Algorithm SHA256).Hash
+if ($hash1 -ne $hashRestoredToolset) { throw 'Restored toolset cache replay changed object bytes' }
+
 [System.IO.File]::WriteAllText($header, ('#define VALUE 29' + $nl), $utf8)
 Remove-Item -LiteralPath $obj -Force
 $changed = Compile $true
