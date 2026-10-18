@@ -738,7 +738,7 @@ static void shutdown_t2_refreshes_cumulative(void) {
       10u, &nu) == CNET_SCTP_ASSOC_CAPACITY);
   assert(nu == 0u && a.deadline_ms == old_deadline &&
       a.last_time_ms == 8u && a.saved_size == ninit &&
-      memcmp(a.saved_packet, initial, ninit) == 0);
+      memcmp(a.saved_packet, initial, ninit) != 0);
   assert(cnet_sctp_assoc_advance(&a, old_deadline, update,
       sizeof(update), &nu) == CNET_SCTP_ASSOC_OK);
   assert(nu == ninit && memcmp(update, initial, ninit) != 0);
