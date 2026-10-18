@@ -689,6 +689,65 @@ static cnet_sctp_assoc_status handle_shutdown_ack(cnet_sctp_assoc *s,
   return CNET_SCTP_ASSOC_OK;
 }
 
+/* RFC 9260 §9.2: DATA received while SHUTDOWN-SENT requires an
+ * immediate SHUTDOWN response and a restarted T2. Stage receive processing,
+ * SACK generation, and both encodings before committing any association
+ * state so output backpressure cannot consume DATA or alter the retry timer. */
+static cnet_sctp_assoc_status handle_shutdown_sent_data(
+    cnet_sctp_assoc *s, uint64_t now, const uint8_t *packet,
+    size_t packet_size, uint8_t *out, size_t cap, size_t *written) {
+  cnet_sctp_data candidate;
+  cnet_sctp_wire_header sack_header = {0};
+  cnet_sctp_wire_decoder sack_decoder = {0};
+  cnet_sctp_wire_chunk sack_chunk = {0}, response_chunks[2];
+  uint8_t sack_packet[CNET_SCTP_DATA_MTU];
+  uint8_t shutdown_value[4], saved_shutdown[CNET_SCTP_ASSOC_MAX_PACKET];
+  uint8_t response[CNET_SCTP_ASSOC_MAX_PACKET];
+  size_t sack_size = 0u, saved_size = 0u, response_size = 0u;
+  cnet_sctp_assoc_status status;
+  cnet_sctp_wire_status wire_status;
+  if (!s->data_ready || s->current_rto_ms == 0u ||
+      now > UINT64_MAX - s->current_rto_ms)
+    return CNET_SCTP_ASSOC_CLOCK;
+  memcpy(&candidate, &s->data, sizeof(candidate));
+  status = data_result(cnet_sctp_data_input(&candidate, now, packet,
+      packet_size, sack_packet, sizeof(sack_packet), &sack_size));
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (sack_size == 0u ||
+      cnet_sctp_wire_decode(sack_packet, sack_size, &sack_header,
+          &sack_decoder) != CNET_SCTP_WIRE_OK ||
+      sack_header.chunk_count != 1u ||
+      cnet_sctp_wire_next_chunk(&sack_decoder, &sack_chunk) !=
+          CNET_SCTP_WIRE_OK || sack_chunk.type != 3u)
+    return CNET_SCTP_ASSOC_PROTOCOL;
+  wr32(shutdown_value, candidate.cumulative_rx);
+  response_chunks[0].type = SCTP_TYPE_SHUTDOWN;
+  response_chunks[0].flags = 0u;
+  response_chunks[0].value = shutdown_value;
+  response_chunks[0].value_size = sizeof(shutdown_value);
+  response_chunks[1] = sack_chunk;
+  wire_status = cnet_sctp_wire_encode(s->config.local_port,
+      s->config.remote_port, s->peer_tag, response_chunks, 2u,
+      response, sizeof(response), &response_size);
+  if (wire_status != CNET_SCTP_WIRE_OK)
+    return wire_status == CNET_SCTP_WIRE_CAPACITY ?
+        CNET_SCTP_ASSOC_CAPACITY : CNET_SCTP_ASSOC_PROTOCOL;
+  status = encode_one(s, s->peer_tag, SCTP_TYPE_SHUTDOWN,
+      shutdown_value, sizeof(shutdown_value), saved_shutdown,
+      sizeof(saved_shutdown), &saved_size);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (response_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+  memcpy(out, response, response_size);
+  *written = response_size;
+  memcpy(&s->data, &candidate, sizeof(candidate));
+  memcpy(s->saved_packet, saved_shutdown, saved_size);
+  s->saved_size = saved_size;
+  s->deadline_ms = now + s->current_rto_ms;
+  s->retransmits = 0u;
+  s->last_time_ms = now;
+  return CNET_SCTP_ASSOC_OK;
+}
+
 cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     uint64_t now, const uint8_t *packet, size_t packet_size,
     uint8_t *output, size_t cap, size_t *written) {
@@ -734,9 +793,14 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
            s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT))
         return CNET_SCTP_ASSOC_PROTOCOL;
       if (chunk.type == 0u) {
+        if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT) {
+          if (header.verification_tag != s->local_tag)
+            return CNET_SCTP_ASSOC_PROTOCOL;
+          return handle_shutdown_sent_data(s, now, packet, packet_size,
+              output, cap, written);
+        }
         if (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
-            s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
-            s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT)
+            s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING)
           return CNET_SCTP_ASSOC_PROTOCOL;
       } else if (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
                  s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
