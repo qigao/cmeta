@@ -841,6 +841,16 @@ static void shutdown_t2_retry_budget(void) {
       shutdown_ack, sizeof(shutdown_ack), &na) == CNET_SCTP_ASSOC_OK);
   assert(b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT &&
       na == 16u && shutdown_chunk_type(shutdown_ack, na) == 8u);
+  /* A duplicate SHUTDOWN retransmits the ACK and restarts T2, but a
+   * capacity failure must leave the timer and retry budget untouched. */
+  assert(cnet_sctp_assoc_input(&b, 50u, shutdown, ns,
+      retry, 8u, &nr) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(nr == 0u && b.retransmits == 0u && b.deadline_ms == 107u &&
+      b.current_rto_ms == 100u && b.last_time_ms == 50u);
+  assert(cnet_sctp_assoc_input(&b, 50u, shutdown, ns,
+      retry, sizeof(retry), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == na && memcmp(retry, shutdown_ack, na) == 0 &&
+      b.retransmits == 0u && b.deadline_ms == 150u);
   assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
       CNET_SCTP_ASSOC_OK && has_deadline && deadline == 106u);
   assert(cnet_sctp_assoc_advance(&a, 106u, retry, 8u, &nr) ==
@@ -864,21 +874,21 @@ static void shutdown_t2_retry_budget(void) {
   assert(cnet_sctp_assoc_input(&a, 1107u, shutdown, ns,
       retry, sizeof(retry), &nr) == CNET_SCTP_ASSOC_CLOSED_ERROR);
   /* The responder's T2 budget for SHUTDOWN ACK is independently bounded. */
-  assert(cnet_sctp_assoc_advance(&b, 107u, retry, 8u, &nr) ==
+  assert(cnet_sctp_assoc_advance(&b, 150u, retry, 8u, &nr) ==
       CNET_SCTP_ASSOC_CAPACITY);
-  assert(nr == 0u && b.retransmits == 0u && b.deadline_ms == 107u &&
-      b.last_time_ms == 7u);
-  assert(cnet_sctp_assoc_advance(&b, 107u, retry, sizeof(retry), &nr) ==
+  assert(nr == 0u && b.retransmits == 0u && b.deadline_ms == 150u &&
+      b.last_time_ms == 50u);
+  assert(cnet_sctp_assoc_advance(&b, 150u, retry, sizeof(retry), &nr) ==
       CNET_SCTP_ASSOC_OK);
   assert(nr == na && memcmp(retry, shutdown_ack, na) == 0 &&
-      b.retransmits == 1u && b.deadline_ms == 307u);
-  assert(cnet_sctp_assoc_advance(&b, 307u, retry, sizeof(retry), &nr) ==
+      b.retransmits == 1u && b.deadline_ms == 350u);
+  assert(cnet_sctp_assoc_advance(&b, 350u, retry, sizeof(retry), &nr) ==
       CNET_SCTP_ASSOC_OK);
-  assert(b.retransmits == 2u && b.deadline_ms == 707u);
-  assert(cnet_sctp_assoc_advance(&b, 707u, retry, sizeof(retry), &nr) ==
+  assert(b.retransmits == 2u && b.deadline_ms == 750u);
+  assert(cnet_sctp_assoc_advance(&b, 750u, retry, sizeof(retry), &nr) ==
       CNET_SCTP_ASSOC_OK);
-  assert(b.retransmits == 3u && b.deadline_ms == 1107u);
-  assert(cnet_sctp_assoc_advance(&b, 1107u, retry, sizeof(retry), &nr) ==
+  assert(b.retransmits == 3u && b.deadline_ms == 1150u);
+  assert(cnet_sctp_assoc_advance(&b, 1150u, retry, sizeof(retry), &nr) ==
       CNET_SCTP_ASSOC_EXPIRED);
   assert(nr == 0u && b.state == CNET_SCTP_ASSOC_FAILED &&
       b.deadline_ms == 0u && b.saved_size == 0u);
