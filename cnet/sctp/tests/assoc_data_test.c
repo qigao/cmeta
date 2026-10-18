@@ -608,6 +608,54 @@ static void shutdown_pending_data_and_cumulative_ack(void) {
 /* A late peer DATA arriving while SHUTDOWN-SENT advances our receive TSN.
  * The T2 retransmitted SHUTDOWN must carry the updated cumulative value.
  * Output-capacity failure may not mutate the saved packet/deadline/clock. */
+/* A packet already in flight may contain multiple DATA chunks even
+ * after the local endpoint sent SHUTDOWN; it must still be admitted and
+ * cumulatively acknowledged while T2 is running. */
+static void shutdown_sent_accepts_bundled_data(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  const uint8_t payloads[2] = {'m', 'n'};
+  uint8_t shutdown[1200], packets[2][1200], combined[1200], sack[1200];
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk chunks[2];
+  cnet_sctp_data_message meta = {0};
+  uint8_t body[8] = {0};
+  size_t nshutdown = 0u, np[2] = {0u, 0u}, ncombined = 0u;
+  size_t nsack = 0u, nbody = 0u, i;
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_shutdown(&a, 6u, shutdown,
+      sizeof(shutdown), &nshutdown) == CNET_SCTP_ASSOC_OK);
+  assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+  for (i = 0u; i < 2u; ++i) {
+    assert(cnet_sctp_assoc_send_message(&b, 6u + i, 0u, 53u, 0,
+        &payloads[i], 1u, packets[i], sizeof(packets[i]), &np[i]) ==
+        CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_wire_decode(packets[i], np[i], &header, &decoder) ==
+        CNET_SCTP_WIRE_OK);
+    assert(header.chunk_count == 1u);
+    assert(cnet_sctp_wire_next_chunk(&decoder, &chunks[i]) ==
+        CNET_SCTP_WIRE_OK && chunks[i].type == 0u);
+  }
+  assert(cnet_sctp_wire_encode(b.config.local_port, b.config.remote_port,
+      b.peer_tag, chunks, 2u, combined, sizeof(combined), &ncombined) ==
+      CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_assoc_input(&a, 9u, combined, ncombined,
+      sack, sizeof(sack), &nsack) == CNET_SCTP_ASSOC_OK);
+  assert(shutdown_chunk_type(sack, nsack) == 3u &&
+      a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+      a.data.buffered_rx == 2u && a.data.cumulative_rx == cb.tsn + 1u);
+  for (i = 0u; i < 2u; ++i) {
+    assert(cnet_sctp_assoc_take_message(&a, &meta, body,
+        sizeof(body), &nbody) == CNET_SCTP_ASSOC_OK);
+    assert(nbody == 1u && body[0] == payloads[i]);
+  }
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void shutdown_t2_refreshes_cumulative(void) {
   cnet_sctp_assoc a, b;
   test_context ca = {0}, cb = {0};
@@ -905,6 +953,7 @@ int main(void) {
   shutdown_t2_retry_budget();
   shutdown_pending_data_and_cumulative_ack();
   shutdown_t2_refreshes_cumulative();
+  shutdown_sent_accepts_bundled_data();
   shutdown_received_waits_for_final_sack();
   shutdown_simultaneous();
   post_handshake_window_update();
