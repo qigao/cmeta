@@ -15,8 +15,8 @@ typedef struct fixture {
   cnet_sctp_data a, b;
   int admitted;
   uint32_t first;
-  uint8_t packet[8][CNET_SCTP_DATA_MTU];
-  size_t size[8];
+  uint8_t packet[12][CNET_SCTP_DATA_MTU];
+  size_t size[12];
 } fixture;
 
 static int owner(void *p) { return *(const int *)p; }
@@ -94,7 +94,7 @@ static void init(fixture *f, uint32_t first) {
 }
 static void send(fixture *f, unsigned int i, uint64_t now) {
   const uint8_t body = (uint8_t)i;
-  assert(i < 8u);
+  assert(i < 12u);
   assert(cnet_sctp_data_send(&f->a, now, 0u, 53u, 0, &body, 1u,
       f->packet[i], sizeof(f->packet[i]), &f->size[i]) == CNET_SCTP_DATA_OK);
 }
@@ -698,6 +698,42 @@ static void pending_priority_for_direct_and_pump(void) {
   finished(&f);
 }
 
+/* A T3 timeout starts a new loss epoch. A different TSN that was fast
+ * retransmitted in the old epoch must be eligible after the T3 barrier clears. */
+static void t3_resets_fast_retransmit_epoch(void) {
+  fixture f;
+  uint8_t out[CNET_SCTP_DATA_MTU], sack[CNET_SCTP_DATA_MTU];
+  size_t n, ns;
+  uint64_t due;
+  unsigned int i;
+  init(&f, 100u);
+  for (i = 0u; i < 6u; ++i) send(&f, i, 64u + i);
+  for (i = 3u; i < 6u; ++i) gap(&f, i, 80u + i * 2u);
+  assert(ticket(&f, 0u)->pending_retransmit);
+  assert(ticket(&f, 1u)->pending_retransmit);
+  assert(cnet_sctp_data_advance(&f.a, 95u, out, sizeof(out), &n) ==
+      CNET_SCTP_DATA_OK);
+  assert(n == f.size[0] && ticket(&f, 0u)->fast_retransmitted);
+  assert(cnet_sctp_data_advance(&f.a, 96u, out, sizeof(out), &n) ==
+      CNET_SCTP_DATA_OK);
+  assert(n == f.size[1] && ticket(&f, 1u)->fast_retransmitted);
+  due = f.a.t3_deadline_ms;
+  assert(cnet_sctp_data_advance(&f.a, due, out, sizeof(out), &n) ==
+      CNET_SCTP_DATA_OK);
+  assert(n == f.size[0] && f.a.t3_wait_ack);
+  assert(!ticket(&f, 1u)->fast_retransmitted);
+  ns = peer_sack(&f, f.first, 0u, 0u, sack);
+  ack(&f, due + 1u, sack, ns);
+  assert(!f.a.t3_wait_ack);
+  for (i = 6u; i < 9u; ++i) {
+    send(&f, i, due + 2u + i);
+    gap(&f, i, due + 3u + i * 2u);
+  }
+  assert(ticket(&f, 1u)->pending_retransmit);
+  assert_flight_invariant(&f.a);
+  finished(&f);
+}
+
 int main(int argc, char **argv) {
   static const struct { const char *name; void (*run)(void); } cases[] = {
     {"multi_tsn_fast_recovery", multi_tsn_fast_recovery},
@@ -706,6 +742,7 @@ int main(int argc, char **argv) {
     {"t3_capacity_then_sack", t3_capacity_then_sack},
     {"t3_preempts_pending_fast", t3_preempts_pending_fast},
     {"t3_ack_then_fresh_loss", t3_ack_then_fresh_loss},
+    {"t3_resets_fast_retransmit_epoch", t3_resets_fast_retransmit_epoch},
     {"duplicate_sack_no_false_fast", duplicate_sack_no_false_fast},
     {"reneging_reack_pending", reneging_reack_pending},
     {"multi_loss_single_cwnd_reduction", multi_loss_single_cwnd_reduction},
