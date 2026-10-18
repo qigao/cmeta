@@ -166,8 +166,12 @@ def main() -> int:
             fail(f"CMake object is missing; build target {args.target} first: {original_object}")
 
         token = hashlib.sha256(str(source).encode("utf-8")).hexdigest()[:12]
-        turbo_object = output_dir / f"{source.stem}-{token}-turbobuild.o"
-        turbo_depfile = output_dir / f"{source.stem}-{token}-turbobuild.d"
+        # Preserve the original object basename for archive member identity while
+        # separating same-named sources into unique subdirectories.
+        turbo_object = output_dir / "objects" / token / original_object.name
+        turbo_object.parent.mkdir(parents=True, exist_ok=True)
+        turbo_depfile = output_dir / "depfiles" / f"{source.stem}-{token}.d"
+        turbo_depfile.parent.mkdir(parents=True, exist_ok=True)
         action_argv = list(argv)
         replace_option_value(action_argv, "-o", str(turbo_object))
         replace_option_value(action_argv, "-MF", str(turbo_depfile))
@@ -219,6 +223,17 @@ def main() -> int:
         for dependency in target_json.get("dependencies", [])
         if isinstance(dependency, dict)
     ]
+    target_artifacts = []
+    for artifact in target_json.get("artifacts", []):
+        if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
+            artifact_path = Path(artifact["path"])
+            candidates = (
+                artifact_path if artifact_path.is_absolute() else build_dir / artifact_path,
+                artifact_path if artifact_path.is_absolute() else Path(target_paths.get("build", build_dir)) / artifact_path,
+            )
+            resolved_artifact = next((candidate.resolve() for candidate in candidates if candidate.exists()), candidates[0].resolve())
+            target_artifacts.append({"path": str(resolved_artifact), "reportedPath": artifact["path"]})
+
     report = {
         "schema": 1,
         "scope": "compile actions only; no archive/link action or complete dependency closure",
@@ -228,6 +243,7 @@ def main() -> int:
             "name": target_ref.get("name"),
             "id": target_ref.get("id"),
             "type": target_type,
+            "artifacts": target_artifacts,
             "sourceFiles": [str(path) for path in sorted(target_sources, key=str)],
             "dependencies": target_dependencies,
         },
