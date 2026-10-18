@@ -1113,6 +1113,9 @@ t3_due:
       if (d->tx[i].used) {
         d->tx[i].missing_reports = 0u;
         d->tx[i].pending_retransmit = 0u;
+        /* T3 begins a new loss epoch. A TSN fast-retransmitted in the old
+         * epoch may become eligible again after the T3 barrier is ACKed. */
+        d->tx[i].fast_retransmitted = 0u;
       }
   }
   d->ssthresh = d->cwnd / 2u;
