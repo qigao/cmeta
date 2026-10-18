@@ -2,6 +2,16 @@ name: TurboBuild pilot
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/turbo-build-pilot.yml'
+      - 'pilot/turbo-build/**'
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/turbo-build-pilot.yml'
+      - 'pilot/turbo-build/**'
 
 permissions:
   contents: read
