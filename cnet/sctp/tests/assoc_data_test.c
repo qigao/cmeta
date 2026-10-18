@@ -518,7 +518,8 @@ static void shutdown_no_inflight_and_t2(void) {
   assert(cnet_sctp_assoc_input(&b, 108u, retry, nr,
       complete, sizeof(complete), &nc) == CNET_SCTP_ASSOC_OK);
   assert(nc == na && memcmp(complete, ack, na) == 0 &&
-      b.deadline_ms == saved_deadline);
+      b.deadline_ms == saved_deadline + 1u);
+  saved_deadline = b.deadline_ms; /* duplicate SHUTDOWN restarted T2 */
   assert(cnet_sctp_assoc_input(&a, 109u, ack, na,
       complete, 10u, &nc) == CNET_SCTP_ASSOC_CAPACITY);
   assert(nc == 0u && a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
