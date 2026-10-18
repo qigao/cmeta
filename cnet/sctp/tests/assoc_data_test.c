@@ -831,6 +831,20 @@ static void shutdown_sent_bundles_gap_sack(void) {
       first, sizeof(first), &nfirst) == CNET_SCTP_ASSOC_OK);
   assert(a.state == CNET_SCTP_ASSOC_STOPPED &&
       b.state == CNET_SCTP_ASSOC_STOPPED);
+  /* Both DATA messages were accepted; drain the receive queue before
+   * asserting that the association owner can be destroyed. */
+  {
+    cnet_sctp_data_message meta = {0};
+    uint8_t payload[8] = {0};
+    size_t bytes = 0u;
+    assert(cnet_sctp_assoc_take_message(&a, &meta, payload,
+        sizeof(payload), &bytes) == CNET_SCTP_ASSOC_OK);
+    assert(bytes == 1u && payload[0] == payloads[1]);
+    assert(cnet_sctp_assoc_take_message(&a, &meta, payload,
+        sizeof(payload), &bytes) == CNET_SCTP_ASSOC_OK);
+    assert(bytes == 1u && payload[0] == payloads[0]);
+    assert(cnet_sctp_assoc_drained(&a) && cnet_sctp_assoc_drained(&b));
+  }
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
