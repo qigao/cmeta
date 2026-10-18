@@ -805,6 +805,8 @@ static void shutdown_received_waits_for_final_sack(void) {
       CNET_SCTP_ASSOC_OK && has_deadline && deadline > 11u);
   assert(cnet_sctp_assoc_input(&a, 12u, second, nsnd,
       sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 13u, sack, ns,
+      ack, sizeof(ack), &na) == CNET_SCTP_ASSOC_OK);
   /* The SHUTDOWN response to the second DATA cumulatively acknowledges
    * the last ticket. The peer must immediately answer with SHUTDOWN ACK;
    * waiting for a later timer advance would delay the RFC 9260 transition. */
