@@ -772,6 +772,69 @@ static void shutdown_t2_refreshes_cumulative(void) {
  * The SHUTDOWN cumulative TSN confirms only the first of two peer tickets;
  * a later real DATA/SACK exchange releases the second through the same Owner.
  */
+/* A SHUTDOWN-SENT endpoint that receives out-of-order DATA must bundle
+ * SHUTDOWN with the gap SACK. The peer must process both chunks atomically:
+ * the SACK retires the second ticket, while the missing first ticket remains
+ * in flight until its DATA arrives. */
+static void shutdown_sent_bundles_gap_sack(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  const uint8_t payloads[2] = {'a', 'b'};
+  uint8_t first[1200], second[1200], shutdown[1200];
+  uint8_t response[1200], ack[1200], complete[1200];
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk chunk = {0};
+  size_t nfirst = 0u, nsecond = 0u, nshutdown = 0u;
+  size_t nresponse = 0u, nack = 0u, ncomplete = 0u;
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_send_message(&b, 6u, 0u, 53u, 0,
+      &payloads[0], 1u, first, sizeof(first), &nfirst) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_send_message(&b, 7u, 0u, 53u, 0,
+      &payloads[1], 1u, second, sizeof(second), &nsecond) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_shutdown(&a, 8u, shutdown,
+      sizeof(shutdown), &nshutdown) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 9u, shutdown, nshutdown,
+      ack, sizeof(ack), &nack) == CNET_SCTP_ASSOC_OK);
+  assert(nack == 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED &&
+      b.data.in_flight == 2u);
+
+  /* Receive TSN+1 first. Its gap block cannot be represented by SHUTDOWN's
+   * cumulative TSN, so the response contains both SHUTDOWN and SACK. */
+  assert(cnet_sctp_assoc_input(&a, 10u, second, nsecond,
+      response, sizeof(response), &nresponse) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_wire_decode(response, nresponse, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK && header.chunk_count == 2u);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
+      chunk.type == 7u);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
+      chunk.type == 3u);
+  assert(cnet_sctp_assoc_input(&b, 11u, response, nresponse,
+      ack, sizeof(ack), &nack) == CNET_SCTP_ASSOC_OK);
+  assert(nack == 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED &&
+      b.data.in_flight == 1u);
+
+  /* The missing first TSN closes the gap. A plain SHUTDOWN now cumulatively
+   * acknowledges it and completes the close without waiting for T2. */
+  assert(cnet_sctp_assoc_input(&a, 12u, first, nfirst,
+      response, sizeof(response), &nresponse) == CNET_SCTP_ASSOC_OK);
+  assert(shutdown_chunk_type(response, nresponse) == 7u);
+  assert(cnet_sctp_assoc_input(&b, 13u, response, nresponse,
+      ack, sizeof(ack), &nack) == CNET_SCTP_ASSOC_OK);
+  assert(shutdown_chunk_type(ack, nack) == 8u &&
+      b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT &&
+      b.data.in_flight == 0u);
+  assert(cnet_sctp_assoc_input(&a, 14u, ack, nack,
+      complete, sizeof(complete), &ncomplete) == CNET_SCTP_ASSOC_OK);
+  assert(shutdown_chunk_type(complete, ncomplete) == 14u);
+  assert(cnet_sctp_assoc_input(&b, 15u, complete, ncomplete,
+      first, sizeof(first), &nfirst) == CNET_SCTP_ASSOC_OK);
+  assert(a.state == CNET_SCTP_ASSOC_STOPPED &&
+      b.state == CNET_SCTP_ASSOC_STOPPED);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void shutdown_received_waits_for_final_sack(void) {
   cnet_sctp_assoc a, b;
   test_context ca = {0}, cb = {0};
