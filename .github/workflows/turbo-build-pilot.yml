@@ -133,9 +133,13 @@ jobs:
             --source-root "$GITHUB_WORKSPACE" \
             --build-dir "$GITHUB_WORKSPACE/build/cmake-platform-graph" \
             --target cmeta_platform
+          python3 pilot/turbo-build/append_cmake_archive_action.py \
+            --source-root "$GITHUB_WORKSPACE" \
+            --build-dir "$GITHUB_WORKSPACE/build/cmake-platform-graph" \
+            --target cmeta_platform
           "$TURBO_BUILD_CLI" validate build/cmake-platform-graph/turbo-build-qualification/buildfile.json
 
-      - name: Rebuild every platform compile action through TurboBuild and compare object hashes
+      - name: Rebuild Salts platform objects and archive through TurboBuild
         shell: bash
         env:
           TURBO_BUILD_CLI: ${{ steps.turbo-build.outputs.cli-path }}
@@ -161,8 +165,21 @@ jobs:
               lines.append(f"{entry['source']}\n  CMake:      {original_hash}\n  TurboBuild: {rebuilt_hash}")
               if original_hash != rebuilt_hash:
                   raise SystemExit(f"object fingerprint mismatch for {entry['source']}")
+
+          archive = report.get("archive")
+          if not archive:
+              raise SystemExit("exporter did not record archive command metadata")
+          cmake_archive = Path(archive["cmakeArchive"])
+          turbo_archive = Path(archive["turboBuildArchive"])
+          if not cmake_archive.is_file() or not turbo_archive.is_file():
+              raise SystemExit(f"missing archive: CMake={cmake_archive} TurboBuild={turbo_archive}")
+          cmake_archive_hash = hashlib.sha256(cmake_archive.read_bytes()).hexdigest()
+          turbo_archive_hash = hashlib.sha256(turbo_archive.read_bytes()).hexdigest()
+          lines.append(f"ARCHIVE {cmake_archive.name}\n  CMake:      {cmake_archive_hash}\n  TurboBuild: {turbo_archive_hash}")
+          if cmake_archive_hash != turbo_archive_hash:
+              raise SystemExit(f"archive fingerprint mismatch: CMake={cmake_archive_hash} TurboBuild={turbo_archive_hash}")
           Path(sys.argv[2]).write_text("\n".join(lines) + "\n", encoding="utf-8")
-          print(f"All {len(lines)} platform object hashes match.")
+          print(f"All {len(report['compileCommands'])} platform object hashes and the static archive hash match.")
           PYTHON
 
       - name: Upload pilot evidence
