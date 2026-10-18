@@ -9,5 +9,5 @@ int main(void)
 
 int salts_turbo_build_probe_value(void)
 {
-    return 23 * 2;
+    return 23 * SALTS_TURBO_BUILD_PROBE_MULTIPLIER;
 }

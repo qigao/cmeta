@@ -69,6 +69,14 @@ jobs:
           test "$(sha256sum build/cmake-output.txt | cut -d ' ' -f1)" = "$(sha256sum build/turbo-output.txt | cut -d ' ' -f1)"
           cat build/output-sha256.txt
 
+      - name: Qualify conservative incremental behavior and failure propagation
+        shell: bash
+        env:
+          TURBO_BUILD_CLI: ${{ steps.turbo-build.outputs.cli-path }}
+        run: |
+          set -euo pipefail
+          bash pilot/turbo-build/qualify.sh "$TURBO_BUILD_CLI"
+
       - name: Upload pilot evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -83,3 +91,4 @@ jobs:
             build/turbo-output.txt
             build/output-sha256.txt
             build/turbo-build-pilot/state.bin
+            build/turbo-build-qualification/**

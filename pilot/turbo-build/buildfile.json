@@ -3,8 +3,9 @@
   "actions": [
     {
       "name": "compile-probe",
-      "executable": "cc",
+      "executable": "bash",
       "args": [
+        "pilot/turbo-build/compiler-wrapper.sh",
         "-std=c11",
         "-Wall",
         "-Wextra",
@@ -19,12 +20,13 @@
       "cwd": ".",
       "inputs": [
         "pilot/turbo-build/probe.c",
-        "pilot/turbo-build/probe.h"
+        "pilot/turbo-build/probe.h",
+        "pilot/turbo-build/compiler-wrapper.sh"
       ],
       "outputs": [
         "build/turbo-build-pilot/probe"
       ],
-      "toolchain": "ubuntu-latest-cc-c11-pilot",
+      "toolchain": "ubuntu-24.04-cc-c11-pilot",
       "inputs_complete": false,
       "environment_complete": false,
       "toolchain_complete": false,
