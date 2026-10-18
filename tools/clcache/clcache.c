@@ -1380,8 +1380,11 @@ static UINT64 HashCompilerEnvironment(struct string Invocation)
 	UINT64 Hash = XXH3_64bits(Invocation.Data, Invocation.Length * sizeof(WCHAR));
 	const LPCWSTR Names[] = {
 		L"INCLUDE", L"EXTERNAL_INCLUDE", L"CL", L"_CL_",
-		L"VCToolsInstallDir", L"VSCMD_VER", L"WindowsSDKVersion",
-		L"SOURCE_DATE_EPOCH"
+		L"VCToolsInstallDir", L"VCToolsVersion",
+		L"VSINSTALLDIR", L"VisualStudioVersion", L"VSCMD_VER",
+		L"VSCMD_ARG_HOST_ARCH", L"VSCMD_ARG_TGT_ARCH",
+		L"WindowsSdkDir", L"WindowsSDKVersion", L"WindowsSDKLibVersion",
+		L"UniversalCRTSdkDir", L"UCRTVersion", L"SOURCE_DATE_EPOCH"
 	};
 	WCHAR Value[MAX_COMMAND_LINE_LENGTH];
 	for(size_t i = 0; i < ARRAYSIZE(Names); ++i)
