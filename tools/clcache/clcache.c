@@ -2263,8 +2263,8 @@ static int CacheMain(int argc, LPWSTR* argv)
 
         // CacheUpToDate appends a dependency suffix before returning. Restore
         // the key terminator so the diagnostic identifies the key directory.
-        CachePathBuffer->Data[CachePathBuffer->Used] = '\0';
-        TraceCacheMiss(CachePathBuffer->Data, g_CacheMissReason, g_CacheMissPath);
+        CachePathBuffer.Data[CachePathBuffer.Used] = '\0';
+        TraceCacheMiss(CachePathBuffer.Data, g_CacheMissReason, g_CacheMissPath);
         WriteStderr(CSTR("clcache: MISS\n"));
       }
       return InvokeCompiler(CmdLine, &Command, &CachePathBuffer, &Arena);
