@@ -306,15 +306,19 @@ cnet_sctp_data_status cnet_sctp_data_send_bundle(cnet_sctp_data *d,
   cnet_sctp_data staged;
   uint8_t singles[CNET_SCTP_DATA_BUNDLE_MAX][CNET_SCTP_DATA_MTU];
   cnet_sctp_wire_chunk chunks[CNET_SCTP_DATA_BUNDLE_MAX];
-  size_t i, packet_cap;
+  size_t i, packet_cap, retained_tx = 0u;
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!items || !output || !written || count == 0u)
     return CNET_SCTP_DATA_INVALID;
   *written = 0u;
   if (count > CNET_SCTP_DATA_BUNDLE_MAX) return CNET_SCTP_DATA_CAPACITY;
-  if (count > CNET_SCTP_DATA_TX_SLOTS - d->tx_count ||
-      d->in_flight > d->config.peer_receive_window ||
-      count > d->config.peer_receive_window - d->in_flight)
+  /* Retained tickets are the source of truth; there is intentionally no
+   * shadow tx_count counter that could drift after SACK reneging/cleanup.
+   * The staged ordinary send path below separately enforces byte rwnd and
+   * congestion-window admission for each actual DATA chunk. */
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+    if (d->tx[i].used) ++retained_tx;
+  if (count > CNET_SCTP_DATA_TX_SLOTS - retained_tx)
     return CNET_SCTP_DATA_CAPACITY;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
   memcpy(&staged, d, sizeof(staged));
