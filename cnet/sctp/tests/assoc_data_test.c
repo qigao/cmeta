@@ -805,19 +805,16 @@ static void shutdown_received_waits_for_final_sack(void) {
       CNET_SCTP_ASSOC_OK && has_deadline && deadline > 11u);
   assert(cnet_sctp_assoc_input(&a, 12u, second, nsnd,
       sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 13u, sack, ns,
-      ack, sizeof(ack), &na) == CNET_SCTP_ASSOC_OK);
-  assert(b.data.in_flight == 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED);
-  assert(cnet_sctp_assoc_next_deadline(&b, &deadline, &has_deadline) ==
-      CNET_SCTP_ASSOC_OK && has_deadline && deadline == b.last_time_ms);
-  assert(cnet_sctp_assoc_advance(&b, 14u, ack,
-      sizeof(ack), &na) == CNET_SCTP_ASSOC_OK);
-  assert(shutdown_chunk_type(ack, na) == 8u &&
+  /* The SHUTDOWN response to the second DATA cumulatively acknowledges
+   * the last ticket. The peer must immediately answer with SHUTDOWN ACK;
+   * waiting for a later timer advance would delay the RFC 9260 transition. */
+  assert(b.data.in_flight == 0u &&
       b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT);
-  assert(cnet_sctp_assoc_input(&a, 15u, ack, na,
+  assert(shutdown_chunk_type(ack, na) == 8u);
+  assert(cnet_sctp_assoc_input(&a, 14u, ack, na,
       complete, sizeof(complete), &nc) == CNET_SCTP_ASSOC_OK);
   assert(shutdown_chunk_type(complete, nc) == 14u);
-  assert(cnet_sctp_assoc_input(&b, 16u, complete, nc,
+  assert(cnet_sctp_assoc_input(&b, 15u, complete, nc,
       first, sizeof(first), &nf) == CNET_SCTP_ASSOC_OK);
   assert(a.state == CNET_SCTP_ASSOC_STOPPED &&
       b.state == CNET_SCTP_ASSOC_STOPPED);
