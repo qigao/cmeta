@@ -753,6 +753,59 @@ static cnet_sctp_assoc_status handle_shutdown_sent_data(
   return CNET_SCTP_ASSOC_OK;
 }
 
+/* A SHUTDOWN response may carry a SACK when gaps/duplicates prevent
+ * its cumulative TSN from describing all received DATA (RFC 9260 §9.2).
+ * Stage both chunks as one transaction: apply SHUTDOWN first, then admit the
+ * trailing SACK only if that transition leaves the association in a state
+ * where SACK is legal. */
+static cnet_sctp_assoc_status handle_shutdown_sack_bundle(
+    cnet_sctp_assoc *s, uint64_t now, const cnet_sctp_wire_header *header,
+    const cnet_sctp_wire_chunk *shutdown_chunk,
+    const cnet_sctp_wire_chunk *sack_chunk, uint8_t *out, size_t cap,
+    size_t *written) {
+  cnet_sctp_assoc staged;
+  cnet_sctp_wire_chunk sack_only;
+  uint8_t sack_packet[CNET_SCTP_DATA_MTU], data_reply[CNET_SCTP_DATA_MTU];
+  size_t sack_size = 0u, reply_size = 0u;
+  cnet_sctp_wire_status ws;
+  cnet_sctp_assoc_status status;
+  if (!s->data_ready || sack_chunk->type != 3u ||
+      (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED))
+    return CNET_SCTP_ASSOC_PROTOCOL;
+  memcpy(&staged, s, sizeof(staged));
+  status = handle_shutdown(&staged, now, header, shutdown_chunk,
+      data_reply, sizeof(data_reply), &reply_size);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  /* If SHUTDOWN already drained the association, the trailing SACK is no
+   * longer actionable in ACK-SENT. Otherwise the transition must have put
+   * us in SHUTDOWN-RECEIVED before SACK processing. */
+  if (staged.state == CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED) {
+    sack_only = *sack_chunk;
+    ws = cnet_sctp_wire_encode(staged.config.remote_port,
+        staged.config.local_port, staged.local_tag, &sack_only, 1u,
+        sack_packet, sizeof(sack_packet), &sack_size);
+    if (ws != CNET_SCTP_WIRE_OK)
+      return ws == CNET_SCTP_WIRE_CAPACITY ?
+          CNET_SCTP_ASSOC_CAPACITY : CNET_SCTP_ASSOC_PROTOCOL;
+    status = data_result(cnet_sctp_data_input(&staged.data, now,
+        sack_packet, sack_size, data_reply, sizeof(data_reply), &reply_size));
+    if (status != CNET_SCTP_ASSOC_OK) return status;
+    if (cnet_sctp_data_outbound_drained(&staged.data)) {
+      status = begin_shutdown_control(&staged, now, 1,
+          data_reply, sizeof(data_reply), &reply_size);
+      if (status != CNET_SCTP_ASSOC_OK) return status;
+    }
+  }
+  if (reply_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+  if (reply_size != 0u) memcpy(out, data_reply, reply_size);
+  *written = reply_size;
+  memcpy(s, &staged, sizeof(staged));
+  return CNET_SCTP_ASSOC_OK;
+}
+
 cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     uint64_t now, const uint8_t *packet, size_t packet_size,
     uint8_t *output, size_t cap, size_t *written) {
@@ -782,6 +835,12 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     if (cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
         !valid_cookie_echo_error(&second))
       return CNET_SCTP_ASSOC_PROTOCOL;
+  } else if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_SHUTDOWN) {
+    if (cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
+        second.type != 3u || second.flags != 0u || second.value_size < 12u)
+      return CNET_SCTP_ASSOC_PROTOCOL;
+    return handle_shutdown_sack_bundle(s, now, &header, &chunk, &second,
+        output, cap, written);
   } else if (header.chunk_count > 1u &&
              chunk.type != 0u && chunk.type != 3u) {
     /* No arbitrary control chunks can be bundled with INIT, Cookie,
