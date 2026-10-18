@@ -44,6 +44,59 @@ Assert-Log $hot 'including file:' 'Ninja dependency lines (hit)'
 $hash2 = (Get-FileHash -LiteralPath $obj -Algorithm SHA256).Hash
 if ($hash1 -ne $hash2) { throw 'Cached object differs from original object' }
 
+# Supported response files expand to the same ordered compiler arguments.
+# Matching arguments must share the direct invocation's cache entry even when
+# the response-file path itself contains spaces.
+$response = Join-Path $dir 'probe args.rsp'
+function Write-ResponseFile([bool] $withExtraDefine) {
+    $rspArgs = @(
+        '/nologo',
+        '/c',
+        '/TC',
+        '/Z7',
+        ('/I"' + $dir + '"'),
+        ('/Fo"' + $obj + '"'),
+        ('/Fd"' + $dir + '\\' + '"'),
+        '/FS',
+        '/showIncludes',
+        ('"' + $source + '"')
+    )
+    if ($withExtraDefine) {
+        $rspArgs = @('/DCLCACHE_RESPONSE_FILE_KEY=1') + $rspArgs
+    }
+    [System.IO.File]::WriteAllLines($response, [string[]]$rspArgs, $utf8)
+}
+function Compile-Response([bool] $expectSuccess) {
+    $responseArg = '@' + $response
+    $logLines = @(& $cache $compiler $responseArg 2>&1)
+    $code = $LASTEXITCODE
+    $output = ($logLines | Out-String)
+    if ($expectSuccess -and $code -ne 0) { throw ('MSVC response-file probe failed: exit ' + $code + ' ' + $output) }
+    if (!$expectSuccess -and $code -eq 0) { throw ('MSVC response-file probe unexpectedly succeeded: ' + $output) }
+    return $output
+}
+
+Write-ResponseFile $false
+Remove-Item -LiteralPath $obj -Force
+$responseHit = Compile-Response $true
+Assert-Log $responseHit 'clcache: HIT' 'Equivalent response-file command'
+Assert-Log $responseHit 'including file:' 'Ninja dependency lines (response-file hit)'
+$responseHash = (Get-FileHash -LiteralPath $obj -Algorithm SHA256).Hash
+if ($hash1 -ne $responseHash) { throw 'Response-file replay changed object bytes' }
+
+Write-ResponseFile $true
+Remove-Item -LiteralPath $obj -Force
+$responseMiss = Compile-Response $true
+Assert-Log $responseMiss 'clcache: MISS' 'Response-file argument cache key'
+$responseChangedHash = (Get-FileHash -LiteralPath $obj -Algorithm SHA256).Hash
+
+Write-ResponseFile $false
+Remove-Item -LiteralPath $obj -Force
+$responseRestored = Compile-Response $true
+Assert-Log $responseRestored 'clcache: HIT' 'Original response-file key restored'
+$responseRestoredHash = (Get-FileHash -LiteralPath $obj -Algorithm SHA256).Hash
+if ($hash1 -ne $responseRestoredHash) { throw 'Restored response-file replay changed object bytes' }
+
 # Toolchain identity is more than the cl.exe file version. Relevant Visual
 # Studio / Windows SDK environment values must participate in the cache key.
 $originalVCToolsVersion = [Environment]::GetEnvironmentVariable('VCToolsVersion', 'Process')
