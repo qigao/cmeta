@@ -154,6 +154,8 @@ WCHAR               g_ConfigFilePath[MAX_PATH];
 
 struct cache_config g_Config;
 BOOL g_VolatileMacroSeen;
+static const char* g_CacheMissReason;
+static LPCWSTR g_CacheMissPath;
 
 /*
  * Helpers
@@ -1698,8 +1700,24 @@ static BOOL ValidDepFile(LPCWSTR Path, struct memory_arena* Arena)
 	return Valid;
 }
 
+static void SetCacheMissReason(struct memory_arena* Arena, const char* Reason, LPCWSTR Path)
+{
+  g_CacheMissReason = Reason;
+  g_CacheMissPath = NULL;
+  if(Path)
+  {
+    size_t Length = lstrlenW(Path);
+    WCHAR* Copy = PushMem(Arena, (Length + 1) * sizeof(WCHAR));
+    CopyMemory(Copy, Path, Length * sizeof(WCHAR));
+    Copy[Length] = '\0';
+    g_CacheMissPath = Copy;
+  }
+}
+
 static BOOL CacheUpToDate(const struct cl_command_info* Command, struct string_buffer* CachePathBuffer, struct memory_arena* Arena)
 {
+  g_CacheMissReason = "missing_dependency_manifest";
+  g_CacheMissPath = NULL;
 	struct string CachePath = MakeString(CachePathBuffer->Data, CachePathBuffer->Used);
 	(void)CachePath;
 	ASSERT(CachePath.Length > 0);
@@ -1711,8 +1729,16 @@ static BOOL CacheUpToDate(const struct cl_command_info* Command, struct string_b
 
 	CachePathBuffer->Used = CachePathLength; // Reset here already. The buffer is not used anymore so the pushed data stays valid.
 
-	if(!FileExists(DepFilePath) || !ValidDepFile(DepFilePath, Arena))
-		return FALSE;
+	if(!FileExists(DepFilePath))
+  {
+    SetCacheMissReason(Arena, "missing_dependency_manifest", DepFilePath);
+    return FALSE;
+  }
+  if(!ValidDepFile(DepFilePath, Arena))
+  {
+    SetCacheMissReason(Arena, "invalid_dependency_manifest", DepFilePath);
+    return FALSE;
+  }
 
 	struct dependency_info Deps = ReadDepFile(DepFilePath, Arena);
 	BOOL UpdateDepFile = FALSE;
@@ -1757,31 +1783,43 @@ static BOOL CacheUpToDate(const struct cl_command_info* Command, struct string_b
 		UINT64 Size;
 		UINT64 LastModified;
 
-		if(FilePath.Length == 0 || !GetFileSizeLastModified(FilePath.Data, &Size, &LastModified))
-			return FALSE;
-		{
-			if(Size == Deps.Entries[DepIndex].Size)
+		if(FilePath.Length == 0)
+    {
+      SetCacheMissReason(Arena, "dependency_not_resolved", NULL);
+      return FALSE;
+    }
+    if(!GetFileSizeLastModified(FilePath.Data, &Size, &LastModified))
+    {
+      SetCacheMissReason(Arena, "dependency_missing", FilePath.Data);
+      return FALSE;
+    }
+    {
+      if(Size == Deps.Entries[DepIndex].Size)
 			{
 				if(LastModified != Deps.Entries[DepIndex].LastModified)
 				{
 					UINT64 Hash = HashFileContent(FilePath.Data, Arena);
 
 					if(Hash != Deps.Entries[DepIndex].Hash)
-						return FALSE;
+          {
+            SetCacheMissReason(Arena, "dependency_content_changed", FilePath.Data);
+            return FALSE;
+          }
 
 					// Update dependency file if timestamp has changed but the content is the same
 					Deps.Entries[DepIndex].LastModified = LastModified;
 					UpdateDepFile = TRUE;
 				}
 			}
-			else
-			{
-				return FALSE;
-			}
-		}
-	}
+      else
+      {
+        SetCacheMissReason(Arena, "dependency_size_changed", FilePath.Data);
+        return FALSE;
+      }
+    }
+  }
 
-	// Do not rewrite the published dependency manifest on cache hits.
+  // Do not rewrite the published dependency manifest on cache hits.
 	// A changed timestamp with identical contents is safe to rehash next time.
 	(void)UpdateDepFile;
 	return TRUE;
@@ -1942,8 +1980,33 @@ static BOOL AtomicWriteCacheDeps(LPCWSTR Target, const struct dependency_info* D
 
 static BOOL CacheTraceEnabled(void)
 {
-	WCHAR Value[4] = {0};
-	return GetEnvironmentVariableW(L"CLCACHE_TRACE", Value, ARRAYSIZE(Value)) > 0 && Value[0] == '1';
+  WCHAR Value[4] = {0};
+  return GetEnvironmentVariableW(L"CLCACHE_TRACE", Value, ARRAYSIZE(Value)) > 0 && Value[0] == '1';
+}
+
+static void TraceWidePath(LPCWSTR Path)
+{
+  char Utf8[MAX_PATH * 4];
+  int Length = WideCharToMultiByte(CP_UTF8, 0, Path, -1, Utf8, ARRAYSIZE(Utf8), NULL, FALSE);
+  if(Length > 1)
+    WriteStderr(MakeCString(Utf8, (size_t)Length - 1));
+}
+
+static void TraceCacheMiss(LPCWSTR CacheKeyPath, const char* Reason, LPCWSTR ReasonPath)
+{
+  if(!CacheTraceEnabled())
+    return;
+
+  WriteStderr(CSTR("clcache: MISS_REASON="));
+  WriteStderr(StringFromChar(Reason ? Reason : "unknown"));
+  if(ReasonPath)
+  {
+    WriteStderr(CSTR(" path="));
+    TraceWidePath(ReasonPath);
+  }
+  WriteStderr(CSTR("\nclcache: MISS_KEY="));
+  TraceWidePath(CacheKeyPath);
+  WriteStderr(CSTR("\n"));
 }
 
 static int InvokeCompiler(LPWSTR CmdLine, const struct cl_command_info* Command, struct string_buffer* CachePathBuffer, struct memory_arena* Arena)
@@ -2189,12 +2252,23 @@ static int CacheMain(int argc, LPWSTR* argv)
 				WriteStderr(CSTR("clcache: HIT\n"));
 			return 0;
 		}
-		else
-		{
-			if(CacheTraceEnabled())
-				WriteStderr(CSTR("clcache: MISS\n"));
-			return InvokeCompiler(CmdLine, &Command, &CachePathBuffer, &Arena);
-		}
+    else
+    {
+      if(CacheTraceEnabled())
+      {
+        if(g_VolatileMacroSeen)
+          SetCacheMissReason(&Arena, "volatile_macro_in_input", Command.SrcFile.Data);
+        else if(!g_CacheMissReason)
+          SetCacheMissReason(&Arena, "cache_miss", NULL);
+
+        // CacheUpToDate appends a dependency suffix before returning. Restore
+        // the key terminator so the diagnostic identifies the key directory.
+        CachePathBuffer->Data[CachePathBuffer->Used] = '\0';
+        TraceCacheMiss(CachePathBuffer->Data, g_CacheMissReason, g_CacheMissPath);
+        WriteStderr(CSTR("clcache: MISS\n"));
+      }
+      return InvokeCompiler(CmdLine, &Command, &CachePathBuffer, &Arena);
+    }
 	}
 	else // Uncacheable so pass command line directly to cl.exe
 	{
