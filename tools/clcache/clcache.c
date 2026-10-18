@@ -883,6 +883,93 @@ static void WriteDataToFile(LPCWSTR Path, const void* Data, size_t Size)
 }
 
 /*
+ * Response files
+ *
+ * MSVC command files are an ordered sequence of compiler arguments. Parse the
+ * supported encodings and expand them before analyzing the command, so both
+ * the cache key and the compiler invocation describe the same arguments.
+ * Unsupported encodings, oversized files, and nested @files fall through to
+ * the original command line.
+ */
+#define MAX_RESPONSE_FILE_SIZE MEGABYTES(4)
+
+static BOOL ReadResponseFile(LPCWSTR Path, struct memory_arena* Arena, LPWSTR* Content)
+{
+	HANDLE File = CreateFileW(Path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	if(File == INVALID_HANDLE_VALUE)
+		return FALSE;
+
+	LARGE_INTEGER FileSize;
+	if(!GetFileSizeEx(File, &FileSize) || FileSize.QuadPart < 0 ||
+	   FileSize.QuadPart > MAX_RESPONSE_FILE_SIZE)
+	{
+		CloseHandle(File);
+		return FALSE;
+	}
+
+	size_t ByteCount = (size_t)FileSize.QuadPart;
+	BYTE* Bytes = PushMem(Arena, ByteCount + 1);
+	DWORD BytesRead = 0;
+	BOOL ReadOK = ReadFile(File, Bytes, (DWORD)ByteCount, &BytesRead, NULL);
+	CloseHandle(File);
+	if(!ReadOK || BytesRead != (DWORD)ByteCount)
+		return FALSE;
+
+	if(ByteCount >= 2 && Bytes[0] == 0xFF && Bytes[1] == 0xFE)
+	{
+		size_t PayloadBytes = ByteCount - 2;
+		if(PayloadBytes % sizeof(WCHAR) != 0)
+			return FALSE;
+
+		size_t WideLength = PayloadBytes / sizeof(WCHAR);
+		LPWSTR Wide = PushMem(Arena, (WideLength + 1) * sizeof(WCHAR));
+		CopyMemory(Wide, Bytes + 2, PayloadBytes);
+		Wide[WideLength] = L'\\0';
+		for(size_t i = 0; i < WideLength; ++i)
+			if(Wide[i] == L'\\0')
+				return FALSE;
+
+		*Content = Wide;
+		return TRUE;
+	}
+
+	if(ByteCount >= 2 && Bytes[0] == 0xFE && Bytes[1] == 0xFF)
+		return FALSE; // UTF-16 big-endian is not a supported MSVC command-file encoding.
+
+	BOOL HasUtf8Bom = ByteCount >= 3 && Bytes[0] == 0xEF && Bytes[1] == 0xBB && Bytes[2] == 0xBF;
+	size_t Offset = HasUtf8Bom ? 3 : 0;
+	int ByteLength = (int)(ByteCount - Offset);
+	UINT CodePage = CP_UTF8;
+	DWORD Flags = MB_ERR_INVALID_CHARS;
+	int WideLength = ByteLength == 0 ? 0 :
+		MultiByteToWideChar(CodePage, Flags, (LPCCH)(Bytes + Offset), ByteLength, NULL, 0);
+
+	if(ByteLength > 0 && WideLength == 0 && !HasUtf8Bom)
+	{
+		// MSVC also accepts command files written in the active Windows code page.
+		CodePage = CP_ACP;
+		Flags = 0;
+		WideLength = MultiByteToWideChar(CodePage, Flags, (LPCCH)Bytes, (int)ByteCount, NULL, 0);
+	}
+
+	if(ByteLength > 0 && WideLength == 0)
+		return FALSE;
+
+	LPWSTR Wide = PushMem(Arena, ((size_t)WideLength + 1) * sizeof(WCHAR));
+	if(WideLength > 0 &&
+	   MultiByteToWideChar(CodePage, Flags, (LPCCH)(Bytes + Offset), ByteLength, Wide, WideLength) != WideLength)
+		return FALSE;
+
+	Wide[WideLength] = L'\\0';
+	for(int i = 0; i < WideLength; ++i)
+		if(Wide[i] == L'\\0')
+			return FALSE;
+
+	*Content = Wide;
+	return TRUE;
+}
+
+/*
  * Configuration
  */
 
@@ -1289,6 +1376,113 @@ static BOOL BuildCommandInfo(int argc, LPWSTR* argv, struct cl_command_info* Com
 	NormalizePaths(Command->ExternalIncludePaths, Arena);
 	NormalizePaths(Command->SystemIncludePaths, Arena);
 
+	return TRUE;
+}
+
+static BOOL ExpandResponseFiles(int argc, LPWSTR* argv, struct memory_arena* Arena,
+                                int* ExpandedArgc, LPWSTR** ExpandedArgv)
+{
+	BOOL HasResponseFile = FALSE;
+	for(int i = 2; i < argc; ++i)
+	{
+		if(argv[i][0] == '@' && argv[i][1] != L'\\0')
+		{
+			HasResponseFile = TRUE;
+			break;
+		}
+	}
+
+	if(!HasResponseFile)
+	{
+		*ExpandedArgc = argc;
+		*ExpandedArgv = argv;
+		return TRUE;
+	}
+
+	LPWSTR* Expanded = PushMem(Arena, (size_t)MAX_COMMAND_LINE_LENGTH * sizeof(LPWSTR));
+	size_t Count = 0;
+	Expanded[Count++] = argv[0];
+	Expanded[Count++] = argv[1];
+
+	for(int i = 2; i < argc; ++i)
+	{
+		if(argv[i][0] != '@' || argv[i][1] == L'\\0')
+		{
+			if(Count >= MAX_COMMAND_LINE_LENGTH)
+				return FALSE;
+			Expanded[Count++] = argv[i];
+			continue;
+		}
+
+		LPWSTR ResponseText = NULL;
+		if(!ReadResponseFile(argv[i] + 1, Arena, &ResponseText))
+			return FALSE;
+
+		while(IsWhitespace(*ResponseText))
+			++ResponseText;
+		if(*ResponseText == L'\\0')
+			continue;
+
+		int ResponseArgc = 0;
+		LPWSTR* ResponseArgv = CommandLineToArgvW(ResponseText, &ResponseArgc);
+		if(!ResponseArgv || ResponseArgc <= 0)
+		{
+			if(ResponseArgv)
+				LocalFree(ResponseArgv);
+			return FALSE;
+		}
+
+		for(int j = 0; j < ResponseArgc; ++j)
+		{
+			struct string Arg = StringFromWchar(ResponseArgv[j]);
+			for(size_t k = 0; k < Arg.Length; ++k)
+			{
+				// A quote spanning physical lines is outside the qualified command-file subset.
+				if(Arg.Data[k] == L'\\r' || Arg.Data[k] == L'\\n')
+				{
+					LocalFree(ResponseArgv);
+					return FALSE;
+				}
+			}
+
+			if(Arg.Length > 0 && Arg.Data[0] == '@')
+			{
+				// Microsoft CL command files cannot nest another @file.
+				LocalFree(ResponseArgv);
+				return FALSE;
+			}
+
+			if(Count >= MAX_COMMAND_LINE_LENGTH)
+			{
+				LocalFree(ResponseArgv);
+				return FALSE;
+			}
+
+			LPWSTR Copy = PushMem(Arena, (Arg.Length + 1) * sizeof(WCHAR));
+			CopyMemory(Copy, Arg.Data, Arg.Length * sizeof(WCHAR));
+			Copy[Arg.Length] = L'\\0';
+			Expanded[Count++] = Copy;
+		}
+
+		LocalFree(ResponseArgv);
+	}
+
+	// A direct CreateProcess command line still has the Windows 32K-character
+	// limit. Keep larger responses on the original @file execution path.
+	size_t EstimatedLength = 0;
+	for(size_t i = 1; i < Count; ++i)
+	{
+		size_t Length = lstrlenW(Expanded[i]);
+		if(Length > (MAX_COMMAND_LINE_LENGTH - 32) / 2)
+			return FALSE;
+		size_t Addition = Length * 2 + 4;
+		if(EstimatedLength > MAX_COMMAND_LINE_LENGTH - 32 - Addition)
+			return FALSE;
+		EstimatedLength += Addition;
+	}
+
+	*ExpandedArgc = (int)Count;
+	*ExpandedArgv = Expanded;
 	return TRUE;
 }
 
@@ -2153,8 +2347,11 @@ static int CacheMain(int argc, LPWSTR* argv)
 
 	struct cl_command_info Command;
 	struct memory_arena Arena = CreateMemory(MEGABYTES(128));
+	int EffectiveArgc = argc;
+	LPWSTR* EffectiveArgv = argv;
 
-	if(BuildCommandInfo(argc, argv, &Command, &Arena))
+	if(ExpandResponseFiles(argc, argv, &Arena, &EffectiveArgc, &EffectiveArgv) &&
+	   BuildCommandInfo(EffectiveArgc, EffectiveArgv, &Command, &Arena))
 	{
 #if 0
 		WriteStdout(FileNameWithoutPath(Command.SrcFile));
@@ -2162,7 +2359,7 @@ static int CacheMain(int argc, LPWSTR* argv)
 #endif
 
 		struct string CompilerFlags;
-		LPWSTR CmdLine = BuildCommandLine(argc, argv, &Command, &Arena, &CompilerFlags);
+		LPWSTR CmdLine = BuildCommandLine(EffectiveArgc, EffectiveArgv, &Command, &Arena, &CompilerFlags);
 		struct string_buffer CachePathBuffer = BuildCachePath(&Command, &Arena, CompilerFlags);
 
 		if(!g_VolatileMacroSeen && CacheUpToDate(&Command, &CachePathBuffer, &Arena))
