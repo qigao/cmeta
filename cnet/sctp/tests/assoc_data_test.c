@@ -1004,6 +1004,44 @@ static void post_cookie_bundled_data(void) {
 }
 
 
+/* RFC 9260 §9.2 optional T5 is absolute, not a T2 retry deadline.
+ * Repeated T2 retries cannot extend it; output-capacity refusal is atomic. */
+static void shutdown_t5_absolute_guard(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  uint8_t shutdown[1200], retry[1200];
+  size_t ns = 0u, nr = 0u;
+  uint64_t deadline = 0u;
+  int has_deadline = 0;
+  ready_pair(&a, &b, &ca, &cb);
+  a.config.t5_shutdown_guard_ms = 250u;
+  assert(cnet_sctp_assoc_shutdown(&a, 6u, shutdown,
+      sizeof(shutdown), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+      a.t5_shutdown_deadline_ms == 256u);
+  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
+      CNET_SCTP_ASSOC_OK && has_deadline && deadline == 106u);
+  assert(cnet_sctp_assoc_advance(&a, 106u, retry,
+      sizeof(retry), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == ns && a.deadline_ms == 306u &&
+      a.t5_shutdown_deadline_ms == 256u);
+  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
+      CNET_SCTP_ASSOC_OK && has_deadline && deadline == 256u);
+  assert(cnet_sctp_assoc_advance(&a, 256u, retry, 8u, &nr) ==
+      CNET_SCTP_ASSOC_CAPACITY);
+  assert(nr == 0u && a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+      a.deadline_ms == 306u && a.t5_shutdown_deadline_ms == 256u);
+  assert(cnet_sctp_assoc_advance(&a, 256u, retry, sizeof(retry), &nr) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(nr == 16u && shutdown_chunk_type(retry, nr) == 6u &&
+      a.state == CNET_SCTP_ASSOC_FAILED &&
+      a.deadline_ms == 0u && a.t5_shutdown_deadline_ms == 0u);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 /* T2 is bounded by the configured retransmit budget. Capacity failures at
  * a due deadline are retryable and must not consume a retry or advance time;
  * after the budget is exhausted, the association fails closed. */
@@ -1082,6 +1120,7 @@ static void shutdown_t2_retry_budget(void) {
 int main(void) {
   post_cookie_bundled_data();
   shutdown_no_inflight_and_t2();
+  shutdown_t5_absolute_guard();
   shutdown_t2_retry_budget();
   shutdown_pending_data_and_cumulative_ack();
   shutdown_t2_refreshes_cumulative();
