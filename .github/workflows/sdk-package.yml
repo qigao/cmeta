@@ -125,7 +125,49 @@ jobs:
             grep -Fq "cnet_name_lookup_normalize" "$name_header"
             grep -Fq "CNET_NAME_LOOKUP_API_VERSION" "$name_header"
           done
-          test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 6
+          # The canonical native runtime is a release contract, not merely a
+          # source-tree target. Require its headers, imported CMake names and
+          # actual static archives in every staged RID before packing NuGet.
+          service_host_abi_sha=''
+          for rid in linux-x64 linux-arm64 windows-x64 macos-arm64 android-arm64-v8a ios-arm64; do
+            root="package/sdk/$rid"
+            targets="$root/lib/cmake/Salts/SaltsTargets.cmake"
+            test -f "$root/include/salts/configurator.h"
+            test -f "$root/include/salts/service_host.h"
+            abi_header="$root/include/salts/component_runtime_abi.h"
+            provider_header="$root/include/salts/component_provider_abi.h"
+            test -f "$abi_header"
+            test -f "$provider_header"
+            test -f "$targets"
+            grep -Fq 'SALTS_COMPONENT_RUNTIME_ABI_VERSION 0x00010000u' "$abi_header"
+            for target in Salts::Configurator Salts::ServiceHost Salts::ComponentProviderABI Salts::PluginABI; do
+              grep -Fq "$target" "$targets"
+            done
+            if grep -Eq 'add_library\(Salts::Component(Plugin)? ' "$targets" ||
+               grep -Fq 'Salts::ComponentPluginABI' "$targets"; then
+              echo "Retired Component runtime target leaked into $rid SDK" >&2
+              exit 1
+            fi
+            test ! -e "$root/include/salts/component.h"
+            test ! -e "$root/include/salts/component_plugin.h"
+            test ! -e "$root/include/salts/component_plugin_abi.h"
+            if [ "$rid" = windows-x64 ]; then
+              test -f "$root/lib/salts_configurator.lib"
+              test -f "$root/lib/salts_service_host.lib"
+            else
+              test -f "$root/lib/libsalts_configurator.a"
+              test -f "$root/lib/libsalts_service_host.a"
+            fi
+            current_sha="$(sha256sum "$abi_header" | cut -d ' ' -f1)"
+            if [ -z "$service_host_abi_sha" ]; then
+              service_host_abi_sha="$current_sha"
+            elif [ "$current_sha" != "$service_host_abi_sha" ]; then
+              echo "Mismatched ServiceHost ABI header in $rid SDK" >&2
+              exit 1
+            fi
+            printf '%s ServiceHost ABI header SHA-256: %s\n' "$rid" "$current_sha"
+          done
+                    test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 6
 
           mapfile -t cache_contracts < <(
             grep -h '^vcpkg_cache_contract=' package/sdk/*/salts-sdk-manifest.txt |
