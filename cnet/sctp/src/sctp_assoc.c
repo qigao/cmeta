@@ -681,9 +681,8 @@ static cnet_sctp_assoc_status handle_shutdown(cnet_sctp_assoc *s,
         s->saved_packet, s->saved_size);
     if (status != CNET_SCTP_ASSOC_OK) return status;
     s->deadline_ms = now + s->current_rto_ms;
-    /* RFC 9260 §9.2: peer traffic during shutdown gives the peer another
-     * opportunity to finish draining. Restart the bounded retry budget. */
-    s->retransmits = 0u;
+    /* Restart T2 for the repeated SHUTDOWN, but do not reset the ACK
+     * retransmission budget: this control duplicate proves no data progress. */
     return CNET_SCTP_ASSOC_OK;
   }
   if (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
