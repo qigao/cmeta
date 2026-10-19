@@ -616,11 +616,20 @@ static cnet_sctp_assoc_status begin_shutdown_control(cnet_sctp_assoc *s,
     s->t5_shutdown_deadline_ms = now + s->config.t5_shutdown_guard_ms;
   return status;
 }
+/* buffered_rx counts payload bytes, not messages: a valid zero-length DATA
+ * record still occupies an RX ticket. Use ticket occupancy to decide whether
+ * graceful shutdown may discard the receive context. */
+static int data_has_rx_tickets(const cnet_sctp_data *data) {
+  size_t i;
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i)
+    if (data->rx[i].used) return 1;
+  return 0;
+}
 /* A graceful terminal retains bounded RX tickets until the Owner takes
  * every fully received ULP record. STOPPED blocks further transport I/O,
- * but drained()/destroy() remain BUSY until those bytes are delivered. */
+ * but drained()/destroy() remain BUSY until those records are delivered. */
 static void finish_shutdown(cnet_sctp_assoc *s) {
-  if (s->data_ready && s->data.buffered_rx == 0u) {
+  if (s->data_ready && !data_has_rx_tickets(&s->data)) {
     (void)cnet_sctp_data_stop(&s->data);
     memset(&s->data, 0, sizeof(s->data));
     s->data_ready = 0u;
@@ -1123,7 +1132,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_take_message(cnet_sctp_assoc *s,
       payload, cap, written));
   if (status == CNET_SCTP_ASSOC_OK &&
       s->state == CNET_SCTP_ASSOC_STOPPED &&
-      s->data.buffered_rx == 0u) {
+      !data_has_rx_tickets(&s->data)) {
     (void)cnet_sctp_data_stop(&s->data);
     memset(&s->data, 0, sizeof(s->data));
     s->data_ready = 0u;
