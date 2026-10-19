@@ -72,6 +72,7 @@ typedef struct cnet_sctp_assoc_config {
   uint16_t inbound_streams;
   uint64_t t1_ms;
   uint64_t t1_max_ms;
+  uint64_t t5_shutdown_guard_ms; /* 0 disables optional RFC 9260 T5 guard. */
   uint64_t cookie_lifetime_ms;
   uint64_t peer_binding; /* Opaque, non-pointer DTLS peer generation identity. */
   uint8_t max_retransmits;
@@ -88,7 +89,8 @@ typedef struct cnet_sctp_assoc {
   uint32_t local_tag; /* Generated once from required CSPRNG in init. */
   uint32_t initial_tsn; /* Generated once from required CSPRNG in init. */
   uint64_t last_time_ms;
-  uint64_t deadline_ms;
+  uint64_t deadline_ms; /* T1/T2 retransmission deadline. */
+  uint64_t t5_shutdown_deadline_ms; /* Absolute guard; never restarted by T2. */
   uint64_t current_rto_ms;
   uint32_t peer_tag;
   uint32_t peer_initial_tsn;
