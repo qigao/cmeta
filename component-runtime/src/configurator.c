@@ -12,6 +12,27 @@ static salts_configurator_failure salts_configurator_failure_none(void) {
     return failure;
 }
 
+static bool salts_configurator_instances_settled(
+    const salts_configurator_context *context);
+
+static void salts_configurator_context_detach_storage(
+    salts_configurator_context *context) {
+    if (context == NULL)
+        return;
+    context->deployments = NULL;
+    context->deployment_count = 0u;
+    context->selections = NULL;
+    context->selection_count = 0u;
+    context->instances = NULL;
+    context->instance_capacity = 0u;
+    context->dependencies = NULL;
+    context->dependency_capacity = 0u;
+    context->dependency_count = 0u;
+    context->activation_order = NULL;
+    context->activation_capacity = 0u;
+    context->activation_count = 0u;
+}
+
 static salts_component_status salts_component_fail(
     salts_configurator_context *context,
     salts_component_status status,
@@ -25,6 +46,16 @@ static salts_component_status salts_component_fail(
         context->failure.dependency_index = dependency_index;
         context->failure.provider_status = provider_status;
         context->state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+
+        /* Init and Resolve cannot leave a live ObjectRef. Start failures reach
+         * this helper only after the failing instance is released and rollback
+         * is complete. Detach borrowed arrays only if that invariant holds;
+         * retain their addresses if teardown did not settle, so reuse is
+         * rejected rather than losing the remaining owner authority. */
+        if (phase == SALTS_CONFIGURATOR_PHASE_INIT ||
+            phase == SALTS_CONFIGURATOR_PHASE_RESOLVE ||
+            salts_configurator_instances_settled(context))
+            salts_configurator_context_detach_storage(context);
     }
     return status;
 }
@@ -691,8 +722,14 @@ salts_component_status salts_configurator_context_stop(
 
     /* activation_count describes the resolved activation plan. Once all
      * instances have been deactivated and released, STOPPED has no remaining
-     * activation entries and is safe to reuse or hand to ServiceHost cleanup. */
+     * activation entries and is safe to reuse or hand to ServiceHost cleanup.
+     * Do not retain borrowed array addresses beyond this boundary. */
     context->activation_count = 0u;
+    if (!salts_configurator_instances_settled(context)) {
+        context->state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+        return SALTS_COMPONENT_INVALID_STATE;
+    }
+    salts_configurator_context_detach_storage(context);
     context->state = SALTS_CONFIGURATOR_CONTEXT_STOPPED;
     return SALTS_COMPONENT_OK;
 }
