@@ -217,6 +217,8 @@ suite("ServiceHost generation") {
         };
         cmeta_plugin_lease valid_lease;
         cmeta_plugin_lifecycle_info info;
+        salts_service_host_runtime attached_runtime =
+            SALTS_SERVICE_HOST_RUNTIME_INIT;
         uint32_t corrupted_generation;
 
         check_equal(salts_service_host_generation_build(
@@ -251,6 +253,17 @@ suite("ServiceHost generation") {
             &generation, UINT64_C(2), &registry, &storage,
             NULL, 0u, &source, 1u, NULL, 0u),
             SALTS_SERVICE_HOST_INVALID_STATE);
+
+        /* Recovery must not cross the runtime's attached-generation
+         * ownership boundary or bypass Scope admission accounting. */
+        generation.runtime_owner = &attached_runtime;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+        generation.runtime_owner = NULL;
+        generation.active_scopes = 1u;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+        generation.active_scopes = 0u;
 
         /* A failed retry preserves the same token and generation storage. */
         check_equal(salts_service_host_generation_recover(&generation),
