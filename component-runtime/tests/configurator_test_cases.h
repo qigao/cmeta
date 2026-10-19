@@ -95,6 +95,11 @@ suite("Salts static Component Configurator") {
         check_equal(salts_configurator_context_stop(&context), SALTS_COMPONENT_OK);
         check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_STOPPED);
         check_equal(context.activation_count, (size_t)0u);
+        check_null(context.deployments);
+        check_equal(context.deployment_count, (size_t)0u);
+        check_null(context.instances);
+        check_null(context.dependencies);
+        check_null(context.activation_order);
         check_equal(logger.destroys, 1u);
     }
 
@@ -220,6 +225,13 @@ suite("Salts static Component Configurator") {
         check_equal(salts_configurator_context_resolve(&context),
                     SALTS_COMPONENT_MISSING_PROVIDER);
         check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
+        /* Resolve failed before object creation; the context must not retain
+         * borrowed pointers after the call, because the caller may reclaim them. */
+        check_null(context.deployments);
+        check_equal(context.deployment_count, (size_t)0u);
+        check_null(context.instances);
+        check_null(context.dependencies);
+        check_null(context.activation_order);
     }
 
     it("rejects ambiguous providers instead of ranking implicitly") {
@@ -501,6 +513,11 @@ suite("Salts static Component Configurator") {
         check_equal(logger.resource_acquires, 1u);
         check_equal(logger.resource_releases, 1u);
         check_false(logger.resource_live);
+        check_null(context.deployments);
+        check_equal(context.deployment_count, (size_t)0u);
+        check_null(context.instances);
+        check_null(context.dependencies);
+        check_null(context.activation_order);
 
         /* STOPPED reuse is permitted only after owned resources are closed. */
         check_equal(salts_configurator_context_init(
@@ -539,6 +556,10 @@ suite("Salts static Component Configurator") {
         check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
         check_equal(logger.destroys, 1u);
         check_false(cmeta_object_ref_valid(&instance.object));
+        check_null(context.deployments);
+        check_equal(context.deployment_count, (size_t)0u);
+        check_null(context.instances);
+        check_null(context.activation_order);
 
         provider.create = test_logger_create;
         check_equal(salts_configurator_context_init(
