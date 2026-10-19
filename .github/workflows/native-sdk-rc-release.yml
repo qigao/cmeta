@@ -79,11 +79,15 @@ jobs:
               if manifests!=expected:
                   raise SystemExit(f'Incorrect SDK RID set: {manifests ^ expected}')
               for entry in expected:
-                  fields=dict(line.split('=',1) for line in
-                      pkg.read(entry).decode('utf-8-sig').splitlines() if '=' in line)
+                  fields={}
+                  for line in pkg.read(entry).decode('utf-8-sig').splitlines():
+                      if '=' in line:
+                          key,value=line.split('=',1)
+                          fields.setdefault(key,[]).append(value)
                   for key,want in [('version',version),('commit',sha),('profile','release')]:
-                      if fields.get(key)!=want:
-                          raise SystemExit(f'{entry}: {key} mismatch {fields.get(key)!r}')
+                      values=fields.get(key,[])
+                      if values != [want]:
+                          raise SystemExit(f'{entry}: {key} values {values!r}, expected exactly [{want!r}]')
                   rid=entry.split('/')[1]
                   root=f'sdk/{rid}/'
                   for header in ('cmeta/function.h','cmeta/component.h',
