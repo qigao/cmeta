@@ -297,6 +297,8 @@ suite("ServiceHost generation") {
         check_equal(cmeta_plugin_registry_get_lifecycle(
             &registry, secondary_ref, &secondary_info), CMETA_PLUGIN_OK);
         check_equal(secondary_info.active_leases, (size_t)0u);
+        check_equal(cmeta_plugin_registry_request_stop(&registry, ref),
+                    CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_unload(&registry, ref),
                     CMETA_PLUGIN_BUSY);
 
