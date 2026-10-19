@@ -101,8 +101,9 @@ const char *salts_configurator_status_string(salts_component_status status);
  * exclusively once all borrowed service views have expired.
  *
  * Caller-owned provider/storage arrays must remain alive through stop.
- * This post-3.0 stricter contract changes source requirements for callers
- * that previously passed uninitialized automatic storage. */
+ * This contract applies to the canonical Configurator API: explicitly
+ * initialize contexts before first use; never pass indeterminate automatic
+ * storage or reset a context while it retains ObjectRefs. */
 salts_component_status salts_configurator_context_init(
     salts_configurator_context *context,
     const salts_configurator_deployment *deployments,
