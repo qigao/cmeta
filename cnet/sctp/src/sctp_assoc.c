@@ -743,6 +743,7 @@ static cnet_sctp_assoc_status handle_shutdown_sent_data(
   size_t response_count = 1u;
   cnet_sctp_assoc_status status;
   cnet_sctp_wire_status wire_status;
+  int peer_data_progress;
   if (!s->data_ready || s->current_rto_ms == 0u ||
       now > UINT64_MAX - s->current_rto_ms)
     return CNET_SCTP_ASSOC_CLOCK;
@@ -778,13 +779,20 @@ static cnet_sctp_assoc_status handle_shutdown_sent_data(
       sizeof(saved_shutdown), &saved_size);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (response_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+  /* A syntactically valid duplicate DATA packet restarts T2 and is ACKed,
+   * but it is not peer progress and must not replenish the bounded retry
+   * budget. New RX bytes, cumulative TSN movement or a changed gap map are
+   * evidence that previously unseen DATA was admitted. */
+  peer_data_progress = candidate.buffered_rx != s->data.buffered_rx ||
+      candidate.cumulative_rx != s->data.cumulative_rx ||
+      candidate.rx_gaps != s->data.rx_gaps;
   memcpy(out, response, response_size);
   *written = response_size;
   memcpy(&s->data, &candidate, sizeof(candidate));
   memcpy(s->saved_packet, saved_shutdown, saved_size);
   s->saved_size = saved_size;
   s->deadline_ms = now + s->current_rto_ms;
-  s->retransmits = 0u;
+  if (peer_data_progress) s->retransmits = 0u;
   s->last_time_ms = now;
   return CNET_SCTP_ASSOC_OK;
 }
