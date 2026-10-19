@@ -33,7 +33,7 @@ void cmeta_mutex_unlock(cmeta_mutex_t *mutex) {
     --lock_depth;
 }
 
-suite("ComponentPlugin platform resource admission") {
+suite("ServiceHost platform resource admission") {
     static salts_service_host_runtime runtime;
 
     before_each() {
