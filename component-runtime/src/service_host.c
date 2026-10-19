@@ -4,7 +4,7 @@
 
 #include <string.h>
 
-static salts_service_host_failure component_plugin_failure_none(void) {
+static salts_service_host_failure service_host_failure_none(void) {
     salts_service_host_failure failure;
     failure.source_index = SALTS_SERVICE_HOST_INDEX_NONE;
     failure.plugin_status = CMETA_PLUGIN_OK;
@@ -250,7 +250,7 @@ const char *salts_service_host_status_string(
     case SALTS_SERVICE_HOST_INVALID_STATE: return "invalid state";
     case SALTS_SERVICE_HOST_RESOURCE_ERROR: return "resource error";
     }
-    return "unknown component-plugin status";
+    return "unknown ServiceHost status";
 }
 
 salts_service_host_status salts_service_host_generation_build(
@@ -310,7 +310,7 @@ salts_service_host_status salts_service_host_generation_build(
         &invalid_source);
     if (preflight_status != SALTS_SERVICE_HOST_OK) {
         if (preflight_status == SALTS_SERVICE_HOST_PROVIDER_ERROR) {
-            generation->failure = component_plugin_failure_none();
+            generation->failure = service_host_failure_none();
             generation->failure.source_index = invalid_source;
             generation->state = SALTS_SERVICE_HOST_GENERATION_FAILED;
         }
@@ -328,7 +328,7 @@ salts_service_host_status salts_service_host_generation_build(
     generation->module_count = 0u;
     generation->runtime_owner = NULL;
     generation->active_scopes = 0u;
-    generation->failure = component_plugin_failure_none();
+    generation->failure = service_host_failure_none();
     generation->state = SALTS_SERVICE_HOST_GENERATION_ZERO;
 
     for (i = 0u; i < static_deployment_count; ++i)
