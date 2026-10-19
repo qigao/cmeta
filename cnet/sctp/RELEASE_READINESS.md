@@ -56,4 +56,7 @@ Separate known cross-repo qualification: [#1177](https://github.com/qigao/salts/
 - [ ] For an approved product source, run its existing **non-publishing** release qualification before any immutable tag. Verify six-RID package SHA, manifest version, commit provenance and native ABI.
 - [ ] Obtain separate explicit permission for final version/tag publication and, later, the [TurboMedia #227](https://github.com/qigao/turbomedia/issues/227) exclusive cutover.
 
+
+**Documentation HEAD requalification (2026-10-19, `e173e70130f54ad4cd41efe2bc86211dea8adbff`):** [CNet SCTP C11 #39194373002](https://github.com/qigao/salts/actions/runs/39194373002) **SUCCESS 5/5** (Linux/macOS/Windows C11 Wire, source ASan/UBSan, pinned-GmSSL Cookie-MAC); [immutable build provenance #39194372998](https://github.com/qigao/salts/actions/runs/39194372998) **SUCCESS**; [Salts CI #39194372988](https://github.com/qigao/salts/actions/runs/39194372988) **SUCCESS** for selected checks including Android ARM64 Release and iOS ARM64 Release. Formal, package, benchmarks, installed ServiceHost ABI, six-RID ABI identity and SDK publication were **SKIPPED**; ACE candidate was **SKIPPED**. This documentation-only checkpoint does not close M0–M6 blockers, qualify an installed SCTP SDK, or authorize merge/release/cutover. Any subsequent HEAD still requires its own exact-commit validation.
+
 **Keep PR #1182 Open / Draft / DO NOT MERGE. No tag, NuGet push, GitHub Release or production source mutation from this document.**
