@@ -247,7 +247,47 @@ static void outbound_bundle_respects_peer_window(void) {
   assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
 }
+static void outbound_bundle_waits_for_retained_tickets_to_be_acked(void) {
+  pair p;
+  uint8_t payload[16], packet[CNET_SCTP_DATA_MTU];
+  uint8_t sack[CNET_SCTP_DATA_MTU], response[CNET_SCTP_DATA_MTU];
+  uint8_t bundle_body[2] = {'m', 'n'};
+  cnet_sctp_data_bundle_item items[2] = {{0}};
+  cnet_sctp_data before;
+  size_t written = 0u, sack_size = 0u, response_size = 0u, i;
+  init(&p);
+  for (i = 0u; i < 16u; ++i) {
+    payload[i] = (uint8_t)i;
+    assert(cnet_sctp_data_send(&p.a, i + 1u, 0u, 53u, 0,
+        &payload[i], 1u, packet, sizeof(packet), &written) ==
+        CNET_SCTP_DATA_OK);
+    assert(cnet_sctp_data_input(&p.b, i + 1u, packet, written,
+        sack, sizeof(sack), &sack_size) == CNET_SCTP_DATA_OK);
+    assert(sack_size != 0u);
+  }
+  assert(p.a.in_flight == 16u);
+  items[0].ppid = items[1].ppid = 53u;
+  items[0].payload = &bundle_body[0];
+  items[1].payload = &bundle_body[1];
+  items[0].payload_size = items[1].payload_size = 1u;
+  memcpy(&before, &p.a, sizeof(before));
+  memset(packet, 0xA5, sizeof(packet));
+  assert(cnet_sctp_data_send_bundle(&p.a, 20u, items, 2u,
+      packet, sizeof(packet), &written) == CNET_SCTP_DATA_CAPACITY);
+  assert(written == 0u && packet[0] == 0xA5 &&
+      memcmp(&before, &p.a, sizeof(before)) == 0);
+  /* The latest cumulative SACK releases all 16 retained tickets. */
+  assert(cnet_sctp_data_input(&p.a, 21u, sack, sack_size,
+      response, sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
+  assert(p.a.in_flight == 0u);
+  assert(cnet_sctp_data_send_bundle(&p.a, 22u, items, 2u,
+      packet, sizeof(packet), &written) == CNET_SCTP_DATA_OK);
+  assert(written != 0u && p.a.in_flight == 2u);
+  assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
+}
 int main(void) {
+  outbound_bundle_waits_for_retained_tickets_to_be_acked();
   outbound_bundle_respects_peer_window();
   outbound_bundle_and_per_tsn_t3();
   multi_data_atomicity();
