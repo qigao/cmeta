@@ -1,4 +1,4 @@
-# RFC-first SCTP conformance matrix — Salts #1181
+# RFC-first SCTP conformance matrix — Salts #1182
 
 Evidence is scoped narrowly: **M1 wire = tested framing**; **M2 private = Owner-driven handshake plus bounded DATA/SACK/T3/Fast Recovery and receive-window tests**; **M3 private subset = DATA fragments and DCEP/PPID**. Unit tests use noncryptographic handshake fixtures except the separate real GmSSL HMAC/CSPRNG job. None establishes production security, full RFC conformance or browser interoperability.
 
@@ -14,7 +14,7 @@ Evidence is scoped narrowly: **M1 wire = tested framing**; **M2 private = Owner-
 | RFC 9260 §5 INIT / INIT ACK / COOKIE ECHO / COOKIE ACK and T1 | **M2 isolated state machine + Owner-injected CSPRNG/Tag/TSN** | Complete INIT parameters/negotiation, provider lifecycle, restart/tie tags, source binding, independent browser peer |
 | RFC 9260 §5.1.3/§5.1.5 cookie authentication | **Private GmSSL HMAC-SM3 + two bounded key epochs**; prior-key in-flight Cookie test | Integrate real CNet Owner/DTLS Generation drain, enforce previous-key retirement deadline, replay/collision security and independent browser interoperability |
 | RFC 9260 §§3.3,6,7 DATA, TSN/SACK, congestion, retransmission, RTO | **Private DATA/Gap-SACK/T3/Fast Recovery**, 16 retained TX/32 RX, TSN wrap, ordered/unordered, multi-TSN loss, actual flight vs pending intent, bounded RTT/backoff, exact TSN priority, zero-window DATA probe/reopened-window SACK with virtual-clock tests | Full RFC congestion/PMTU/multipath, broader receive-window and shutdown edge cases, PR-SCTP and independent peer |
-| RFC 9260 §9 SHUTDOWN/ABORT | **Private SHUTDOWN-PENDING/SENT/RECEIVED/ACK-SENT, T2 retransmit, cumulative peer ACK, simultaneous shutdown and ULP RX preservation; basic ABORT** | T5 guard, independent close interoperability, complete ABORT/T-bit/error causes and all peer-race paths |
+| RFC 9260 §9 SHUTDOWN/ABORT | **Private SHUTDOWN-PENDING/SENT/RECEIVED/ACK-SENT, T2 retransmit, cumulative peer ACK, simultaneous shutdown and ULP RX preservation; optional absolute T5 guard; T5 expiry emits ABORT; late SHUTDOWN ACK cannot bypass an expired T5** | Independent close interoperability, complete ABORT/T-bit/error causes and all peer-race paths |
 | RFC 9260 §§6.9–6.10 Chunk bundling | **Private bounded multi-DATA and leading-SACK receive; up to four outbound DATA chunks**, all-or-nothing input/send, one cumulative SACK, per-TSN retransmit tickets | General control bundling, independent peer and negotiated PMTU |
 | RFC 8261 SCTP over DTLS | **Not implemented** | Existing GmSSL DTLS plaintext ingress/egress with real browser |
 | RFC 3758 / RFC 7496 PR-SCTP | **Not implemented** | Timed/max-retransmits, FORWARD-TSN, independent peer |
@@ -49,6 +49,8 @@ Evidence is scoped narrowly: **M1 wire = tested framing**; **M2 private = Owner-
   The existing Rust/C++-free design and unchanged production SDK remain intact.
 
 ## Release gates (all still open)
+
+Latest T5 checkpoint: `07876fadfe1cec3ff41da6b45f2fedbf710cff02`. [CNet SCTP prototype #514](https://github.com/qigao/salts/actions/runs/39182508607) and [immutable provenance #168](https://github.com/qigao/salts/actions/runs/39182508538) passed; [Salts CI #2547](https://github.com/qigao/salts/actions/runs/39182527428) passed its selected iOS/Android checks but skipped package, formal, benchmark, installed ServiceHost ABI, six-RID identity and SDK publication jobs. These results do not establish independent shutdown interoperability or release readiness.
 
 1. Complete RFC 9260 state machine, robust authenticated cookies and full parameter/unknown-chunk policy.
 2. RFC 8261 GmSSL/DTLS integration with independent browser/libwebrtc wire interoperability.
