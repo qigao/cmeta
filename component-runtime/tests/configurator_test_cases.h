@@ -54,6 +54,7 @@ suite("Salts static Component Configurator") {
         check_equal(logger.destroys, 1u);
         check_equal(app.destroys, 1u);
         check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_STOPPED);
+        check_equal(context.activation_count, (size_t)0u);
     }
 
     it("rejects provider binding ABI mismatch before resolution") {
