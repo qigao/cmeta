@@ -303,7 +303,7 @@ jobs:
                       release_targets
                   )
                   for relative_path in imported_paths:
-                      relative_path = relative_path.replace('\\\\', '/')
+                      relative_path = relative_path.replace('\\', '/')
                       item = root + relative_path
                       if item not in names:
                           raise SystemExit(f'{rid}: imported target binary is missing: {relative_path}')
@@ -331,6 +331,8 @@ jobs:
                   if not name.startswith(prefix):
                       continue
                   relative = pathlib.PurePosixPath(name[len(prefix):])
+                  if not relative.parts and name.endswith('/'):
+                      continue
                   if not relative.parts or relative.is_absolute() or '..' in relative.parts:
                       raise SystemExit(f'Unsafe SDK path in NuGet package: {name}')
                   target = root.joinpath(*relative.parts)
