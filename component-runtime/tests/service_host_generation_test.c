@@ -190,6 +190,12 @@ suite("ServiceHost generation") {
             SALTS_SERVICE_HOST_PLUGIN_ERROR);
         check_equal(generation.state,
                     SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_equal(generation.module_count, (size_t)0u);
+        check_null(generation.storage.deployments);
+        check_null(generation.storage.instances);
+        check_null(generation.storage.modules);
+        check_equal(generation.components.state,
+                    SALTS_CONFIGURATOR_CONTEXT_ZERO);
 
         check_equal(cmeta_plugin_registry_get_lifecycle(
             &registry, ref, &info), CMETA_PLUGIN_OK);
