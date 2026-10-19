@@ -50,7 +50,7 @@ Evidence is scoped narrowly: **M1 wire = tested framing**; **M2 private = Owner-
 
 ## Release gates (all still open)
 
-Latest T5 checkpoint: `07876fadfe1cec3ff41da6b45f2fedbf710cff02`. [CNet SCTP prototype #514](https://github.com/qigao/salts/actions/runs/39182508607) and [immutable provenance #168](https://github.com/qigao/salts/actions/runs/39182508538) passed; [Salts CI #2547](https://github.com/qigao/salts/actions/runs/39182527428) passed its selected iOS/Android checks but skipped package, formal, benchmark, installed ServiceHost ABI, six-RID identity and SDK publication jobs. These results do not establish independent shutdown interoperability or release readiness.
+Latest documented checkpoint: `7c37fa094003602e89ce48229a7f83ee221477eb` (T5 implementation plus docs-only commits). [CNet SCTP prototype #518](https://github.com/qigao/salts/actions/runs/39184204351) and [immutable provenance #170](https://github.com/qigao/salts/actions/runs/39184204332) passed. [Salts CI #2550](https://github.com/qigao/salts/actions/runs/39184204406) passed selected checks, including Android ARM64 and iOS ARM64 release builds; formal, package, benchmarks, installed ServiceHost ABI, six-RID identity and SDK publication were skipped. ACE candidate #744 was skipped. These results do not establish independent shutdown interoperability or release readiness.
 
 1. Complete RFC 9260 state machine, robust authenticated cookies and full parameter/unknown-chunk policy.
 2. RFC 8261 GmSSL/DTLS integration with independent browser/libwebrtc wire interoperability.
