@@ -49,6 +49,29 @@ static bool plugin_lease_is_zero(cmeta_plugin_lease lease) {
            lease.generation == 0u;
 }
 
+static bool module_records_are_clear(
+    const salts_service_host_generation *generation) {
+    size_t i;
+
+    if (generation == NULL || generation->module_count != 0u)
+        return false;
+    if (generation->storage.module_capacity == 0u)
+        return generation->storage.modules == NULL;
+    if (generation->storage.modules == NULL)
+        return false;
+
+    for (i = 0u; i < generation->storage.module_capacity; ++i) {
+        const salts_service_host_module *module =
+            &generation->storage.modules[i];
+        if (!plugin_lease_is_zero(module->lease) ||
+            module->plugin.slot != 0u ||
+            module->plugin.generation != 0u ||
+            module->manifest != NULL)
+            return false;
+    }
+    return true;
+}
+
 static cmeta_plugin_status release_modules(
     salts_service_host_generation *generation) {
     cmeta_plugin_status first = CMETA_PLUGIN_OK;
@@ -59,6 +82,9 @@ static cmeta_plugin_status release_modules(
     if (generation->module_count > generation->storage.module_capacity ||
         (generation->module_count != 0u &&
          generation->storage.modules == NULL))
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
+    if (generation->module_count == 0u &&
+        !module_records_are_clear(generation))
         return CMETA_PLUGIN_INVALID_ARGUMENT;
 
     i = generation->module_count;
@@ -369,6 +395,7 @@ salts_service_host_status salts_service_host_generation_build(
         if (generation->runtime_owner != NULL ||
             generation->active_scopes != 0u ||
             generation->module_count != 0u ||
+            !module_records_are_clear(generation) ||
             generation->components.activation_count != 0u ||
             (generation->components.state != SALTS_CONFIGURATOR_CONTEXT_ZERO &&
              generation->components.state != SALTS_CONFIGURATOR_CONTEXT_FAILED &&
@@ -420,6 +447,12 @@ salts_service_host_status salts_service_host_generation_build(
     generation->active_scopes = 0u;
     generation->failure = service_host_failure_none();
     generation->state = SALTS_SERVICE_HOST_GENERATION_ZERO;
+
+    /* Establish a canonical empty tail before the first lease can be
+     * acquired. Later cleanup can then detect orphaned records if the public
+     * module_count metadata ever disagrees with the caller-owned table. */
+    for (i = 0u; i < storage->module_capacity; ++i)
+        memset(&storage->modules[i], 0, sizeof(storage->modules[i]));
 
     for (i = 0u; i < static_deployment_count; ++i)
         storage->deployments[i] = static_deployments[i];
