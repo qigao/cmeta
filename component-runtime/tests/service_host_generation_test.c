@@ -248,6 +248,7 @@ suite("ServiceHost generation") {
         cmeta_plugin_lifecycle_info secondary_info;
         salts_service_host_runtime attached_runtime =
             SALTS_SERVICE_HOST_RUNTIME_INIT;
+        size_t valid_module_capacity;
         uint32_t corrupted_generation;
 
         check_equal(cmeta_plugin_registry_load(
@@ -301,6 +302,18 @@ suite("ServiceHost generation") {
                     CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_unload(&registry, ref),
                     CMETA_PLUGIN_BUSY);
+
+        /* Caller-visible storage metadata cannot authorize an
+         * out-of-bounds cleanup walk. The guard leaves every token intact. */
+        valid_module_capacity = generation.storage.module_capacity;
+        generation.storage.module_capacity = 0u;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_PLUGIN_ERROR);
+        check_equal(generation.failure.plugin_status,
+                    CMETA_PLUGIN_INVALID_ARGUMENT);
+        check_equal(generation.module_count, (size_t)2u);
+        check_equal(two_modules[0].lease.generation, corrupted_generation);
+        generation.storage.module_capacity = valid_module_capacity;
 
         /* No build/reuse while any recorded lease is unsettled. */
         check_equal(salts_service_host_generation_build(
