@@ -30,7 +30,7 @@ typedef struct cnet_sctp_dcep_channel {
   uint16_t sid, priority;
   uint32_t reliability;
   uint8_t channel_type; /* Only 0x00 and 0x80 admitted until PR-SCTP */
-  uint8_t state; /* 0 free, 1 local WAIT_ACK, 2 open, 3 closing */
+  uint8_t state; /* 0 free, 1 local WAIT_ACK, 2 open, 3 peer ACK_PENDING */
   uint8_t locally_initiated; /* never accept ACK for a peer-opened stream */
   uint8_t label[CNET_SCTP_DCEP_TEXT_MAX];
   uint8_t protocol[CNET_SCTP_DCEP_TEXT_MAX];
@@ -67,6 +67,10 @@ cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
     uint16_t stream, const void *wire, size_t n,
     void *reply, size_t capacity, size_t *written);
 
+/* Commit a peer-opened channel only after its DCEP ACK has been admitted to
+ * the underlying SCTP send queue. This is not proof of network delivery. */
+cnet_sctp_dcep_status cnet_sctp_dcep_ack_admitted(cnet_sctp_dcep *d,
+    uint16_t stream);
 int cnet_sctp_dcep_ready(const cnet_sctp_dcep *d, uint16_t stream);
 cnet_sctp_dcep_status cnet_sctp_dcep_stop(cnet_sctp_dcep *d);
 
