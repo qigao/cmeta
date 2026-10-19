@@ -1,5 +1,6 @@
-/* ABI gate for the opt-in, nonpublished Configurator/ServiceHost SDK.
- * Salts #1153; initial public candidate epoch 1. No 2.3 compatibility claim. */
+/* Native ABI gate for the canonical Configurator/ServiceHost runtime.
+ * Epoch 1.0 is the first ABI contract for this runtime; it is not compatible
+ * with SDKs that do not provide these symbols and layouts. */
 #ifndef SALTS_COMPONENT_RUNTIME_ABI_H
 #define SALTS_COMPONENT_RUNTIME_ABI_H
 #include <stdint.h>
