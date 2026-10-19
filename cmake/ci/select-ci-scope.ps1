@@ -29,8 +29,8 @@ if (($AceMatrix -or $AceSan) -and -not $aceBranchPr) {
   throw "ACE qualification is restricted to its long-lived PR"
 }
 if ($AceMatrix -and $AceSan) { throw "ACE-MATRIX and ACE-SAN are exclusive" }
-$componentSanOnly = $EventName -eq 'pull_request' -and -not $PrepareRelease -and
-  $HeadBranch -eq 'review/servicehost-fullsource-sanitizers'
+$serviceHostSanOnly = $EventName -eq 'pull_request' -and -not $PrepareRelease -and
+  $HeadBranch -eq 'review/servicehost-canonical-sdk-audit'
 # Branch-only release/tag readiness proof uses genuine six-RID installed SDKs.
 # The same package=true profile is already mandatory on version-tag push and
 # explicit prepare_release; do not accidentally skip installed ABI validation.
@@ -181,7 +181,7 @@ $cnetProgressBench = $PrepareRelease -or (
   (Test-Changed '^\.github/workflows/native-io-benchmarks\.yml$')
 )
 $work = $nativeOwner -or $nativeStyle -or $cnetOwner -or $cnetIo -or $cnetSg -or $coroutine -or $nativeUring -or $forensic -or $transportOwner -or $aceActor -or $cnetProgressBench
-if ($componentSanOnly) { $work = $false }
+if ($serviceHostSanOnly) { $work = $false }
 
 $checks = [ordered]@{
   contracts = $native -or $execution -or $projection -or $lean
@@ -229,7 +229,7 @@ $profiles = @(
   @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
   @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' }
 )
-if ($componentSanOnly -or $aceSanitizerQualification -or $unifiedSanitizerQualification -or $concurrencyQualification -or $cnetProgressQualification -or $cnetHandoffQualification -or $nativeReadinessQualification) {
+if ($serviceHostSanOnly -or $aceSanitizerQualification -or $unifiedSanitizerQualification -or $concurrencyQualification -or $cnetProgressQualification -or $cnetHandoffQualification -or $nativeReadinessQualification) {
   # Reuse existing Debug ASan and independent TSan CMake presets; the ASan
   # profile adds UBSan via the canonical Sanitizers.cmake flag. Do not combine
   # TSan with ASan, or reuse release binaries for sanitizer checks.
@@ -240,7 +240,7 @@ if ($componentSanOnly -or $aceSanitizerQualification -or $unifiedSanitizerQualif
 }
 $builds = @()
 foreach ($profile in $profiles) {
-  if ($componentSanOnly -and $profile.id -notin @(
+  if ($serviceHostSanOnly -and $profile.id -notin @(
       'linux-release', 'linux-ace-asan-ubsan', 'linux-ace-tsan')) { continue }
   # [2.3-SAN] is a dedicated source-identical sanitizer gate; a separate
   # [2.3-VERIFY] run must qualify the eight real host/build profiles. Keep
