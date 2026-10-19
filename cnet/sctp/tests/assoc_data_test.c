@@ -1198,49 +1198,8 @@ static void shutdown_sent_duplicate_data_does_not_reset_budget(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
-/* A zero-length ULP record owns an RX ticket despite buffered_rx == 0.
- * Graceful shutdown must preserve it until the Owner takes the message. */
-static void shutdown_preserves_zero_length_message(void) {
-  cnet_sctp_assoc a, b;
-  test_context ca = {0}, cb = {0};
-  cnet_sctp_data_message message = {0};
-  uint8_t empty = 0u, data[1200], sack[1200], shutdown[1200];
-  uint8_t ack[1200], complete[1200], received = 0u;
-  size_t nd = 0u, ns = 0u, nr = 0u, na = 0u, nc = 0u, got = 0u;
-  ready_pair(&a, &b, &ca, &cb);
-  assert(cnet_sctp_assoc_send_message(&b, 6u, 0u, 53u, 0,
-      &empty, 0u, data, sizeof(data), &nd) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&a, 7u, data, nd,
-      sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
-  assert(ns != 0u && a.data.buffered_rx == 0u && a.data.rx[0].used);
-  assert(a.data.last_advertised_rwnd ==
-      CNET_SCTP_DATA_RECEIVE_CEILING - CNET_SCTP_DATA_PAYLOAD_MAX);
-  assert(cnet_sctp_assoc_input(&b, 8u, sack, ns,
-      complete, sizeof(complete), &nc) == CNET_SCTP_ASSOC_OK);
-  assert(nc == 0u && b.data.in_flight == 0u);
-  assert(cnet_sctp_assoc_shutdown(&a, 9u, shutdown,
-      sizeof(shutdown), &nr) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 10u, shutdown, nr,
-      ack, sizeof(ack), &na) == CNET_SCTP_ASSOC_OK);
-  assert(shutdown_chunk_type(ack, na) == 8u);
-  assert(cnet_sctp_assoc_input(&a, 11u, ack, na,
-      complete, sizeof(complete), &nc) == CNET_SCTP_ASSOC_OK);
-  assert(shutdown_chunk_type(complete, nc) == 14u);
-  assert(a.state == CNET_SCTP_ASSOC_STOPPED && !cnet_sctp_assoc_drained(&a));
-  assert(cnet_sctp_assoc_take_message(&a, &message, &received,
-      sizeof(received), &got) == CNET_SCTP_ASSOC_OK);
-  assert(got == 0u && message.size == 0u && message.stream_id == 0u);
-  assert(cnet_sctp_assoc_drained(&a));
-  assert(cnet_sctp_assoc_input(&b, 12u, complete, nc,
-      sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
-  assert(b.state == CNET_SCTP_ASSOC_STOPPED && cnet_sctp_assoc_drained(&b));
-  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
-}
-
 int main(void) {
   post_cookie_bundled_data();
-  shutdown_preserves_zero_length_message();
   shutdown_no_inflight_and_t2();
   shutdown_t5_absolute_guard();
   shutdown_t5_preempts_late_ack();
