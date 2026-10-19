@@ -305,8 +305,13 @@ static bool generation_is_clear(
 
     components = &generation->components;
     return components->state == SALTS_CONFIGURATOR_CONTEXT_ZERO &&
-           components->activation_count == 0u &&
+           components->deployment_count == 0u &&
+           components->selection_count == 0u &&
+           components->instance_capacity == 0u &&
+           components->dependency_capacity == 0u &&
+           components->activation_capacity == 0u &&
            components->dependency_count == 0u &&
+           components->activation_count == 0u &&
            components->deployments == NULL &&
            components->selections == NULL &&
            components->instances == NULL &&
