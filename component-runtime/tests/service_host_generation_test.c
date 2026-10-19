@@ -252,6 +252,7 @@ suite("ServiceHost generation") {
         salts_service_host_runtime attached_runtime =
             SALTS_SERVICE_HOST_RUNTIME_INIT;
         size_t valid_module_capacity;
+        size_t valid_module_count;
         uint32_t corrupted_generation;
 
         check_equal(cmeta_plugin_registry_load(
@@ -380,6 +381,26 @@ suite("ServiceHost generation") {
         check_equal(two_modules[0].lease.plugin.generation, failed_lease.plugin.generation);
         check_true(two_modules[0].manifest != NULL);
         two_modules[0].plugin = ref;
+
+        /* If the count metadata is inconsistent, the canonical-empty
+         * tail check must retain the orphaned lease record and reject reuse. */
+        valid_module_count = generation.module_count;
+        generation.module_count = 0u;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_PLUGIN_ERROR);
+        check_equal(generation.failure.plugin_status,
+                    CMETA_PLUGIN_INVALID_ARGUMENT);
+        check_true(cmeta_plugin_lease_valid(two_modules[0].lease));
+        check_equal(two_modules[0].lease.plugin.slot, failed_lease.plugin.slot);
+        check_equal(two_modules[0].lease.plugin.generation, failed_lease.plugin.generation);
+        check_equal(two_modules[0].lease.slot, failed_lease.slot);
+        check_equal(two_modules[0].lease.generation, failed_lease.generation);
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(2), &registry, &storage,
+            NULL, 0u, NULL, 0u, NULL, 0u),
+            SALTS_SERVICE_HOST_INVALID_STATE);
+        generation.module_count = valid_module_count;
+        check_equal(generation.module_count, (size_t)2u);
 
         /* No build/reuse while any recorded lease is unsettled. */
         check_equal(salts_service_host_generation_build(
