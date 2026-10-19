@@ -390,6 +390,12 @@ suite("ServiceHost generation") {
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
         check_equal(generation.module_count, (size_t)0u);
         check_equal(generation.registry, NULL);
+        check_null(generation.storage.deployments);
+        check_null(generation.storage.instances);
+        check_null(generation.storage.modules);
+        check_null(generation.components.deployments);
+        check_equal(generation.components.state,
+                    SALTS_CONFIGURATOR_CONTEXT_ZERO);
         check_equal(two_modules[0].manifest, NULL);
         check_false(cmeta_plugin_lease_valid(two_modules[0].lease));
         check_equal(cmeta_plugin_registry_get_lifecycle(
@@ -578,6 +584,12 @@ suite("ServiceHost generation") {
             &generation), SALTS_SERVICE_HOST_OK);
         check_equal(generation.state,
                     SALTS_SERVICE_HOST_GENERATION_DRAINED);
+        check_null(generation.storage.deployments);
+        check_null(generation.storage.instances);
+        check_null(generation.storage.modules);
+        check_null(generation.components.deployments);
+        check_equal(generation.components.state,
+                    SALTS_CONFIGURATOR_CONTEXT_ZERO);
 
         check_equal(cmeta_plugin_registry_get_lifecycle(
             &registry, ref, &info), CMETA_PLUGIN_OK);
