@@ -129,7 +129,7 @@ jobs:
                   for relative_path in re.findall(
                       r'IMPORTED_(?:IMPLIB|LOCATION)(?:_[A-Z0-9_]+)?\s+"?\$\{_IMPORT_PREFIX\}/([^"\s)]+)',
                       release_targets):
-                      relative_path=relative_path.replace('\\\\','/')
+                      relative_path=relative_path.replace('\\','/')
                       if root+relative_path not in names:
                           raise SystemExit(f'{rid}: missing imported binary {relative_path}')
                   if rid=='windows-x64':
