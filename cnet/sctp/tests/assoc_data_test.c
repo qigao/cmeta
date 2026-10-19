@@ -1042,6 +1042,31 @@ static void shutdown_t5_absolute_guard(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* A packet arriving after the absolute T5 deadline cannot race past
+ * the overdue Owner timer and complete a graceful shutdown. */
+static void shutdown_t5_preempts_late_ack(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  uint8_t shutdown[1200], ack[1200], response[1200];
+  size_t ns = 0u, na = 0u, nr = 0u;
+  ready_pair(&a, &b, &ca, &cb);
+  a.config.t5_shutdown_guard_ms = 250u;
+  assert(cnet_sctp_assoc_shutdown(&a, 6u, shutdown,
+      sizeof(shutdown), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 7u, shutdown, ns,
+      ack, sizeof(ack), &na) == CNET_SCTP_ASSOC_OK);
+  assert(na == 16u && shutdown_chunk_type(ack, na) == 8u);
+  assert(cnet_sctp_assoc_input(&a, 256u, ack, na,
+      response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == 16u && shutdown_chunk_type(response, nr) == 6u &&
+      a.state == CNET_SCTP_ASSOC_FAILED &&
+      a.t5_shutdown_deadline_ms == 0u);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 /* T2 is bounded by the configured retransmit budget. Capacity failures at
  * a due deadline are retryable and must not consume a retry or advance time;
  * after the budget is exhausted, the association fails closed. */
@@ -1121,6 +1146,7 @@ int main(void) {
   post_cookie_bundled_data();
   shutdown_no_inflight_and_t2();
   shutdown_t5_absolute_guard();
+  shutdown_t5_preempts_late_ack();
   shutdown_t2_retry_budget();
   shutdown_pending_data_and_cumulative_ack();
   shutdown_t2_refreshes_cumulative();
