@@ -406,7 +406,7 @@ suite("ServiceHost generation") {
         /* The valid second lease was consumed exactly once; the first
          * failed token remains unchanged and its DSO remains pinned. */
         check_false(cmeta_plugin_lease_valid(two_modules[1].lease));
-        check_equal(two_modules[1].manifest, NULL);
+        check_null(two_modules[1].manifest);
         check_equal(cmeta_plugin_registry_get_lifecycle(
             &registry, ref, &primary_info), CMETA_PLUGIN_OK);
         check_equal(primary_info.active_leases, (size_t)1u);
@@ -549,14 +549,14 @@ suite("ServiceHost generation") {
                     SALTS_SERVICE_HOST_OK);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
         check_equal(generation.module_count, (size_t)0u);
-        check_equal(generation.registry, NULL);
+        check_null(generation.registry);
         check_null(generation.storage.deployments);
         check_null(generation.storage.instances);
         check_null(generation.storage.modules);
         check_null(generation.components.deployments);
         check_equal(generation.components.state,
                     SALTS_CONFIGURATOR_CONTEXT_ZERO);
-        check_equal(two_modules[0].manifest, NULL);
+        check_null(two_modules[0].manifest);
         check_false(cmeta_plugin_lease_valid(two_modules[0].lease));
         check_equal(cmeta_plugin_registry_get_lifecycle(
             &registry, ref, &primary_info), CMETA_PLUGIN_OK);
