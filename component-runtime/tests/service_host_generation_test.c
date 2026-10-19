@@ -33,7 +33,7 @@ static salts_component_dependency dependencies[1];
 static size_t activation_order[1];
 static salts_service_host_module modules[1];
 
-suite("ComponentPlugin candidate generation") {
+suite("ServiceHost generation") {
     before_each() {
         const cmeta_plugin_registry_config config = {1};
 
