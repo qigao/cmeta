@@ -236,17 +236,18 @@ jobs:
               for rid in rids:
                   root = f'sdk/{rid}/'
                   manifest_path = root + 'salts-sdk-manifest.txt'
-                  fields = dict(
-                      line.split('=', 1)
-                      for line in package.read(manifest_path).decode('utf-8-sig').splitlines()
-                      if '=' in line
-                  )
+                  fields = {}
+                  for line in package.read(manifest_path).decode('utf-8-sig').splitlines():
+                      if '=' in line:
+                          key, value = line.split('=', 1)
+                          fields.setdefault(key, []).append(value)
                   for key, expected in (
                       ('version', version), ('commit', source_sha), ('profile', 'release')
                   ):
-                      if fields.get(key) != expected:
+                      values = fields.get(key, [])
+                      if values != [expected]:
                           raise SystemExit(
-                              f'{manifest_path}: {key}={fields.get(key)!r}, expected {expected!r}'
+                              f'{manifest_path}: {key} values {values!r}, expected exactly [{expected!r}]'
                           )
                   for header in (
                       'salts/configurator.h', 'salts/service_host.h',
