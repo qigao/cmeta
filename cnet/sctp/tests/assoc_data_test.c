@@ -1200,6 +1200,7 @@ static void shutdown_sent_duplicate_data_does_not_reset_budget(void) {
 
 int main(void) {
   post_cookie_bundled_data();
+  shutdown_preserves_zero_length_message();
   shutdown_no_inflight_and_t2();
   shutdown_t5_absolute_guard();
   shutdown_t5_preempts_late_ack();
