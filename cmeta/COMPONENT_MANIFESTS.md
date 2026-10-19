@@ -93,7 +93,7 @@ Static:
 ```text
 cmeta_component_desc
     -> explicit CMeta manifest
-    -> Salts::Component Configurator
+    -> Salts::Configurator
 ```
 
 Dynamic:
@@ -103,8 +103,19 @@ DSO
     -> Salts::Plugin manifest/export
     -> live Plugin lease
     -> borrowed cmeta_component_desc
-    -> Salts::Component Configurator
+    -> Salts::ServiceHost
+    -> Salts::Configurator
 ```
+
+**Current runtime names and ownership (2026-10-19):** CMeta declares immutable
+component/capability metadata; `Salts::Configurator` selects and runs one
+static dependency graph; `Salts::ServiceHost` owns published generations,
+Scope admission/drain and settlement of the Plugin leases held for dynamic
+Providers; `Salts::Plugin` remains the only DSO loader/Registry/quiescence/
+unload authority. Older ACE freeze documents and historical test names may say
+`ComponentPlugin`; that historical name is not an installed runtime target or
+a compatibility alias. The public runtime targets are `Salts::Configurator`
+and `Salts::ServiceHost`.
 
 A dynamic consumer must hold the Plugin lease through every descriptor,
 Interface, callback, instance teardown, and dependent cleanup that can reach
@@ -330,7 +341,11 @@ External YAML/JSON/XML/CLI parsing remains outside CMeta. Factory and lifecycle
 execution authority are deliberately not embedded in the descriptor; they
 belong to the Component runtime binding under #1008.
 
-The Component descriptor and Configurator baseline are integrated into
-master source, but not in the latest published Salts 2.2.0 Release.
-The 2.3.0 ACE lifecycle candidate remains on `feature/cmeta-ace-patterns`
-under Draft PR #1013. Neither stable release nor branch merge is authorized.
+The Component descriptor and canonical Configurator/ServiceHost runtime
+are integrated into master source; the latest published Salts release remains
+2.2.0, so installed 2.3 SDK/package and downstream acceptance are separate
+from source integration. The current ServiceHost SDK audit is tracked in Draft
+PR #1260. No stable release, tag or downstream cutover is authorized by that
+PR. The older ACE freeze and coverage records retain their source-SHA scope and
+historical `ComponentPlugin` terminology; consult the canonical runtime docs
+above for supported targets and ownership.
