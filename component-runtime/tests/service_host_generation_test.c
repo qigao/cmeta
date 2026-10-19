@@ -94,6 +94,30 @@ suite("ServiceHost generation") {
         check_equal(cmeta_plugin_registry_destroy(&registry), CMETA_PLUGIN_OK);
     }
 
+    it("rejects noncanonical invalid ObjectRefs during recovery") {
+        /* An invalid ObjectRef is not proof that ownership storage is empty:
+         * recovery must reject malformed nonzero state instead of erasing it. */
+        instances[0] = (salts_configurator_instance){0};
+        instances[0].object.size = 0u;
+        generation.state = SALTS_SERVICE_HOST_GENERATION_FAILED;
+        generation.components.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+        generation.components.failure.phase = SALTS_CONFIGURATOR_PHASE_CREATE;
+        generation.components.deployment_count = 1u;
+        generation.components.instance_capacity = 1u;
+        generation.components.instances = instances;
+
+        check_false(cmeta_object_ref_valid(&instances[0].object));
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+
+        /* Once the record is restored to the canonical empty representation,
+         * the explicit recovery operation may clear the failed candidate. */
+        instances[0].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_OK);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
+    }
+
     it("rejects module capacity before acquiring any Plugin lease") {
         const salts_service_host_generation_storage storage = {
             deployments, 1u,
