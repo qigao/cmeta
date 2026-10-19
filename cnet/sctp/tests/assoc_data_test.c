@@ -1150,12 +1150,61 @@ static void shutdown_t2_retry_budget(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* A duplicate DATA TSN is ACKed while SHUTDOWN-SENT and restarts T2,
+ * but it must not replenish the bounded shutdown retry budget. */
+static void shutdown_sent_duplicate_data_does_not_reset_budget(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  const uint8_t payload[] = {'d'};
+  uint8_t data[1200], sack[1200], shutdown[1200], response[1200], retry[1200];
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  size_t nd = 0u, ns = 0u, nshutdown = 0u, nr = 0u;
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_send_message(&b, 6u, 0u, 53u, 0,
+      payload, sizeof(payload), data, sizeof(data), &nd) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 7u, data, nd,
+      sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 8u, sack, ns,
+      response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == 0u && b.data.in_flight == 0u);
+  assert(cnet_sctp_assoc_shutdown(&a, 9u, shutdown,
+      sizeof(shutdown), &nshutdown) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_advance(&a, 109u, retry,
+      sizeof(retry), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(a.retransmits == 1u && a.deadline_ms == 309u);
+  assert(cnet_sctp_assoc_advance(&a, 309u, retry,
+      sizeof(retry), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(a.retransmits == 2u && a.deadline_ms == 709u &&
+      a.current_rto_ms == 400u);
+
+  /* The exact same DATA TSN was already admitted before shutdown. */
+  assert(cnet_sctp_assoc_input(&a, 310u, data, nd,
+      response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_wire_decode(response, nr, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK && header.chunk_count == 2u);
+  assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+      a.data.buffered_rx == 1u && a.retransmits == 2u &&
+      a.deadline_ms == 710u);
+  assert(cnet_sctp_assoc_advance(&a, 710u, retry,
+      sizeof(retry), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(a.retransmits == 3u && a.deadline_ms == 1110u);
+  assert(cnet_sctp_assoc_advance(&a, 1110u, retry,
+      sizeof(retry), &nr) == CNET_SCTP_ASSOC_EXPIRED);
+  assert(a.state == CNET_SCTP_ASSOC_FAILED && a.retransmits == 3u);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
   post_cookie_bundled_data();
   shutdown_no_inflight_and_t2();
   shutdown_t5_absolute_guard();
   shutdown_t5_preempts_late_ack();
   shutdown_t2_retry_budget();
+  shutdown_sent_duplicate_data_does_not_reset_budget();
   shutdown_pending_data_and_cumulative_ack();
   shutdown_t2_refreshes_cumulative();
   shutdown_sent_accepts_bundled_data();
