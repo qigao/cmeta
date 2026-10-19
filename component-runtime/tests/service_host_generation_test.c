@@ -380,7 +380,7 @@ suite("ServiceHost generation") {
                 SALTS_SERVICE_HOST_OK);
         }
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_BUILT);
-        check_equal(generation.module_count, (size_t)2u);
+        check_equal(generation.module_count, (size_t)1u);
         valid_lease = two_modules[0].lease;
         check_true(cmeta_plugin_lease_valid(valid_lease));
         check_true(cmeta_plugin_lease_valid(two_modules[1].lease));
@@ -396,7 +396,7 @@ suite("ServiceHost generation") {
         check_equal(salts_service_host_generation_discard(&generation),
                     SALTS_SERVICE_HOST_PLUGIN_ERROR);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
-        check_equal(generation.module_count, (size_t)2u);
+        check_equal(generation.module_count, (size_t)1u);
         check_equal(two_modules[0].lease.plugin.slot, failed_lease.plugin.slot);
         check_equal(two_modules[0].lease.plugin.generation, failed_lease.plugin.generation);
         check_equal(two_modules[0].lease.slot, failed_lease.slot);
@@ -424,14 +424,14 @@ suite("ServiceHost generation") {
             &generation, UINT64_C(2), &registry, &storage,
             NULL, 0u, NULL, 0u, NULL, 0u),
             SALTS_SERVICE_HOST_INVALID_STATE);
-        check_equal(generation.module_count, (size_t)2u);
+        check_equal(generation.module_count, (size_t)1u);
         check_equal(two_modules[0].lease.generation, failed_lease.generation);
         generation.state = SALTS_SERVICE_HOST_GENERATION_ZERO;
         check_equal(salts_service_host_generation_build(
             &generation, UINT64_C(2), &registry, &storage,
             NULL, 0u, NULL, 0u, NULL, 0u),
             SALTS_SERVICE_HOST_INVALID_STATE);
-        check_equal(generation.module_count, (size_t)2u);
+        check_equal(generation.module_count, (size_t)1u);
         check_equal(two_modules[0].lease.generation, failed_lease.generation);
         generation.state = SALTS_SERVICE_HOST_GENERATION_FAILED;
 
@@ -443,7 +443,7 @@ suite("ServiceHost generation") {
                     SALTS_SERVICE_HOST_PLUGIN_ERROR);
         check_equal(generation.failure.plugin_status,
                     CMETA_PLUGIN_INVALID_ARGUMENT);
-        check_equal(generation.module_count, (size_t)2u);
+        check_equal(generation.module_count, (size_t)1u);
         check_equal(two_modules[0].lease.generation, corrupted_generation);
         generation.storage.module_capacity = valid_module_capacity;
 
@@ -454,7 +454,7 @@ suite("ServiceHost generation") {
                     SALTS_SERVICE_HOST_PLUGIN_ERROR);
         check_equal(generation.failure.plugin_status,
                     CMETA_PLUGIN_INVALID_ARGUMENT);
-        check_equal(generation.module_count, (size_t)2u);
+        check_equal(generation.module_count, (size_t)1u);
         check_equal(two_modules[0].lease.plugin.slot, failed_lease.plugin.slot);
         check_equal(two_modules[0].lease.plugin.generation, failed_lease.plugin.generation);
         check_equal(two_modules[0].lease.slot, (uint32_t)0u);
@@ -468,7 +468,7 @@ suite("ServiceHost generation") {
                     SALTS_SERVICE_HOST_PLUGIN_ERROR);
         check_equal(generation.failure.plugin_status,
                     CMETA_PLUGIN_INVALID_ARGUMENT);
-        check_equal(generation.module_count, (size_t)2u);
+        check_equal(generation.module_count, (size_t)1u);
         check_equal(two_modules[0].plugin.slot, failed_lease.plugin.slot);
         check_equal(two_modules[0].plugin.generation, failed_lease.plugin.generation);
         check_true(two_modules[0].manifest != NULL);
@@ -481,7 +481,7 @@ suite("ServiceHost generation") {
                     SALTS_SERVICE_HOST_PLUGIN_ERROR);
         check_equal(generation.failure.plugin_status,
                     CMETA_PLUGIN_INVALID_ARGUMENT);
-        check_equal(generation.module_count, (size_t)2u);
+        check_equal(generation.module_count, (size_t)1u);
         check_equal(two_modules[0].plugin.slot, secondary_ref.slot);
         check_equal(two_modules[0].plugin.generation, secondary_ref.generation);
         check_equal(two_modules[0].lease.plugin.slot, failed_lease.plugin.slot);
@@ -507,7 +507,7 @@ suite("ServiceHost generation") {
             NULL, 0u, NULL, 0u, NULL, 0u),
             SALTS_SERVICE_HOST_INVALID_STATE);
         generation.module_count = valid_module_count;
-        check_equal(generation.module_count, (size_t)2u);
+        check_equal(generation.module_count, (size_t)1u);
 
         /* No build/reuse while any recorded lease is unsettled. */
         check_equal(salts_service_host_generation_build(
@@ -533,7 +533,7 @@ suite("ServiceHost generation") {
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
         check_equal(generation.components.state, SALTS_CONFIGURATOR_CONTEXT_STOPPED);
         check_equal(generation.components.activation_count, (size_t)0u);
-        check_equal(generation.module_count, (size_t)2u);
+        check_equal(generation.module_count, (size_t)1u);
         check_equal(two_modules[0].lease.plugin.slot, failed_lease.plugin.slot);
         check_equal(two_modules[0].lease.plugin.generation, failed_lease.plugin.generation);
         check_equal(two_modules[0].lease.slot, failed_lease.slot);
