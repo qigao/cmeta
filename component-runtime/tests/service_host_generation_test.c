@@ -60,6 +60,12 @@ suite("ServiceHost generation") {
         cmeta_plugin_lifecycle_info info;
         bool quiet = false;
 
+        if (generation.state == SALTS_SERVICE_HOST_GENERATION_BUILT)
+            check_equal(salts_service_host_generation_discard(
+                &generation), SALTS_SERVICE_HOST_OK);
+
+        /* Settle the generation's leases before trying to stop/unload the
+         * secondary fixture, even if an earlier assertion aborts the case. */
         if (secondary_loaded) {
             check_equal(cmeta_plugin_registry_get_lifecycle(
                 &registry, secondary_ref, &info), CMETA_PLUGIN_OK);
@@ -73,10 +79,6 @@ suite("ServiceHost generation") {
                 &registry, secondary_ref), CMETA_PLUGIN_OK);
             secondary_loaded = false;
         }
-
-        if (generation.state == SALTS_SERVICE_HOST_GENERATION_BUILT)
-            check_equal(salts_service_host_generation_discard(
-                &generation), SALTS_SERVICE_HOST_OK);
 
         check_equal(cmeta_plugin_registry_get_lifecycle(
             &registry, ref, &info), CMETA_PLUGIN_OK);
