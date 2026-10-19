@@ -315,6 +315,10 @@ suite("ServiceHost generation") {
         check_equal(salts_service_host_generation_recover(&generation),
                     SALTS_SERVICE_HOST_INVALID_STATE);
         generation.active_scopes = 0u;
+        generation.components.activation_count = 1u;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+        generation.components.activation_count = 0u;
         check_equal(salts_service_host_generation_recover(&generation),
                     SALTS_SERVICE_HOST_PLUGIN_ERROR);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
