@@ -291,7 +291,8 @@ static void outbound_bundle_fast_retransmit_is_per_tsn(void) {
   assert(retransmitted.value_size == 13u &&
       retransmitted.value[3] == 100u);
   assert(p.a.tx[0].fast_retransmitted && p.a.tx[0].retransmits == 1u);
-  assert(p.a.recovery_active && p.a.in_flight == 4u);
+  /* Gap-ACKed TSNs 101-103 leave only missing TSN 100 in Flight Size. */
+  assert(p.a.recovery_active && p.a.in_flight == 1u);
   assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
 }
