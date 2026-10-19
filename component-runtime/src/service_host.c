@@ -282,6 +282,38 @@ static void generation_clear(
         (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
 }
 
+/* ZERO and DRAINED are reusable only if every owner/borrrow field has reached
+ * the canonical empty representation. The state enum alone is not enough to
+ * authorize overwriting a public generation record with unsettled ownership. */
+static bool generation_is_clear(
+    const salts_service_host_generation *generation) {
+    const salts_service_host_generation_storage *storage;
+    const salts_configurator_context *components;
+
+    if (generation == NULL || generation->registry != NULL ||
+        generation->deployment_count != 0u || generation->module_count != 0u ||
+        generation->runtime_owner != NULL || generation->active_scopes != 0u)
+        return false;
+
+    storage = &generation->storage;
+    if (storage->deployments != NULL || storage->deployment_capacity != 0u ||
+        storage->instances != NULL || storage->instance_capacity != 0u ||
+        storage->dependencies != NULL || storage->dependency_capacity != 0u ||
+        storage->activation_order != NULL || storage->activation_capacity != 0u ||
+        storage->modules != NULL || storage->module_capacity != 0u)
+        return false;
+
+    components = &generation->components;
+    return components->state == SALTS_CONFIGURATOR_CONTEXT_ZERO &&
+           components->activation_count == 0u &&
+           components->dependency_count == 0u &&
+           components->deployments == NULL &&
+           components->selections == NULL &&
+           components->instances == NULL &&
+           components->dependencies == NULL &&
+           components->activation_order == NULL;
+}
+
 const char *salts_service_host_status_string(
     salts_service_host_status status) {
     switch (status) {
@@ -324,17 +356,22 @@ salts_service_host_status salts_service_host_generation_build(
         (selection_count != 0u && selections == NULL))
         return SALTS_SERVICE_HOST_INVALID_ARGUMENT;
 
-    if (generation->state != SALTS_SERVICE_HOST_GENERATION_ZERO &&
-        generation->state != SALTS_SERVICE_HOST_GENERATION_DRAINED &&
-        !(generation->state == SALTS_SERVICE_HOST_GENERATION_FAILED &&
-          generation->runtime_owner == NULL &&
-          generation->active_scopes == 0u &&
-          generation->module_count == 0u &&
-          generation->components.activation_count == 0u &&
-          (generation->components.state == SALTS_CONFIGURATOR_CONTEXT_ZERO ||
-           generation->components.state == SALTS_CONFIGURATOR_CONTEXT_FAILED ||
-           generation->components.state == SALTS_CONFIGURATOR_CONTEXT_STOPPED)))
+    if (generation->state == SALTS_SERVICE_HOST_GENERATION_ZERO ||
+        generation->state == SALTS_SERVICE_HOST_GENERATION_DRAINED) {
+        if (!generation_is_clear(generation))
+            return SALTS_SERVICE_HOST_INVALID_STATE;
+    } else if (generation->state == SALTS_SERVICE_HOST_GENERATION_FAILED) {
+        if (generation->runtime_owner != NULL ||
+            generation->active_scopes != 0u ||
+            generation->module_count != 0u ||
+            generation->components.activation_count != 0u ||
+            (generation->components.state != SALTS_CONFIGURATOR_CONTEXT_ZERO &&
+             generation->components.state != SALTS_CONFIGURATOR_CONTEXT_FAILED &&
+             generation->components.state != SALTS_CONFIGURATOR_CONTEXT_STOPPED))
+            return SALTS_SERVICE_HOST_INVALID_STATE;
+    } else {
         return SALTS_SERVICE_HOST_INVALID_STATE;
+    }
 
     if (static_deployment_count > SIZE_MAX - dynamic_source_count)
         return SALTS_SERVICE_HOST_CAPACITY_EXCEEDED;
