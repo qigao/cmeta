@@ -2,6 +2,16 @@
 
 Status: **post-freeze design + isolated test-local prototype** on `feature/cmeta-ace-patterns`. This is not a productized executor, fully qualified conformance, a new Salts 2.3 public ABI, or release approval. See #1058, #1064 and #1018.
 
+**Current ServiceHost mapping (2026-10-19):** this audit document preserves the
+historical ACE branch and its original `ComponentPlugin` labels. In the
+currently integrated native runtime, `Salts::Configurator` owns static graph
+selection/activation; `Salts::ServiceHost` owns generation publication,
+Scope admission/drain and settlement of generation-held Plugin leases; and
+`Salts::Plugin` remains the sole loader/Registry/quiescence/unload authority.
+Historical pattern results in this document are not a statement that the old
+`Salts::ComponentPlugin` target remains exported. Current SDK evidence is
+tracked by [PR #1260](https://github.com/qigao/salts/pull/1260).
+
 ## Non-negotiable architectural split
 
 | Concern | Authority | CMeta role |
