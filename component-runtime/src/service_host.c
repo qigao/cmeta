@@ -45,8 +45,16 @@ static salts_service_host_status generation_fail_provider(
 static cmeta_plugin_status release_modules(
     salts_service_host_generation *generation) {
     cmeta_plugin_status first = CMETA_PLUGIN_OK;
-    size_t i = generation->module_count;
+    size_t i;
 
+    if (generation == NULL)
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
+    if (generation->module_count > generation->storage.module_capacity ||
+        (generation->module_count != 0u &&
+         generation->storage.modules == NULL))
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
+
+    i = generation->module_count;
     while (i != 0u) {
         cmeta_plugin_status status;
         --i;
