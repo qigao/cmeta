@@ -263,6 +263,78 @@ suite("ServiceHost generation") {
         check_null(generation.storage.modules);
     }
 
+    it("rejects a truncated module count while a live lease remains in the tail") {
+        salts_configurator_deployment two_deployments[2];
+        salts_configurator_instance two_instances[2];
+        salts_component_dependency two_dependencies[2];
+        size_t two_activation_order[2];
+        salts_service_host_module two_modules[2];
+        const salts_service_host_generation_storage storage = {
+            two_deployments, 2u,
+            two_instances, 2u,
+            two_dependencies, 2u,
+            two_activation_order, 2u,
+            two_modules, 2u
+        };
+        salts_service_host_source admitted_sources[2];
+        cmeta_plugin_lifecycle_info primary_info;
+        cmeta_plugin_lifecycle_info secondary_info;
+
+        check_equal(cmeta_plugin_registry_load(
+            &registry, COMPONENT_PROVIDER_SECONDARY_PLUGIN_PATH, &secondary_ref),
+            CMETA_PLUGIN_OK);
+        secondary_loaded = true;
+        check_equal(cmeta_plugin_registry_start(&registry, secondary_ref),
+                    CMETA_PLUGIN_OK);
+
+        admitted_sources[0] = (salts_service_host_source){
+            ref, COMPONENT_PROVIDER_EXPORT_ID, NULL, NULL
+        };
+        admitted_sources[1] = (salts_service_host_source){
+            secondary_ref, COMPONENT_PROVIDER_EXPORT_ID, NULL, NULL
+        };
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(1), &registry, &storage,
+            NULL, 0u, admitted_sources, 2u, NULL, 0u),
+            SALTS_SERVICE_HOST_OK);
+        check_equal(generation.module_count, (size_t)2u);
+        check_true(cmeta_plugin_lease_valid(two_modules[0].lease));
+        check_true(cmeta_plugin_lease_valid(two_modules[1].lease));
+
+        /* Truncate the public owner count while slot 1 still owns a live
+         * lease. Discard must quarantine rather than release only slot 0. */
+        generation.module_count = 1u;
+        check_equal(salts_service_host_generation_discard(&generation),
+                    SALTS_SERVICE_HOST_PLUGIN_ERROR);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_equal(generation.failure.plugin_status,
+                    CMETA_PLUGIN_INVALID_ARGUMENT);
+        check_equal(generation.module_count, (size_t)1u);
+        check_true(cmeta_plugin_lease_valid(two_modules[0].lease));
+        check_true(cmeta_plugin_lease_valid(two_modules[1].lease));
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &primary_info), CMETA_PLUGIN_OK);
+        check_equal(primary_info.active_leases, (size_t)1u);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, secondary_ref, &secondary_info), CMETA_PLUGIN_OK);
+        check_equal(secondary_info.active_leases, (size_t)1u);
+
+        /* Repair the count and explicitly settle both retained leases. */
+        generation.module_count = 2u;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_OK);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
+        check_false(cmeta_plugin_lease_valid(two_modules[0].lease));
+        check_false(cmeta_plugin_lease_valid(two_modules[1].lease));
+        check_null(generation.storage.modules);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &primary_info), CMETA_PLUGIN_OK);
+        check_equal(primary_info.active_leases, (size_t)0u);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, secondary_ref, &secondary_info), CMETA_PLUGIN_OK);
+        check_equal(secondary_info.active_leases, (size_t)0u);
+    }
+
     it("preserves partial lease settlement and recovers after repairing the failed token") {
         salts_configurator_deployment two_deployments[2];
         salts_configurator_instance two_instances[2];
