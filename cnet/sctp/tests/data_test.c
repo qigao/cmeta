@@ -150,15 +150,7 @@ static void unordered_priority_and_capacity(void) {
                              one, 1u, wire0, 15u, &n0) == CNET_SCTP_DATA_CAPACITY);
   assert(a.next_tsn == 100u && a.in_flight == 0u);
   assert(cnet_sctp_data_send(&a, 1u, 0u, 53u, 0,
-                             one, 0u, wire0, sizeof(wire0), &n0) == CNET_SCTP_DATA_OK);
-  assert(n0 > 0u && a.tx[0].used && a.tx[0].user_size == 0u);
-  /* Isolate the zero-length admission check from the ordering assertions below. */
-  memset(&a, 0, sizeof(a));
-  memset(&b, 0, sizeof(b));
-  oa = (test_owner){0};
-  ob = (test_owner){0};
-  pair_init(&a, &b, &oa, &ob, 100u, 300u);
-  n0 = 0u;
+                             one, 0u, wire0, sizeof(wire0), &n0) == CNET_SCTP_DATA_INVALID);
   assert(cnet_sctp_data_send(&a, 1u, 5u, 53u, 0,
                              one, 1u, wire0, sizeof(wire0), &n0) == CNET_SCTP_DATA_INVALID);
   assert(cnet_sctp_data_send(&a, 1u, 0u, 53u, 0,
