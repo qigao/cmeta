@@ -87,6 +87,10 @@ typedef struct salts_service_host_generation {
 
     salts_service_host_generation_storage storage;
     size_t deployment_count;
+    /* Prefix length of retained module-owner records. On a partial cleanup
+     * failure this shrinks as individual leases settle; only unsettled or
+     * malformed ownership records remain in [0, module_count), and every slot
+     * in [module_count, storage.module_capacity) is canonical zero. */
     size_t module_count;
 
     salts_service_host_runtime *runtime_owner;
