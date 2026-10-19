@@ -217,7 +217,7 @@ jobs:
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" --no-tests=error \
             --output-on-failure --timeout 120 --repeat until-fail:3 \
-            -R '^cmeta_native_(configurator(_cpp)?_test|service_host_(generation|publication|concurrency|exclusive_fence|scope_cpp|runtime_failure)_test)
+            -R '^cmeta_native_(configurator(_cpp)?_test|service_host_(generation|publication|concurrency|exclusive_fence|scope_cpp|runtime_failure)_test)$'
       - name: Run ACE sanitizer ownership contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.sanitizer != '' }}
         timeout-minutes: 30
