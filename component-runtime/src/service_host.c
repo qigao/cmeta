@@ -436,7 +436,13 @@ salts_service_host_status salts_service_host_generation_build(
     (void)distinct_modules;
 
     /* A candidate owns this context exclusively, never while ACTIVE.
-     * Establish defined typed ZERO state before static Context admission. */
+     * Establish defined typed ZERO state before static Context admission.
+     * The whole module table is caller-owned scratch storage: initialize every
+     * slot before any failure path can ask release_modules() to distinguish
+     * canonical empty records from unsettled Plugin ownership. */
+    for (i = 0u; i < storage->module_capacity; ++i)
+        memset(&storage->modules[i], 0, sizeof(storage->modules[i]));
+
     generation->components = (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
     generation->id = generation_id;
     generation->registry = registry;
