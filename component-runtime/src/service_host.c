@@ -493,12 +493,6 @@ salts_service_host_status salts_service_host_generation_build(
     generation->failure = service_host_failure_none();
     generation->state = SALTS_SERVICE_HOST_GENERATION_ZERO;
 
-    /* Establish a canonical empty tail before the first lease can be
-     * acquired. Later cleanup can then detect orphaned records if the public
-     * module_count metadata ever disagrees with the caller-owned table. */
-    for (i = 0u; i < storage->module_capacity; ++i)
-        memset(&storage->modules[i], 0, sizeof(storage->modules[i]));
-
     for (i = 0u; i < static_deployment_count; ++i)
         storage->deployments[i] = static_deployments[i];
 
