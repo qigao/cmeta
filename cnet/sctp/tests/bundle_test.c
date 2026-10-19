@@ -305,6 +305,8 @@ static void outbound_bundle_multiple_losses_are_per_tsn(void) {
   uint8_t payload[4] = {'a', 'b', 'c', 'd'};
   uint8_t combined[CNET_SCTP_DATA_MTU], single[CNET_SCTP_DATA_MTU];
   uint8_t sack[CNET_SCTP_DATA_MTU], response[CNET_SCTP_DATA_MTU];
+  uint8_t extra_packets[2][CNET_SCTP_DATA_MTU];
+  size_t extra_sizes[2] = {0u, 0u};
   cnet_sctp_wire_header header = {0};
   cnet_sctp_wire_decoder decoder = {0};
   cnet_sctp_wire_chunk chunks[4], retransmitted;
@@ -326,7 +328,16 @@ static void outbound_bundle_multiple_losses_are_per_tsn(void) {
   for (i = 0u; i < 4u; ++i)
     assert(cnet_sctp_wire_next_chunk(&decoder, &chunks[i]) == CNET_SCTP_WIRE_OK);
 
-  /* Lose TSNs 100 and 101 from the aggregate; later chunks still arrive. */
+  /* Create TSNs 104/105 before delivering any SACKs. Once loss
+   * evidence reaches the fast-retransmit threshold, RFC 9260 6.1(C)
+   * correctly backpressures new DATA until Owner advance() repairs loss. */
+  for (i = 0u; i < 2u; ++i) {
+    const uint8_t extra = (uint8_t)('e' + i);
+    assert(cnet_sctp_data_send(&p.a, 2u + i, 0u, 53u, 0,
+        &extra, 1u, extra_packets[i], sizeof(extra_packets[i]),
+        &extra_sizes[i]) == CNET_SCTP_DATA_OK);
+  }
+  /* Lose TSNs 100 and 101 from the aggregate; later TSNs arrive in order. */
   for (i = 2u; i < 4u; ++i) {
     single_size = pack(&p.a, 1, &chunks[i], 1u, single, sizeof(single));
     assert(cnet_sctp_data_input(&p.b, 10u + i, single, single_size,
@@ -334,18 +345,11 @@ static void outbound_bundle_multiple_losses_are_per_tsn(void) {
     assert(cnet_sctp_data_input(&p.a, 20u + i, sack, sack_size,
         response, sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
   }
-  /* Duplicate SACKs alone do not create new missing reports: only newly
-   * acknowledged higher TSNs count. Once 102/103 are Gap-ACKed, send two
-   * more DATA tickets within the newly freed Flight Size and ACK 104/105. */
   for (i = 0u; i < 2u; ++i) {
-    const uint8_t extra = (uint8_t)('e' + i);
-    assert(cnet_sctp_data_send(&p.a, 40u + i, 0u, 53u, 0,
-        &extra, 1u, single, sizeof(single), &single_size) ==
-        CNET_SCTP_DATA_OK);
-    assert(cnet_sctp_data_input(&p.b, 45u + i, single, single_size,
-        sack, sizeof(sack), &sack_size) == CNET_SCTP_DATA_OK);
+    assert(cnet_sctp_data_input(&p.b, 30u + i, extra_packets[i],
+        extra_sizes[i], sack, sizeof(sack), &sack_size) == CNET_SCTP_DATA_OK);
     assert(sack_size != 0u);
-    assert(cnet_sctp_data_input(&p.a, 50u + i, sack, sack_size,
+    assert(cnet_sctp_data_input(&p.a, 40u + i, sack, sack_size,
         response, sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
   }
   assert(p.a.tx[0].tsn == 100u && p.a.tx[0].pending_retransmit);
