@@ -633,6 +633,32 @@ static void finish_shutdown(cnet_sctp_assoc *s) {
   s->retransmits = 0u;
   memset(s->saved_packet, 0, sizeof(s->saved_packet));
 }
+/* T5 is absolute: both timer advancement and a late inbound packet
+ * must observe it before accepting a SHUTDOWN ACK. Output admission is
+ * transactional so the Owner can retry ABORT publication with a larger buffer. */
+static cnet_sctp_assoc_status shutdown_t5_abort(cnet_sctp_assoc *s,
+    uint64_t now, uint8_t *output, size_t cap, size_t *written) {
+  uint8_t packet[CNET_SCTP_ASSOC_MAX_PACKET];
+  size_t packet_size = 0u;
+  cnet_sctp_assoc_status status;
+  if (s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT ||
+      s->t5_shutdown_deadline_ms == 0u ||
+      now < s->t5_shutdown_deadline_ms)
+    return CNET_SCTP_ASSOC_EMPTY;
+  status = encode_one(s, s->peer_tag, SCTP_TYPE_ABORT, NULL, 0u,
+      packet, sizeof(packet), &packet_size);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (packet_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+  memcpy(output, packet, packet_size);
+  *written = packet_size;
+  s->state = CNET_SCTP_ASSOC_FAILED;
+  s->deadline_ms = 0u;
+  s->t5_shutdown_deadline_ms = 0u;
+  s->saved_size = 0u;
+  memset(s->saved_packet, 0, sizeof(s->saved_packet));
+  s->last_time_ms = now;
+  return CNET_SCTP_ASSOC_OK;
+}
 /* SHUTDOWN cumulatively acknowledges peer DATA.  Preview all mutation on
  * a bounded stack-owned candidate before emitting SHUTDOWN ACK, so an
  * undersized output buffer cannot half-retire a sender's TX tickets. */
@@ -829,6 +855,12 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK)
     return status;
+  if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+      s->t5_shutdown_deadline_ms != 0u &&
+      now >= s->t5_shutdown_deadline_ms) {
+    status = shutdown_t5_abort(s, now, output, cap, written);
+    return status == CNET_SCTP_ASSOC_EMPTY ? CNET_SCTP_ASSOC_OK : status;
+  }
   /* The external clock advances even when incoming bytes are rejected: an
    * invalid/expired cookie must not enable a later clock rollback replay. */
   s->last_time_ms = now;
@@ -960,28 +992,12 @@ cnet_sctp_assoc_status cnet_sctp_assoc_advance(cnet_sctp_assoc *s,
     s->last_time_ms = now;
     return CNET_SCTP_ASSOC_OK;
   }
-  /* Optional RFC 9260 §9.2 T5 is an absolute shutdown guard, distinct
-   * from the restarted T2 retransmission timer. On expiry, publish ABORT
-   * before committing terminal state; a short output buffer changes nothing. */
+  /* T5 must preempt T2 when the absolute shutdown budget expires. */
   if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
       s->t5_shutdown_deadline_ms != 0u &&
       now >= s->t5_shutdown_deadline_ms) {
-    uint8_t abort_packet[CNET_SCTP_ASSOC_MAX_PACKET];
-    size_t abort_size = 0u;
-    cnet_sctp_assoc_status abort_status = encode_one(s, s->peer_tag,
-        SCTP_TYPE_ABORT, NULL, 0u, abort_packet, sizeof(abort_packet),
-        &abort_size);
-    if (abort_status != CNET_SCTP_ASSOC_OK) return abort_status;
-    if (abort_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
-    memcpy(output, abort_packet, abort_size);
-    *written = abort_size;
-    s->state = CNET_SCTP_ASSOC_FAILED;
-    s->deadline_ms = 0u;
-    s->t5_shutdown_deadline_ms = 0u;
-    s->saved_size = 0u;
-    memset(s->saved_packet, 0, sizeof(s->saved_packet));
-    s->last_time_ms = now;
-    return CNET_SCTP_ASSOC_OK;
+    status = shutdown_t5_abort(s, now, output, cap, written);
+    return status == CNET_SCTP_ASSOC_EMPTY ? CNET_SCTP_ASSOC_OK : status;
   }
   if (now < s->deadline_ms) {
     s->last_time_ms = now;
