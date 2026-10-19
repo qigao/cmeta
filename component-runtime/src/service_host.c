@@ -285,7 +285,10 @@ salts_service_host_status salts_service_host_generation_build(
           generation->runtime_owner == NULL &&
           generation->active_scopes == 0u &&
           generation->module_count == 0u &&
-          generation->components.state != SALTS_CONFIGURATOR_CONTEXT_ACTIVE))
+          generation->components.activation_count == 0u &&
+          (generation->components.state == SALTS_CONFIGURATOR_CONTEXT_ZERO ||
+           generation->components.state == SALTS_CONFIGURATOR_CONTEXT_FAILED ||
+           generation->components.state == SALTS_CONFIGURATOR_CONTEXT_STOPPED)))
         return SALTS_SERVICE_HOST_INVALID_STATE;
 
     if (static_deployment_count > SIZE_MAX - dynamic_source_count)
