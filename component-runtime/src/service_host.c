@@ -358,6 +358,31 @@ static bool generation_is_clear(
            components->activation_order == NULL;
 }
 
+/* The Configurator plan count is not the only evidence of teardown. A failed
+ * or stopped context that is being reused must also have no active instance
+ * flags or live ObjectRefs. INIT-phase failure is the exception: no create or
+ * activate callback ran, and Init may have visited only a prefix of the array. */
+static bool service_host_components_settled(
+    const salts_configurator_context *components) {
+    size_t i;
+
+    if (components == NULL)
+        return false;
+    if (components->state == SALTS_CONFIGURATOR_CONTEXT_FAILED &&
+        components->failure.phase == SALTS_CONFIGURATOR_PHASE_INIT)
+        return true;
+    if (components->deployment_count > components->instance_capacity ||
+        (components->deployment_count != 0u && components->instances == NULL))
+        return false;
+
+    for (i = 0u; i < components->deployment_count; ++i) {
+        const salts_configurator_instance *instance = &components->instances[i];
+        if (instance->active || cmeta_object_ref_valid(&instance->object))
+            return false;
+    }
+    return true;
+}
+
 const char *salts_service_host_status_string(
     salts_service_host_status status) {
     switch (status) {
@@ -412,7 +437,8 @@ salts_service_host_status salts_service_host_generation_build(
             generation->components.activation_count != 0u ||
             (generation->components.state != SALTS_CONFIGURATOR_CONTEXT_ZERO &&
              generation->components.state != SALTS_CONFIGURATOR_CONTEXT_FAILED &&
-             generation->components.state != SALTS_CONFIGURATOR_CONTEXT_STOPPED))
+             generation->components.state != SALTS_CONFIGURATOR_CONTEXT_STOPPED) ||
+            !service_host_components_settled(&generation->components))
             return SALTS_SERVICE_HOST_INVALID_STATE;
     } else {
         return SALTS_SERVICE_HOST_INVALID_STATE;
@@ -573,7 +599,8 @@ salts_service_host_status salts_service_host_generation_recover(
     if ((component_state != SALTS_CONFIGURATOR_CONTEXT_ZERO &&
          component_state != SALTS_CONFIGURATOR_CONTEXT_FAILED &&
          component_state != SALTS_CONFIGURATOR_CONTEXT_STOPPED) ||
-        generation->components.activation_count != 0u)
+        generation->components.activation_count != 0u ||
+        !service_host_components_settled(&generation->components))
         return SALTS_SERVICE_HOST_INVALID_STATE;
 
     /* A failure must not discard an unresolved token. Plugin release consumes
