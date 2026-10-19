@@ -399,6 +399,46 @@ salts_service_host_status salts_service_host_generation_discard(
     return SALTS_SERVICE_HOST_OK;
 }
 
+salts_service_host_status salts_service_host_generation_recover(
+    salts_service_host_generation *generation) {
+    cmeta_plugin_status plugin_status;
+    salts_configurator_context_state component_state;
+
+    if (generation == NULL)
+        return SALTS_SERVICE_HOST_INVALID_ARGUMENT;
+    if (generation->state != SALTS_SERVICE_HOST_GENERATION_FAILED ||
+        generation->runtime_owner != NULL ||
+        generation->active_scopes != 0u ||
+        (generation->module_count != 0u &&
+         generation->storage.modules == NULL))
+        return SALTS_SERVICE_HOST_INVALID_STATE;
+
+    component_state = generation->components.state;
+    if ((component_state != SALTS_CONFIGURATOR_CONTEXT_ZERO &&
+         component_state != SALTS_CONFIGURATOR_CONTEXT_FAILED &&
+         component_state != SALTS_CONFIGURATOR_CONTEXT_STOPPED) ||
+        generation->components.activation_count != 0u)
+        return SALTS_SERVICE_HOST_INVALID_STATE;
+
+    /* A failure must not discard an unresolved token. Plugin release consumes
+     * successful leases exactly once and leaves failed tokens unchanged.
+     * release_modules preserves the module table until all remaining tokens
+     * settle, so the caller can repair the ownership fault and retry. */
+    plugin_status = release_modules(generation);
+    if (plugin_status != CMETA_PLUGIN_OK) {
+        generation->failure.plugin_status = plugin_status;
+        return SALTS_SERVICE_HOST_PLUGIN_ERROR;
+    }
+
+    generation_clear(generation);
+    generation->components =
+        (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
+    generation->runtime_owner = NULL;
+    generation->active_scopes = 0u;
+    generation->state = SALTS_SERVICE_HOST_GENERATION_DRAINED;
+    return SALTS_SERVICE_HOST_OK;
+}
+
 salts_service_host_status salts_service_host_runtime_publish(
     salts_service_host_runtime *runtime,
     salts_service_host_generation *generation,
