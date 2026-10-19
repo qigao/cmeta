@@ -211,6 +211,81 @@ jobs:
           set -euo pipefail
           dotnet pack packaging/nuget/Salts.Native.csproj --configuration Release --output dist -p:PackageVersion=${{ inputs.version }} -p:PackageRoot="$GITHUB_WORKSPACE/package" -p:RepositoryCommit="$SALTS_SOURCE_SHA"
           test -f "dist/Salts.Native.${{ inputs.version }}.nupkg"
+
+          # Qualify the package that will actually be handed to consumers. The
+          # staged tree check above cannot detect pack-layout omissions.
+          python3 - "dist/Salts.Native.${{ inputs.version }}.nupkg" "${{ inputs.version }}" "$SALTS_SOURCE_SHA" <<'PY'
+          import hashlib, re, sys, zipfile
+          package_path, version, source_sha = sys.argv[1:]
+          rids = (
+              'linux-x64', 'linux-arm64', 'windows-x64', 'macos-arm64',
+              'android-arm64-v8a', 'ios-arm64',
+          )
+          abi_digest = None
+          with zipfile.ZipFile(package_path) as package:
+              names = set(package.namelist())
+              expected_manifests = {
+                  f'sdk/{rid}/salts-sdk-manifest.txt' for rid in rids
+              }
+              manifests = {name for name in names
+                           if name.endswith('/salts-sdk-manifest.txt')}
+              if manifests != expected_manifests:
+                  raise SystemExit(
+                      f'Incorrect packaged SDK RID set: {manifests ^ expected_manifests}'
+                  )
+              for rid in rids:
+                  root = f'sdk/{rid}/'
+                  manifest_path = root + 'salts-sdk-manifest.txt'
+                  fields = dict(
+                      line.split('=', 1)
+                      for line in package.read(manifest_path).decode('utf-8-sig').splitlines()
+                      if '=' in line
+                  )
+                  for key, expected in (
+                      ('version', version), ('commit', source_sha), ('profile', 'release')
+                  ):
+                      if fields.get(key) != expected:
+                          raise SystemExit(
+                              f'{manifest_path}: {key}={fields.get(key)!r}, expected {expected!r}'
+                          )
+                  for header in (
+                      'salts/configurator.h', 'salts/service_host.h',
+                      'salts/component_provider_abi.h', 'salts/component_runtime_abi.h',
+                  ):
+                      item = root + 'include/' + header
+                      if item not in names:
+                          raise SystemExit(f'{rid}: missing packaged header {header}')
+                  abi_path = root + 'include/salts/component_runtime_abi.h'
+                  abi = package.read(abi_path)
+                  if b'SALTS_COMPONENT_RUNTIME_ABI_VERSION 0x00010000u' not in abi:
+                      raise SystemExit(f'{rid}: wrong packaged ServiceHost ABI epoch')
+                  digest = hashlib.sha256(abi).hexdigest()
+                  if abi_digest is None:
+                      abi_digest = digest
+                  elif digest != abi_digest:
+                      raise SystemExit(f'{rid}: packaged ServiceHost ABI header differs')
+                  targets_path = root + 'lib/cmake/Salts/SaltsTargets.cmake'
+                  if targets_path not in names:
+                      raise SystemExit(f'{rid}: missing packaged CMake exports')
+                  targets = package.read(targets_path).decode('utf-8', errors='strict')
+                  for target in (
+                      'Salts::Configurator', 'Salts::ServiceHost',
+                      'Salts::ComponentProviderABI', 'Salts::PluginABI',
+                  ):
+                      if target not in targets:
+                          raise SystemExit(f'{rid}: missing exported target {target}')
+                  if (re.search(r'add_library\\s*\\(\\s*Salts::Component(?:Plugin)?\\s', targets)
+                      or 'Salts::ComponentPluginABI' in targets):
+                      raise SystemExit(f'{rid}: retired runtime target was packaged')
+                  if rid == 'windows-x64':
+                      libraries = ('lib/salts_configurator.lib', 'lib/salts_service_host.lib')
+                  else:
+                      libraries = ('lib/libsalts_configurator.a', 'lib/libsalts_service_host.a')
+                  for library in libraries:
+                      if root + library not in names:
+                          raise SystemExit(f'{rid}: missing packaged runtime archive {library}')
+          print('PASS final NuGet payload: six RIDs, one source SHA, canonical ServiceHost ABI')
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: salts-native-nuget
