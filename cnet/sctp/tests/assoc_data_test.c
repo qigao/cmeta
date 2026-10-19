@@ -1213,6 +1213,8 @@ static void shutdown_preserves_zero_length_message(void) {
   assert(cnet_sctp_assoc_input(&a, 7u, data, nd,
       sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_OK);
   assert(ns != 0u && a.data.buffered_rx == 0u && a.data.rx[0].used);
+  assert(a.data.last_advertised_rwnd ==
+      CNET_SCTP_DATA_RECEIVE_CEILING - CNET_SCTP_DATA_PAYLOAD_MAX);
   assert(cnet_sctp_assoc_input(&b, 8u, sack, ns,
       complete, sizeof(complete), &nc) == CNET_SCTP_ASSOC_OK);
   assert(nc == 0u && b.data.in_flight == 0u);
