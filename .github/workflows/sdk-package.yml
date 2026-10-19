@@ -258,6 +258,12 @@ jobs:
                       item = root + 'include/' + header
                       if item not in names:
                           raise SystemExit(f'{rid}: missing packaged header {header}')
+                  for retired_header in (
+                      'salts/component.h', 'salts/component_plugin.h',
+                      'salts/component_plugin_abi.h',
+                  ):
+                      if root + 'include/' + retired_header in names:
+                          raise SystemExit(f'{rid}: retired runtime header was packaged: {retired_header}')
                   abi_path = root + 'include/salts/component_runtime_abi.h'
                   abi = package.read(abi_path)
                   if b'SALTS_COMPONENT_RUNTIME_ABI_VERSION 0x00010000u' not in abi:
