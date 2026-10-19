@@ -67,10 +67,11 @@ jobs:
           package="dist/Salts.Native.$RELEASE_VERSION.nupkg"
           test -f "$package"
           python3 - "$package" "$RELEASE_VERSION" "$SOURCE_SHA" <<'PY'
-          import sys,zipfile
+          import hashlib, re, sys, zipfile
           path,version,sha=sys.argv[1:]
           rids={'linux-x64','linux-arm64','windows-x64','macos-arm64',
                 'android-arm64-v8a','ios-arm64'}
+          abi_header_sha=None
           with zipfile.ZipFile(path) as pkg:
               names=set(pkg.namelist())
               manifests={n for n in names if n.endswith('/salts-sdk-manifest.txt')}
@@ -84,9 +85,41 @@ jobs:
                       if fields.get(key)!=want:
                           raise SystemExit(f'{entry}: {key} mismatch {fields.get(key)!r}')
                   rid=entry.split('/')[1]
-                  for header in ('cmeta/function.h','cnet/cnet.h','cnet/name_lookup.h'):
-                      if f'sdk/{rid}/include/{header}' not in names:
+                  root=f'sdk/{rid}/'
+                  for header in ('cmeta/function.h','cnet/cnet.h','cnet/name_lookup.h',
+                                 'salts/configurator.h','salts/service_host.h',
+                                 'salts/component_provider_abi.h',
+                                 'salts/component_runtime_abi.h'):
+                      item=root+'include/'+header
+                      if item not in names:
                           raise SystemExit(f'{rid}: missing {header}')
+                  abi_path=root+'include/salts/component_runtime_abi.h'
+                  abi=pkg.read(abi_path)
+                  if b'SALTS_COMPONENT_RUNTIME_ABI_VERSION 0x00010000u' not in abi:
+                      raise SystemExit(f'{rid}: unexpected ServiceHost ABI epoch')
+                  digest=hashlib.sha256(abi).hexdigest()
+                  if abi_header_sha is None:
+                      abi_header_sha=digest
+                  elif digest != abi_header_sha:
+                      raise SystemExit(f'{rid}: ServiceHost ABI header differs across RIDs')
+                  target_path=root+'lib/cmake/Salts/SaltsTargets.cmake'
+                  if target_path not in names:
+                      raise SystemExit(f'{rid}: missing exported CMake targets')
+                  targets=pkg.read(target_path).decode('utf-8',errors='strict')
+                  for target in ('Salts::Configurator','Salts::ServiceHost',
+                                 'Salts::ComponentProviderABI','Salts::PluginABI'):
+                      if target not in targets:
+                          raise SystemExit(f'{rid}: missing exported target {target}')
+                  if (re.search(r'add_library\s*\(\s*Salts::Component(?:Plugin)?\s',targets)
+                      or 'Salts::ComponentPluginABI' in targets):
+                      raise SystemExit(f'{rid}: retired runtime target exported')
+                  if rid=='windows-x64':
+                      libraries=('lib/salts_configurator.lib','lib/salts_service_host.lib')
+                  else:
+                      libraries=('lib/libsalts_configurator.a','lib/libsalts_service_host.a')
+                  for library in libraries:
+                      if root+library not in names:
+                          raise SystemExit(f'{rid}: missing runtime library {library}')
           PY
           sha256sum "$package" | tee dist/SHA256SUMS
 
