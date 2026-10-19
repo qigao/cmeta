@@ -45,6 +45,10 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: pwsh
         run: ./cmake/ci/tests/test-cflow-test-scope.ps1
+      - name: Verify canonical ServiceHost qualification routing
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: ./cmake/ci/tests/test-servicehost-ci-scope.ps1
       - name: Classify changes
         id: select
         shell: pwsh
