@@ -1,5 +1,5 @@
-/* Isolated Salts runtime candidate; copied from component-plugin/src/component_plugin_runtime.c at c8a1a3d5.
- * See Salts #1154. No changes to the legacy module or provider ABI. */
+/* Canonical ServiceHost runtime synchronization and resource admission.
+ * Plugin loading and lifecycle authority remain in Salts::Plugin. */
 #include <salts/service_host.h>
 #include <salts/thread.h>
 
