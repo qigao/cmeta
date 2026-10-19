@@ -86,10 +86,12 @@ jobs:
                           raise SystemExit(f'{entry}: {key} mismatch {fields.get(key)!r}')
                   rid=entry.split('/')[1]
                   root=f'sdk/{rid}/'
-                  for header in ('cmeta/function.h','cnet/cnet.h','cnet/name_lookup.h',
+                  for header in ('cmeta/function.h','cmeta/component.h',
+                                 'cnet/cnet.h','cnet/name_lookup.h',
                                  'salts/configurator.h','salts/service_host.h',
-                                 'salts/component_provider_abi.h',
-                                 'salts/component_runtime_abi.h'):
+                                 'salts/component_abi.h','salts/component_provider_abi.h',
+                                 'salts/component_runtime_abi.h','salts/plugin.h',
+                                 'salts/plugin_decl.h','salts/thread.h'):
                       item=root+'include/'+header
                       if item not in names:
                           raise SystemExit(f'{rid}: missing {header}')
