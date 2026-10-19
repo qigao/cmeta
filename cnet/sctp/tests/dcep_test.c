@@ -41,6 +41,10 @@ static void reliable_open_ack(void) {
   assert(cnet_sctp_dcep_input(&server, 0u, open, no,
       ack, sizeof(ack), &na) == CNET_SCTP_DCEP_OK);
   assert(na == 1u && ack[0] == 2u);
+  assert(!cnet_sctp_dcep_ready(&server, 0u));
+  /* Simulate downstream queue backpressure: without admission, not ready. */
+  assert(!cnet_sctp_dcep_ready(&server, 0u));
+  assert(cnet_sctp_dcep_ack_admitted(&server, 0u) == CNET_SCTP_DCEP_OK);
   assert(cnet_sctp_dcep_ready(&server, 0u));
   assert(server.channels[0].label_size == sizeof(label));
   assert(memcmp(server.channels[0].label, label, sizeof(label)) == 0);
@@ -70,6 +74,9 @@ static void unordered_and_negative(void) {
       open, sizeof(open), &n) == CNET_SCTP_DCEP_OK);
   assert(cnet_sctp_dcep_input(&client, 1u, open, n,
       ack, sizeof(ack), &na) == CNET_SCTP_DCEP_OK);
+  assert(!cnet_sctp_dcep_ready(&client, 1u));
+  assert(cnet_sctp_dcep_ack_admitted(&client, 1u) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_ready(&client, 1u));
   assert(client.channels[1].channel_type == 0x80u);
   assert(client.channels[1].label_size == sizeof(valid_utf8));
   assert(cnet_sctp_dcep_input(&server, 1u, ack, na,
