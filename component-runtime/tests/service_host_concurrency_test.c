@@ -103,7 +103,7 @@ static void drain_worker(void *arg) {
         drainer->runtime, drainer->generation);
 }
 
-suite("ComponentPlugin concurrent admission and drain") {
+suite("ServiceHost concurrent admission and drain") {
     static cmeta_plugin_registry registry;
     static cmeta_plugin_ref ref;
     static bool plugin_started;
