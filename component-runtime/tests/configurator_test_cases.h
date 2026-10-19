@@ -57,6 +57,47 @@ suite("Salts static Component Configurator") {
         check_equal(context.activation_count, (size_t)0u);
     }
 
+    it("refuses to reset a FAILED context with unsettled activation entries") {
+        test_provider_state logger;
+        salts_component_provider_binding provider;
+        salts_configurator_deployment deployment;
+        salts_configurator_instance instance;
+        size_t order;
+        salts_configurator_context context = SALTS_CONFIGURATOR_CONTEXT_INIT;
+
+        test_provider_state_init(&logger, 7, NULL);
+        provider = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_start(&context), SALTS_COMPONENT_OK);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(context.activation_count, (size_t)1u);
+
+        /* Model an inconsistent FAILED marker while ObjectRef teardown
+         * authority is still live. Init must reject without overwriting it. */
+        context.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
+        check_equal(context.activation_count, (size_t)1u);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(logger.destroys, 0u);
+
+        context.state = SALTS_CONFIGURATOR_CONTEXT_ACTIVE;
+        check_equal(salts_configurator_context_stop(&context), SALTS_COMPONENT_OK);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_STOPPED);
+        check_equal(context.activation_count, (size_t)0u);
+        check_equal(logger.destroys, 1u);
+    }
+
     it("rejects provider binding ABI mismatch before resolution") {
         test_provider_state logger;
         salts_component_provider_binding provider;
