@@ -151,6 +151,19 @@ salts_service_host_status salts_service_host_generation_build(
 salts_service_host_status salts_service_host_generation_discard(
     salts_service_host_generation *generation);
 
+/* Retry cleanup for an unpublished FAILED generation after its owner has
+ * repaired the underlying lease/ownership fault. Requires exclusive access,
+ * no runtime owner or active scopes, and a ZERO, fully rolled-back FAILED, or
+ * STOPPED Configurator context with activation_count == 0.
+ *
+ * Only remaining authoritative Plugin leases are retried; this function never
+ * starts/stops a live graph, loads/unloads a DSO, or retries automatically.
+ * On failure the generation stays FAILED and unsettled module records/storage
+ * remain owned by the caller. On success ownership is settled and the
+ * generation becomes DRAINED/reusable. Attached generations use generation_drain. */
+salts_service_host_status salts_service_host_generation_recover(
+    salts_service_host_generation *generation);
+
 /* Initialize a zero-initialized runtime. RESOURCE_ERROR means the platform
  * mutex could not be created; the runtime remains zero and may be retried.
  * NULL or an already initialized runtime returns INVALID_ARGUMENT. */
