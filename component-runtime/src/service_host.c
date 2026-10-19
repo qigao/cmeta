@@ -482,9 +482,13 @@ salts_service_host_status salts_service_host_generation_build(
             &storage->deployments[static_deployment_count + i]);
         if (status != SALTS_SERVICE_HOST_OK) {
             cmeta_plugin_status release_status = release_modules(generation);
-            if (generation->failure.plugin_status == CMETA_PLUGIN_OK &&
-                release_status != CMETA_PLUGIN_OK)
+            if (release_status != CMETA_PLUGIN_OK) {
+                /* Cleanup safety outranks the initiating admission error: the
+                 * caller must know the candidate still owns unsettled leases. */
+                generation->failure.source_index = SALTS_SERVICE_HOST_INDEX_NONE;
                 generation->failure.plugin_status = release_status;
+                return SALTS_SERVICE_HOST_PLUGIN_ERROR;
+            }
             return status;
         }
     }
@@ -507,8 +511,10 @@ salts_service_host_status salts_service_host_generation_build(
         cmeta_plugin_status release_status;
         generation_fail_component(generation, component_status);
         release_status = release_modules(generation);
-        if (release_status != CMETA_PLUGIN_OK)
+        if (release_status != CMETA_PLUGIN_OK) {
+            generation->failure.source_index = SALTS_SERVICE_HOST_INDEX_NONE;
             generation->failure.plugin_status = release_status;
+        }
         return SALTS_SERVICE_HOST_COMPONENT_ERROR;
     }
 
@@ -568,6 +574,7 @@ salts_service_host_status salts_service_host_generation_recover(
      * settle, so the caller can repair the ownership fault and retry. */
     plugin_status = release_modules(generation);
     if (plugin_status != CMETA_PLUGIN_OK) {
+        generation->failure.source_index = SALTS_SERVICE_HOST_INDEX_NONE;
         generation->failure.plugin_status = plugin_status;
         return SALTS_SERVICE_HOST_PLUGIN_ERROR;
     }
