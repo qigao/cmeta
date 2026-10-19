@@ -598,16 +598,23 @@ static cnet_sctp_assoc_status begin_shutdown_control(cnet_sctp_assoc *s,
   uint8_t value[4] = {0};
   size_t n = 0u;
   cnet_sctp_assoc_status status;
-  if (now > UINT64_MAX - s->config.t1_ms) return CNET_SCTP_ASSOC_CLOCK;
+  if (now > UINT64_MAX - s->config.t1_ms ||
+      (!acknowledgement && s->config.t5_shutdown_guard_ms != 0u &&
+       now > UINT64_MAX - s->config.t5_shutdown_guard_ms))
+    return CNET_SCTP_ASSOC_CLOCK;
   if (!acknowledgement) wr32(value, s->data.cumulative_rx);
   status = encode_one(s, s->peer_tag,
       acknowledgement ? SCTP_TYPE_SHUTDOWN_ACK : SCTP_TYPE_SHUTDOWN,
       acknowledgement ? NULL : value, acknowledgement ? 0u : sizeof(value),
       scratch, sizeof(scratch), &n);
   if (status != CNET_SCTP_ASSOC_OK) return status;
-  return begin_packet(s, now, scratch, n,
+  status = begin_packet(s, now, scratch, n,
       acknowledgement ? CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT :
           CNET_SCTP_ASSOC_SHUTDOWN_SENT, out, cap, written);
+  if (status == CNET_SCTP_ASSOC_OK && !acknowledgement &&
+      s->config.t5_shutdown_guard_ms != 0u)
+    s->t5_shutdown_deadline_ms = now + s->config.t5_shutdown_guard_ms;
+  return status;
 }
 /* A graceful terminal retains bounded RX tickets until the Owner takes
  * every fully received ULP record. STOPPED blocks further transport I/O,
@@ -620,6 +627,7 @@ static void finish_shutdown(cnet_sctp_assoc *s) {
   }
   s->state = CNET_SCTP_ASSOC_STOPPED;
   s->deadline_ms = 0u;
+  s->t5_shutdown_deadline_ms = 0u;
   s->saved_size = 0u;
   s->current_rto_ms = 0u;
   s->retransmits = 0u;
@@ -951,6 +959,29 @@ cnet_sctp_assoc_status cnet_sctp_assoc_advance(cnet_sctp_assoc *s,
     s->last_time_ms = now;
     return CNET_SCTP_ASSOC_OK;
   }
+  /* Optional RFC 9260 §9.2 T5 is an absolute shutdown guard, distinct
+   * from the restarted T2 retransmission timer. On expiry, publish ABORT
+   * before committing terminal state; a short output buffer changes nothing. */
+  if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+      s->t5_shutdown_deadline_ms != 0u &&
+      now >= s->t5_shutdown_deadline_ms) {
+    uint8_t abort_packet[CNET_SCTP_ASSOC_MAX_PACKET];
+    size_t abort_size = 0u;
+    cnet_sctp_assoc_status abort_status = encode_one(s, s->peer_tag,
+        SCTP_TYPE_ABORT, NULL, 0u, abort_packet, sizeof(abort_packet),
+        &abort_size);
+    if (abort_status != CNET_SCTP_ASSOC_OK) return abort_status;
+    if (abort_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+    memcpy(output, abort_packet, abort_size);
+    *written = abort_size;
+    s->state = CNET_SCTP_ASSOC_FAILED;
+    s->deadline_ms = 0u;
+    s->t5_shutdown_deadline_ms = 0u;
+    s->saved_size = 0u;
+    memset(s->saved_packet, 0, sizeof(s->saved_packet));
+    s->last_time_ms = now;
+    return CNET_SCTP_ASSOC_OK;
+  }
   if (now < s->deadline_ms) {
     s->last_time_ms = now;
     return CNET_SCTP_ASSOC_OK;
@@ -1021,6 +1052,12 @@ cnet_sctp_assoc_status cnet_sctp_assoc_next_deadline(cnet_sctp_assoc *s,
       s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT ||
       s->state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT;
   *deadline_ms = *has_deadline ? s->deadline_ms : 0u;
+  if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+      s->t5_shutdown_deadline_ms != 0u &&
+      (!*has_deadline || s->t5_shutdown_deadline_ms < *deadline_ms)) {
+    *has_deadline = 1;
+    *deadline_ms = s->t5_shutdown_deadline_ms;
+  }
   return CNET_SCTP_ASSOC_OK;
 }
 
@@ -1160,6 +1197,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_stop(cnet_sctp_assoc *s) {
   }
   s->state = CNET_SCTP_ASSOC_STOPPED;
   s->deadline_ms = 0u;
+  s->t5_shutdown_deadline_ms = 0u;
   s->saved_size = 0u;
   memset(s->saved_packet, 0, sizeof(s->saved_packet));
   return CNET_SCTP_ASSOC_OK;
