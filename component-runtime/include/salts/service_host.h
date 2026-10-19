@@ -112,8 +112,9 @@ typedef struct salts_service_host_scope {
  * generations are drained. Do not copy/move a live scope; a copied scope is
  * rejected without changing its generation's admission count. One original
  * owner releases it exactly once. Services borrowed from it expire at release.
- * The additional owner-address field is a post-3.0 ABI change and must not
- * ship as a silent 3.0.x-compatible update.
+ * The owner-address field is part of the canonical ServiceHost epoch-1
+ * layout. It is not compatible with any earlier unpublished prototype layout;
+ * consumers must use the headers and library from one immutable SDK.
  *
  * After init, publish/close/acquire/release/drain synchronize runtime admission
  * and generation counts. Each scope is used by one thread at a time; provider
