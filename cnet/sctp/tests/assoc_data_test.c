@@ -1129,10 +1129,23 @@ static void shutdown_t2_retry_budget(void) {
   assert(cnet_sctp_assoc_advance(&b, 350u, retry, sizeof(retry), &nr) ==
       CNET_SCTP_ASSOC_OK);
   assert(b.retransmits == 2u && b.deadline_ms == 750u);
-  assert(cnet_sctp_assoc_advance(&b, 750u, retry, sizeof(retry), &nr) ==
+  /* Peer progress during SHUTDOWN-ACK-SENT restarts the bounded retry
+   * budget and T2, even after the RTO has backed off to its maximum. */
+  assert(cnet_sctp_assoc_input(&b, 400u, shutdown, ns,
+      retry, sizeof(retry), &nr) == CNET_SCTP_ASSOC_OK);
+  assert(nr == na && memcmp(retry, shutdown_ack, na) == 0 &&
+      b.retransmits == 0u && b.current_rto_ms == 400u &&
+      b.deadline_ms == 800u && b.last_time_ms == 400u);
+  assert(cnet_sctp_assoc_advance(&b, 800u, retry, sizeof(retry), &nr) ==
       CNET_SCTP_ASSOC_OK);
-  assert(b.retransmits == 3u && b.deadline_ms == 1150u);
-  assert(cnet_sctp_assoc_advance(&b, 1150u, retry, sizeof(retry), &nr) ==
+  assert(b.retransmits == 1u && b.deadline_ms == 1200u);
+  assert(cnet_sctp_assoc_advance(&b, 1200u, retry, sizeof(retry), &nr) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(b.retransmits == 2u && b.deadline_ms == 1600u);
+  assert(cnet_sctp_assoc_advance(&b, 1600u, retry, sizeof(retry), &nr) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(b.retransmits == 3u && b.deadline_ms == 2000u);
+  assert(cnet_sctp_assoc_advance(&b, 2000u, retry, sizeof(retry), &nr) ==
       CNET_SCTP_ASSOC_EXPIRED);
   assert(nr == 0u && b.state == CNET_SCTP_ASSOC_FAILED &&
       b.deadline_ms == 0u && b.saved_size == 0u);
