@@ -4,6 +4,10 @@
 #include <salts/service_host.h>
 #include <cmeta/object_scope.h>
 
+#ifndef COMPONENT_PROVIDER_SECONDARY_PLUGIN_PATH
+#error COMPONENT_PROVIDER_SECONDARY_PLUGIN_PATH must name the secondary Provider DSO
+#endif
+
 /* This callback observes the outer Plugin lease during lexical ObjectRef
  * destruction; cmeta_cleanup itself never acquires or extends that lease. */
 typedef struct test_lease_observer {
@@ -26,6 +30,8 @@ static void test_observed_object_destroy(void *context, void *object) {
 
 static cmeta_plugin_registry registry;
 static cmeta_plugin_ref ref;
+static cmeta_plugin_ref secondary_ref;
+static bool secondary_loaded;
 static salts_service_host_generation generation;
 static salts_configurator_deployment deployments[1];
 static salts_configurator_instance instances[1];
@@ -35,9 +41,11 @@ static salts_service_host_module modules[1];
 
 suite("ServiceHost generation") {
     before_each() {
-        const cmeta_plugin_registry_config config = {1};
+        const cmeta_plugin_registry_config config = {2};
 
         generation = (salts_service_host_generation){0};
+        secondary_ref = (cmeta_plugin_ref){0u, 0u};
+        secondary_loaded = false;
 
         check_equal(cmeta_plugin_registry_init(&registry, &config),
                     CMETA_PLUGIN_OK);
@@ -51,6 +59,20 @@ suite("ServiceHost generation") {
     after_each() {
         cmeta_plugin_lifecycle_info info;
         bool quiet = false;
+
+        if (secondary_loaded) {
+            check_equal(cmeta_plugin_registry_get_lifecycle(
+                &registry, secondary_ref, &info), CMETA_PLUGIN_OK);
+            if (info.state == CMETA_PLUGIN_LIFECYCLE_STARTED)
+                check_equal(cmeta_plugin_registry_request_stop(
+                    &registry, secondary_ref), CMETA_PLUGIN_OK);
+            check_equal(cmeta_plugin_registry_poll_quiescent(
+                &registry, secondary_ref, &quiet), CMETA_PLUGIN_OK);
+            check_true(quiet);
+            check_equal(cmeta_plugin_registry_unload(
+                &registry, secondary_ref), CMETA_PLUGIN_OK);
+            secondary_loaded = false;
+        }
 
         if (generation.state == SALTS_SERVICE_HOST_GENERATION_BUILT)
             check_equal(salts_service_host_generation_discard(
@@ -204,58 +226,87 @@ suite("ServiceHost generation") {
         check_equal(info.active_leases, (size_t)0u);
     }
 
-    it("recovers an unpublished generation after its Plugin lease is repaired") {
+    it("preserves partial lease settlement and recovers after repairing the failed token") {
+        salts_configurator_deployment two_deployments[2];
+        salts_configurator_instance two_instances[2];
+        salts_component_dependency two_dependencies[2];
+        size_t two_activation_order[2];
+        salts_service_host_module two_modules[2];
         const salts_service_host_generation_storage storage = {
-            deployments, 1u,
-            instances, 1u,
-            dependencies, 1u,
-            activation_order, 1u,
-            modules, 1u
+            two_deployments, 2u,
+            two_instances, 2u,
+            two_dependencies, 2u,
+            two_activation_order, 2u,
+            two_modules, 2u
         };
-        const salts_service_host_source source = {
-            ref, COMPONENT_PROVIDER_EXPORT_ID, NULL, NULL
+        const salts_service_host_source sources[2] = {
+            { ref, COMPONENT_PROVIDER_EXPORT_ID, NULL, NULL },
+            { {0u, 0u}, COMPONENT_PROVIDER_EXPORT_ID, NULL, NULL }
         };
         cmeta_plugin_lease valid_lease;
-        cmeta_plugin_lifecycle_info info;
+        cmeta_plugin_lifecycle_info primary_info;
+        cmeta_plugin_lifecycle_info secondary_info;
         salts_service_host_runtime attached_runtime =
             SALTS_SERVICE_HOST_RUNTIME_INIT;
         uint32_t corrupted_generation;
 
-        check_equal(salts_service_host_generation_build(
-            &generation, UINT64_C(1), &registry, &storage,
-            NULL, 0u, &source, 1u, NULL, 0u),
-            SALTS_SERVICE_HOST_OK);
-        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_BUILT);
-        valid_lease = modules[0].lease;
-        check_true(cmeta_plugin_lease_valid(valid_lease));
+        check_equal(cmeta_plugin_registry_load(
+            &registry, COMPONENT_PROVIDER_SECONDARY_PLUGIN_PATH, &secondary_ref),
+            CMETA_PLUGIN_OK);
+        secondary_loaded = true;
+        check_equal(cmeta_plugin_registry_start(&registry, secondary_ref),
+                    CMETA_PLUGIN_OK);
 
-        /* Test-only owner-state fault: the registry refuses a stale token and
-         * promises not to mutate it. The host must quarantine the generation. */
-        corrupted_generation = modules[0].lease.generation + 1u;
+        {
+            salts_service_host_source admitted_sources[2] = {
+                sources[0],
+                { secondary_ref, COMPONENT_PROVIDER_EXPORT_ID, NULL, NULL }
+            };
+            check_equal(salts_service_host_generation_build(
+                &generation, UINT64_C(1), &registry, &storage,
+                NULL, 0u, admitted_sources, 2u, NULL, 0u),
+                SALTS_SERVICE_HOST_OK);
+        }
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_BUILT);
+        check_equal(generation.module_count, (size_t)2u);
+        valid_lease = two_modules[0].lease;
+        check_true(cmeta_plugin_lease_valid(valid_lease));
+        check_true(cmeta_plugin_lease_valid(two_modules[1].lease));
+
+        /* Test-only owner-state fault on the first module. release_modules()
+         * drains the second module in reverse order before encountering it. */
+        corrupted_generation = two_modules[0].lease.generation + 1u;
         if (corrupted_generation == 0u)
             corrupted_generation = 1u;
-        modules[0].lease.generation = corrupted_generation;
+        two_modules[0].lease.generation = corrupted_generation;
 
         check_equal(salts_service_host_generation_discard(&generation),
                     SALTS_SERVICE_HOST_PLUGIN_ERROR);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
-        check_equal(generation.module_count, (size_t)1u);
-        check_equal(modules[0].lease.generation, corrupted_generation);
+        check_equal(generation.module_count, (size_t)2u);
+        check_equal(two_modules[0].lease.generation, corrupted_generation);
         check_equal(generation.failure.plugin_status, CMETA_PLUGIN_STALE);
+
+        /* The valid second lease was consumed exactly once; the first
+         * failed token remains unchanged and its DSO remains pinned. */
+        check_false(cmeta_plugin_lease_valid(two_modules[1].lease));
+        check_equal(two_modules[1].manifest, NULL);
         check_equal(cmeta_plugin_registry_get_lifecycle(
-            &registry, ref, &info), CMETA_PLUGIN_OK);
-        check_equal(info.active_leases, (size_t)1u);
+            &registry, ref, &primary_info), CMETA_PLUGIN_OK);
+        check_equal(primary_info.active_leases, (size_t)1u);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, secondary_ref, &secondary_info), CMETA_PLUGIN_OK);
+        check_equal(secondary_info.active_leases, (size_t)0u);
         check_equal(cmeta_plugin_registry_unload(&registry, ref),
                     CMETA_PLUGIN_BUSY);
 
         /* No build/reuse while any recorded lease is unsettled. */
         check_equal(salts_service_host_generation_build(
             &generation, UINT64_C(2), &registry, &storage,
-            NULL, 0u, &source, 1u, NULL, 0u),
+            NULL, 0u, NULL, 0u, NULL, 0u),
             SALTS_SERVICE_HOST_INVALID_STATE);
 
-        /* Recovery must not cross the runtime's attached-generation
-         * ownership boundary or bypass Scope admission accounting. */
+        /* A failed recovery preserves the unsettled token and module table. */
         generation.runtime_owner = &attached_runtime;
         check_equal(salts_service_host_generation_recover(&generation),
                     SALTS_SERVICE_HOST_INVALID_STATE);
@@ -264,29 +315,31 @@ suite("ServiceHost generation") {
         check_equal(salts_service_host_generation_recover(&generation),
                     SALTS_SERVICE_HOST_INVALID_STATE);
         generation.active_scopes = 0u;
-
-        /* A failed retry preserves the same token and generation storage. */
         check_equal(salts_service_host_generation_recover(&generation),
                     SALTS_SERVICE_HOST_PLUGIN_ERROR);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
-        check_equal(generation.module_count, (size_t)1u);
-        check_equal(modules[0].lease.generation, corrupted_generation);
+        check_equal(generation.module_count, (size_t)2u);
+        check_equal(two_modules[0].lease.generation, corrupted_generation);
         check_equal(cmeta_plugin_registry_get_lifecycle(
-            &registry, ref, &info), CMETA_PLUGIN_OK);
-        check_equal(info.active_leases, (size_t)1u);
+            &registry, ref, &primary_info), CMETA_PLUGIN_OK);
+        check_equal(primary_info.active_leases, (size_t)1u);
 
-        /* Once the owner token is repaired, recovery consumes it exactly once. */
-        modules[0].lease = valid_lease;
+        /* Once the owner token is repaired, recovery settles the remaining
+         * lease and makes the still-unpublished bundle reusable. */
+        two_modules[0].lease = valid_lease;
         check_equal(salts_service_host_generation_recover(&generation),
                     SALTS_SERVICE_HOST_OK);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
         check_equal(generation.module_count, (size_t)0u);
         check_equal(generation.registry, NULL);
-        check_equal(modules[0].manifest, NULL);
-        check_false(cmeta_plugin_lease_valid(modules[0].lease));
+        check_equal(two_modules[0].manifest, NULL);
+        check_false(cmeta_plugin_lease_valid(two_modules[0].lease));
         check_equal(cmeta_plugin_registry_get_lifecycle(
-            &registry, ref, &info), CMETA_PLUGIN_OK);
-        check_equal(info.active_leases, (size_t)0u);
+            &registry, ref, &primary_info), CMETA_PLUGIN_OK);
+        check_equal(primary_info.active_leases, (size_t)0u);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, secondary_ref, &secondary_info), CMETA_PLUGIN_OK);
+        check_equal(secondary_info.active_leases, (size_t)0u);
     }
 
     it("discharges explicit ObjectRef cleanup before releasing its Plugin lease") {
