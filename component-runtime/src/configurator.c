@@ -97,6 +97,33 @@ static void salts_configurator_instance_reset(salts_configurator_instance *insta
     instance->active = false;
 }
 
+/* A public state enum and activation_count are not, by themselves, proof that
+ * teardown authority is gone. For a graph that passed INIT, verify the
+ * caller-owned instance prefix contains no live flags or ObjectRefs before
+ * allowing FAILED/STOPPED context reuse. INIT-phase failures never published
+ * objects and may have validated only a prefix of the caller array, so don't
+ * inspect the unvisited tail in that case. */
+static bool salts_configurator_instances_settled(
+    const salts_configurator_context *context) {
+    size_t i;
+
+    if (context == NULL)
+        return false;
+    if (context->state == SALTS_CONFIGURATOR_CONTEXT_FAILED &&
+        context->failure.phase == SALTS_CONFIGURATOR_PHASE_INIT)
+        return true;
+    if (context->deployment_count > context->instance_capacity ||
+        (context->deployment_count != 0u && context->instances == NULL))
+        return false;
+
+    for (i = 0u; i < context->deployment_count; ++i) {
+        const salts_configurator_instance *instance = &context->instances[i];
+        if (instance->active || cmeta_object_ref_valid(&instance->object))
+            return false;
+    }
+    return true;
+}
+
 static bool salts_component_order_contains(
     const salts_configurator_context *context,
     size_t prefix_count,
@@ -312,6 +339,10 @@ salts_component_status salts_configurator_context_init(
      * reusable state carrying entries is inconsistent and may still own
      * ObjectRefs; do not overwrite its teardown authority. */
     if (context->activation_count != 0u)
+        return SALTS_COMPONENT_INVALID_STATE;
+    if ((context->state == SALTS_CONFIGURATOR_CONTEXT_STOPPED ||
+         context->state == SALTS_CONFIGURATOR_CONTEXT_FAILED) &&
+        !salts_configurator_instances_settled(context))
         return SALTS_COMPONENT_INVALID_STATE;
 
     *context = (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
