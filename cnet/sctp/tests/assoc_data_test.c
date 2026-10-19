@@ -228,6 +228,12 @@ static void post_handshake_dcep_wire(void) {
   assert(cnet_sctp_assoc_input(&a, 8u, sack, ns,
                                response, sizeof(response), &nr) == CNET_SCTP_ASSOC_OK);
   assert(a.data.in_flight == 0u && nr == 0u);
+  /* Queue-capacity refusal must not consume the ACK or open the channel. */
+  assert(cnet_sctp_assoc_send_message(&b, 9u, 0u, CNET_SCTP_DCEP_PPID, 0,
+      ack_payload, nack, wire, 8u, &np) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(np == 0u && b.data.in_flight == 0u);
+  assert(!cnet_sctp_dcep_ready(&server, 0u));
+  assert(server.channels[0].state == 3u); /* ACK_PENDING remains retryable. */
   assert(cnet_sctp_assoc_send_message(&b, 9u, 0u, CNET_SCTP_DCEP_PPID, 0,
       ack_payload, nack, wire, sizeof(wire), &np) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_dcep_ack_admitted(&server, 0u) == CNET_SCTP_DCEP_OK);
