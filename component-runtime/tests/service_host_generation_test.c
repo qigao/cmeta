@@ -380,7 +380,7 @@ suite("ServiceHost generation") {
                 SALTS_SERVICE_HOST_OK);
         }
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_BUILT);
-        check_equal(generation.module_count, (size_t)1u);
+        check_equal(generation.module_count, (size_t)2u);
         valid_lease = two_modules[0].lease;
         check_true(cmeta_plugin_lease_valid(valid_lease));
         check_true(cmeta_plugin_lease_valid(two_modules[1].lease));
