@@ -163,29 +163,9 @@ jobs:
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R "^(test_salts_(unicode|idna)($|_)|cnet_name_lookup(_dns)?_test$)"
           if errorlevel 1 exit /b 1
-      # Branch-only conformance of original #1234 FR Provider DSO and strict
-      # borrowed service admission against #1235 already merged into master.
-      - name: Requalify original Configurator/ServiceHost Candidate (Unix)
-        if: ${{ !cancelled() && (github.head_ref == 'review/component-runtime-mainline-requal' || (github.head_ref == 'review/component-runtime-mainline-installed-abi' || github.head_ref == 'review/servicehost-installed-dso-conformance')) && steps.build_unix.outcome == 'success' && matrix.execution && (matrix.family == 'linux' || matrix.family == 'mac') }}
-        shell: bash
-        timeout-minutes: 15
-        run: |
-          set -euo pipefail
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R '^cmeta_native_(configurator_candidate|service_host_candidate|component_candidate)_'
-      - name: Requalify original Configurator/ServiceHost Candidate (Windows)
-        if: ${{ !cancelled() && (github.head_ref == 'review/component-runtime-mainline-requal' || (github.head_ref == 'review/component-runtime-mainline-installed-abi' || github.head_ref == 'review/servicehost-installed-dso-conformance')) && steps.build_windows.outcome == 'success' && matrix.execution && matrix.family == 'windows' }}
-        shell: cmd
-        timeout-minutes: 15
-        run: |
-          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R "^cmeta_native_(configurator_candidate|service_host_candidate|component_candidate)_"
-          if errorlevel 1 exit /b 1
       # First-party code in a single sanitizer build; no prebuilt Salts SDKs.
       - name: Audit source-instrumented ServiceHost dependency closure
-        if: ${{ !cancelled() && github.head_ref == 'review/servicehost-fullsource-sanitizers' && matrix.sanitizer != '' && steps.build_unix.outcome == 'success' }}
+        if: ${{ !cancelled() && github.head_ref == 'review/servicehost-canonical-sdk-audit' && matrix.sanitizer != '' && steps.build_unix.outcome == 'success' }}
         shell: bash
         timeout-minutes: 5
         env:
@@ -199,15 +179,12 @@ jobs:
           db = pathlib.Path(os.environ["SANITIZER_BUILD_DIR"]) / "compile_commands.json"
           rows = json.loads(db.read_text(encoding="utf-8"))
           required = {
-              "ServiceHost and Configurator": ("component-runtime/src/",),
-              "ServiceHost real DSO tests": ("component-runtime/tests/",),
-              "Original Component": ("component/src/",),
-              "Original ComponentPlugin": ("component-plugin/src/",),
-              "Plugin loader": ("plugin/src/",),
-              "CMeta": ("cmeta/",),
-              "Platform": ("platform/src/",),
-              "CFlow": ("cflow/src/",),
-              "CNet": ("cnet/src/",),
+              "Configurator/ServiceHost implementation": ("component-runtime/src/",),
+              "ServiceHost C11/C++17 and DSO tests": ("component-runtime/tests/",),
+              "Plugin loader and Registry": ("plugin/src/",),
+              "CMeta descriptor and ABI contracts": ("cmeta/",),
+              "Platform mutex/resource adapter": ("platform/src/",),
+              "NativeIO publication-test dependency": ("native-io/src/",),
           }
           kind = os.environ["SANITIZER_KIND"]
           expected = ("-fsanitize=thread",) if kind == "tsan" else ("-fsanitize=address", "-fsanitize=undefined")
@@ -233,14 +210,500 @@ jobs:
               raise SystemExit("Missing first-party sanitizer closure: " + repr(missing[:12]))
           PY
       - name: Repeat ServiceHost under full-source Linux ASan/UBSan or TSan
-        if: ${{ !cancelled() && github.head_ref == 'review/servicehost-fullsource-sanitizers' && matrix.sanitizer != '' && steps.build_unix.outcome == 'success' }}
+        if: ${{ !cancelled() && github.head_ref == 'review/servicehost-canonical-sdk-audit' && matrix.sanitizer != '' && steps.build_unix.outcome == 'success' }}
         shell: bash
         timeout-minutes: 25
         run: |
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" --no-tests=error \
             --output-on-failure --timeout 120 --repeat until-fail:3 \
-            -R '^cmeta_native_(configurator_candidate|service_host_candidate|component_candidate)_'
+            -R '^cmeta_native_(configurator(_cpp)?_test|service_host_(generation|publication|concurrency|exclusive_fence|scope_cpp|runtime_failure)_test)
+      - name: Run ACE sanitizer ownership contracts
+        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.sanitizer != '' }}
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --preset "${{ matrix.preset }}" \
+            --no-tests=error --output-on-failure --timeout 90 \
+            -R '^(cmeta_native_(configurator(_cpp)?_test|service_host_(generation|publication|concurrency|exclusive_fence|scope_cpp|runtime_failure)_test|component_(test|cpp_test|plugin_(abi_test|abi_cpp_test|dso_test|generation_test|scope_cpp_test|publication_test|act_native_io_test|runtime_failure_test|concurrency_test)))|cmeta_fastpath_(component|pattern)(_cpp)?_test|cmeta_ace_sync(_cpp)?_test|cmeta_ace_leader_followers_contract(_cpp)?_test|platform_ace_leader_followers(_cpp)?_test|native_io_readiness_(lifetime|accept)_test|native_io_header_cpp_test|thread_pool_test|thread_pool_lf_test|disruptor_test|concurrency_header_cpp_test|cflow_reactive_test|cflow_actor_test|cflow_ace_pipes_filters_test|cflow_ace_half_sync_async_test|cnet_ace_acceptor_connector_test|cnet_tcp_endpoint_test|cnet_(progress_strategy|owner_placement|destination_policy|client_pool|recovery_policy|managed_dial|handoff|manager|event|dispatcher|sg_hosted_gateway|sg_handoff_owner|external_gateway_owner|native_io_sharded_ownership|shards_multi_owner)_test)$'
+      # Full functional qualification and performance sampling are different
+      # gates. CNet enables separately labeled benchmark CTests when native
+      # benchmark binaries are built for downstream measurement. The host
+      # qualification runs every non-benchmark test; the reusable benchmark
+      # workflow runs the labeled performance workloads from the exact SHA.
+      - name: Run complete Unix integration tests
+        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.full_tests }}
+        timeout-minutes: 30
+        shell: bash
+        run: ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -LE benchmark
+      - name: Run complete Windows ACE integration tests
+        if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.full_tests }}
+        timeout-minutes: 30
+        shell: cmd
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -LE benchmark
+          if errorlevel 1 exit /b 1
+      - name: Run Unix native and plugin contracts
+        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.native }}
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V \
+            -R '^(platform_fastpath_|cmeta_trace_|cmeta_fastpath_|cmeta_data_reflect_|tinymock_reflect_|cmeta_coroutine|coro_executor|cmeta_native_|cmeta_plugin_native_|cflow_io_native_test$|cflow_io_file_test$|salts_static_owner_exports_test$)'
+      - name: Run Windows native and plugin contracts
+        if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.native }}
+        timeout-minutes: 30
+        shell: cmd
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -V -R "^(platform_fastpath_|cmeta_trace_|cmeta_fastpath_|cmeta_data_reflect_|tinymock_reflect_|cmeta_coroutine|coro_executor|cmeta_native_|cmeta_plugin_native_|cmeta_plugin_windows_search_test$|cflow_io_native_test$|cflow_io_file_test$|cflow_execution_test$|cflow_interface_reflection_test$|cflow_executor_dso_test$|salts_static_owner_exports_test$)"
+          if errorlevel 1 exit /b 1
+      - name: Run POSIX execution and nested CSTL contracts
+        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.execution }}
+        timeout-minutes: 30
+        shell: bash
+        run: ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(test_cmeta_process$|native_io_test$|cflow_io_(actor|native_adapter|pipe)_test$|tinytest_regression_runtime$|cnet_.*_test$|native_ipc(_header_cpp)?_test$|cmeta_native_|thread_pool_test$|thread_pool_lf_test$|thread_pool_lf_installed_test$|disruptor_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cflow_.*_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
+      - name: Run Windows execution and nested CSTL contracts
+        if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.execution }}
+        timeout-minutes: 30
+        shell: cmd
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(test_cmeta_process$|native_io_test$|cflow_io_(actor|native_adapter|pipe)_test$|tinytest_regression_runtime$|cnet_.*_test$|native_ipc(_header_cpp)?_test$|cmeta_native_|thread_pool_test$|thread_pool_lf_test$|thread_pool_lf_installed_test$|disruptor_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cflow_.*_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
+          if errorlevel 1 exit /b 1
+      - name: Run reflected CFlow contracts
+        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.projection }}
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 60 -R '^(cflow_function_projection_test|cflow_execution_test|cflow_interface_reflection_test)$'
+      - name: Run portable arm64 runtime and header tests
+        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.armcontracts }}
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --preset linux-arm64-release-ci --no-tests=error --output-on-failure --timeout 60 -R '^(thread_pool_test|thread_pool_lf_test|thread_pool_lf_installed_test|concurrency_header_cpp_test|disruptor_test|cmeta_native_component.*|native_io_header_cpp_test|cmeta_header_cpp_test|cflow_header_cpp_test|cflow_owner_executor_test|cflow_owner_scheduler_test|cflow_reactive_test|cflow_actor_test|cflow_machine_instance_test|cflow_statechart_instance_test|cnet_header_cpp_test|cmeta_coroutine_completion_test|cmeta_coroutine_facade_test|coro_executor_test|coro_executor_header_cpp_test|cnet_api_test|cnet_progress_strategy_test|cnet_tls_test)$'
+      - name: Compile PR-base modules for the CNet comparison
+        if: matrix.compare
+        shell: cmd
+        env:
+          CNET_COMPARE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set "BASELINE_SOURCE=%GITHUB_WORKSPACE%\build\pr-base"
+          git worktree add --detach "%BASELINE_SOURCE%" "%CNET_COMPARE_BASE_SHA%"
+          if errorlevel 1 exit /b 1
+          cd /d "%BASELINE_SOURCE%"
+          set "PROJECT_ROOT=%BASELINE_SOURCE%"
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          cmake --preset win-release-ci -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF -DCMETA_BUILD_BENCHMARKS=OFF -DNATIVE_IO_BUILD_BENCHMARKS=OFF -DCOROUTINE_BUILD_BENCHMARKS=OFF -DCNET_BUILD_BENCHMARKS=OFF
+          if errorlevel 1 exit /b 1
+          cmake --build --preset win-release-ci --parallel 2
+          if errorlevel 1 exit /b 1
+      - name: Isolate the baseline DSO runtime for the comparison
+        if: matrix.compare
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $baseline = Join-Path $env:GITHUB_WORKSPACE "build/pr-base"
+          $binary = Join-Path $baseline "build/Msvc-Release/bin"
+          if (-not (Test-Path -LiteralPath (Join-Path $binary "cnet.dll"))) { throw "Missing baseline CNet DSO" }
+          $cache = Get-Content (Join-Path $baseline "build/Msvc-Release/CMakeCache.txt")
+          $triplets = @($cache | Where-Object { $_ -match '^VCPKG_TARGET_TRIPLET:[^=]+=' })
+          if ($triplets.Count -ne 1) { throw "Missing baseline target triplet" }
+          $triplet = ($triplets[0] -split '=', 2)[1]
+          # LOAD_WITH_ALTERED_SEARCH_PATH must resolve each revision's own dependencies.
+          Copy-Item -Path (Join-Path $baseline "vcpkg_installed/$triplet/bin/*.dll") -Destination $binary
+      - name: Install SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/sdk/linux-x64"
+          cmake --build --preset install-strip-linux-release-ci --parallel 2
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/cflow/function_projection.h"
+          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
+          test -f "$prefix/include/cmeta/interface.h"
+          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
+          grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
+          grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
+          grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/tinytest/detail/equality.h"
+          test -f "$prefix/include/tinymock.h"
+          test -f "$prefix/include/tinymock_support.h"
+          test -f "$prefix/include/tinymock_cmeta.h"
+          test -f "$prefix/include/tinymock_value.h"
+          test -f "$prefix/include/tinymock_function.h"
+          test -f "$prefix/include/tinymock_history.h"
+          test -f "$prefix/include/tinymock_actions.h"
+          test -f "$prefix/include/tinymock_return.h"
+          grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/unicode/salts_unicode.h"
+          test -f "$prefix/include/unicode/salts_unicode_normalize.h"
+          test -f "$prefix/include/idna/salts_idna.h"
+          grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          # Installed C11/C++ tests already ran through the parent CTest preset.
+          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
+          version=${{ inputs.version }}
+          commit=$(git rev-parse HEAD)
+          os=linux
+          arch=x64
+          profile=release
+          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
+          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
+          EOF
+        if: matrix.package && matrix.id == 'linux-release'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-sdk-linux-x64
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
+        if: matrix.package && matrix.id == 'linux-release'
+      - name: Install SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $prefix = Join-Path $env:GITHUB_WORKSPACE "stage\sdk\windows-x64"
+          cmd /d /c "call `"$env:VSINSTALL\Common7\Tools\VsDevCmd.bat`" -arch=x64 -host_arch=x64 >nul && cmake --build --preset install-win-release-ci --parallel 2"
+          if ($LASTEXITCODE -ne 0) { throw "SDK installation failed" }
+
+          $config = Join-Path $prefix "lib\cmake\Salts\SaltsConfig.cmake"
+          $targets = Join-Path $prefix "lib\cmake\Salts\SaltsTargets.cmake"
+          $functionHeader = Join-Path $prefix "include\cmeta\function.h"
+          $projectionHeader = Join-Path $prefix "include\cflow\function_projection.h"
+          $interfaceHeader = Join-Path $prefix "include\cmeta\interface.h"
+          $tinyEqualityHeader = Join-Path $prefix "include\tinytest\detail\equality.h"
+          $tinymockUmbrellaHeader = Join-Path $prefix "include\tinymock.h"
+          $tinymockSupportHeader = Join-Path $prefix "include\tinymock_support.h"
+          $tinymockHeader = Join-Path $prefix "include\tinymock_cmeta.h"
+          $tinymockValueHeader = Join-Path $prefix "include\tinymock_value.h"
+          $tinymockFunctionHeader = Join-Path $prefix "include\tinymock_function.h"
+          $tinymockHistoryHeader = Join-Path $prefix "include\tinymock_history.h"
+          $tinymockActionsHeader = Join-Path $prefix "include\tinymock_actions.h"
+          $tinymockReturnHeader = Join-Path $prefix "include\tinymock_return.h"
+          if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
+          if (-not (Test-Path -LiteralPath $functionHeader -PathType Leaf)) { throw "missing $functionHeader" }
+          if (-not (Test-Path -LiteralPath $projectionHeader -PathType Leaf)) { throw "missing $projectionHeader" }
+          if (-not (Select-String -LiteralPath $projectionHeader -SimpleMatch "cflow_function_typed_filter_projection_admit" -Quiet)) { throw "missing typed FILTER projection in $projectionHeader" }
+          if (-not (Test-Path -LiteralPath $interfaceHeader -PathType Leaf)) { throw "missing $interfaceHeader" }
+          $interfaceText = Get-Content -LiteralPath $interfaceHeader -Raw
+          if ($interfaceText -notmatch "cmeta_interface_desc_valid") { throw "missing canonical Interface reflection in $interfaceHeader" }
+          if ($interfaceText -notmatch "cmeta_interface_desc_equal") { throw "missing canonical Interface equality in $interfaceHeader" }
+          if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "cmeta_function_abi_desc" -Quiet)) { throw "missing cmeta_function_abi_desc in $functionHeader" }
+          if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "FunctionAbi" -Quiet)) { throw "missing FunctionAbi in $functionHeader" }
+          if (-not (Test-Path -LiteralPath $tinyEqualityHeader -PathType Leaf)) { throw "missing $tinyEqualityHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockUmbrellaHeader -PathType Leaf)) { throw "missing $tinymockUmbrellaHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockSupportHeader -PathType Leaf)) { throw "missing $tinymockSupportHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockHeader -PathType Leaf)) { throw "missing $tinymockHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockValueHeader -PathType Leaf)) { throw "missing $tinymockValueHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockFunctionHeader -PathType Leaf)) { throw "missing $tinymockFunctionHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockHistoryHeader -PathType Leaf)) { throw "missing $tinymockHistoryHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockActionsHeader -PathType Leaf)) { throw "missing $tinymockActionsHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockReturnHeader -PathType Leaf)) { throw "missing $tinymockReturnHeader" }
+          if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::TinyMock" -Quiet)) {
+            throw "missing Salts::TinyMock export in $targets"
+          }
+          if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::CFlow" -Quiet)) {
+            throw "missing Salts::CFlow export in $targets"
+          }
+          $unicodeHeader = Join-Path $prefix "include\unicode\salts_unicode.h"
+          if (-not (Test-Path -LiteralPath $unicodeHeader -PathType Leaf)) { throw "missing $unicodeHeader" }
+          foreach ($relative in @("include\unicode\salts_unicode_normalize.h", "include\idna\salts_idna.h")) {
+            $header = Join-Path $prefix $relative
+            if (-not (Test-Path -LiteralPath $header -PathType Leaf)) { throw "missing $header" }
+          }
+          if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::Unicode" -Quiet)) {
+            throw "missing Salts::Unicode export in $targets"
+          }
+          # Installed C11/C++ tests already ran through the parent CTest preset.
+          $sourceCommit = (git rev-parse HEAD).Trim()
+          $manifest = @(
+            "version=${{ inputs.version }}"
+            "commit=$sourceCommit"
+            "os=windows"
+            "arch=x64"
+            "profile=release"
+            "vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}"
+            "vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}"
+          ) -join "`n"
+          [System.IO.File]::WriteAllText(
+            (Join-Path $prefix "salts-sdk-manifest.txt"),
+            $manifest + "`n",
+            [System.Text.UTF8Encoding]::new($false)
+          )
+        if: matrix.package && matrix.id == 'windows-release'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-sdk-windows-x64
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
+        if: matrix.package && matrix.id == 'windows-release'
+      - name: Install SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RUNNER_ARCH" in
+            X64) rid=macos-x64 ;;
+            ARM64) rid=macos-arm64 ;;
+            *) echo "unsupported RUNNER_ARCH=$RUNNER_ARCH" >&2; exit 1 ;;
+          esac
+          prefix="$GITHUB_WORKSPACE/stage/sdk/$rid"
+          cmake --build --preset install-strip-mac-arm64-release-ci --parallel 2
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/cflow/function_projection.h"
+          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
+          test -f "$prefix/include/cmeta/interface.h"
+          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
+          grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
+          grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
+          grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/tinytest/detail/equality.h"
+          test -f "$prefix/include/tinymock.h"
+          test -f "$prefix/include/tinymock_support.h"
+          test -f "$prefix/include/tinymock_cmeta.h"
+          test -f "$prefix/include/tinymock_value.h"
+          test -f "$prefix/include/tinymock_function.h"
+          test -f "$prefix/include/tinymock_history.h"
+          test -f "$prefix/include/tinymock_actions.h"
+          test -f "$prefix/include/tinymock_return.h"
+          grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/unicode/salts_unicode.h"
+          test -f "$prefix/include/unicode/salts_unicode_normalize.h"
+          test -f "$prefix/include/idna/salts_idna.h"
+          grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          # Installed C11/C++ tests already ran through the parent CTest preset.
+          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
+          version=${{ inputs.version }}
+          commit=$(git rev-parse HEAD)
+          os=macos
+          arch=$RUNNER_ARCH
+          profile=release
+          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
+          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
+          EOF
+        if: matrix.id == 'macos-release'
+      - name: Verify installed macOS TinyTest native TLS ABI (C11)
+        if: matrix.id == 'macos-release'
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/sdk/macos-arm64"
+          archive="$prefix/lib/libtinytest.a"
+          test -f "$archive"
+          # The SDK may not expose GNU GCC's emulated TLS wrapper when
+          # AppleClang C11 consumers expect one native Mach-O TLS variable.
+          if nm -gU "$archive" | grep -F '___emutls_v.ttest_active_config__'; then
+            echo 'TinyTest SDK contains incompatible GCC emulated TLS' >&2
+            exit 1
+          fi
+          nm -gU "$archive" | grep -F ' _ttest_active_config__'
+          temp="$RUNNER_TEMP/salts-tinytest-installed-c11"
+          mkdir -p "$temp"
+          cat > "$temp/consumer.c" <<'EOF'
+          #include <tinytest.h>
+          spec("installed TinyTest C11 native TLS") {
+              it("links the one installed TinyTest runtime") {
+                  check_equal(1, 1);
+              }
+          }
+          EOF
+          /usr/bin/clang -std=c11 -O2 -arch arm64 -I"$prefix/include" \
+            "$temp/consumer.c" "$archive" -o "$temp/consumer"
+          "$temp/consumer"
+      # Test-only artifact on PR builds. Normal release packaging retains the
+      # canonical salts-sdk-macos name for the existing SDK aggregation job.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.package && 'salts-sdk-macos' || 'salts-sdk-macos-tinytest-candidate' }}
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
+        if: matrix.id == 'macos-release'
+      - name: Install native arm64 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/sdk/linux-arm64"
+          cmake --build --preset install-strip-linux-arm64-release-ci --parallel 2
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/cflow/function_projection.h"
+          test -f "$prefix/include/cmeta/interface.h"
+          test -f "$prefix/include/tinytest/detail/equality.h"
+          grep -F "Salts::CMeta" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/unicode/salts_unicode.h"
+          test -f "$prefix/include/unicode/salts_unicode_normalize.h"
+          test -f "$prefix/include/idna/salts_idna.h"
+          grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
+          version=${{ inputs.version }}
+          commit=$(git rev-parse HEAD)
+          os=linux
+          arch=arm64
+          rid=linux-arm64
+          triplet=arm64-linux
+          profile=release
+          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
+          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
+          EOF
+        if: matrix.package && matrix.id == 'linux-arm64-release'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-sdk-linux-arm64
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
+        if: matrix.package && matrix.id == 'linux-arm64-release'
+      - name: Install Android SDK
+        if: matrix.family == 'android'
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
+          cmake --build --preset install-android-arm64-v8a-release-ci --parallel 2
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/cflow/function_projection.h"
+          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
+          test -f "$prefix/include/cmeta/interface.h"
+          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
+          grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
+          grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
+          grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/tinytest/detail/equality.h"
+          test -f "$prefix/include/tinymock.h"
+          test -f "$prefix/include/tinymock_support.h"
+          test -f "$prefix/include/tinymock_cmeta.h"
+          test -f "$prefix/include/tinymock_value.h"
+          test -f "$prefix/include/tinymock_function.h"
+          test -f "$prefix/include/tinymock_history.h"
+          test -f "$prefix/include/tinymock_actions.h"
+          test -f "$prefix/include/tinymock_return.h"
+          grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/unicode/salts_unicode.h"
+          test -f "$prefix/include/unicode/salts_unicode_normalize.h"
+          test -f "$prefix/include/idna/salts_idna.h"
+          grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
+          version=${{ inputs.version }}
+          commit=$(git rev-parse HEAD)
+          os=android
+          abi=arm64-v8a
+          api=android-24
+          profile=release
+          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
+          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: matrix.family == 'android'
+        with:
+          name: salts-sdk-android-arm64-v8a
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
+      - name: Install iOS SDK
+        if: matrix.family == 'ios'
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/sdk/${{ matrix.sdk }}"
+          cmake --build --preset "install-strip-${{ matrix.sdk }}-release-ci" --parallel 2
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/cflow/function_projection.h"
+          test -f "$prefix/include/cmeta/interface.h"
+          test -f "$prefix/include/tinytest/detail/equality.h"
+          test -f "$prefix/include/tinymock.h"
+          test -f "$prefix/include/tinymock_cmeta.h"
+          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/include/unicode/salts_unicode.h"
+          test -f "$prefix/include/unicode/salts_unicode_normalize.h"
+          test -f "$prefix/include/idna/salts_idna.h"
+          grep -Fq "Salts::Unicode" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CNet" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
+          grep -F "cflow_function_typed_filter_projection_admit" "$prefix/include/cflow/function_projection.h"
+          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
+          version=${{ inputs.version }}
+          commit=$(git rev-parse HEAD)
+          os=ios
+          rid=${{ matrix.sdk }}
+          triplet=${{ matrix.triplet }}
+          profile=release
+          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
+          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: matrix.family == 'ios'
+        with:
+          name: salts-sdk-${{ matrix.sdk }}
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
+      - name: Archive the complete build and source timestamps
+        if: matrix.artifact && !matrix.cross
+        shell: bash
+        env:
+          BUILD_ARTIFACT: native-${{ matrix.id }}
+          BUILD_DIRECTORY: ${{ matrix.build_dir }}
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > native-build-commit.txt
+          pwd -P > native-build-workspace.txt
+          printf '%s/%s\n' "$ImageOS" "$ImageVersion" > native-build-image.txt
+          printf '%s/%s/%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "$ImageOS" > native-build-platform.txt
+          printf '%s\n%s\n' "$BUILD_ARTIFACT" "$BUILD_DIRECTORY" > native-build-profile.txt
+          git ls-files -z > native-build-sources.txt
+          paths=("${{ matrix.build_dir }}" vcpkg_installed)
+          if [ -d stage ]; then paths+=(stage); fi
+          if [ -d build/pr-base ]; then paths+=(build/pr-base/build/Msvc-Release/bin); fi
+          tar --format=pax -cf native-build.tar --null -T native-build-sources.txt \
+            native-build-commit.txt native-build-workspace.txt native-build-image.txt \
+            native-build-platform.txt native-build-profile.txt "${paths[@]}"
+      - name: Upload compiled inputs for benchmarks
+        if: matrix.artifact && !matrix.cross
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.id }}
+          path: native-build.tar
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 1
+
+      - name: Report ccache compilation statistics
+        if: ${{ always() && steps.compiler_cache.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          ccache --show-stats
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run ACE sanitizer ownership contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.sanitizer != '' }}
         timeout-minutes: 30
