@@ -335,16 +335,20 @@ static void outbound_bundle_multiple_losses_are_per_tsn(void) {
     assert(cnet_sctp_data_input(&p.a, 20u + i, sack, sack_size,
         response, sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
   }
-  /* Three distinct higher TSNs provide three reports for both holes. */
+  /* Re-deliver later TSNs to elicit repeated SACKs without injecting new
+   * DATA beyond cwnd. Each report observes both holes independently. */
   for (i = 0u; i < 3u; ++i) {
-    body = (uint8_t)('e' + i);
-    assert(cnet_sctp_data_send(&p.a, 30u + i, 0u, 53u, 0, &body, 1u,
-        single, sizeof(single), &single_size) == CNET_SCTP_DATA_OK);
-    assert(cnet_sctp_data_input(&p.b, 40u + i, single, single_size,
-        sack, sizeof(sack), &sack_size) == CNET_SCTP_DATA_OK);
-    assert(sack_size != 0u);
-    assert(cnet_sctp_data_input(&p.a, 50u + i, sack, sack_size,
-        response, sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
+    size_t j;
+    for (j = 2u; j < 4u; ++j) {
+      single_size = pack(&p.a, 1, &chunks[j], 1u, single, sizeof(single));
+      assert(cnet_sctp_data_input(&p.b, 30u + i * 2u + j,
+          single, single_size, sack, sizeof(sack), &sack_size) ==
+          CNET_SCTP_DATA_OK);
+      assert(sack_size != 0u);
+      assert(cnet_sctp_data_input(&p.a, 50u + i * 2u + j,
+          sack, sack_size, response, sizeof(response), &response_size) ==
+          CNET_SCTP_DATA_OK);
+    }
   }
   assert(p.a.tx[0].tsn == 100u && p.a.tx[0].pending_retransmit);
   assert(p.a.tx[1].tsn == 101u && p.a.tx[1].pending_retransmit);
