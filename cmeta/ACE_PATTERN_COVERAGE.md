@@ -14,6 +14,13 @@
 > **Baseline:** `feature/cmeta-ace-patterns`; ACE functional-freeze code SHA [`02b741a`](https://github.com/qigao/salts/commit/02b741a7f2ebceaeed68c681898d09072c5323d1), qualified by [CI #37775060929](https://github.com/qigao/salts/actions/runs/37775060929). This document is documentation-only: it does not reopen or supersede the frozen source contract in [ACE_FREEZE.md](ACE_FREEZE.md).
 > **Change policy:** [#1012](https://github.com/qigao/salts/issues/1012), draft [PR #1013](https://github.com/qigao/salts/pull/1013) **DO NOT MERGE / DO NOT PUBLISH**; [#1018](https://github.com/qigao/salts/issues/1018) independently owns 2.3.0 package, ABI and downstream release qualification.
 
+> **Runtime naming note (2026-10-19):** the matrix preserves historical source
+> checkpoints and CTest names, some of which use `ComponentPlugin`. The
+> currently integrated lifecycle targets are `Salts::Configurator` and
+> `Salts::ServiceHost`; Plugin remains the sole loader/Registry/quiescence/
+> unload authority. Current SDK and installed-consumer qualification is tracked
+> in [PR #1260](https://github.com/qigao/salts/pull/1260).
+
 ## Goal and counting rule
 
 Target: **all 17 canonical patterns in POSA2 expressed and usable through CMeta semantics composed with existing Salts runtime owners**. This is **not** a request for 17 new classes, 17 new public `cmeta_*` aliases, or 17 runtimes.
@@ -40,8 +47,8 @@ Status vocabulary:
 | # | POSA2 family / pattern | Existing authoritative mechanism | Canonical CMeta representation | Status | Exact remaining work (no duplicated runtime) |
 |---:|---|---|---|---|---|
 | 1 | Service — **Wrapper Facade** | Platform / NativeIO / CNet | typed inline façade, Interface, FunctionAbi, explicit status/borrow | **COMPOSED / PARTIAL CONFORMANCE** | Qualify a complete narrow native-resource façade: types, errors, close/borrow, C11/C++17 and out-of-tree consumer. No generic wrapper runtime. |
-| 2 | Service — **Component Configurator** | Salts::Component + ComponentPlugin + Plugin | immutable `cmeta_component_desc`, manifests, typed provider, ObjectRef, leased Interface projections | **QUALIFIED** | Preserve [frozen Component/Plugin contracts](ACE_FREEZE.md); downstream/ABI remains [#1018](https://github.com/qigao/salts/issues/1018), not a new pattern engine. |
-| 3 | Service — **Interceptor** | domain callback/dispatch owners | exact FunctionDesc/FunctionAbi + typed Interface roles + borrowed context | **IMPLEMENTED / POST-FREEZE TESTED** | Typed before/after/error/short-circuit chain; result/error ownership, effect/ordering, reentrancy and Plugin Scope admission. No generic dynamic ABI reconstruction or hidden invocation registry. |
+| 2 | Service — **Component Configurator** | Salts::Configurator + Salts::ServiceHost + Salts::Plugin | immutable `cmeta_component_desc`, manifests, typed provider, ObjectRef, leased Interface projections | **QUALIFIED** | Preserve [frozen Component/Plugin contracts](ACE_FREEZE.md); downstream/ABI remains [#1018](https://github.com/qigao/salts/issues/1018), not a new pattern engine. |
+| 3 | Service — **Interceptor** | domain callback/dispatch owners | exact FunctionDesc/FunctionAbi + typed Interface roles + borrowed context | **IMPLEMENTED / POST-FREEZE TESTED** | Typed before/after/error/short-circuit chain; result/error ownership, effect/ordering, reentrancy and ServiceHost Scope admission. No generic dynamic ABI reconstruction or hidden invocation registry. |
 | 4 | Service — **Extension Interface** | existing provider/ObjectRef/Plugin lifetime | `cmeta_object_ref`, `cmeta_object_interface_provider`, `cmeta_interface_projection` | **QUALIFIED** | Preserve non-owning projections and explicit owning-self rejection; no second provider identity. |
 | 5 | Event — **Reactor** | NativeIO epoll/kqueue readiness; CNet event callbacks | typed callback / Interface over existing owner-bound dispatch | **REUSE** | Existing NativeIO/CNet model, ownership and callback tests are evidence; **no second Reactor or CMeta scheduler**. |
 | 6 | Event — **Proactor** | NativeIO IOCP/io_uring completion; CNet completion-driven semantics | typed callback / Interface over existing completion contract | **REUSE** | Existing NativeIO/CNet request/completion and terminal tests are evidence; **no second Proactor**. |
