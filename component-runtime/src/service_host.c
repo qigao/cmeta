@@ -489,6 +489,10 @@ salts_service_host_status salts_service_host_generation_build(
                 generation->failure.plugin_status = release_status;
                 return SALTS_SERVICE_HOST_PLUGIN_ERROR;
             }
+            /* The candidate owns no remaining DSO leases. Drop its borrowed
+             * Provider/context/storage references but retain the failure
+             * record so the caller can diagnose and retry with new storage. */
+            generation_clear(generation);
             return status;
         }
     }
@@ -514,6 +518,10 @@ salts_service_host_status salts_service_host_generation_build(
         if (release_status != CMETA_PLUGIN_OK) {
             generation->failure.source_index = SALTS_SERVICE_HOST_INDEX_NONE;
             generation->failure.plugin_status = release_status;
+        } else {
+            /* Rollback settled every lease; do not retain borrowed
+             * descriptors or scratch-storage addresses after failed build. */
+            generation_clear(generation);
         }
         return SALTS_SERVICE_HOST_COMPONENT_ERROR;
     }
