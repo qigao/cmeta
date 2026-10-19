@@ -264,19 +264,49 @@ jobs:
                       abi_digest = digest
                   elif digest != abi_digest:
                       raise SystemExit(f'{rid}: packaged ServiceHost ABI header differs')
-                  targets_path = root + 'lib/cmake/Salts/SaltsTargets.cmake'
-                  if targets_path not in names:
-                      raise SystemExit(f'{rid}: missing packaged CMake exports')
+                  cmake_root = root + 'lib/cmake/Salts/'
+                  required_cmake_files = (
+                      'SaltsConfig.cmake', 'SaltsConfigVersion.cmake',
+                      'SaltsTargets.cmake', 'SaltsTargets-release.cmake',
+                  )
+                  for filename in required_cmake_files:
+                      if cmake_root + filename not in names:
+                          raise SystemExit(f'{rid}: missing packaged CMake file {filename}')
+                  targets_path = cmake_root + 'SaltsTargets.cmake'
+                  release_path = cmake_root + 'SaltsTargets-release.cmake'
                   targets = package.read(targets_path).decode('utf-8', errors='strict')
-                  for target in (
+                  release_targets = package.read(release_path).decode('utf-8', errors='strict')
+                  active_targets = '\n'.join(
+                      line for line in targets.splitlines()
+                      if not line.lstrip().startswith('#')
+                  )
+                  required_targets = (
                       'Salts::Configurator', 'Salts::ServiceHost',
-                      'Salts::ComponentProviderABI', 'Salts::PluginABI',
-                  ):
-                      if target not in targets:
-                          raise SystemExit(f'{rid}: missing exported target {target}')
-                  if (re.search(r'add_library\s*\(\s*Salts::Component(?:Plugin)?\s', targets)
-                      or 'Salts::ComponentPluginABI' in targets):
+                      'Salts::ComponentABI', 'Salts::ComponentProviderABI',
+                      'Salts::PluginABI', 'Salts::Plugin',
+                      'Salts::Platform', 'Salts::CMeta', 'Salts::Core',
+                  )
+                  for target in required_targets:
+                      target_definition = re.compile(
+                          r'(?m)^\s*add_library\s*\(\s*' + re.escape(target) +
+                          r'\s+[A-Z_]+\s+IMPORTED\b'
+                      )
+                      if target_definition.search(active_targets) is None:
+                          raise SystemExit(f'{rid}: missing actual imported target {target}')
+                  if (re.search(r'add_library\s*\(\s*Salts::Component(?:Plugin)?\s', active_targets)
+                      or re.search(r'add_library\s*\(\s*Salts::ComponentPluginABI\s', active_targets)):
                       raise SystemExit(f'{rid}: retired runtime target was packaged')
+                  # The release-specific import file names every linked archive/import library.
+                  # Require each referenced binary to be present in this same RID payload.
+                  imported_paths = re.findall(
+                      r'IMPORTED_(?:IMPLIB|LOCATION)(?:_[A-Z0-9_]+)?\s+"?\$\{_IMPORT_PREFIX\}/([^"\s)]+)',
+                      release_targets
+                  )
+                  for relative_path in imported_paths:
+                      relative_path = relative_path.replace('\\\\', '/')
+                      item = root + relative_path
+                      if item not in names:
+                          raise SystemExit(f'{rid}: imported target binary is missing: {relative_path}')
                   if rid == 'windows-x64':
                       libraries = ('lib/salts_configurator.lib', 'lib/salts_service_host.lib')
                   else:
@@ -286,6 +316,35 @@ jobs:
                           raise SystemExit(f'{rid}: missing packaged runtime archive {library}')
           print('PASS final NuGet payload: six RIDs, one source SHA, canonical ServiceHost ABI')
           PY
+          # Re-extract the Linux x64 SDK from the packed artifact and run the
+          # actual out-of-tree consumer against those bytes, not the staging tree.
+          nupkg_probe="$RUNNER_TEMP/salts-nupkg-consumer"
+          rm -rf "$nupkg_probe"
+          mkdir -p "$nupkg_probe/sdk/linux-x64"
+          python3 - "dist/Salts.Native.${{ inputs.version }}.nupkg" "$nupkg_probe/sdk/linux-x64" <<'PY'
+          import pathlib, sys, zipfile
+          package_path, destination = sys.argv[1:]
+          prefix = 'sdk/linux-x64/'
+          root = pathlib.Path(destination)
+          with zipfile.ZipFile(package_path) as package:
+              for name in package.namelist():
+                  if not name.startswith(prefix):
+                      continue
+                  relative = pathlib.PurePosixPath(name[len(prefix):])
+                  if not relative.parts or relative.is_absolute() or '..' in relative.parts:
+                      raise SystemExit(f'Unsafe SDK path in NuGet package: {name}')
+                  target = root.joinpath(*relative.parts)
+                  if name.endswith('/'):
+                      target.mkdir(parents=True, exist_ok=True)
+                  else:
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      target.write_bytes(package.read(name))
+          PY
+          cmake -S component-runtime/sdk-probe -B "$nupkg_probe/build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSALTS_INSTALLED_ROOT="$nupkg_probe/sdk/linux-x64"
+          cmake --build "$nupkg_probe/build" --parallel 2
+          ctest --test-dir "$nupkg_probe/build" --no-tests=error --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: salts-native-nuget
