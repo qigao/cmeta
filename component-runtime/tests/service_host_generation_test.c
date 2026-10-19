@@ -366,6 +366,21 @@ suite("ServiceHost generation") {
         check_true(two_modules[0].manifest != NULL);
         two_modules[0].lease = failed_lease;
 
+        /* A syntactically valid token that disagrees with its owner record
+         * must not release a different Plugin lease by accident. */
+        two_modules[0].plugin = secondary_ref;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_PLUGIN_ERROR);
+        check_equal(generation.failure.plugin_status,
+                    CMETA_PLUGIN_INVALID_ARGUMENT);
+        check_equal(generation.module_count, (size_t)2u);
+        check_equal(two_modules[0].plugin.slot, secondary_ref.slot);
+        check_equal(two_modules[0].plugin.generation, secondary_ref.generation);
+        check_equal(two_modules[0].lease.plugin.slot, failed_lease.plugin.slot);
+        check_equal(two_modules[0].lease.plugin.generation, failed_lease.plugin.generation);
+        check_true(two_modules[0].manifest != NULL);
+        two_modules[0].plugin = ref;
+
         /* No build/reuse while any recorded lease is unsettled. */
         check_equal(salts_service_host_generation_build(
             &generation, UINT64_C(2), &registry, &storage,
