@@ -360,6 +360,8 @@ suite("ServiceHost generation") {
         };
         cmeta_plugin_lease valid_lease;
         cmeta_plugin_lease failed_lease;
+        salts_service_host_module saved_modules[2];
+        salts_configurator_failure saved_component_failure;
         cmeta_plugin_lifecycle_info primary_info;
         cmeta_plugin_lifecycle_info secondary_info;
         salts_service_host_runtime attached_runtime =
@@ -387,6 +389,38 @@ suite("ServiceHost generation") {
         }
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_BUILT);
         check_equal(generation.module_count, (size_t)2u);
+
+        /* Neither a FAILED enum nor a cleared public count can discharge a
+         * live Configurator ObjectRef. Temporarily clear the lease table/count
+         * to isolate the graph-settlement fence, then restore all owners. */
+        saved_modules[0] = two_modules[0];
+        saved_modules[1] = two_modules[1];
+        saved_component_failure = generation.components.failure;
+        generation.state = SALTS_SERVICE_HOST_GENERATION_FAILED;
+        generation.components.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+        generation.components.failure.phase = SALTS_CONFIGURATOR_PHASE_ACTIVATE;
+        generation.components.activation_count = 0u;
+        generation.module_count = 0u;
+        two_modules[0] = (salts_service_host_module){0};
+        two_modules[1] = (salts_service_host_module){0};
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(2), &registry, &storage,
+            NULL, 0u, NULL, 0u, NULL, 0u),
+            SALTS_SERVICE_HOST_INVALID_STATE);
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+        check_true(two_instances[0].active);
+        check_true(cmeta_object_ref_valid(&two_instances[0].object));
+        check_true(two_instances[1].active);
+        check_true(cmeta_object_ref_valid(&two_instances[1].object));
+        two_modules[0] = saved_modules[0];
+        two_modules[1] = saved_modules[1];
+        generation.module_count = 2u;
+        generation.components.failure = saved_component_failure;
+        generation.components.state = SALTS_CONFIGURATOR_CONTEXT_ACTIVE;
+        generation.components.activation_count = 2u;
+        generation.state = SALTS_SERVICE_HOST_GENERATION_BUILT;
+
         valid_lease = two_modules[0].lease;
         check_true(cmeta_plugin_lease_valid(valid_lease));
         check_true(cmeta_plugin_lease_valid(two_modules[1].lease));
