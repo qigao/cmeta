@@ -22,10 +22,19 @@ set_target_properties(salts_service_host_provider_fixture PROPERTIES
   FOLDER "component-runtime/tests/fixtures"
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 
+add_library(salts_service_host_provider_secondary_fixture SHARED
+  fixture_component_provider_secondary.c)
+target_link_libraries(salts_service_host_provider_secondary_fixture
+  PRIVATE Salts::ComponentProviderABI Salts::PluginABI)
+set_target_properties(salts_service_host_provider_secondary_fixture PROPERTIES
+  FOLDER "component-runtime/tests/fixtures"
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
 cmake_add_test(cmeta_native_service_host_generation_test
   SOURCES service_host_generation_test.c
   LIBS Salts::ServiceHost Salts::TinyTest
   DEFS "COMPONENT_PROVIDER_PLUGIN_PATH=\"$<TARGET_FILE:salts_service_host_provider_fixture>\""
+       "COMPONENT_PROVIDER_SECONDARY_PLUGIN_PATH=\"$<TARGET_FILE:salts_service_host_provider_secondary_fixture>\""
   FOLDER "component-runtime/tests")
 cmake_add_test(cmeta_native_service_host_publication_test
   SOURCES service_host_publication_test.c
@@ -56,6 +65,8 @@ foreach(host_test IN ITEMS
   cmeta_native_service_host_concurrency_test)
   add_dependencies(${host_test} salts_service_host_provider_fixture)
 endforeach()
+add_dependencies(cmeta_native_service_host_generation_test
+  salts_service_host_provider_secondary_fixture)
 foreach(host_c_test IN ITEMS
   cmeta_native_service_host_generation_test
   cmeta_native_service_host_publication_test
