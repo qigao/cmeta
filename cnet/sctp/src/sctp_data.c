@@ -461,8 +461,8 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
   unsigned int i;
   int duplicate = 0;
   if ((ch->flags & (uint8_t)~(DATA_B | DATA_E | DATA_U)) != 0u ||
-      ch->value_size < DATA_HEADER + 1u)
-    return CNET_SCTP_DATA_PROTOCOL; /* fragments legal, empty RFC DATA not */
+      ch->value_size < DATA_HEADER)
+    return CNET_SCTP_DATA_PROTOCOL;
   bytes = ch->value_size - DATA_HEADER;
   if (bytes > CNET_SCTP_DATA_PAYLOAD_MAX) return CNET_SCTP_DATA_CAPACITY;
   tsn = rd32(ch->value);
