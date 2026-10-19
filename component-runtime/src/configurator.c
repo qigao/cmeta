@@ -307,6 +307,12 @@ salts_component_status salts_configurator_context_init(
         context->state != SALTS_CONFIGURATOR_CONTEXT_STOPPED &&
         context->state != SALTS_CONFIGURATOR_CONTEXT_FAILED)
         return SALTS_COMPONENT_INVALID_STATE;
+    /* activation_count is the resolved plan length while READY/RESOLVED/
+     * ACTIVE, and is cleared only after rollback or successful stop. A
+     * reusable state carrying entries is inconsistent and may still own
+     * ObjectRefs; do not overwrite its teardown authority. */
+    if (context->activation_count != 0u)
+        return SALTS_COMPONENT_INVALID_STATE;
 
     *context = (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
     context->failure = salts_configurator_failure_none();
