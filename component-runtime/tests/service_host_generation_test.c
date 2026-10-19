@@ -244,6 +244,7 @@ suite("ServiceHost generation") {
             { {0u, 0u}, COMPONENT_PROVIDER_EXPORT_ID, NULL, NULL }
         };
         cmeta_plugin_lease valid_lease;
+        cmeta_plugin_lease failed_lease;
         cmeta_plugin_lifecycle_info primary_info;
         cmeta_plugin_lifecycle_info secondary_info;
         salts_service_host_runtime attached_runtime =
@@ -280,12 +281,16 @@ suite("ServiceHost generation") {
         if (corrupted_generation == 0u)
             corrupted_generation = 1u;
         two_modules[0].lease.generation = corrupted_generation;
+        failed_lease = two_modules[0].lease;
 
         check_equal(salts_service_host_generation_discard(&generation),
                     SALTS_SERVICE_HOST_PLUGIN_ERROR);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
         check_equal(generation.module_count, (size_t)2u);
-        check_equal(two_modules[0].lease.generation, corrupted_generation);
+        check_equal(two_modules[0].lease.plugin.slot, failed_lease.plugin.slot);
+        check_equal(two_modules[0].lease.plugin.generation, failed_lease.plugin.generation);
+        check_equal(two_modules[0].lease.slot, failed_lease.slot);
+        check_equal(two_modules[0].lease.generation, failed_lease.generation);
         check_equal(generation.failure.plugin_status, CMETA_PLUGIN_STALE);
 
         /* The valid second lease was consumed exactly once; the first
@@ -338,7 +343,10 @@ suite("ServiceHost generation") {
                     SALTS_SERVICE_HOST_PLUGIN_ERROR);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
         check_equal(generation.module_count, (size_t)2u);
-        check_equal(two_modules[0].lease.generation, corrupted_generation);
+        check_equal(two_modules[0].lease.plugin.slot, failed_lease.plugin.slot);
+        check_equal(two_modules[0].lease.plugin.generation, failed_lease.plugin.generation);
+        check_equal(two_modules[0].lease.slot, failed_lease.slot);
+        check_equal(two_modules[0].lease.generation, failed_lease.generation);
         check_equal(cmeta_plugin_registry_get_lifecycle(
             &registry, ref, &primary_info), CMETA_PLUGIN_OK);
         check_equal(primary_info.active_leases, (size_t)1u);
