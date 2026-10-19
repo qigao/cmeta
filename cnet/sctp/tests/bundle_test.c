@@ -305,7 +305,6 @@ static void outbound_bundle_multiple_losses_are_per_tsn(void) {
   uint8_t payload[4] = {'a', 'b', 'c', 'd'};
   uint8_t combined[CNET_SCTP_DATA_MTU], single[CNET_SCTP_DATA_MTU];
   uint8_t sack[CNET_SCTP_DATA_MTU], response[CNET_SCTP_DATA_MTU];
-  uint8_t body;
   cnet_sctp_wire_header header = {0};
   cnet_sctp_wire_decoder decoder = {0};
   cnet_sctp_wire_chunk chunks[4], retransmitted;
