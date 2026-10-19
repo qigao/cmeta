@@ -84,7 +84,7 @@ static bool module_records_are_clear(
 static cmeta_plugin_status release_modules(
     salts_service_host_generation *generation) {
     cmeta_plugin_status first = CMETA_PLUGIN_OK;
-    size_t i;
+    size_t scan;
 
     if (generation == NULL)
         return CMETA_PLUGIN_INVALID_ARGUMENT;
@@ -100,30 +100,22 @@ static cmeta_plugin_status release_modules(
         !module_records_are_clear(generation))
         return CMETA_PLUGIN_INVALID_ARGUMENT;
 
-    i = generation->module_count;
-    while (i != 0u) {
-        salts_service_host_module *module;
-        cmeta_plugin_lease lease;
+    /* module_count is the number of unsettled owner records, not a high-water
+     * mark. Compact each successful release out of the prefix. This means a
+     * zero/malformed token can never masquerade as a lease already consumed:
+     * consumed records are moved out of the prefix and fully cleared. 'scan'
+     * remains the original count so a failed record swapped from the tail is
+     * not retried automatically during the same cleanup operation. */
+    scan = generation->module_count;
+    while (scan != 0u) {
+        size_t index = --scan;
+        salts_service_host_module *module =
+            &generation->storage.modules[index];
+        cmeta_plugin_lease lease = module->lease;
         cmeta_plugin_status status;
-        --i;
-        module = &generation->storage.modules[i];
-        lease = module->lease;
 
-        if (plugin_lease_is_zero(lease)) {
-            /* Zero means consumed only when the accompanying ownership record
-             * has also been cleared after a successful Registry release. A
-             * zero/malformed token with a retained module record is ambiguous:
-             * fail closed and never drop the generation's last owner record. */
-            if (module->plugin.slot != 0u ||
-                module->plugin.generation != 0u ||
-                module->manifest != NULL) {
-                if (first == CMETA_PLUGIN_OK)
-                    first = CMETA_PLUGIN_INVALID_ARGUMENT;
-            }
-            continue;
-        }
-
-        if (!cmeta_plugin_lease_valid(lease) ||
+        if (plugin_lease_is_zero(lease) ||
+            !cmeta_plugin_lease_valid(lease) ||
             !plugin_ref_equal(module->plugin, lease.plugin) ||
             module->manifest == NULL) {
             if (first == CMETA_PLUGIN_OK)
@@ -133,16 +125,24 @@ static cmeta_plugin_status release_modules(
 
         status = cmeta_plugin_registry_release(
             generation->registry, &module->lease);
-        if (first == CMETA_PLUGIN_OK && status != CMETA_PLUGIN_OK)
-            first = status;
-        if (status == CMETA_PLUGIN_OK) {
-            module->manifest = NULL;
-            module->plugin = (cmeta_plugin_ref){0u, 0u};
+        if (status != CMETA_PLUGIN_OK) {
+            if (first == CMETA_PLUGIN_OK)
+                first = status;
+            continue;
+        }
+
+        memset(module, 0, sizeof(*module));
+        --generation->module_count;
+        if (index < generation->module_count) {
+            /* The tail record was already visited by this pass. If it did not
+             * settle, preserve it in the prefix for a later explicit retry. */
+            generation->storage.modules[index] =
+                generation->storage.modules[generation->module_count];
+            memset(&generation->storage.modules[generation->module_count],
+                   0, sizeof(generation->storage.modules[generation->module_count]));
         }
     }
 
-    if (first == CMETA_PLUGIN_OK)
-        generation->module_count = 0u;
     return first;
 }
 
