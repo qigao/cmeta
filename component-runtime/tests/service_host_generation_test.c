@@ -310,6 +310,23 @@ suite("ServiceHost generation") {
         check_equal(cmeta_plugin_registry_unload(&registry, ref),
                     CMETA_PLUGIN_BUSY);
 
+        /* A terminal enum cannot override retained ownership records. */
+        generation.state = SALTS_SERVICE_HOST_GENERATION_DRAINED;
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(2), &registry, &storage,
+            NULL, 0u, NULL, 0u, NULL, 0u),
+            SALTS_SERVICE_HOST_INVALID_STATE);
+        check_equal(generation.module_count, (size_t)2u);
+        check_equal(two_modules[0].lease.generation, failed_lease.generation);
+        generation.state = SALTS_SERVICE_HOST_GENERATION_ZERO;
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(2), &registry, &storage,
+            NULL, 0u, NULL, 0u, NULL, 0u),
+            SALTS_SERVICE_HOST_INVALID_STATE);
+        check_equal(generation.module_count, (size_t)2u);
+        check_equal(two_modules[0].lease.generation, failed_lease.generation);
+        generation.state = SALTS_SERVICE_HOST_GENERATION_FAILED;
+
         /* Caller-visible storage metadata cannot authorize an
          * out-of-bounds cleanup walk. The guard leaves every token intact. */
         valid_module_capacity = generation.storage.module_capacity;
