@@ -274,7 +274,7 @@ jobs:
                   ):
                       if target not in targets:
                           raise SystemExit(f'{rid}: missing exported target {target}')
-                  if (re.search(r'add_library\\s*\\(\\s*Salts::Component(?:Plugin)?\\s', targets)
+                  if (re.search(r'add_library\s*\(\s*Salts::Component(?:Plugin)?\s', targets)
                       or 'Salts::ComponentPluginABI' in targets):
                       raise SystemExit(f'{rid}: retired runtime target was packaged')
                   if rid == 'windows-x64':
