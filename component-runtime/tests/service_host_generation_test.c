@@ -228,6 +228,41 @@ suite("ServiceHost generation") {
         check_equal(info.active_leases, (size_t)0u);
     }
 
+    it("initializes unused module slots before a no-Plugin failure path") {
+        salts_service_host_module scratch_modules[1];
+        const salts_service_host_generation_storage storage = {
+            deployments, 1u,
+            instances, 1u,
+            dependencies, 1u,
+            activation_order, 1u,
+            scratch_modules, 1u
+        };
+        const salts_configurator_deployment invalid = { NULL, NULL, NULL };
+
+        /* Poison the unused output slot. The builder must establish canonical
+         * empty records before a pre-lease Configurator failure can clean up. */
+        scratch_modules[0].plugin = ref;
+        scratch_modules[0].lease = (cmeta_plugin_lease){ref, 1u, 1u};
+        scratch_modules[0].manifest = NULL;
+
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(1), &registry, &storage,
+            &invalid, 1u, NULL, 0u, NULL, 0u),
+            SALTS_SERVICE_HOST_COMPONENT_ERROR);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_equal(generation.module_count, (size_t)0u);
+        check_equal(generation.failure.plugin_status, CMETA_PLUGIN_OK);
+        check_equal(scratch_modules[0].plugin.slot, (uint32_t)0u);
+        check_equal(scratch_modules[0].plugin.generation, (uint32_t)0u);
+        check_false(cmeta_plugin_lease_valid(scratch_modules[0].lease));
+        check_null(scratch_modules[0].manifest);
+
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_OK);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
+        check_null(generation.storage.modules);
+    }
+
     it("preserves partial lease settlement and recovers after repairing the failed token") {
         salts_configurator_deployment two_deployments[2];
         salts_configurator_instance two_instances[2];
