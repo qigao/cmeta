@@ -1120,7 +1120,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_take_message(cnet_sctp_assoc *s,
       payload, cap, written));
   if (status == CNET_SCTP_ASSOC_OK &&
       s->state == CNET_SCTP_ASSOC_STOPPED &&
-      !data_has_rx_tickets(&s->data)) {
+      s->data.buffered_rx == 0u) {
     (void)cnet_sctp_data_stop(&s->data);
     memset(&s->data, 0, sizeof(s->data));
     s->data_ready = 0u;
