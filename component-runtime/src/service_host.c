@@ -42,6 +42,13 @@ static salts_service_host_status generation_fail_provider(
     return SALTS_SERVICE_HOST_PROVIDER_ERROR;
 }
 
+static bool plugin_lease_is_zero(cmeta_plugin_lease lease) {
+    return lease.plugin.slot == 0u &&
+           lease.plugin.generation == 0u &&
+           lease.slot == 0u &&
+           lease.generation == 0u;
+}
+
 static cmeta_plugin_status release_modules(
     salts_service_host_generation *generation) {
     cmeta_plugin_status first = CMETA_PLUGIN_OK;
@@ -56,19 +63,42 @@ static cmeta_plugin_status release_modules(
 
     i = generation->module_count;
     while (i != 0u) {
+        salts_service_host_module *module;
+        cmeta_plugin_lease lease;
         cmeta_plugin_status status;
         --i;
-        if (!cmeta_plugin_lease_valid(generation->storage.modules[i].lease))
+        module = &generation->storage.modules[i];
+        lease = module->lease;
+
+        if (plugin_lease_is_zero(lease)) {
+            /* Zero means consumed only when the accompanying ownership record
+             * has also been cleared after a successful Registry release. A
+             * zero/malformed token with a retained module record is ambiguous:
+             * fail closed and never drop the generation's last owner record. */
+            if (module->plugin.slot != 0u ||
+                module->plugin.generation != 0u ||
+                module->manifest != NULL) {
+                if (first == CMETA_PLUGIN_OK)
+                    first = CMETA_PLUGIN_INVALID_ARGUMENT;
+            }
             continue;
+        }
+
+        if (!cmeta_plugin_lease_valid(lease) ||
+            !plugin_ref_equal(module->plugin, lease.plugin) ||
+            module->manifest == NULL) {
+            if (first == CMETA_PLUGIN_OK)
+                first = CMETA_PLUGIN_INVALID_ARGUMENT;
+            continue;
+        }
+
         status = cmeta_plugin_registry_release(
-            generation->registry,
-            &generation->storage.modules[i].lease);
+            generation->registry, &module->lease);
         if (first == CMETA_PLUGIN_OK && status != CMETA_PLUGIN_OK)
             first = status;
         if (status == CMETA_PLUGIN_OK) {
-            generation->storage.modules[i].manifest = NULL;
-            generation->storage.modules[i].plugin =
-                (cmeta_plugin_ref){0u, 0u};
+            module->manifest = NULL;
+            module->plugin = (cmeta_plugin_ref){0u, 0u};
         }
     }
 
