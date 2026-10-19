@@ -277,10 +277,10 @@ suite("ServiceHost generation") {
             { ref, COMPONENT_PROVIDER_AUX_EXPORT_ID, NULL, NULL }
         };
         salts_configurator_service service;
-        component_plugin_value value =
-            component_plugin_value_bind(NULL, NULL);
-        component_plugin_aux aux =
-            component_plugin_aux_bind(NULL, NULL);
+        service_host_provider_value value =
+            service_host_provider_value_bind(NULL, NULL);
+        service_host_provider_aux aux =
+            service_host_provider_aux_bind(NULL, NULL);
         cmeta_plugin_lifecycle_info info;
 
         check_equal(salts_service_host_generation_build(
@@ -302,20 +302,20 @@ suite("ServiceHost generation") {
 
         check_equal(salts_configurator_context_find_service(
             &multi.components,
-            component_plugin_value_interface(),
+            service_host_provider_value_interface(),
             &service), SALTS_COMPONENT_OK);
-        check_equal(component_plugin_value_borrow_from_object(
+        check_equal(service_host_provider_value_borrow_from_object(
             service.object, service.interfaces, &value), CMETA_OK);
-        check_equal(component_plugin_value_get(&value),
+        check_equal(service_host_provider_value_get(&value),
                     COMPONENT_PROVIDER_VALUE);
 
         check_equal(salts_configurator_context_find_service(
             &multi.components,
-            component_plugin_aux_interface(),
+            service_host_provider_aux_interface(),
             &service), SALTS_COMPONENT_OK);
-        check_equal(component_plugin_aux_borrow_from_object(
+        check_equal(service_host_provider_aux_borrow_from_object(
             service.object, service.interfaces, &aux), CMETA_OK);
-        check_equal(component_plugin_aux_get(&aux),
+        check_equal(service_host_provider_aux_get(&aux),
                     COMPONENT_PROVIDER_AUX_VALUE);
 
         check_equal(salts_service_host_generation_discard(
@@ -340,8 +340,8 @@ suite("ServiceHost generation") {
             NULL
         };
         salts_configurator_service service;
-        component_plugin_value value =
-            component_plugin_value_bind(NULL, NULL);
+        service_host_provider_value value =
+            service_host_provider_value_bind(NULL, NULL);
         cmeta_plugin_lifecycle_info info;
 
         check_equal(salts_service_host_generation_build(
@@ -361,12 +361,12 @@ suite("ServiceHost generation") {
 
         check_equal(salts_configurator_context_find_service(
             &generation.components,
-            component_plugin_value_interface(),
+            service_host_provider_value_interface(),
             &service),
             SALTS_COMPONENT_OK);
-        check_equal(component_plugin_value_borrow_from_object(
+        check_equal(service_host_provider_value_borrow_from_object(
             service.object, service.interfaces, &value), CMETA_OK);
-        check_equal(component_plugin_value_get(&value),
+        check_equal(service_host_provider_value_get(&value),
                     COMPONENT_PROVIDER_VALUE);
 
         check_equal(cmeta_plugin_registry_get_lifecycle(
