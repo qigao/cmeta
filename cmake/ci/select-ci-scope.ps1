@@ -240,8 +240,6 @@ if ($serviceHostSanOnly -or $aceSanitizerQualification -or $unifiedSanitizerQual
 }
 $builds = @()
 foreach ($profile in $profiles) {
-  if ($serviceHostSanOnly -and $profile.id -notin @(
-      'linux-release', 'linux-ace-asan-ubsan', 'linux-ace-tsan')) { continue }
   # [2.3-SAN] is a dedicated source-identical sanitizer gate; a separate
   # [2.3-VERIFY] run must qualify the eight real host/build profiles. Keep
   # the Release Linux smoke in this mode, never package or merge by default.
