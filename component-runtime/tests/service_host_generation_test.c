@@ -371,6 +371,8 @@ suite("ServiceHost generation") {
         check_equal(salts_service_host_generation_recover(&generation),
                     SALTS_SERVICE_HOST_PLUGIN_ERROR);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_equal(generation.components.state, SALTS_CONFIGURATOR_CONTEXT_STOPPED);
+        check_equal(generation.components.activation_count, (size_t)0u);
         check_equal(generation.module_count, (size_t)2u);
         check_equal(two_modules[0].lease.plugin.slot, failed_lease.plugin.slot);
         check_equal(two_modules[0].lease.plugin.generation, failed_lease.plugin.generation);
