@@ -167,7 +167,7 @@ jobs:
             fi
             printf '%s ServiceHost ABI header SHA-256: %s\n' "$rid" "$current_sha"
           done
-                    test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 6
+          test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 6
 
           mapfile -t cache_contracts < <(
             grep -h '^vcpkg_cache_contract=' package/sdk/*/salts-sdk-manifest.txt |
