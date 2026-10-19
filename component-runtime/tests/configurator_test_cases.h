@@ -1,5 +1,5 @@
 #ifndef SALTS_CONFIGURATOR_TEST_CASES_H
-#define SALTS_CONFIGURATOR_CANDIDATE_TEST_CASES_H
+#define SALTS_CONFIGURATOR_TEST_CASES_H
 
 #include "configurator_test_fixture.h"
 
