@@ -362,6 +362,19 @@ static bool generation_is_clear(
  * or stopped context that is being reused must also have no active instance
  * flags or live ObjectRefs. INIT-phase failure is the exception: no create or
  * activate callback ran, and Init may have visited only a prefix of the array. */
+static bool service_host_object_ref_is_empty(
+    const cmeta_object_ref *object) {
+    return object != NULL &&
+           object->size == sizeof(*object) &&
+           object->object == NULL &&
+           object->data == NULL &&
+           object->field_provider == NULL &&
+           object->operations == NULL &&
+           object->operation_provider == NULL &&
+           object->lifetime == CMETA_OBJECT_LIFETIME_NONE &&
+           object->lifecycle == NULL;
+}
+
 static bool service_host_components_settled(
     const salts_configurator_context *components) {
     size_t i;
@@ -375,9 +388,13 @@ static bool service_host_components_settled(
         (components->deployment_count != 0u && components->instances == NULL))
         return false;
 
+    /* Match Configurator's canonical-empty invariant, not merely its public
+     * validity predicate: an invalid but nonzero ObjectRef must not be
+     * mistaken for settled ownership and overwritten during recovery/reuse. */
     for (i = 0u; i < components->deployment_count; ++i) {
         const salts_configurator_instance *instance = &components->instances[i];
-        if (instance->active || cmeta_object_ref_valid(&instance->object))
+        if (instance->active ||
+            !service_host_object_ref_is_empty(&instance->object))
             return false;
     }
     return true;
