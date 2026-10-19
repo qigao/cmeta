@@ -250,7 +250,10 @@ jobs:
                           )
                   for header in (
                       'salts/configurator.h', 'salts/service_host.h',
-                      'salts/component_provider_abi.h', 'salts/component_runtime_abi.h',
+                      'salts/component_abi.h', 'salts/component_provider_abi.h',
+                      'salts/component_runtime_abi.h', 'salts/plugin.h',
+                      'salts/plugin_decl.h', 'salts/thread.h',
+                      'cmeta/component.h', 'cmeta/function.h',
                   ):
                       item = root + 'include/' + header
                       if item not in names:
