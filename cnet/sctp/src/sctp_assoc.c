@@ -900,6 +900,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       }
       s->state = CNET_SCTP_ASSOC_FAILED;
       s->deadline_ms = 0u;
+      s->t5_shutdown_deadline_ms = 0u;
       s->saved_size = 0u;
       memset(s->saved_packet, 0, sizeof(s->saved_packet));
       return CNET_SCTP_ASSOC_OK;
@@ -989,6 +990,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_advance(cnet_sctp_assoc *s,
   if (s->retransmits >= s->config.max_retransmits) {
     s->state = CNET_SCTP_ASSOC_FAILED;
     s->deadline_ms = 0u;
+    s->t5_shutdown_deadline_ms = 0u;
     s->saved_size = 0u;
     memset(s->saved_packet, 0, sizeof(s->saved_packet));
     s->last_time_ms = now;
