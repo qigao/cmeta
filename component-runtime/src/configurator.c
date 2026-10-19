@@ -652,6 +652,10 @@ salts_component_status salts_configurator_context_stop(
         cmeta_object_release(&instance->object);
     }
 
+    /* activation_count describes the resolved activation plan. Once all
+     * instances have been deactivated and released, STOPPED has no remaining
+     * activation entries and is safe to reuse or hand to ServiceHost cleanup. */
+    context->activation_count = 0u;
     context->state = SALTS_CONFIGURATOR_CONTEXT_STOPPED;
     return SALTS_COMPONENT_OK;
 }
