@@ -134,6 +134,19 @@ static void salts_configurator_instance_reset(salts_configurator_instance *insta
  * allowing FAILED/STOPPED context reuse. INIT-phase failures never published
  * objects and may have validated only a prefix of the caller array, so don't
  * inspect the unvisited tail in that case. */
+static bool salts_configurator_object_ref_empty(
+    const cmeta_object_ref *object) {
+    return object != NULL &&
+           object->size == sizeof(*object) &&
+           object->object == NULL &&
+           object->data == NULL &&
+           object->field_provider == NULL &&
+           object->operations == NULL &&
+           object->operation_provider == NULL &&
+           object->lifetime == CMETA_OBJECT_LIFETIME_NONE &&
+           object->lifecycle == NULL;
+}
+
 static bool salts_configurator_instances_settled(
     const salts_configurator_context *context) {
     size_t i;
@@ -149,7 +162,8 @@ static bool salts_configurator_instances_settled(
 
     for (i = 0u; i < context->deployment_count; ++i) {
         const salts_configurator_instance *instance = &context->instances[i];
-        if (instance->active || cmeta_object_ref_valid(&instance->object))
+        if (instance->active ||
+            !salts_configurator_object_ref_empty(&instance->object))
             return false;
     }
     return true;
