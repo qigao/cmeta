@@ -296,6 +296,74 @@ static void outbound_bundle_fast_retransmit_is_per_tsn(void) {
   assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
 }
+/* Two missing TSNs from one aggregate must be retransmitted as two
+ * independent DATA chunks after later TSNs supply distinct miss reports.
+ * Gap-ACKed TSNs must leave Flight Size, and Fast Recovery may cut cwnd once. */
+static void outbound_bundle_multiple_losses_are_per_tsn(void) {
+  pair p;
+  cnet_sctp_data_bundle_item items[4] = {{0}};
+  uint8_t payload[4] = {'a', 'b', 'c', 'd'};
+  uint8_t combined[CNET_SCTP_DATA_MTU], single[CNET_SCTP_DATA_MTU];
+  uint8_t sack[CNET_SCTP_DATA_MTU], response[CNET_SCTP_DATA_MTU];
+  uint8_t body;
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk chunks[4], retransmitted;
+  size_t combined_size = 0u, single_size = 0u, sack_size = 0u;
+  size_t response_size = 0u, i;
+  uint32_t reduced_cwnd = 0u;
+  init(&p);
+  for (i = 0u; i < 4u; ++i) {
+    items[i].stream_id = 0u;
+    items[i].ppid = 53u;
+    items[i].payload = &payload[i];
+    items[i].payload_size = 1u;
+  }
+  assert(cnet_sctp_data_send_bundle(&p.a, 1u, items, 4u,
+      combined, sizeof(combined), &combined_size) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_wire_decode(combined, combined_size,
+      &header, &decoder) == CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == 4u);
+  for (i = 0u; i < 4u; ++i)
+    assert(cnet_sctp_wire_next_chunk(&decoder, &chunks[i]) == CNET_SCTP_WIRE_OK);
+
+  /* Lose TSNs 100 and 101 from the aggregate; later chunks still arrive. */
+  for (i = 2u; i < 4u; ++i) {
+    single_size = pack(&p.a, 1, &chunks[i], 1u, single, sizeof(single));
+    assert(cnet_sctp_data_input(&p.b, 10u + i, single, single_size,
+        sack, sizeof(sack), &sack_size) == CNET_SCTP_DATA_OK);
+    assert(cnet_sctp_data_input(&p.a, 20u + i, sack, sack_size,
+        response, sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
+  }
+  /* Three distinct higher TSNs provide three reports for both holes. */
+  for (i = 0u; i < 3u; ++i) {
+    body = (uint8_t)('e' + i);
+    assert(cnet_sctp_data_send(&p.a, 30u + i, 0u, 53u, 0, &body, 1u,
+        single, sizeof(single), &single_size) == CNET_SCTP_DATA_OK);
+    assert(cnet_sctp_data_input(&p.b, 40u + i, single, single_size,
+        sack, sizeof(sack), &sack_size) == CNET_SCTP_DATA_OK);
+    assert(sack_size != 0u);
+    assert(cnet_sctp_data_input(&p.a, 50u + i, sack, sack_size,
+        response, sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
+  }
+  assert(p.a.tx[0].tsn == 100u && p.a.tx[0].pending_retransmit);
+  assert(p.a.tx[1].tsn == 101u && p.a.tx[1].pending_retransmit);
+  assert(p.a.tx[0].missing_reports >= 3u && p.a.tx[1].missing_reports >= 3u);
+  assert(p.a.in_flight == 2u);
+  for (i = 0u; i < 2u; ++i) {
+    assert(cnet_sctp_data_advance(&p.a, 60u + i, response,
+        sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
+    retransmitted = one(response, response_size, 0u);
+    assert(retransmitted.value_size == 13u);
+    assert(retransmitted.value[3] == (uint8_t)(100u + i));
+    assert(p.a.tx[i].fast_retransmitted && p.a.tx[i].retransmits == 1u);
+    if (i == 0u) reduced_cwnd = p.a.cwnd;
+    else assert(p.a.cwnd == reduced_cwnd);
+  }
+  assert(p.a.recovery_active && p.a.in_flight == 2u);
+  assert(cnet_sctp_data_stop(&p.a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
+}
 static void outbound_bundle_waits_for_retained_tickets_to_be_acked(void) {
   pair p;
   uint8_t payload[16], packet[CNET_SCTP_DATA_MTU];
@@ -336,6 +404,7 @@ static void outbound_bundle_waits_for_retained_tickets_to_be_acked(void) {
   assert(cnet_sctp_data_stop(&p.b) == CNET_SCTP_DATA_OK);
 }
 int main(void) {
+  outbound_bundle_multiple_losses_are_per_tsn();
   outbound_bundle_fast_retransmit_is_per_tsn();
   outbound_bundle_waits_for_retained_tickets_to_be_acked();
   outbound_bundle_respects_peer_window();
