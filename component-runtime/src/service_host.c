@@ -49,18 +49,20 @@ static bool plugin_lease_is_zero(cmeta_plugin_lease lease) {
            lease.generation == 0u;
 }
 
-static bool module_records_are_clear(
+static bool module_tail_is_clear(
     const salts_service_host_generation *generation) {
     size_t i;
 
-    if (generation == NULL || generation->module_count != 0u)
+    if (generation == NULL ||
+        generation->module_count > generation->storage.module_capacity)
         return false;
     if (generation->storage.module_capacity == 0u)
-        return generation->storage.modules == NULL;
+        return generation->module_count == 0u;
     if (generation->storage.modules == NULL)
         return false;
 
-    for (i = 0u; i < generation->storage.module_capacity; ++i) {
+    for (i = generation->module_count;
+         i < generation->storage.module_capacity; ++i) {
         const salts_service_host_module *module =
             &generation->storage.modules[i];
         if (!plugin_lease_is_zero(module->lease) ||
@@ -70,6 +72,13 @@ static bool module_records_are_clear(
             return false;
     }
     return true;
+}
+
+static bool module_records_are_clear(
+    const salts_service_host_generation *generation) {
+    return generation != NULL &&
+           generation->module_count == 0u &&
+           module_tail_is_clear(generation);
 }
 
 static cmeta_plugin_status release_modules(
@@ -82,6 +91,10 @@ static cmeta_plugin_status release_modules(
     if (generation->module_count > generation->storage.module_capacity ||
         (generation->module_count != 0u &&
          generation->storage.modules == NULL))
+        return CMETA_PLUGIN_INVALID_ARGUMENT;
+    /* Any entry outside the recorded prefix must be empty; otherwise a
+     * smaller/corrupted module_count could hide a live lease in the tail. */
+    if (!module_tail_is_clear(generation))
         return CMETA_PLUGIN_INVALID_ARGUMENT;
     if (generation->module_count == 0u &&
         !module_records_are_clear(generation))
