@@ -37,7 +37,8 @@ $componentSanOnly = $EventName -eq 'pull_request' -and -not $PrepareRelease -and
 $installedAbiProbe = $EventName -eq 'pull_request' -and -not $PrepareRelease -and
   $HeadBranch -in @(
     'review/servicehost-release-tag-gate',
-    'review/servicehost-canonical-release-preflight')
+    'review/servicehost-canonical-release-preflight',
+    'review/servicehost-canonical-sdk-audit')
 $unified23Review = ($HeadBranch -eq 'release/salts-2.3-ace-cnet-review' -and
   ($EventName -eq 'pull_request' -or $release23Push) -and -not $PrepareRelease) -or $releaseTagPush
 if ($UnifiedSan -and -not $unified23Review) {
