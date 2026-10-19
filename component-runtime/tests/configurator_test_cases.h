@@ -98,6 +98,55 @@ suite("Salts static Component Configurator") {
         check_equal(logger.destroys, 1u);
     }
 
+    it("refuses reuse of a FAILED context with live ObjectRefs even when activation_count is zero") {
+        test_provider_state logger;
+        salts_component_provider_binding provider;
+        salts_configurator_deployment deployment;
+        salts_configurator_instance instance;
+        size_t order;
+        salts_configurator_context context = SALTS_CONFIGURATOR_CONTEXT_INIT;
+        int value = 0;
+
+        test_provider_state_init(&logger, 7, NULL);
+        provider = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_start(&context), SALTS_COMPONENT_OK);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+
+        /* A zero plan count and FAILED enum do not discharge the live instance.
+         * The reusable-state guard must inspect the owned ObjectRef prefix. */
+        context.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+        context.failure.phase = SALTS_CONFIGURATOR_PHASE_ACTIVATE;
+        context.activation_count = 0u;
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
+        check_equal(context.activation_count, (size_t)0u);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(logger.destroys, 0u);
+
+        /* Restore the valid live owner state and settle it normally. */
+        context.state = SALTS_CONFIGURATOR_CONTEXT_ACTIVE;
+        context.activation_count = 1u;
+        context.failure = (salts_configurator_failure){0};
+        check_equal(salts_configurator_context_stop(&context), SALTS_COMPONENT_OK);
+        check_false(instance.active);
+        check_false(cmeta_object_ref_valid(&instance.object));
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_STOPPED);
+        check_equal(context.activation_count, (size_t)0u);
+        check_equal(logger.destroys, 1u);
+        (void)value;
+    }
+
     it("rejects provider binding ABI mismatch before resolution") {
         test_provider_state logger;
         salts_component_provider_binding provider;
