@@ -180,8 +180,23 @@ cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
   channel->protocol_size = proto_len;
   if (label_len) memcpy(channel->label, bytes + 12u, label_len);
   if (proto_len) memcpy(channel->protocol, bytes + 12u + label_len, proto_len);
-  channel->state = 2u;
+  /* ACK is only prepared here. The caller must first admit these bytes to
+   * reliable ordered SCTP DATA, then commit the channel with ack_admitted(). */
+  channel->state = 3u; /* ACK_PENDING; not yet observable as open */
   channel->locally_initiated = 0u;
+  return CNET_SCTP_DCEP_OK;
+}
+
+cnet_sctp_dcep_status cnet_sctp_dcep_ack_admitted(cnet_sctp_dcep *d,
+    uint16_t sid) {
+  cnet_sctp_dcep_status status = guard(d);
+  cnet_sctp_dcep_channel *channel;
+  if (status != CNET_SCTP_DCEP_OK) return status;
+  if (sid >= d->streams) return CNET_SCTP_DCEP_INVALID;
+  channel = &d->channels[sid];
+  if (channel->locally_initiated || channel->state != 3u)
+    return CNET_SCTP_DCEP_PROTOCOL;
+  channel->state = 2u;
   return CNET_SCTP_DCEP_OK;
 }
 
