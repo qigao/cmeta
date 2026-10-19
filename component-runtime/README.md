@@ -42,6 +42,16 @@ new Scopes; existing Scopes keep the old generation alive. Drain returns
 stopping its components precedes release of the generation's Plugin leases.
 At most two generations may remain attached to one runtime.
 
+An unpublished generation that reaches `FAILED` while Plugin lease settlement
+is incomplete remains quarantined: its storage must not be reused and a live
+lease continues to prevent DSO unload. After the caller repairs the ownership
+fault, `salts_service_host_generation_recover()` explicitly retries only the
+remaining leases, and only when the Configurator context is ZERO, fully rolled
+back, or STOPPED with no activation entries, and the generation has no runtime
+owner or active Scopes. Failure preserves the unsettled record; success moves
+the generation to DRAINED. Attached generations continue through explicit
+`generation_drain()`. Neither path performs automatic retry or hidden unload.
+
 Runtime, generation bundles and caller-provided storage must remain alive and
 address-stable until their lifecycle contracts are complete. A live Scope is
 single-owner and non-copyable/non-movable by contract; the owner-address check
