@@ -42,8 +42,12 @@ static void reliable_open_ack(void) {
       ack, sizeof(ack), &na) == CNET_SCTP_DCEP_OK);
   assert(na == 1u && ack[0] == 2u);
   assert(!cnet_sctp_dcep_ready(&server, 0u));
-  /* Simulate downstream queue backpressure: without admission, not ready. */
+  /* Simulate admission failure at the Owner boundary: no premature open. */
+  b.admitted = 0;
+  assert(cnet_sctp_dcep_ack_admitted(&server, 0u) == CNET_SCTP_DCEP_OWNER);
   assert(!cnet_sctp_dcep_ready(&server, 0u));
+  b.admitted = 1;
+  /* The caller retries admission of the already-built ACK bytes. */
   assert(cnet_sctp_dcep_ack_admitted(&server, 0u) == CNET_SCTP_DCEP_OK);
   assert(cnet_sctp_dcep_ready(&server, 0u));
   assert(server.channels[0].label_size == sizeof(label));
