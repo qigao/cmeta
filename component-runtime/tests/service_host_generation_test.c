@@ -204,6 +204,78 @@ suite("ServiceHost generation") {
         check_equal(info.active_leases, (size_t)0u);
     }
 
+    it("recovers an unpublished generation after its Plugin lease is repaired") {
+        const salts_service_host_generation_storage storage = {
+            deployments, 1u,
+            instances, 1u,
+            dependencies, 1u,
+            activation_order, 1u,
+            modules, 1u
+        };
+        const salts_service_host_source source = {
+            ref, COMPONENT_PROVIDER_EXPORT_ID, NULL, NULL
+        };
+        cmeta_plugin_lease valid_lease;
+        cmeta_plugin_lifecycle_info info;
+        uint32_t corrupted_generation;
+
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(1), &registry, &storage,
+            NULL, 0u, &source, 1u, NULL, 0u),
+            SALTS_SERVICE_HOST_OK);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_BUILT);
+        valid_lease = modules[0].lease;
+        check_true(cmeta_plugin_lease_valid(valid_lease));
+
+        /* Test-only owner-state fault: the registry refuses a stale token and
+         * promises not to mutate it. The host must quarantine the generation. */
+        corrupted_generation = modules[0].lease.generation + 1u;
+        if (corrupted_generation == 0u)
+            corrupted_generation = 1u;
+        modules[0].lease.generation = corrupted_generation;
+
+        check_equal(salts_service_host_generation_discard(&generation),
+                    SALTS_SERVICE_HOST_PLUGIN_ERROR);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_equal(generation.module_count, (size_t)1u);
+        check_equal(modules[0].lease.generation, corrupted_generation);
+        check_equal(generation.failure.plugin_status, CMETA_PLUGIN_STALE);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)1u);
+        check_equal(cmeta_plugin_registry_unload(&registry, ref),
+                    CMETA_PLUGIN_BUSY);
+
+        /* No build/reuse while any recorded lease is unsettled. */
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(2), &registry, &storage,
+            NULL, 0u, &source, 1u, NULL, 0u),
+            SALTS_SERVICE_HOST_INVALID_STATE);
+
+        /* A failed retry preserves the same token and generation storage. */
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_PLUGIN_ERROR);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_equal(generation.module_count, (size_t)1u);
+        check_equal(modules[0].lease.generation, corrupted_generation);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)1u);
+
+        /* Once the owner token is repaired, recovery consumes it exactly once. */
+        modules[0].lease = valid_lease;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_OK);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
+        check_equal(generation.module_count, (size_t)0u);
+        check_equal(generation.registry, NULL);
+        check_equal(modules[0].manifest, NULL);
+        check_false(cmeta_plugin_lease_valid(modules[0].lease));
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+    }
+
     it("discharges explicit ObjectRef cleanup before releasing its Plugin lease") {
         const salts_service_host_generation_storage storage = {
             deployments, 1u,
