@@ -322,6 +322,33 @@ suite("ServiceHost generation") {
         check_equal(two_modules[0].lease.generation, corrupted_generation);
         generation.storage.module_capacity = valid_module_capacity;
 
+        /* A malformed non-zero token must not be mistaken for an already
+         * consumed lease, and the module ownership record must be preserved. */
+        two_modules[0].lease.slot = 0u;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_PLUGIN_ERROR);
+        check_equal(generation.failure.plugin_status,
+                    CMETA_PLUGIN_INVALID_ARGUMENT);
+        check_equal(generation.module_count, (size_t)2u);
+        check_equal(two_modules[0].lease.plugin.slot, failed_lease.plugin.slot);
+        check_equal(two_modules[0].lease.plugin.generation, failed_lease.plugin.generation);
+        check_equal(two_modules[0].lease.slot, (uint32_t)0u);
+        check_equal(two_modules[0].lease.generation, failed_lease.generation);
+        check_true(two_modules[0].manifest != NULL);
+
+        /* Canonical-zero token bytes are also insufficient evidence that the
+         * owner released a lease if the Plugin/module record is still present. */
+        two_modules[0].lease = (cmeta_plugin_lease){0};
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_PLUGIN_ERROR);
+        check_equal(generation.failure.plugin_status,
+                    CMETA_PLUGIN_INVALID_ARGUMENT);
+        check_equal(generation.module_count, (size_t)2u);
+        check_equal(two_modules[0].plugin.slot, failed_lease.plugin.slot);
+        check_equal(two_modules[0].plugin.generation, failed_lease.plugin.generation);
+        check_true(two_modules[0].manifest != NULL);
+        two_modules[0].lease = failed_lease;
+
         /* No build/reuse while any recorded lease is unsettled. */
         check_equal(salts_service_host_generation_build(
             &generation, UINT64_C(2), &registry, &storage,
