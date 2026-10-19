@@ -223,7 +223,7 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
   uint8_t value[DATA_HEADER + CNET_SCTP_DATA_PAYLOAD_MAX];
   size_t packet_bytes = 0u, i;
   cnet_sctp_data_status status;
-  if (n == 0u || n > CNET_SCTP_DATA_PAYLOAD_MAX)
+  if (n > CNET_SCTP_DATA_PAYLOAD_MAX)
     return CNET_SCTP_DATA_INVALID;
   /* RFC 9260 6.1(B): one new packet may cross cwnd only while flight
    * was below it. Each supported DATA chunk is <= CC_QUANTUM, so this
@@ -280,7 +280,7 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now,
   cnet_sctp_data_status status = guard(d);
   uint16_t seq;
   if (status != CNET_SCTP_DATA_OK) return status;
-  if (!payload || !output || !written || n == 0u ||
+  if (!payload || !output || !written ||
       stream >= d->config.outbound_streams) return CNET_SCTP_DATA_INVALID;
   *written = 0u;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
