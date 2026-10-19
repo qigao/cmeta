@@ -10,9 +10,9 @@ NATIVE_IO_ACE_TOKEN_TYPE(ace_plugin_scope_act, salts_service_host_scope);
 
 
 
-/* POSA2 Interceptor under an actual ComponentPlugin generation Scope.
+/* POSA2 Interceptor under an actual ServiceHost generation Scope.
  * CMeta describes the exact FunctionAbi and borrows the native function.
- * ComponentPlugin alone admits/drains the Scope and retains the DSO lease. */
+ * ServiceHost alone admits/drains the Scope and retains the DSO lease. */
 CMETA_INTERCEPTOR_TYPE(ace_plugin_interceptor, int, int);
 
 typedef struct ace_plugin_interceptor_call {
@@ -81,7 +81,7 @@ CMETA_STATIC_ASSERT(
     CMETA_TYPE_MATCHES(&ace_plugin_interceptor_target, ace_plugin_interceptor_target_fn),
     "Interceptor provider must match its canonical native callable");
 
-suite("ComponentPlugin generation publication") {
+suite("ServiceHost generation publication") {
 
     it("borrows a real Plugin DSO through typed Interceptor success/short-circuit/error") {
         const cmeta_plugin_registry_config registry_config = {1};
@@ -516,11 +516,11 @@ suite("ComponentPlugin generation publication") {
         {
             salts_configurator_service copied_service;
             check_equal(salts_service_host_scope_find_service(
-                &copied_scope, component_plugin_value_interface(), &copied_service),
+                &copied_scope, service_host_provider_value_interface(), &copied_service),
                 SALTS_SERVICE_HOST_INVALID_STATE);
             check_equal(salts_service_host_scope_find_service_from(
-                &copied_scope, "ComponentPluginFixture",
-                component_plugin_value_interface(), &copied_service),
+                &copied_scope, "ServiceHostProviderFixture",
+                service_host_provider_value_interface(), &copied_service),
                 SALTS_SERVICE_HOST_INVALID_STATE);
         }
         check_equal(salts_service_host_scope_release(
