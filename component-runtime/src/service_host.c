@@ -273,6 +273,13 @@ static void generation_clear(
     generation->registry = NULL;
     generation->deployment_count = 0u;
     generation->module_count = 0u;
+    /* A DRAINED generation no longer owns or borrows any graph/Provider
+     * storage. Drop its stale addresses so callers may reclaim their bundles
+     * as soon as cleanup returns successfully. */
+    generation->storage =
+        (salts_service_host_generation_storage){0};
+    generation->components =
+        (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
 }
 
 const char *salts_service_host_status_string(
