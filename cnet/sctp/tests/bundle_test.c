@@ -334,20 +334,19 @@ static void outbound_bundle_multiple_losses_are_per_tsn(void) {
     assert(cnet_sctp_data_input(&p.a, 20u + i, sack, sack_size,
         response, sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
   }
-  /* Re-deliver later TSNs to elicit repeated SACKs without injecting new
-   * DATA beyond cwnd. Each report observes both holes independently. */
-  for (i = 0u; i < 3u; ++i) {
-    size_t j;
-    for (j = 2u; j < 4u; ++j) {
-      single_size = pack(&p.a, 1, &chunks[j], 1u, single, sizeof(single));
-      assert(cnet_sctp_data_input(&p.b, 30u + i * 2u + j,
-          single, single_size, sack, sizeof(sack), &sack_size) ==
-          CNET_SCTP_DATA_OK);
-      assert(sack_size != 0u);
-      assert(cnet_sctp_data_input(&p.a, 50u + i * 2u + j,
-          sack, sack_size, response, sizeof(response), &response_size) ==
-          CNET_SCTP_DATA_OK);
-    }
+  /* Duplicate SACKs alone do not create new missing reports: only newly
+   * acknowledged higher TSNs count. Once 102/103 are Gap-ACKed, send two
+   * more DATA tickets within the newly freed Flight Size and ACK 104/105. */
+  for (i = 0u; i < 2u; ++i) {
+    const uint8_t extra = (uint8_t)('e' + i);
+    assert(cnet_sctp_data_send(&p.a, 40u + i, 0u, 53u, 0,
+        &extra, 1u, single, sizeof(single), &single_size) ==
+        CNET_SCTP_DATA_OK);
+    assert(cnet_sctp_data_input(&p.b, 45u + i, single, single_size,
+        sack, sizeof(sack), &sack_size) == CNET_SCTP_DATA_OK);
+    assert(sack_size != 0u);
+    assert(cnet_sctp_data_input(&p.a, 50u + i, sack, sack_size,
+        response, sizeof(response), &response_size) == CNET_SCTP_DATA_OK);
   }
   assert(p.a.tx[0].tsn == 100u && p.a.tx[0].pending_retransmit);
   assert(p.a.tx[1].tsn == 101u && p.a.tx[1].pending_retransmit);
