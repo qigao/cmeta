@@ -107,6 +107,63 @@ static cnet_sctp_assoc_status handle_unknown_single_chunk(
   }
 }
 
+/* Process a packet containing only genuinely unrecognized Chunks. This
+ * bounded extension is intentionally separate from mixed unknown/known
+ * bundles: it applies each action in wire order and accumulates REPORT causes
+ * in private storage before publishing any response or advancing time. */
+static cnet_sctp_assoc_status handle_unknown_multi_chunks(
+    cnet_sctp_assoc *s, uint64_t now, const cnet_sctp_wire_decoder *decoded,
+    size_t count, uint8_t *out, size_t cap, size_t *written) {
+  uint8_t causes[CNET_SCTP_ASSOC_MAX_PACKET];
+  uint8_t response[CNET_SCTP_ASSOC_MAX_PACKET];
+  cnet_sctp_wire_decoder cursor;
+  size_t causes_size = 0u;
+  size_t response_size = 0u;
+  size_t i;
+  cnet_sctp_assoc_status status;
+  if (!s || !decoded || count < 2u || !out || !written)
+    return CNET_SCTP_ASSOC_INVALID;
+  cursor = *decoded;
+  for (i = 0u; i < count; ++i) {
+    cnet_sctp_wire_chunk chunk;
+    cnet_sctp_wire_unknown_action action;
+    if (cnet_sctp_wire_next_chunk(&cursor, &chunk) != CNET_SCTP_WIRE_OK)
+      return CNET_SCTP_ASSOC_PROTOCOL;
+    action = cnet_sctp_wire_unknown_chunk_action(chunk.type);
+    if (action == CNET_SCTP_WIRE_UNKNOWN_STOP_REPORT ||
+        action == CNET_SCTP_WIRE_UNKNOWN_SKIP_REPORT) {
+      size_t raw_size = chunk.value_size + 4u;
+      size_t cause_size = raw_size + 4u;
+      size_t padded_size = (cause_size + 3u) & ~(size_t)3u;
+      if (cause_size > UINT16_MAX ||
+          padded_size > sizeof(causes) - causes_size)
+        return CNET_SCTP_ASSOC_CAPACITY;
+      wr16(causes + causes_size, 6u); /* Unrecognized Chunk Type */
+      wr16(causes + causes_size + 2u, (uint16_t)cause_size);
+      memcpy(causes + causes_size + 4u, chunk.value - 4u, raw_size);
+      if (padded_size > cause_size)
+        memset(causes + causes_size + cause_size, 0,
+               padded_size - cause_size);
+      causes_size += padded_size;
+    }
+    if (action == CNET_SCTP_WIRE_UNKNOWN_STOP_DISCARD ||
+        action == CNET_SCTP_WIRE_UNKNOWN_STOP_REPORT)
+      break;
+  }
+  if (causes_size == 0u) {
+    s->last_time_ms = now;
+    return CNET_SCTP_ASSOC_OK;
+  }
+  status = encode_one(s, s->peer_tag, SCTP_TYPE_ERROR, causes, causes_size,
+      response, sizeof(response), &response_size);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (response_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+  memcpy(out, response, response_size);
+  *written = response_size;
+  s->last_time_ms = now;
+  return CNET_SCTP_ASSOC_OK;
+}
+
 static cnet_sctp_assoc_status check_time(cnet_sctp_assoc *s, uint64_t now) {
   return now < s->last_time_ms ? CNET_SCTP_ASSOC_CLOCK : CNET_SCTP_ASSOC_OK;
 }
@@ -952,10 +1009,13 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   cnet_sctp_wire_header header;
   cnet_sctp_wire_decoder decoder;
   cnet_sctp_wire_decoder preflight_decoder;
+  cnet_sctp_wire_decoder classify_decoder;
   cnet_sctp_wire_chunk chunk;
   cnet_sctp_wire_chunk second;
   cnet_sctp_assoc_status status;
   uint64_t prior_time;
+  size_t i;
+  int all_unknown;
   if (written) *written = 0u;
   status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
@@ -970,8 +1030,8 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       header.destination_port != s->config.local_port)
     return CNET_SCTP_ASSOC_PROTOCOL;
   preflight_decoder = decoder;
-  if (!assoc_bundle_preflight(&preflight_decoder, header.chunk_count) ||
-      cnet_sctp_wire_next_chunk(&decoder, &chunk) != CNET_SCTP_WIRE_OK)
+  classify_decoder = decoder;
+  if (cnet_sctp_wire_next_chunk(&decoder, &chunk) != CNET_SCTP_WIRE_OK)
     return CNET_SCTP_ASSOC_PROTOCOL;
   /* RFC 9260 §8.5 (Verified Erratum 7852): validate the packet Verification
    * Tag before changing association state or processing any chunk. INIT is
@@ -982,6 +1042,31 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   if ((chunk.type == SCTP_TYPE_INIT && header.verification_tag != 0u) ||
       (chunk.type != SCTP_TYPE_INIT &&
        header.verification_tag != s->local_tag))
+    return CNET_SCTP_ASSOC_PROTOCOL;
+  /* A multi-Chunk packet consisting only of unknown types can be handled
+   * without invoking the DATA/control dispatcher: collect all ERROR causes
+   * transactionally, and stop at the first stop-action Chunk. Mixed bundles
+   * still require the full RFC legal-combination/transaction matrix and stay
+   * fail-closed in assoc_bundle_preflight(). */
+  if (header.chunk_count == 1u && !recognized_chunk_type(chunk.type))
+    return handle_unknown_single_chunk(s, now, &chunk, output, cap, written);
+  if (header.chunk_count > 1u) {
+    all_unknown = 1;
+    for (i = 0u; i < header.chunk_count; ++i) {
+      cnet_sctp_wire_chunk candidate;
+      if (cnet_sctp_wire_next_chunk(&classify_decoder, &candidate) !=
+          CNET_SCTP_WIRE_OK)
+        return CNET_SCTP_ASSOC_PROTOCOL;
+      if (recognized_chunk_type(candidate.type)) {
+        all_unknown = 0;
+        break;
+      }
+    }
+    if (all_unknown)
+      return handle_unknown_multi_chunks(s, now, &preflight_decoder,
+          header.chunk_count, output, cap, written);
+  }
+  if (!assoc_bundle_preflight(&preflight_decoder, header.chunk_count))
     return CNET_SCTP_ASSOC_PROTOCOL;
   if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_COOKIE_ECHO) {
     /* Validate the entire advisory ERROR before advancing the clock watermark
@@ -1002,9 +1087,6 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   /* Unknown Chunk action bits are meaningful only for unrecognized types.
    * Known-but-unimplemented controls (e.g. HEARTBEAT) still take the
    * unsupported-control rejection path and must never be misreported. */
-  if (header.chunk_count == 1u && !recognized_chunk_type(chunk.type)) {
-    return handle_unknown_single_chunk(s, now, &chunk, output, cap, written);
-  }
   /* A packet-triggered T5 action is also a state transition. Run it only
    * after every Chunk in the bounded packet has passed structural preflight;
    * wrong-tag or malformed bundled packets cannot trigger an ABORT. The
