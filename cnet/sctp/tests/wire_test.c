@@ -21,6 +21,21 @@ static void seal(uint8_t *p, size_t length) {
   put_le32(p + 8u, cnet_sctp_wire_crc32c(p, length));
 }
 
+static void test_unknown_chunk_action_bits(void) {
+  /* RFC 9260 §3.2: 00 stop/discard, 01 stop/report,
+   * 10 skip, 11 skip/report. Test each class with distinct type values. */
+  assert(cnet_sctp_wire_unknown_chunk_action(0x00u) ==
+         CNET_SCTP_WIRE_UNKNOWN_STOP_DISCARD);
+  assert(cnet_sctp_wire_unknown_chunk_action(0x41u) ==
+         CNET_SCTP_WIRE_UNKNOWN_STOP_REPORT);
+  assert(cnet_sctp_wire_unknown_chunk_action(0x82u) ==
+         CNET_SCTP_WIRE_UNKNOWN_SKIP);
+  assert(cnet_sctp_wire_unknown_chunk_action(0xC3u) ==
+         CNET_SCTP_WIRE_UNKNOWN_SKIP_REPORT);
+  assert(cnet_sctp_wire_unknown_chunk_action(0xFFu) ==
+         CNET_SCTP_WIRE_UNKNOWN_SKIP_REPORT);
+}
+
 static void test_crc_and_init(void) {
   static const uint8_t init[] = {
     0x11u, 0x22u, 0x33u, 0x44u, /* initiate tag */
@@ -157,6 +172,7 @@ static void test_truncation_and_mutations(void) {
 }
 
 int main(void) {
+  test_unknown_chunk_action_bits();
   test_crc_and_init();
   test_multiple_chunks_and_padding();
   test_reject_and_no_partial_write();
