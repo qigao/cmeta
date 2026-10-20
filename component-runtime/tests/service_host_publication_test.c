@@ -805,6 +805,23 @@ suite("ServiceHost generation publication") {
         check_true(generation.instances[0].active);
         check_true(cmeta_object_ref_valid(&generation.instances[0].object));
 
+        /* Drain must validate the actual teardown plan before context_stop()
+         * follows caller-owned activation indices. */
+        generation.activation_order[0] = SIZE_MAX;
+        check_equal(salts_service_host_generation_drain(
+            &runtime, &generation.generation),
+            SALTS_SERVICE_HOST_COMPONENT_ERROR);
+        check_equal(generation.generation.state,
+                    SALTS_SERVICE_HOST_GENERATION_DRAINING);
+        check_true(generation.generation.runtime_owner == &runtime);
+        check_true(generation.instances[0].active);
+        check_true(cmeta_object_ref_valid(&generation.instances[0].object));
+        check_true(generation.generation.storage.instances == generation.instances);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)1u);
+        generation.activation_order[0] = 0u;
+
         /* A stale/miswritten STOPPED marker is not evidence that context_stop
          * has released the graph. Drain must not unload the DSO or forget the
          * caller-owned ObjectRef storage on this inconsistent state. */
