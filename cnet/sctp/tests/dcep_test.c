@@ -110,8 +110,43 @@ static void unordered_and_negative(void) {
   assert(cnet_sctp_dcep_stop(&server) == CNET_SCTP_DCEP_OK);
 }
 
+static void output_length_on_early_errors(void) {
+  cnet_sctp_dcep d = {0};
+  test_owner owner = {1};
+  uint8_t wire_ack = 2u, output[16];
+  size_t written = 99u;
+  assert(cnet_sctp_dcep_init(&d, 8u, 1, owned, &owner) == CNET_SCTP_DCEP_OK);
+
+  /* Even failures before payload validation must not leak a stale length. */
+  assert(cnet_sctp_dcep_open(&d, 0u, 0u, 0u, 0u, NULL, 0u, NULL, 0u,
+      NULL, sizeof(output), &written) == CNET_SCTP_DCEP_INVALID);
+  assert(written == 0u);
+
+  written = 99u;
+  owner.admitted = 0;
+  assert(cnet_sctp_dcep_open(&d, 0u, 0u, 0u, 0u, NULL, 0u, NULL, 0u,
+      output, sizeof(output), &written) == CNET_SCTP_DCEP_OWNER);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_dcep_input(&d, 0u, &wire_ack, 1u,
+      output, sizeof(output), &written) == CNET_SCTP_DCEP_OWNER);
+  assert(written == 0u);
+
+  owner.admitted = 1;
+  assert(cnet_sctp_dcep_stop(&d) == CNET_SCTP_DCEP_OK);
+  written = 99u;
+  assert(cnet_sctp_dcep_open(&d, 0u, 0u, 0u, 0u, NULL, 0u, NULL, 0u,
+      output, sizeof(output), &written) == CNET_SCTP_DCEP_CLOSED);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_dcep_input(&d, 0u, &wire_ack, 1u,
+      output, sizeof(output), &written) == CNET_SCTP_DCEP_CLOSED);
+  assert(written == 0u);
+}
+
 int main(void) {
   reliable_open_ack();
+  output_length_on_early_errors();
   unordered_and_negative();
   puts("C11 RFC8832 reliable DCEP OPEN/ACK, UTF-8, parity, bounds PASS");
   return 0;
