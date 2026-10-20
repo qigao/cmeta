@@ -22,6 +22,19 @@ typedef enum cnet_sctp_wire_status {
   CNET_SCTP_WIRE_CAPACITY = -4
 } cnet_sctp_wire_status;
 
+/* RFC 9260 §3.2 action bits for an unrecognized Chunk Type. This is a
+ * classifier only: Association packet processing must still enforce packet
+ * preflight, legal Chunk combinations, report construction and commit rules. */
+typedef enum cnet_sctp_wire_unknown_action {
+  CNET_SCTP_WIRE_UNKNOWN_STOP_DISCARD = 0,
+  CNET_SCTP_WIRE_UNKNOWN_STOP_REPORT = 1,
+  CNET_SCTP_WIRE_UNKNOWN_SKIP = 2,
+  CNET_SCTP_WIRE_UNKNOWN_SKIP_REPORT = 3
+} cnet_sctp_wire_unknown_action;
+
+/* Returns the RFC action encoded in the top two Chunk Type bits. */
+cnet_sctp_wire_unknown_action cnet_sctp_wire_unknown_chunk_action(uint8_t type);
+
 typedef struct cnet_sctp_wire_chunk {
   uint8_t type;
   uint8_t flags;
