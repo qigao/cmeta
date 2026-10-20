@@ -142,7 +142,7 @@ cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
   if (written) *written = 0u;
   status = guard(d);
   if (status != CNET_SCTP_DCEP_OK) return status;
-  if (!wire || !reply || !written || sid >= d->streams || n == 0u)
+  if (!wire || !written || sid >= d->streams || n == 0u)
     return CNET_SCTP_DCEP_INVALID;
   channel = &d->channels[sid];
   if (bytes[0] == DCEP_ACK) {
@@ -152,6 +152,7 @@ cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
     channel->state = 2u;
     return CNET_SCTP_DCEP_OK;
   }
+  if (!reply) return CNET_SCTP_DCEP_INVALID;
   if (bytes[0] != DCEP_OPEN || n < 12u)
     return CNET_SCTP_DCEP_PROTOCOL;
   /* The remote DTLS role must use the opposite SID parity. */
