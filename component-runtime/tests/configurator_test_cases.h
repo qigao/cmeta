@@ -139,6 +139,17 @@ suite("Salts static Component Configurator") {
         check_true(cmeta_object_ref_valid(&instance.object));
         check_equal(logger.destroys, 0u);
 
+        /* The failure phase is public mutable state too: forging INIT must
+         * not bypass the retained ObjectRef check for this still-live graph. */
+        context.failure.phase = SALTS_CONFIGURATOR_PHASE_INIT;
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(logger.destroys, 0u);
+
         /* Restore the valid live owner state and settle it normally. */
         context.state = SALTS_CONFIGURATOR_CONTEXT_ACTIVE;
         context.activation_count = 1u;
