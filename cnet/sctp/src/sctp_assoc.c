@@ -1043,13 +1043,11 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       (chunk.type != SCTP_TYPE_INIT &&
        header.verification_tag != s->local_tag))
     return CNET_SCTP_ASSOC_PROTOCOL;
-  /* A multi-Chunk packet consisting only of unknown types can be handled
-   * without invoking the DATA/control dispatcher: collect all ERROR causes
-   * transactionally, and stop at the first stop-action Chunk. Mixed bundles
-   * still require the full RFC legal-combination/transaction matrix and stay
-   * fail-closed in assoc_bundle_preflight(). */
-  if (header.chunk_count == 1u && !recognized_chunk_type(chunk.type))
-    return handle_unknown_single_chunk(s, now, &chunk, output, cap, written);
+  /* Classify the complete packet before dispatch. Unknown-only bundles
+   * have a narrow transactional action handler; packets mixing unknown and
+   * recognized types remain fail-closed until the full RFC transaction matrix
+   * is implemented. */
+  all_unknown = header.chunk_count == 1u && !recognized_chunk_type(chunk.type);
   if (header.chunk_count > 1u) {
     all_unknown = 1;
     for (i = 0u; i < header.chunk_count; ++i) {
@@ -1062,27 +1060,31 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
         break;
       }
     }
-    if (all_unknown)
-      return handle_unknown_multi_chunks(s, now, &preflight_decoder,
-          header.chunk_count, output, cap, written);
   }
-  if (!assoc_bundle_preflight(&preflight_decoder, header.chunk_count))
-    return CNET_SCTP_ASSOC_PROTOCOL;
-  if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_COOKIE_ECHO) {
-    /* Validate the entire advisory ERROR before advancing the clock watermark
-     * or allowing COOKIE ECHO processing to begin. */
-    if (cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
-        !valid_cookie_echo_error(&second))
+  /* The regular bundle preflight accepts single Chunks and the narrow known
+   * bundle subset. Unknown-only multi-Chunk packets use their own complete
+   * framing/type preflight above. */
+  if (header.chunk_count == 1u || !all_unknown) {
+    if (!assoc_bundle_preflight(&preflight_decoder, header.chunk_count))
       return CNET_SCTP_ASSOC_PROTOCOL;
-  } else if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_SHUTDOWN) {
-    if (cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
-        second.type != 3u || second.flags != 0u || second.value_size < 12u)
+  }
+  if (!all_unknown) {
+    if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_COOKIE_ECHO) {
+      /* Validate the entire advisory ERROR before advancing the clock watermark
+       * or allowing COOKIE ECHO processing to begin. */
+      if (cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
+          !valid_cookie_echo_error(&second))
+        return CNET_SCTP_ASSOC_PROTOCOL;
+    } else if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_SHUTDOWN) {
+      if (cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
+          second.type != 3u || second.flags != 0u || second.value_size < 12u)
+        return CNET_SCTP_ASSOC_PROTOCOL;
+    } else if (header.chunk_count > 1u &&
+               chunk.type != 0u && chunk.type != 3u) {
+      /* No arbitrary control chunks can be bundled with INIT, Cookie,
+       * SHUTDOWN or ABORT in the private Association profile. */
       return CNET_SCTP_ASSOC_PROTOCOL;
-  } else if (header.chunk_count > 1u &&
-             chunk.type != 0u && chunk.type != 3u) {
-    /* No arbitrary control chunks can be bundled with INIT, Cookie,
-     * SHUTDOWN or ABORT in the private Association profile. */
-    return CNET_SCTP_ASSOC_PROTOCOL;
+    }
   }
   /* Unknown Chunk action bits are meaningful only for unrecognized types.
    * Known-but-unimplemented controls (e.g. HEARTBEAT) still take the
@@ -1097,6 +1099,13 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     status = shutdown_t5_abort(s, now, output, cap, written);
     return status == CNET_SCTP_ASSOC_EMPTY ? CNET_SCTP_ASSOC_OK : status;
   }
+  /* Validated unknown-only packets are handled after the absolute T5 guard:
+   * an unknown Chunk may not postpone a due shutdown ABORT. */
+  if (all_unknown && header.chunk_count == 1u)
+    return handle_unknown_single_chunk(s, now, &chunk, output, cap, written);
+  if (all_unknown && header.chunk_count > 1u)
+    return handle_unknown_multi_chunks(s, now, &preflight_decoder,
+        header.chunk_count, output, cap, written);
   if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_SHUTDOWN) {
     s->last_time_ms = now;
     return handle_shutdown_sack_bundle(s, now, &header, &chunk, &second,
