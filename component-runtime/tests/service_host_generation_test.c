@@ -186,7 +186,7 @@ suite("ServiceHost generation") {
         check_equal(instances[0].object.size, (size_t)0u);
         check_equal(salts_service_host_generation_recover(&generation),
                     SALTS_SERVICE_HOST_INVALID_STATE);
-        check_equal(generation.storage.instances, instances);
+        check_true(generation.storage.instances == instances);
 
         /* Once the caller repairs the invalid owner record, explicit recovery
          * can clear the generation and relinquish the scratch storage. */
