@@ -146,6 +146,13 @@ suite("ServiceHost generation") {
                     SALTS_SERVICE_HOST_INVALID_STATE);
         generation.components.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
 
+        /* Truncating the public deployment prefix to zero must not hide the
+         * still-retained instance storage from explicit recovery. */
+        generation.components.deployment_count = 0u;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+        generation.components.deployment_count = 1u;
+
         /* Once the record is restored to the canonical empty representation,
          * the explicit recovery operation may clear the failed candidate. */
         instances[0].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
