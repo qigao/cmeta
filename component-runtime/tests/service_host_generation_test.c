@@ -207,6 +207,78 @@ suite("ServiceHost generation") {
         check_equal(logger.creates, 1u);
     }
 
+    it("rejects recovery when truncated deployment_count hides a live tail ObjectRef") {
+        test_provider_state logger;
+        salts_component_provider_binding provider;
+        salts_configurator_deployment deployment;
+        salts_configurator_instance tail_instances[2] = {{0}};
+        salts_component_dependency tail_dependencies[1] = {{0}};
+        size_t tail_order[1] = {0u};
+        salts_service_host_generation_storage storage;
+        salts_service_host_generation tail_generation = {0};
+
+        test_provider_state_init(&logger, 23, NULL);
+        provider = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+        storage = (salts_service_host_generation_storage){
+            &deployment, 1u,
+            tail_instances, 2u,
+            tail_dependencies, 1u,
+            tail_order, 1u,
+            NULL, 0u
+        };
+
+        /* Slot zero is a settled visible prefix; slot one holds an actual
+         * ObjectRef whose ownership must survive a rejected recovery. */
+        check_equal(test_logger_create(
+            &logger, NULL, NULL, NULL, 0u, &tail_instances[1].object),
+            CMETA_OK);
+        tail_instances[1].active = true;
+        check_false(tail_instances[0].active);
+        check_false(cmeta_object_ref_valid(&tail_instances[0].object));
+        check_true(tail_instances[1].active);
+        check_true(cmeta_object_ref_valid(&tail_instances[1].object));
+
+        tail_generation.state = SALTS_SERVICE_HOST_GENERATION_FAILED;
+        tail_generation.id = UINT64_C(81);
+        tail_generation.deployment_count = 1u;
+        tail_generation.storage = storage;
+        tail_generation.components =
+            (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
+        tail_generation.components.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+        tail_generation.components.deployments = &deployment;
+        tail_generation.components.deployment_count = 1u;
+        tail_generation.components.instances = tail_instances;
+        tail_generation.components.instance_capacity = 2u;
+        tail_generation.components.dependencies = tail_dependencies;
+        tail_generation.components.dependency_capacity = 1u;
+        tail_generation.components.activation_order = tail_order;
+        tail_generation.components.activation_capacity = 1u;
+        tail_generation.components.failure.phase = SALTS_CONFIGURATOR_PHASE_CREATE;
+
+        /* Recovery rejects the inconsistent tail and leaves ownership intact. */
+        check_equal(salts_service_host_generation_recover(&tail_generation),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+        check_equal(tail_generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_true(tail_generation.storage.instances == tail_instances);
+        check_true(tail_instances[1].active);
+        check_true(cmeta_object_ref_valid(&tail_instances[1].object));
+        check_equal(logger.destroys, 0u);
+
+        /* Repair the tail owner, then explicit recovery may detach storage. */
+        test_deactivate(&logger, &tail_instances[1].object);
+        tail_instances[1].active = false;
+        cmeta_object_release(&tail_instances[1].object);
+        check_false(cmeta_object_ref_valid(&tail_instances[1].object));
+        check_equal(logger.destroys, 1u);
+        check_equal(salts_service_host_generation_recover(&tail_generation),
+                    SALTS_SERVICE_HOST_OK);
+        check_equal(tail_generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
+        check_null(tail_generation.storage.instances);
+        check_null(tail_generation.components.instances);
+    }
+
     it("rejects module capacity before acquiring any Plugin lease") {
         const salts_service_host_generation_storage storage = {
             deployments, 1u,
