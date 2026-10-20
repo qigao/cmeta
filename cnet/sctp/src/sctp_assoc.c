@@ -891,6 +891,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     uint8_t *output, size_t cap, size_t *written) {
   cnet_sctp_wire_header header;
   cnet_sctp_wire_decoder decoder;
+  cnet_sctp_wire_decoder preflight_decoder;
   cnet_sctp_wire_chunk chunk;
   cnet_sctp_wire_chunk second;
   cnet_sctp_assoc_status status;
@@ -905,10 +906,11 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   if (cnet_sctp_wire_decode(packet, packet_size, &header, &decoder) !=
       CNET_SCTP_WIRE_OK) return CNET_SCTP_ASSOC_PROTOCOL;
   if (header.source_port != s->config.remote_port ||
-      header.destination_port != s->config.local_port ||
-      cnet_sctp_wire_next_chunk(&decoder, &chunk) != CNET_SCTP_WIRE_OK)
+      header.destination_port != s->config.local_port)
     return CNET_SCTP_ASSOC_PROTOCOL;
-  if (!assoc_bundle_preflight(&decoder, header.chunk_count))
+  preflight_decoder = decoder;
+  if (!assoc_bundle_preflight(&preflight_decoder, header.chunk_count) ||
+      cnet_sctp_wire_next_chunk(&decoder, &chunk) != CNET_SCTP_WIRE_OK)
     return CNET_SCTP_ASSOC_PROTOCOL;
   /* RFC 9260 §8.5 (Verified Erratum 7852): validate the packet Verification
    * Tag before changing association state or processing any chunk. INIT is
