@@ -55,6 +55,10 @@ static void reliable_open_ack(void) {
   assert(cnet_sctp_dcep_ready(&server, 0u));
   assert(server.channels[0].label_size == sizeof(label));
   assert(memcmp(server.channels[0].label, label, sizeof(label)) == 0);
+  /* ACK consumes no reply bytes, so the reply buffer is optional. */
+  assert(cnet_sctp_dcep_input(&client, 0u, ack, na,
+      NULL, 0u, &no) == CNET_SCTP_DCEP_OK);
+  assert(no == 0u && cnet_sctp_dcep_ready(&client, 0u));
   assert(cnet_sctp_dcep_input(&client, 0u, ack, na,
       open, sizeof(open), &no) == CNET_SCTP_DCEP_OK);
   assert(no == 0u && cnet_sctp_dcep_ready(&client, 0u));
