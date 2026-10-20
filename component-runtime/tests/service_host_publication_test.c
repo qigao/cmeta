@@ -386,6 +386,17 @@ suite("ServiceHost generation publication") {
                 NULL, 0u, &exact, 1u, NULL, 0u),
                 SALTS_SERVICE_HOST_OK);
         }
+        /* A forged BUILT marker must not publish a candidate whose graph is
+         * no longer ACTIVE. The failed attempt must not replace prior state. */
+        pending.generation.components.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+        check_equal(salts_service_host_runtime_publish(
+            &runtime, &pending.generation, &previous),
+            SALTS_SERVICE_HOST_INVALID_STATE);
+        check_true(previous == &live.generation);
+        check_equal(pending.generation.state,
+                    SALTS_SERVICE_HOST_GENERATION_BUILT);
+        pending.generation.components.state = SALTS_CONFIGURATOR_CONTEXT_ACTIVE;
+
         check_equal(cmeta_plugin_registry_get_lifecycle(
             &registry, ref, &info), CMETA_PLUGIN_OK);
         check_equal(info.active_leases, (size_t)2u);
