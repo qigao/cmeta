@@ -1,4 +1,5 @@
 #include "service_host_fixture.h"
+#include "configurator_test_fixture.h"
 #include "tinytest.h"
 
 #include <salts/service_host.h>
@@ -38,6 +39,27 @@ static salts_configurator_instance instances[1];
 static salts_component_dependency dependencies[1];
 static size_t activation_order[1];
 static salts_service_host_module modules[1];
+
+/* Deliberately leave a noncanonical ObjectRef on a failed create. Configurator
+ * must retain its caller-owned instance prefix, and ServiceHost must not drop
+ * that backing storage just because the independent Plugin cleanup succeeded. */
+static cmeta_status test_logger_create_noncanonical(
+    void *provider_context,
+    const cmeta_data_desc *config_data,
+    const void *config_value,
+    const salts_component_dependency *dependencies,
+    size_t dependency_count,
+    cmeta_object_ref *out_instance) {
+    (void)provider_context;
+    (void)config_data;
+    (void)config_value;
+    (void)dependencies;
+    (void)dependency_count;
+    if (out_instance == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    out_instance->size = 0u;
+    return CMETA_CALLBACK_ERROR;
+}
 
 suite("ServiceHost generation") {
     before_each() {
@@ -129,6 +151,50 @@ suite("ServiceHost generation") {
         check_equal(salts_service_host_generation_recover(&generation),
                     SALTS_SERVICE_HOST_OK);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
+    }
+
+    it("retains storage when failed create leaves a noncanonical ObjectRef") {
+        test_provider_state logger;
+        salts_component_provider_binding provider;
+        salts_configurator_deployment deployment;
+        const salts_service_host_generation_storage storage = {
+            deployments, 1u,
+            instances, 1u,
+            dependencies, 1u,
+            activation_order, 1u,
+            modules, 1u
+        };
+
+        test_provider_state_init(&logger, 11, NULL);
+        provider = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create_noncanonical);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(7), &registry, &storage,
+            &deployment, 1u, NULL, 0u, NULL, 0u),
+            SALTS_SERVICE_HOST_COMPONENT_ERROR);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_equal(generation.components.state,
+                    SALTS_CONFIGURATOR_CONTEXT_FAILED);
+        check_equal(generation.components.failure.phase,
+                    SALTS_CONFIGURATOR_PHASE_CREATE);
+        check_equal(generation.components.instances, instances);
+        check_equal(generation.storage.instances, instances);
+        check_equal(generation.module_count, (size_t)0u);
+        check_equal(instances[0].object.size, (size_t)0u);
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+        check_equal(generation.storage.instances, instances);
+
+        /* Once the caller repairs the invalid owner record, explicit recovery
+         * can clear the generation and relinquish the scratch storage. */
+        instances[0].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_OK);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
+        check_null(generation.storage.instances);
+        check_equal(logger.creates, 0u);
     }
 
     it("rejects module capacity before acquiring any Plugin lease") {
