@@ -247,7 +247,9 @@ static int assoc_bundle_preflight(const cnet_sctp_wire_decoder *decoded,
     }
   }
   return data_seen;
-}static void arm_timer(cnet_sctp_assoc *s, uint64_t now) {
+}
+
+static void arm_timer(cnet_sctp_assoc *s, uint64_t now) {
   s->current_rto_ms = s->config.t1_ms;
   s->deadline_ms = now + s->current_rto_ms;
   s->retransmits = 0u;
