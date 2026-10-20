@@ -115,6 +115,8 @@ cnet_sctp_wire_status cnet_sctp_wire_decode(
   size_t next;
   size_t count = 0u;
   uint8_t first_type = 0;
+  if (header) memset(header, 0, sizeof(*header));
+  if (decoder) memset(decoder, 0, sizeof(*decoder));
   if (!bytes || !header || !decoder) return CNET_SCTP_WIRE_EINVAL;
   if (packet_size > CNET_SCTP_WIRE_MAX_PACKET_BYTES)
     return CNET_SCTP_WIRE_CAPACITY;
@@ -161,7 +163,9 @@ cnet_sctp_wire_status cnet_sctp_wire_next_chunk(
   size_t value_size;
   size_t next;
   size_t position;
-  if (!decoder || !chunk) return CNET_SCTP_WIRE_EINVAL;
+  if (!chunk) return CNET_SCTP_WIRE_EINVAL;
+  memset(chunk, 0, sizeof(*chunk));
+  if (!decoder) return CNET_SCTP_WIRE_EINVAL;
   if (decoder->chunks_remaining == 0u) return CNET_SCTP_WIRE_END;
   if (!decoder->packet ||
       next_extent(decoder->packet, decoder->packet_size,
@@ -184,10 +188,10 @@ cnet_sctp_wire_status cnet_sctp_wire_encode(
   uint8_t *packet = (uint8_t *)destination;
   size_t position = SCTP_HEADER_BYTES;
   size_t i;
+  if (written) *written = 0u;
   if (!packet || !written || !chunks || chunk_count == 0u ||
       source_port == 0u || destination_port == 0u)
     return CNET_SCTP_WIRE_EINVAL;
-  *written = 0u;
   if (chunk_count > CNET_SCTP_WIRE_MAX_CHUNKS)
     return CNET_SCTP_WIRE_CAPACITY;
   for (i = 0u; i < chunk_count; ++i) {
