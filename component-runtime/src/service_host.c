@@ -360,8 +360,8 @@ static bool generation_is_clear(
 
 /* The Configurator plan count is not the only evidence of teardown. A failed
  * or stopped context that is being reused must also have no active instance
- * flags or live ObjectRefs. INIT-phase failure is the exception: no create or
- * activate callback ran, and Init may have visited only a prefix of the array. */
+ * flags or live ObjectRefs. A genuine INIT-phase failure has detached borrowed
+ * arrays already; never trust the mutable failure.phase field as a bypass. */
 static bool service_host_object_ref_is_empty(
     const cmeta_object_ref *object) {
     return object != NULL &&
@@ -381,9 +381,6 @@ static bool service_host_components_settled(
 
     if (components == NULL)
         return false;
-    if (components->state == SALTS_CONFIGURATOR_CONTEXT_FAILED &&
-        components->failure.phase == SALTS_CONFIGURATOR_PHASE_INIT)
-        return true;
     if (components->deployment_count > components->instance_capacity ||
         (components->deployment_count != 0u && components->instances == NULL))
         return false;
