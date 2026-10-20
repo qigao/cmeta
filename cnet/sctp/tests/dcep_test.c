@@ -20,6 +20,9 @@ static void reliable_open_ack(void) {
   size_t no = 0u, na = 0u;
   assert(cnet_sctp_dcep_init(&client, 8u, 1, owned, &a) == CNET_SCTP_DCEP_OK);
   assert(cnet_sctp_dcep_init(&server, 8u, 0, owned, &b) == CNET_SCTP_DCEP_OK);
+  /* Reinitialization is rejected while the zero-initialized instance is live. */
+  assert(cnet_sctp_dcep_init(&client, 8u, 1, owned, &a) == CNET_SCTP_DCEP_BUSY);
+  assert(client.streams == 8u && client.is_owner == owned && client.context == &a);
   assert(cnet_sctp_dcep_open(&client, 0u, 0x00u, 256u, 0u,
       label, sizeof(label), protocol, sizeof(protocol),
       open, 11u, &no) == CNET_SCTP_DCEP_CAPACITY);
