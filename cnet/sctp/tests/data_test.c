@@ -610,6 +610,18 @@ static void output_count_zeroed_before_owner_guard(void) {
       &written) == CNET_SCTP_DATA_OWNER);
   assert(written == 0u);
   oa.admitted = 1;
+  written = 99u;
+  assert(cnet_sctp_data_send(&a, 1u, 0u, 51u, 0, payload, 0u,
+      packet, sizeof(packet), &written) == CNET_SCTP_DATA_INVALID);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_data_send(&a, 1u, 0u, 51u, 0, payload, sizeof(payload),
+      packet, 1u, &written) == CNET_SCTP_DATA_CAPACITY);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_data_input(&a, 1u, NULL, 0u, packet, sizeof(packet),
+      &written) != CNET_SCTP_DATA_OK);
+  assert(written == 0u);
   assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
