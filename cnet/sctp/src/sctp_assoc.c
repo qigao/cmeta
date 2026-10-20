@@ -49,6 +49,10 @@ static cnet_sctp_assoc_status guard(cnet_sctp_assoc *s) {
   if (s->in_progress) return CNET_SCTP_ASSOC_BUSY;
   return CNET_SCTP_ASSOC_OK;
 }
+static cnet_sctp_assoc_status encode_one(const cnet_sctp_assoc *s,
+    uint32_t tag, uint8_t type, const uint8_t *value, size_t size,
+    uint8_t *output, size_t capacity, size_t *written);
+
 /* RFC-defined and registered extension types are not "unknown" merely
  * because this bounded Association profile has no handler for them. */
 static int recognized_chunk_type(uint8_t type) {
@@ -57,7 +61,8 @@ static int recognized_chunk_type(uint8_t type) {
     case 6u: case 7u: case 8u: case 9u: case 10u: case 11u:
     case 12u: case 13u: case 14u:
     case 64u:  /* I-DATA, RFC 8260 */
-    case 128u: /* ASCONF, RFC 5061 */
+    case 128u: /* ASCONF-ACK, RFC 5061 */
+    case 193u: /* ASCONF, RFC 5061 */
     case 130u: /* RE-CONFIG, RFC 6525 */
     case 192u: /* FORWARD-TSN, RFC 3758 */
     case 194u: /* I-FORWARD-TSN, RFC 8260 */
