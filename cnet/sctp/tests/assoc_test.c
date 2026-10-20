@@ -546,12 +546,17 @@ static void init_tlv_wire_gate(void) {
   assert(chunk.value[4] == 0xc0u && chunk.value[5] == 2u);
   /* A syntactically broken advisory ERROR MUST NOT admit the accompanying
    * COOKIE ECHO, even when the outer packet checksum has been recomputed. */
-  memcpy(scratch, echo, echo_n);
-  scratch[111u] ^= 1u; /* ERROR cause length 8 -> 9 */
-  reseal_sctp_checksum(scratch, echo_n);
-  assert(cnet_sctp_assoc_input(&b, 4u, scratch, echo_n, confirm,
-                               sizeof(confirm), &confirm_n) == CNET_SCTP_ASSOC_PROTOCOL);
-  assert(confirm_n == 0u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  {
+    uint64_t prior_time = b.last_time_ms;
+    memcpy(scratch, echo, echo_n);
+    scratch[111u] ^= 1u; /* ERROR cause length 8 -> 9 */
+    reseal_sctp_checksum(scratch, echo_n);
+    assert(cnet_sctp_assoc_input(&b, 4u, scratch, echo_n, confirm,
+                                 sizeof(confirm), &confirm_n) == CNET_SCTP_ASSOC_PROTOCOL);
+    assert(confirm_n == 0u &&
+           cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+    assert(b.last_time_ms == prior_time);
+  }
   assert(cnet_sctp_assoc_advance(&a, 103u, scratch,
                                  sizeof(scratch), &encoded_n) == CNET_SCTP_ASSOC_OK);
   assert(encoded_n == echo_n && memcmp(echo, scratch, echo_n) == 0);
