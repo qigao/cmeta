@@ -381,6 +381,22 @@ static bool service_host_components_settled(
 
     if (components == NULL)
         return false;
+    /* A genuine ZERO context is fully detached. Do not accept a public enum
+     * rewrite that hides the retained arrays of a live or resolved graph. */
+    if (components->state == SALTS_CONFIGURATOR_CONTEXT_ZERO &&
+        (components->deployments != NULL ||
+         components->deployment_count != 0u ||
+         components->selections != NULL ||
+         components->selection_count != 0u ||
+         components->instances != NULL ||
+         components->instance_capacity != 0u ||
+         components->dependencies != NULL ||
+         components->dependency_capacity != 0u ||
+         components->dependency_count != 0u ||
+         components->activation_order != NULL ||
+         components->activation_capacity != 0u ||
+         components->activation_count != 0u))
+        return false;
     if (components->deployment_count > components->instance_capacity ||
         (components->deployment_count != 0u && components->instances == NULL))
         return false;
