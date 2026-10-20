@@ -366,11 +366,17 @@ static void binding_vtag_and_invalid_input(void) {
          CNET_SCTP_ASSOC_CLOSED);
   assert(cnet_sctp_wire_encode(5001u, 5000u, UINT32_C(0xfefe0001),
       &cookie_ack, 1u, bad_ack, sizeof(bad_ack), &bad_n) == CNET_SCTP_WIRE_OK);
-  assert(cnet_sctp_assoc_input(&a, 7u, bad_ack, bad_n, out, sizeof(out), &out_n) ==
-         CNET_SCTP_ASSOC_PROTOCOL);
-  assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_ECHOED);
-  assert(cnet_sctp_assoc_input(&a, 8u, bad_ack, bad_n - 1u, out, sizeof(out), &out_n) ==
-         CNET_SCTP_ASSOC_PROTOCOL);
+  {
+    uint64_t last_valid_time = a.last_time_ms;
+    assert(cnet_sctp_assoc_input(&a, 7u, bad_ack, bad_n, out, sizeof(out), &out_n) ==
+           CNET_SCTP_ASSOC_PROTOCOL);
+    assert(a.last_time_ms == last_valid_time);
+    assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+    assert(cnet_sctp_assoc_input(&a, 8u, bad_ack, bad_n - 1u,
+                                 out, sizeof(out), &out_n) ==
+           CNET_SCTP_ASSOC_PROTOCOL);
+    assert(a.last_time_ms == last_valid_time);
+  }
   assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_stop(&wrong_generation) == CNET_SCTP_ASSOC_OK);
