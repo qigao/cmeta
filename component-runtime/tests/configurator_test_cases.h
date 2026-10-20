@@ -150,6 +150,18 @@ suite("Salts static Component Configurator") {
         check_true(cmeta_object_ref_valid(&instance.object));
         check_equal(logger.destroys, 0u);
 
+        /* Truncating the owner prefix to zero must not make retained arrays
+         * disappear from the reuse check. */
+        context.deployment_count = 0u;
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.deployment_count, (size_t)0u);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(logger.destroys, 0u);
+        context.deployment_count = 1u;
+
         /* ZERO is also public mutable state. It is reusable only if the
          * context's storage fields are canonically empty. */
         context.state = SALTS_CONFIGURATOR_CONTEXT_ZERO;
