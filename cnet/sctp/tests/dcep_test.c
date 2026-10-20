@@ -39,6 +39,9 @@ static void reliable_open_ack(void) {
   assert(open[10] == 0u && open[11] == sizeof(protocol));
   assert(client.channels[0].state == 1u && !cnet_sctp_dcep_ready(&client, 0u));
   assert(cnet_sctp_dcep_input(&server, 0u, open, no,
+      NULL, 0u, &na) == CNET_SCTP_DCEP_INVALID);
+  assert(na == 0u && server.channels[0].state == 0u);
+  assert(cnet_sctp_dcep_input(&server, 0u, open, no,
       ack, 0u, &na) == CNET_SCTP_DCEP_CAPACITY);
   assert(na == 0u && server.channels[0].state == 0u);
   assert(cnet_sctp_dcep_input(&server, 0u, open, no,
