@@ -63,8 +63,9 @@ uint32_t cnet_sctp_wire_crc32c(const void *data, size_t size);
 
 /* Validates complete framing and checksum before publishing borrowed views.
  * No allocation, mutation, external transport, timers or background threads.
- * Association-level unknown-chunk action execution is NOT implemented; the
- * action-bit classifier above does not validate Chunk Type recognition.
+ * This public Wire-only API exposes the action-bit classifier but not private
+ * Association processing; see RFC_MATRIX.md for the bounded Association subset
+ * and the still-open mixed-bundle/full-conformance gates.
  */
 cnet_sctp_wire_status cnet_sctp_wire_decode(
     const void *packet, size_t packet_size,
