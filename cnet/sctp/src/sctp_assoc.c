@@ -924,15 +924,6 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       (chunk.type != SCTP_TYPE_INIT &&
        header.verification_tag != s->local_tag))
     return CNET_SCTP_ASSOC_PROTOCOL;
-  /* A packet-triggered T5 action is also a state transition. Do not let a
-   * wrong-tag packet trigger it; the Owner's advance() path remains the
-   * independent way to service an expired deadline. */
-  if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
-      s->t5_shutdown_deadline_ms != 0u &&
-      now >= s->t5_shutdown_deadline_ms) {
-    status = shutdown_t5_abort(s, now, output, cap, written);
-    return status == CNET_SCTP_ASSOC_EMPTY ? CNET_SCTP_ASSOC_OK : status;
-  }
   if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_COOKIE_ECHO) {
     /* Validate the entire advisory ERROR before advancing the clock watermark
      * or allowing COOKIE ECHO processing to begin. */
@@ -943,19 +934,33 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     if (cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
         second.type != 3u || second.flags != 0u || second.value_size < 12u)
       return CNET_SCTP_ASSOC_PROTOCOL;
-    /* Bundle shape is fully checked before the stateful handler is entered. */
-    s->last_time_ms = now;
-    return handle_shutdown_sack_bundle(s, now, &header, &chunk, &second,
-        output, cap, written);
+    /* Validate SACK flags and fixed fields before any deadline transition. */
+    if (second.flags != 0u || second.value_size < 12u)
+      return CNET_SCTP_ASSOC_PROTOCOL;
   } else if (header.chunk_count > 1u &&
              chunk.type != 0u && chunk.type != 3u) {
     /* No arbitrary control chunks can be bundled with INIT, Cookie,
      * SHUTDOWN or ABORT in the private Association profile. */
     return CNET_SCTP_ASSOC_PROTOCOL;
   }
+  /* A packet-triggered T5 action is also a state transition. Run it only
+   * after every Chunk in the bounded packet has passed structural preflight;
+   * wrong-tag or malformed bundled packets cannot trigger an ABORT. The
+   * Owner's advance() path remains the independent deadline service. */
+  if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+      s->t5_shutdown_deadline_ms != 0u &&
+      now >= s->t5_shutdown_deadline_ms) {
+    status = shutdown_t5_abort(s, now, output, cap, written);
+    return status == CNET_SCTP_ASSOC_EMPTY ? CNET_SCTP_ASSOC_OK : status;
+  }
+  if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_SHUTDOWN) {
+    s->last_time_ms = now;
+    return handle_shutdown_sack_bundle(s, now, &header, &chunk, &second,
+        output, cap, written);
+  }
   /* Framing, ports, tag and supported bundle shape are now preflighted.
    * Authentication and state-specific validation may still reject the packet,
-   * but a malformed bundled ERROR above must not advance this watermark. */
+   * but malformed bundle members above must not advance this watermark. */
   s->last_time_ms = now;
   switch (chunk.type) {
     case 0u: /* DATA */
