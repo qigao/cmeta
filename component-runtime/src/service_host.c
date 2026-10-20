@@ -442,12 +442,32 @@ static bool service_host_deployment_valid(
            cmeta_data_desc_equal(component->config, deployment->config_data);
 }
 
+static bool service_host_component_has_role(
+    const cmeta_component_desc *component,
+    const cmeta_interface_desc *interface_desc,
+    cmeta_component_capability_role role) {
+    size_t i;
+
+    if (!cmeta_component_desc_valid(component) ||
+        !cmeta_interface_desc_valid(interface_desc))
+        return false;
+    for (i = 0u; i < component->capability_count; ++i) {
+        const cmeta_component_capability *capability = &component->capabilities[i];
+        if (capability->role == role &&
+            cmeta_interface_desc_equal(capability->interface_desc, interface_desc))
+            return true;
+    }
+    return false;
+}
+
 static bool service_host_generation_publishable(
     const salts_service_host_generation *generation) {
     const salts_configurator_context *components;
     const salts_service_host_generation_storage *storage;
     size_t i;
     size_t j;
+    size_t k;
+    size_t expected_dependency_offset = 0u;
 
     if (generation == NULL ||
         (generation->module_count != 0u && generation->registry == NULL))
@@ -507,14 +527,73 @@ static bool service_host_generation_publishable(
 
     for (i = 0u; i < components->deployment_count; ++i) {
         const salts_configurator_instance *instance = &components->instances[i];
-        if (instance->dependency_offset > components->dependency_count ||
+        if (instance->dependency_offset != expected_dependency_offset ||
+            expected_dependency_offset > components->dependency_count ||
             instance->dependency_count >
-                components->dependency_count - instance->dependency_offset ||
+                components->dependency_count - expected_dependency_offset ||
             !service_host_deployment_valid(&components->deployments[i]) ||
             !instance->active ||
             !cmeta_object_ref_valid(&instance->object))
             return false;
+        expected_dependency_offset += instance->dependency_count;
     }
+    if (expected_dependency_offset != components->dependency_count)
+        return false;
+
+    /* A count-bounded slice is not enough: require each dependency to point
+     * at its declared ProviderBinding and require the Interface role on both
+     * ends. This prevents a corrupted-but-in-range ref from leaving the host
+     * unable to stop a generation after it transitions to STOPPING. */
+    for (i = 0u; i < components->deployment_count; ++i) {
+        const salts_configurator_instance *instance = &components->instances[i];
+        const salts_component_provider_binding *consumer =
+            components->deployments[i].provider;
+        for (j = 0u; j < instance->dependency_count; ++j) {
+            const salts_component_dependency *dependency =
+                &components->dependencies[instance->dependency_offset + j];
+            const salts_component_provider_binding *provider;
+
+            if (dependency->consumer_index != i ||
+                dependency->provider_index >= components->deployment_count ||
+                !cmeta_interface_desc_valid(dependency->interface_desc))
+                return false;
+            provider =
+                components->deployments[dependency->provider_index].provider;
+            if (dependency->provider_component != provider->component ||
+                dependency->provider_instance !=
+                    &components->instances[dependency->provider_index].object ||
+                dependency->provider_interfaces != provider->interfaces ||
+                !service_host_component_has_role(
+                    consumer->component, dependency->interface_desc,
+                    CMETA_COMPONENT_REQUIRES) ||
+                !service_host_component_has_role(
+                    provider->component, dependency->interface_desc,
+                    CMETA_COMPONENT_PROVIDES))
+                return false;
+        }
+    }
+
+    /* Prove the activation permutation is also topological: every dependency's
+     * provider appears before its consumer, as Configurator stop/rollback
+     * assumes when consuming this caller-owned plan. */
+    for (i = 0u; i < components->activation_count; ++i) {
+        const size_t component_index = components->activation_order[i];
+        const salts_configurator_instance *instance =
+            &components->instances[component_index];
+        for (j = 0u; j < instance->dependency_count; ++j) {
+            const salts_component_dependency *dependency =
+                &components->dependencies[instance->dependency_offset + j];
+            bool provider_precedes_consumer = false;
+            for (k = 0u; k < i; ++k)
+                if (components->activation_order[k] == dependency->provider_index) {
+                    provider_precedes_consumer = true;
+                    break;
+                }
+            if (!provider_precedes_consumer)
+                return false;
+        }
+    }
+
     for (i = components->deployment_count;
          i < components->instance_capacity; ++i) {
         const salts_configurator_instance *instance = &components->instances[i];
