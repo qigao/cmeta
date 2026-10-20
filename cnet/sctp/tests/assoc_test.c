@@ -951,6 +951,57 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void unknown_chunks_do_not_preempt_t5(void) {
+  size_t case_i;
+  for (case_i = 0u; case_i < 2u; ++case_i) {
+    cnet_sctp_assoc a, b;
+    test_context ca, cb;
+    static const uint8_t value[] = {0xA5u, 0x5Au, 0xC3u};
+    cnet_sctp_wire_chunk chunks[2];
+    uint8_t packet[128] = {0}, output[128];
+    cnet_sctp_wire_header response_header = {0};
+    cnet_sctp_wire_decoder response_decoder = {0};
+    cnet_sctp_wire_chunk response_chunk = {0};
+    size_t packet_n = 0u, output_n = 0u;
+    size_t count = case_i == 0u ? 1u : 2u;
+    setup(&a, &b, &ca, &cb);
+    a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+    a.peer_tag = b.local_tag;
+    a.t5_shutdown_deadline_ms = 1000u;
+    a.deadline_ms = 1000u;
+    a.last_time_ms = 10u;
+    chunks[0].type = case_i == 0u ? 0x20u : 0xA2u;
+    chunks[0].flags = 0u;
+    chunks[0].value = value;
+    chunks[0].value_size = sizeof(value);
+    chunks[1].type = 0xE3u;
+    chunks[1].flags = 0u;
+    chunks[1].value = value;
+    chunks[1].value_size = sizeof(value);
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, count,
+        packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    memset(output, 0xCC, sizeof(output));
+    /* At the absolute T5 deadline, neither single nor multi unknown-Chunk
+     * fast paths may postpone publication of the required ABORT. */
+    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+        output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
+    assert(output_n >= 16u);
+    assert(a.state == CNET_SCTP_ASSOC_FAILED);
+    assert(a.t5_shutdown_deadline_ms == 0u);
+    assert(a.last_time_ms == 1000u);
+    assert(cnet_sctp_wire_decode(output, output_n, &response_header,
+        &response_decoder) == CNET_SCTP_WIRE_OK);
+    assert(response_header.chunk_count == 1u);
+    assert(cnet_sctp_wire_next_chunk(&response_decoder, &response_chunk) ==
+        CNET_SCTP_WIRE_OK);
+    assert(response_chunk.type == 6u && response_chunk.value_size == 0u);
+    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  }
+}
+
 static void unknown_chunk_actions_are_bounded_and_exact(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -1125,6 +1176,7 @@ static void unsupported_control_preserves_time_watermark(void) {
 
 int main(void) {
   malformed_shutdown_bundle_does_not_preempt_t5();
+  unknown_chunks_do_not_preempt_t5();
   unknown_chunk_actions_are_bounded_and_exact();
   unknown_multi_chunk_actions_are_transactional();
   unsupported_control_preserves_time_watermark();
