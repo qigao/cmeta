@@ -1005,6 +1005,96 @@ static void unknown_chunk_actions_are_bounded_and_exact(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void unknown_multi_chunk_actions_are_transactional(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  static const uint8_t value[] = {0xA5u, 0x5Au, 0xC3u};
+  static const uint8_t sequences[][3] = {
+    {0x20u, 0xA2u, 0xE3u}, /* stop/discard at first Chunk */
+    {0x61u, 0xA2u, 0xE3u}, /* stop/report at first Chunk */
+    {0xA2u, 0x20u, 0xE3u}, /* skip, then stop/discard */
+    {0xA2u, 0x61u, 0xE3u}, /* skip, then stop/report */
+    {0xA2u, 0xE3u, 0xA2u}, /* skip/report in the middle */
+    {0xE3u, 0xE3u, 0xA2u}, /* collect two reports */
+    {0xA2u, 0xA2u, 0xA2u}  /* skip all */
+  };
+  static const uint8_t report_masks[] = {
+    0u, 1u, 0u, 2u, 2u, 3u, 0u
+  };
+  size_t case_i;
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_ESTABLISHED;
+  a.peer_tag = b.local_tag;
+  for (case_i = 0u; case_i < sizeof(sequences) / sizeof(sequences[0]);
+       ++case_i) {
+    cnet_sctp_wire_chunk chunks[3];
+    uint8_t packet[128] = {0}, output[256], tiny[1] = {0xCCu};
+    cnet_sctp_wire_header header = {0};
+    cnet_sctp_wire_decoder decoder = {0};
+    cnet_sctp_wire_chunk response_chunk = {0};
+    size_t packet_n = 0u, output_n = 0u, report_count = 0u, i;
+    uint64_t prior_time = a.last_time_ms;
+    uint64_t now = prior_time + 1u;
+    for (i = 0u; i < 3u; ++i) {
+      chunks[i].type = sequences[case_i][i];
+      chunks[i].flags = 0x5Au;
+      chunks[i].value = value;
+      chunks[i].value_size = sizeof(value);
+    }
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 3u,
+        packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    memset(output, 0xCC, sizeof(output));
+    if (case_i == 5u) {
+      /* An ERROR with two causes cannot fit: no output byte, TCB field or
+       * monotonic watermark may be committed; retry at the same time works. */
+      assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+          tiny, sizeof(tiny), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
+      assert(output_n == 0u && tiny[0] == 0xCCu);
+      assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+      assert(a.last_time_ms == prior_time);
+    }
+    assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+        output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
+    assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+    assert(a.last_time_ms == now);
+    for (i = 0u; i < 3u; ++i)
+      if ((report_masks[case_i] & (uint8_t)(1u << i)) != 0u)
+        ++report_count;
+    if (report_count == 0u) {
+      assert(output_n == 0u && output[0] == 0xCCu);
+      continue;
+    }
+    assert(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
+        CNET_SCTP_WIRE_OK);
+    assert(header.chunk_count == 1u);
+    assert(cnet_sctp_wire_next_chunk(&decoder, &response_chunk) ==
+        CNET_SCTP_WIRE_OK);
+    assert(response_chunk.type == 9u && response_chunk.flags == 0u);
+    assert(response_chunk.value_size == report_count * 12u);
+    {
+      size_t cause_pos = 0u;
+      for (i = 0u; i < 3u; ++i) {
+        const uint8_t *cause;
+        if ((report_masks[case_i] & (uint8_t)(1u << i)) == 0u) continue;
+        cause = response_chunk.value + cause_pos;
+        assert(cause[0] == 0u && cause[1] == 6u);
+        assert(cause[2] == 0u && cause[3] == 11u);
+        assert(cause[4] == sequences[case_i][i]);
+        assert(cause[5] == 0x5Au);
+        assert(cause[6] == 0u && cause[7] == 7u);
+        assert(memcmp(cause + 8u, value, sizeof(value)) == 0);
+        assert(cause[11] == 0u); /* cause element padding */
+        cause_pos += 12u;
+      }
+      assert(cause_pos == response_chunk.value_size);
+    }
+  }
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void unsupported_control_preserves_time_watermark(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -1036,6 +1126,7 @@ static void unsupported_control_preserves_time_watermark(void) {
 int main(void) {
   malformed_shutdown_bundle_does_not_preempt_t5();
   unknown_chunk_actions_are_bounded_and_exact();
+  unknown_multi_chunk_actions_are_transactional();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();
