@@ -43,6 +43,41 @@ static void test_unknown_chunk_action_bits(void) {
   }
 }
 
+static void test_unknown_chunk_types_in_packet_order(void) {
+  static const uint8_t a[] = {0xA1u, 0xA2u};
+  static const uint8_t b[] = {0xB1u};
+  static const uint8_t c[] = {0xC1u, 0xC2u, 0xC3u};
+  const cnet_sctp_wire_chunk chunks[] = {
+    {0x41u, 0x5Au, a, sizeof(a)},
+    {0x82u, 0x00u, b, sizeof(b)},
+    {0xC3u, 0x00u, c, sizeof(c)}
+  };
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk out = {0};
+  uint8_t packet[64] = {0};
+  size_t written = 0u;
+  assert(cnet_sctp_wire_encode(5000u, 5001u, 0x12345678u, chunks, 3u,
+                               packet, sizeof(packet), &written) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_wire_decode(packet, written, &header, &decoder) == CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == 3u);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &out) == CNET_SCTP_WIRE_OK);
+  assert(out.type == 0x41u && out.flags == 0x5Au && out.value_size == sizeof(a));
+  assert(cnet_sctp_wire_unknown_chunk_action(out.type) ==
+         CNET_SCTP_WIRE_UNKNOWN_STOP_REPORT);
+  assert(memcmp(out.value, a, sizeof(a)) == 0);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &out) == CNET_SCTP_WIRE_OK);
+  assert(out.type == 0x82u && out.value_size == sizeof(b));
+  assert(cnet_sctp_wire_unknown_chunk_action(out.type) == CNET_SCTP_WIRE_UNKNOWN_SKIP);
+  assert(out.value[0] == b[0]);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &out) == CNET_SCTP_WIRE_OK);
+  assert(out.type == 0xC3u && out.value_size == sizeof(c));
+  assert(cnet_sctp_wire_unknown_chunk_action(out.type) ==
+         CNET_SCTP_WIRE_UNKNOWN_SKIP_REPORT);
+  assert(memcmp(out.value, c, sizeof(c)) == 0);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &out) == CNET_SCTP_WIRE_END);
+}
+
 static void test_crc_and_init(void) {
   static const uint8_t init[] = {
     0x11u, 0x22u, 0x33u, 0x44u, /* initiate tag */
@@ -180,6 +215,7 @@ static void test_truncation_and_mutations(void) {
 
 int main(void) {
   test_unknown_chunk_action_bits();
+  test_unknown_chunk_types_in_packet_order();
   test_crc_and_init();
   test_multiple_chunks_and_padding();
   test_reject_and_no_partial_write();
