@@ -951,6 +951,56 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void unknown_chunk_actions_are_bounded_and_exact(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  static const uint8_t value[] = {0xA5u, 0x5Au, 0xC3u};
+  const uint8_t types[] = {0x20u, 0x41u, 0x82u, 0xC3u};
+  size_t i;
+  setup(&a, &b, &ca, &cb);
+  for (i = 0u; i < sizeof(types); ++i) {
+    cnet_sctp_wire_chunk chunk = {types[i], 0x5Au, value, sizeof(value)};
+    cnet_sctp_wire_header h = {0};
+    cnet_sctp_wire_decoder d = {0};
+    cnet_sctp_wire_chunk response_chunk = {0};
+    uint8_t packet[64] = {0}, output[128], tiny[1] = {0xCCu};
+    size_t packet_n = 0u, output_n = 0u;
+    uint64_t prior_time = a.last_time_ms;
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+        packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    memset(output, 0xCC, sizeof(output));
+    if (types[i] == 0x41u || types[i] == 0xC3u) {
+      assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+          tiny, sizeof(tiny), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
+      assert(output_n == 0u && a.last_time_ms == prior_time);
+      assert(a.state == CNET_SCTP_ASSOC_CLOSED && tiny[0] == 0xCCu);
+    }
+    assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+        output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
+    assert(a.state == CNET_SCTP_ASSOC_CLOSED);
+    assert(a.last_time_ms == prior_time + 1u);
+    if (types[i] == 0x20u || types[i] == 0x82u) {
+      assert(output_n == 0u && output[0] == 0xCCu);
+    } else {
+      assert(output_n >= 24u);
+      assert(cnet_sctp_wire_decode(output, output_n, &h, &d) == CNET_SCTP_WIRE_OK);
+      assert(h.chunk_count == 1u);
+      assert(cnet_sctp_wire_next_chunk(&d, &response_chunk) == CNET_SCTP_WIRE_OK);
+      assert(response_chunk.type == 9u && response_chunk.flags == 0u);
+      assert(response_chunk.value_size == sizeof(value) + 8u);
+      assert(response_chunk.value[0] == 0u && response_chunk.value[1] == 6u);
+      assert(response_chunk.value[2] == 0u &&
+             response_chunk.value[3] == (uint8_t)(sizeof(value) + 8u));
+      assert(memcmp(response_chunk.value + 4u, packet + 12u,
+                    sizeof(value) + 4u) == 0);
+    }
+  }
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void unsupported_control_preserves_time_watermark(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -978,6 +1028,7 @@ static void unsupported_control_preserves_time_watermark(void) {
 
 int main(void) {
   malformed_shutdown_bundle_does_not_preempt_t5();
+  unknown_chunk_actions_are_bounded_and_exact();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();
