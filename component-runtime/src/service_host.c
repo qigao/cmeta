@@ -956,6 +956,18 @@ salts_service_host_status salts_service_host_generation_drain(
         return SALTS_SERVICE_HOST_BUSY;
     }
 
+    /* Validate the full active teardown plan while still under the runtime
+     * lock. A corrupted activation index or dependency slice must be rejected
+     * before context_stop() can index caller-owned storage. For a retry after
+     * successful graph stop, require the canonical settled representation. */
+    if ((generation->state == SALTS_SERVICE_HOST_GENERATION_DRAINING &&
+         !service_host_generation_publishable(generation)) ||
+        (generation->state == SALTS_SERVICE_HOST_GENERATION_FAILED &&
+         !service_host_components_settled(&generation->components))) {
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_SERVICE_HOST_COMPONENT_ERROR;
+    }
+
     generation->state = SALTS_SERVICE_HOST_GENERATION_STOPPING;
     cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
 
