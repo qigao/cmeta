@@ -56,6 +56,10 @@ static uint32_t crc_step(uint32_t crc, uint8_t octet) {
   return crc;
 }
 
+cnet_sctp_wire_unknown_action cnet_sctp_wire_unknown_chunk_action(uint8_t type) {
+  return (cnet_sctp_wire_unknown_action)((type >> 6) & 0x03u);
+}
+
 uint32_t cnet_sctp_wire_crc32c(const void *data, size_t size) {
   const uint8_t *bytes = (const uint8_t *)data;
   uint32_t crc = UINT32_MAX;
