@@ -101,6 +101,18 @@ suite("Salts static Component Configurator") {
         check_true(instance.active);
         check_true(cmeta_object_ref_valid(&instance.object));
 
+        /* A forged READY marker must not let resolve() overwrite a live graph. */
+        context.state = SALTS_CONFIGURATOR_CONTEXT_READY;
+        context.activation_count = 0u;
+        check_equal(salts_configurator_context_resolve(&context),
+                    SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_READY);
+        check_equal(logger.creates, 1u);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        context.state = SALTS_CONFIGURATOR_CONTEXT_ACTIVE;
+        context.activation_count = 1u;
+
         /* stop() must validate the same caller-owned index before teardown. */
         order = SIZE_MAX;
         check_equal(salts_configurator_context_stop(&context),
