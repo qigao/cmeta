@@ -220,32 +220,12 @@ static int assoc_bundle_preflight(const cnet_sctp_wire_decoder *decoded,
   cnet_sctp_wire_chunk chunk;
   size_t i;
   int data_seen = 0;
-  int sack_seen = 0;
   if (!decoded || count == 0u || count > CNET_SCTP_WIRE_MAX_CHUNKS)
     return 0;
   cursor = *decoded;
-  for (i = 0u; i < count; ++i) {
-    if (cnet_sctp_wire_next_chunk(&cursor, &chunk) != CNET_SCTP_WIRE_OK)
-      return 0;
-    if (count == 1u) continue;
-    if (i == 0u && (chunk.type == SCTP_TYPE_COOKIE_ECHO ||
-                    chunk.type == SCTP_TYPE_SHUTDOWN))
-      continue; /* exact second-chunk rules checked below */
-    if (chunk.type == 3u) {
-      if (sack_seen || data_seen || i > 0u) return 0;
-      sack_seen = 1;
-    } else if (chunk.type == 0u) {
-      data_seen = 1;
-    } else if (i == 1u && cursor.chunks_remaining == 0u &&
-               /* COOKIE-ECHO + ERROR is the sole advisory control bundle. */
-               chunk.type == SCTP_TYPE_ERROR) {
-      return 1;
-    } else {
-      return 0;
-    }
-  }
+  if (count == 1u) return 1; /* Single chunks receive state-specific checks. */
   if (count == 2u) {
-    cnet_sctp_wire_decoder pair = *decoded;
+    cnet_sctp_wire_decoder pair = cursor;
     cnet_sctp_wire_chunk first, second;
     if (cnet_sctp_wire_next_chunk(&pair, &first) != CNET_SCTP_WIRE_OK ||
         cnet_sctp_wire_next_chunk(&pair, &second) != CNET_SCTP_WIRE_OK)
@@ -255,11 +235,19 @@ static int assoc_bundle_preflight(const cnet_sctp_wire_decoder *decoded,
     if (first.type == SCTP_TYPE_SHUTDOWN)
       return second.type == 3u;
   }
-  /* A multi-chunk data packet must contain DATA, with at most one leading
-   * SACK; a SACK-only bundle is not a useful legal bundle in this profile. */
-  return data_seen && (sack_seen || count > 1u);
-}
-static void arm_timer(cnet_sctp_assoc *s, uint64_t now) {
+  for (i = 0u; i < count; ++i) {
+    if (cnet_sctp_wire_next_chunk(&cursor, &chunk) != CNET_SCTP_WIRE_OK)
+      return 0;
+    if (chunk.type == 0u) {
+      data_seen = 1;
+    } else if (chunk.type == 3u && i == 0u) {
+      /* Only a leading SACK may accompany DATA in this private profile. */
+    } else {
+      return 0;
+    }
+  }
+  return data_seen;
+}static void arm_timer(cnet_sctp_assoc *s, uint64_t now) {
   s->current_rto_ms = s->config.t1_ms;
   s->deadline_ms = now + s->current_rto_ms;
   s->retransmits = 0u;
