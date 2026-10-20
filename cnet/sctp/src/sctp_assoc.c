@@ -1183,9 +1183,11 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       s->last_time_ms = now;
       return CNET_SCTP_ASSOC_OK;
     default:
-      /* Unsupported control chunks have no handler-side effects. Roll back
-       * the provisional time watermark so rejection is observationally inert.
-       * Unknown-Chunk RFC action-bit handling remains a separate open gate. */
+      /* Only recognized-but-unimplemented controls reach this switch.
+       * Bounded unknown-only packets are handled before dispatch; mixed
+       * unknown/recognized bundles remain fail-closed in packet preflight.
+       * Roll back the provisional watermark for this unsupported-control
+       * rejection so it remains observationally inert. */
       s->last_time_ms = prior_time;
       return CNET_SCTP_ASSOC_PROTOCOL;
   }
