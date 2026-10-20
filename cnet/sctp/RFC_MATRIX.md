@@ -4,7 +4,7 @@ Evidence is scoped narrowly: **M1 wire = tested framing**; **M2 private = Owner-
 
 | RFC requirement | State | Still required for conformance |
 | --- | --- | --- |
-| RFC 9260 §3/§6.8/App A packet header, CRC32C, Chunk lengths/padding | **M1 local and CI-tested** | Independent wire oracle, malformed-input fuzz and explicit unknown-chunk handling |
+| RFC 9260 §3/§6.8/App A packet header, CRC32C, Chunk lengths/padding | **M1 local and CI-tested; inbound unknown-Chunk policy NOT IMPLEMENTED** | Independent wire oracle, malformed-input fuzz; Association must apply all four RFC 9260 §3.2 action classes (stop/continue × report/discard), validate the full packet before side effects, enforce legal Chunk combinations, and atomically commit state plus ERROR output |
 | RFC 9260 §§3.2.1–3.2.2 INIT / INIT ACK optional TLVs | **C11 00/01/10/11 actions + bounded Unrecognized Parameter/ERROR 8 wire responses**, 8 reports / 512 bytes, validated COOKIE ECHO+ERROR bundle | Full reporting beyond capacity, ERROR-cause notifications to ULP, IPv4/IPv6/ECN/cookie preservation and independent browser negotiation |
 | RFC 9260 §§3.3.7,5.1.2 Host Name Address | **Private C11 ABORT (type 6), correct peer Initiate Tag, T=0**, no optional cause and capacity-before-transition tests | Other mandatory-parameter ABORT causes, full inbound ABORT semantics and independent wire conformance |
 | RFC 9260 §5.2.1 COOKIE-WAIT / COOKIE-ECHOED simultaneous INIT | **Private C11 restricted handshake path**: original Tag/TSN, T1/saved handshake kept unchanged, no duplicate TCB | Authenticated Tie-Tags in COOKIE-ECHOED; address admission, actual CNet/DTLS owner and independent peer qualification |
