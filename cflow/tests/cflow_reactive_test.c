@@ -1894,8 +1894,10 @@ suite("CFlow runtime") {
             check_equal(create_status, 0);
             if (create_status != 0) abort();
         }
-        check_true(runtime_wait_until_at_least(&scheduler_state.posts, 1));
-        check_true(atomic_load(&scheduler_state.entered));
+        /* The post counter is incremented just before entered is stored;
+         * waiting on posts and immediately sampling entered races under TSan.
+         * Wait on the actual barrier signal before waking the subscription. */
+        check_true(runtime_wait_until_true(&scheduler_state.entered));
 
         cflow_subscription_wake(&run);
         atomic_store(&scheduler_state.release, true);
