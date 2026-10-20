@@ -739,9 +739,18 @@ suite("ServiceHost generation publication") {
         check_true(runtime.current == &current.generation);
         check_equal(runtime.attached_generations, (size_t)1u);
 
+        candidate.instances[0].dependency_offset = 0u;
+        candidate.generation.registry = NULL;
+        check_equal(salts_service_host_runtime_publish(
+            &runtime, &candidate.generation, &previous),
+            SALTS_SERVICE_HOST_INVALID_STATE);
+        check_true(previous == &sentinel.generation);
+        check_true(runtime.current == &current.generation);
+        check_equal(runtime.attached_generations, (size_t)1u);
+
         /* Repair only the deliberately corrupted test fields; valid N+1
          * publishes atomically, then both generations use normal drain. */
-        candidate.instances[0].dependency_offset = 0u;
+        candidate.generation.registry = &registry;
         check_equal(salts_service_host_runtime_publish(
             &runtime, &candidate.generation, &previous),
             SALTS_SERVICE_HOST_OK);
