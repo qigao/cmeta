@@ -502,6 +502,21 @@ static void init_tlv_wire_gate(void) {
                                sizeof(scratch), &encoded_n) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
   assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_ESTABLISHED);
+  /* A framed but illegal multi-control bundle must be rejected by full
+   * Association preflight before the monotonic watermark or TCB changes. */
+  {
+    cnet_sctp_wire_chunk illegal[2] = {
+      {11u, 0u, NULL, 0u}, {11u, 0u, NULL, 0u}
+    };
+    uint64_t prior_time = a.last_time_ms;
+    size_t illegal_n = 0u;
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, illegal, 2u,
+        encoded, sizeof(encoded), &illegal_n) == CNET_SCTP_WIRE_OK);
+    assert(cnet_sctp_assoc_input(&a, 6u, encoded, illegal_n, scratch,
+        sizeof(scratch), &encoded_n) == CNET_SCTP_ASSOC_PROTOCOL);
+    assert(encoded_n == 0u && a.last_time_ms == prior_time);
+    assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
+  }
   assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
