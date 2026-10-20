@@ -568,9 +568,12 @@ salts_service_host_status salts_service_host_generation_build(
         if (release_status != CMETA_PLUGIN_OK) {
             generation->failure.source_index = SALTS_SERVICE_HOST_INDEX_NONE;
             generation->failure.plugin_status = release_status;
-        } else {
-            /* Rollback settled every lease; do not retain borrowed
-             * descriptors or scratch-storage addresses after failed build. */
+        } else if (service_host_components_settled(&generation->components)) {
+            /* Clear borrowed graph/storage addresses only after Configurator
+             * teardown is independently proven settled. Plugin lease cleanup
+             * does not prove that a failing Provider returned a canonical
+             * empty ObjectRef; retain the bundle so explicit recovery can
+             * reject reuse until the caller repairs that ownership record. */
             generation_clear(generation);
         }
         return SALTS_SERVICE_HOST_COMPONENT_ERROR;
