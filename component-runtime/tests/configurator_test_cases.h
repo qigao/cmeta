@@ -82,7 +82,9 @@ suite("Salts static Component Configurator") {
         check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_RESOLVED);
         check_equal(logger.creates, 0u);
         check_false(instance.active);
-        check_true(salts_configurator_object_ref_empty(&instance.object));
+        check_false(cmeta_object_ref_valid(&instance.object));
+        check_equal(instance.object.size, sizeof(instance.object));
+        check_null(instance.object.object);
 
         /* A forged dependency slice must fail before the first Provider call. */
         order = 0u;
