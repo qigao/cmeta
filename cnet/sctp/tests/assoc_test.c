@@ -951,8 +951,34 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void unsupported_control_preserves_time_watermark(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  static const uint8_t value[] = {0xA5u, 0x5Au};
+  cnet_sctp_wire_chunk chunk = {4u, 0u, value, sizeof(value)}; /* HEARTBEAT: known, not implemented */
+  uint8_t packet[64] = {0}, output[64];
+  size_t packet_n = 0u, output_n = 0u;
+  uint64_t prior_time;
+  setup(&a, &b, &ca, &cb);
+  prior_time = a.last_time_ms;
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+      packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+      output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+  assert(output_n == 0u);
+  assert(a.state == CNET_SCTP_ASSOC_CLOSED);
+  assert(a.last_time_ms == prior_time);
+  assert(output[0] == 0xCCu);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
   malformed_shutdown_bundle_does_not_preempt_t5();
+  unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();
   simultaneous_init_keeps_owner_and_t1();
