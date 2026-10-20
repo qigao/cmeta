@@ -337,6 +337,100 @@ static cmeta_status salts_component_preflight_provides(
     return CMETA_OK;
 }
 
+static bool salts_configurator_activation_plan_valid(
+    const salts_configurator_context *context,
+    bool expect_active) {
+    size_t expected_dependency_offset = 0u;
+    size_t i;
+    size_t j;
+
+    if (context == NULL ||
+        context->deployment_count > context->instance_capacity ||
+        context->deployment_count > context->activation_capacity ||
+        context->activation_count != context->deployment_count ||
+        context->dependency_count > context->dependency_capacity ||
+        (context->deployment_count != 0u &&
+         (context->deployments == NULL || context->instances == NULL ||
+          context->activation_order == NULL)) ||
+        (context->dependency_capacity != 0u && context->dependencies == NULL))
+        return false;
+
+    /* Validate all bindings, instance states and dependency slices before any
+     * lifecycle callback or activation-order dereference occurs. The arrays
+     * are caller-owned, so a mutable count/offset cannot be trusted alone. */
+    for (i = 0u; i < context->deployment_count; ++i) {
+        const salts_configurator_instance *instance = &context->instances[i];
+        if (salts_configurator_deployment_status(&context->deployments[i]) !=
+                SALTS_COMPONENT_OK ||
+            instance->dependency_offset != expected_dependency_offset ||
+            instance->dependency_offset > context->dependency_count ||
+            instance->dependency_count >
+                context->dependency_count - instance->dependency_offset)
+            return false;
+
+        if (expect_active) {
+            if (!instance->active || !cmeta_object_ref_valid(&instance->object))
+                return false;
+        } else if (instance->active ||
+                   !salts_configurator_object_ref_empty(&instance->object)) {
+            return false;
+        }
+        expected_dependency_offset += instance->dependency_count;
+    }
+    if (expected_dependency_offset != context->dependency_count)
+        return false;
+
+    for (i = 0u; i < context->activation_count; ++i) {
+        const size_t component_index = context->activation_order[i];
+        if (component_index >= context->deployment_count)
+            return false;
+        for (j = 0u; j < i; ++j)
+            if (context->activation_order[j] == component_index)
+                return false;
+    }
+
+    for (i = 0u; i < context->deployment_count; ++i) {
+        const salts_configurator_instance *instance = &context->instances[i];
+        const salts_component_provider_binding *consumer =
+            salts_component_provider_at(context, i);
+        size_t dependency_index;
+
+        for (dependency_index = 0u;
+             dependency_index < instance->dependency_count;
+             ++dependency_index) {
+            const salts_component_dependency *dependency =
+                &context->dependencies[instance->dependency_offset + dependency_index];
+            const salts_component_provider_binding *provider;
+
+            if (dependency->consumer_index != i ||
+                dependency->provider_index >= context->deployment_count ||
+                !cmeta_interface_desc_valid(dependency->interface_desc))
+                return false;
+            provider = salts_component_provider_at(
+                context, dependency->provider_index);
+            if (consumer == NULL || provider == NULL ||
+                dependency->provider_component != provider->component ||
+                dependency->provider_instance !=
+                    &context->instances[dependency->provider_index].object ||
+                dependency->provider_interfaces != provider->interfaces ||
+                !salts_component_requires(
+                    consumer->component, dependency->interface_desc) ||
+                !salts_component_provides(
+                    provider->component, dependency->interface_desc))
+                return false;
+        }
+    }
+
+    /* A valid permutation is not sufficient: every provider must precede its
+     * consumer so start/rollback/stop all use the canonical dependency order. */
+    for (i = 0u; i < context->activation_count; ++i)
+        if (!salts_component_dependencies_ready(
+                context, context->activation_order[i], i))
+            return false;
+
+    return true;
+}
+
 static void salts_component_rollback(
     salts_configurator_context *context,
     size_t activated_count) {
@@ -634,7 +728,8 @@ salts_component_status salts_configurator_context_start(
 
     if (context == NULL)
         return SALTS_COMPONENT_INVALID_ARGUMENT;
-    if (context->state != SALTS_CONFIGURATOR_CONTEXT_RESOLVED)
+    if (context->state != SALTS_CONFIGURATOR_CONTEXT_RESOLVED ||
+        !salts_configurator_activation_plan_valid(context, false))
         return SALTS_COMPONENT_INVALID_STATE;
 
     context->failure = salts_configurator_failure_none();
@@ -744,7 +839,8 @@ salts_component_status salts_configurator_context_stop(
 
     if (context == NULL)
         return SALTS_COMPONENT_INVALID_ARGUMENT;
-    if (context->state != SALTS_CONFIGURATOR_CONTEXT_ACTIVE)
+    if (context->state != SALTS_CONFIGURATOR_CONTEXT_ACTIVE ||
+        !salts_configurator_activation_plan_valid(context, true))
         return SALTS_COMPONENT_INVALID_STATE;
 
     order_index = context->activation_count;
