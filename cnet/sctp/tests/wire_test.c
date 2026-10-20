@@ -156,10 +156,60 @@ static void test_truncation_and_mutations(void) {
   }
 }
 
+
+static void test_output_cleared_on_errors(void) {
+  cnet_sctp_wire_header header;
+  cnet_sctp_wire_decoder decoder;
+  cnet_sctp_wire_chunk chunk;
+  uint8_t packet[32];
+  size_t written;
+  memset(&header, 0xa5, sizeof(header));
+  memset(&decoder, 0xa5, sizeof(decoder));
+  assert(cnet_sctp_wire_decode(NULL, 0u, &header, &decoder) ==
+         CNET_SCTP_WIRE_EINVAL);
+  {
+    const uint8_t *p = (const uint8_t *)&header;
+    size_t i;
+    for (i = 0u; i < sizeof(header); ++i) assert(p[i] == 0u);
+    p = (const uint8_t *)&decoder;
+    for (i = 0u; i < sizeof(decoder); ++i) assert(p[i] == 0u);
+  }
+
+  memset(&chunk, 0xa5, sizeof(chunk));
+  memset(&decoder, 0, sizeof(decoder));
+  decoder.chunks_remaining = 1u;
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) ==
+         CNET_SCTP_WIRE_MALFORMED);
+  {
+    const uint8_t *p = (const uint8_t *)&chunk;
+    size_t i;
+    for (i = 0u; i < sizeof(chunk); ++i) assert(p[i] == 0u);
+  }
+  memset(&chunk, 0xa5, sizeof(chunk));
+  memset(&decoder, 0, sizeof(decoder));
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_END);
+  {
+    const uint8_t *p = (const uint8_t *)&chunk;
+    size_t i;
+    for (i = 0u; i < sizeof(chunk); ++i) assert(p[i] == 0u);
+  }
+
+  memset(packet, 0x5a, sizeof(packet));
+  written = 99u;
+  assert(cnet_sctp_wire_encode(0u, 5001u, 0u, NULL, 1u,
+      packet, sizeof(packet), &written) == CNET_SCTP_WIRE_EINVAL);
+  assert(written == 0u && packet[0] == 0x5au);
+  written = 99u;
+  assert(cnet_sctp_wire_encode(5000u, 5001u, 0u, NULL, 1u,
+      packet, sizeof(packet), &written) == CNET_SCTP_WIRE_EINVAL);
+  assert(written == 0u && packet[0] == 0x5au);
+}
+
 int main(void) {
   test_crc_and_init();
   test_multiple_chunks_and_padding();
   test_reject_and_no_partial_write();
+  test_output_cleared_on_errors();
   test_truncation_and_mutations();
   puts("cnet SCTP RFC 9260 wire M1: PASS (not protocol interoperability)");
   return 0;
