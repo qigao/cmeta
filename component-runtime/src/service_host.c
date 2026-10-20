@@ -1090,10 +1090,10 @@ salts_service_host_status salts_service_host_generation_drain(
         component_status =
             salts_configurator_context_stop(&generation->components);
 
-    /* A FAILED+STOPPED state is accepted for retry only after an earlier
-     * successful graph stop. The public state field is not proof of that:
-     * confirm the retained instance prefix is settled before releasing any
-     * Plugin lease or clearing generation storage. */
+    /* A FAILED graph can be retried only after the caller repairs its
+     * ObjectRef records and the full instance-capacity scan proves the graph
+     * is settled. Do not rerun lifecycle callbacks from FAILED; release Plugin
+     * leases and clear storage only after ownership is independently settled. */
     if (component_status == SALTS_COMPONENT_OK &&
         !service_host_components_settled(&generation->components))
         component_status = SALTS_COMPONENT_INVALID_STATE;
