@@ -858,6 +858,17 @@ suite("ServiceHost generation publication") {
         check_equal(cmeta_object_release(&instances[0].object), CMETA_OK);
         check_false(cmeta_object_ref_valid(&instances[0].object));
         check_equal(provider_state.destroys, 1u);
+
+        /* Empty ObjectRefs alone do not settle a forged nonempty activation
+         * plan; failed drain must preserve the attached generation/lease. */
+        generation.components.activation_count = 1u;
+        check_equal(salts_service_host_generation_drain(&runtime, &generation),
+                    SALTS_SERVICE_HOST_COMPONENT_ERROR);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_true(generation.storage.instances == instances);
+        check_equal(runtime.attached_generations, (size_t)1u);
+        generation.components.activation_count = 0u;
+
         check_equal(salts_service_host_generation_drain(&runtime, &generation),
                     SALTS_SERVICE_HOST_OK);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
