@@ -60,6 +60,12 @@ static void reliable_open_ack(void) {
   assert(cnet_sctp_dcep_ready(&server, 0u));
   assert(server.channels[0].label_size == sizeof(label));
   assert(memcmp(server.channels[0].label, label, sizeof(label)) == 0);
+  na = 99u;
+  b.admitted = 0;
+  assert(cnet_sctp_dcep_input(&server, 2u, open, no,
+      ack, sizeof(ack), &na) == CNET_SCTP_DCEP_OWNER);
+  assert(na == 0u && server.channels[2].state == 0u);
+  b.admitted = 1;
   no = 99u;
   assert(cnet_sctp_dcep_input(&client, 0u, ack, na,
       NULL, 0u, &no) == CNET_SCTP_DCEP_OK);
