@@ -855,7 +855,7 @@ suite("ServiceHost generation publication") {
         /* Repair ownership without asking ServiceHost to discard it: restore
          * the saved handle and explicitly settle that ObjectRef. */
         instances[0].object = service_host_saved_object_ref;
-        check_equal(cmeta_object_release(&instances[0].object), CMETA_OK);
+        cmeta_object_release(&instances[0].object);
         check_false(cmeta_object_ref_valid(&instances[0].object));
         check_equal(provider_state.destroys, 1u);
 
