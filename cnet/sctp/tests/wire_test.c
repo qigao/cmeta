@@ -34,6 +34,13 @@ static void test_unknown_chunk_action_bits(void) {
          CNET_SCTP_WIRE_UNKNOWN_SKIP_REPORT);
   assert(cnet_sctp_wire_unknown_chunk_action(0xFFu) ==
          CNET_SCTP_WIRE_UNKNOWN_SKIP_REPORT);
+  {
+    unsigned int type;
+    for (type = 0u; type <= 255u; ++type) {
+      assert((unsigned int)cnet_sctp_wire_unknown_chunk_action((uint8_t)type) ==
+             ((type >> 6) & 0x03u));
+    }
+  }
 }
 
 static void test_crc_and_init(void) {
