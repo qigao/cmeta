@@ -231,6 +231,7 @@ suite("ServiceHost generation") {
 
         /* Slot zero is a settled visible prefix; slot one holds an actual
          * ObjectRef whose ownership must survive a rejected recovery. */
+        tail_instances[0].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
         tail_instances[1].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
         check_equal(test_logger_create(
             &logger, NULL, NULL, NULL, 0u, &tail_instances[1].object),
