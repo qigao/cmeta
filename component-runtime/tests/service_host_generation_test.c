@@ -116,6 +116,13 @@ suite("ServiceHost generation") {
         check_equal(salts_service_host_generation_recover(&generation),
                     SALTS_SERVICE_HOST_INVALID_STATE);
 
+        /* Forging ZERO must not hide the still-retained Configurator storage
+         * from the outer ServiceHost recovery guard either. */
+        generation.components.state = SALTS_CONFIGURATOR_CONTEXT_ZERO;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+        generation.components.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+
         /* Once the record is restored to the canonical empty representation,
          * the explicit recovery operation may clear the failed candidate. */
         instances[0].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
