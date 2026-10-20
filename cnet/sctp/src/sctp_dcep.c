@@ -87,15 +87,16 @@ cnet_sctp_dcep_status cnet_sctp_dcep_open(cnet_sctp_dcep *d,
     uint16_t sid, uint8_t type, uint16_t priority, uint32_t reliability,
     const void *label, size_t label_len, const void *protocol, size_t proto_len,
     void *output, size_t cap, size_t *written) {
-  cnet_sctp_dcep_status status = guard(d);
+  cnet_sctp_dcep_status status;
   cnet_sctp_dcep_channel *channel;
   uint8_t *bytes = (uint8_t *)output;
   size_t n = 12u + label_len + proto_len;
+  if (written) *written = 0u;
+  status = guard(d);
   if (status != CNET_SCTP_DCEP_OK) return status;
   if (!output || !written || (label_len && !label) ||
       (proto_len && !protocol) || sid >= d->streams)
     return CNET_SCTP_DCEP_INVALID;
-  *written = 0u;
   if (((sid & 1u) == 0u) != (d->is_dtls_client != 0u))
     return CNET_SCTP_DCEP_PROTOCOL;
   channel = &d->channels[sid];
@@ -134,14 +135,15 @@ cnet_sctp_dcep_status cnet_sctp_dcep_open(cnet_sctp_dcep *d,
 cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
     uint16_t sid, const void *wire, size_t n,
     void *reply, size_t cap, size_t *written) {
-  cnet_sctp_dcep_status status = guard(d);
+  cnet_sctp_dcep_status status;
   const uint8_t *bytes = (const uint8_t *)wire;
   cnet_sctp_dcep_channel *channel;
   size_t label_len, proto_len;
+  if (written) *written = 0u;
+  status = guard(d);
   if (status != CNET_SCTP_DCEP_OK) return status;
   if (!wire || !reply || !written || sid >= d->streams || n == 0u)
     return CNET_SCTP_DCEP_INVALID;
-  *written = 0u;
   channel = &d->channels[sid];
   if (bytes[0] == DCEP_ACK) {
     if (n != 1u || !channel->locally_initiated ||
