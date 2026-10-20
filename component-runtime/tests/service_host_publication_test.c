@@ -386,6 +386,15 @@ suite("ServiceHost generation publication") {
                 NULL, 0u, &exact, 1u, NULL, 0u),
                 SALTS_SERVICE_HOST_OK);
         }
+        /* Corrupted teardown metadata must not gain runtime authority. */
+        check_equal(pending.activation_order[0], (size_t)0u);
+        pending.activation_order[0] = pending.generation.deployment_count;
+        check_equal(salts_service_host_runtime_publish(
+            &runtime, &pending.generation, &previous),
+            SALTS_SERVICE_HOST_INVALID_STATE);
+        check_true(previous == &live.generation);
+        pending.activation_order[0] = 0u;
+
         /* A forged BUILT marker must not publish a candidate whose graph is
          * no longer ACTIVE. The failed attempt must not replace prior state. */
         pending.generation.components.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
