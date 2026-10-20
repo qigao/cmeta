@@ -121,7 +121,7 @@ suite("ServiceHost generation") {
         /* An invalid ObjectRef is not proof that ownership storage is empty:
          * recovery must reject malformed nonzero state instead of erasing it. */
         instances[0] = (salts_configurator_instance){0};
-        instances[1].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
+        instances[0].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
         instances[1] = (salts_configurator_instance){0};
         instances[1].object.size = 0u;
         generation.state = SALTS_SERVICE_HOST_GENERATION_FAILED;
