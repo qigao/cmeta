@@ -375,27 +375,37 @@ static bool service_host_object_ref_is_empty(
            object->lifecycle == NULL;
 }
 
+static bool service_host_configurator_storage_detached(
+    const salts_configurator_context *components) {
+    return components != NULL &&
+           components->deployments == NULL &&
+           components->deployment_count == 0u &&
+           components->selections == NULL &&
+           components->selection_count == 0u &&
+           components->instances == NULL &&
+           components->instance_capacity == 0u &&
+           components->dependencies == NULL &&
+           components->dependency_capacity == 0u &&
+           components->dependency_count == 0u &&
+           components->activation_order == NULL &&
+           components->activation_capacity == 0u &&
+           components->activation_count == 0u;
+}
+
 static bool service_host_components_settled(
     const salts_configurator_context *components) {
     size_t i;
 
     if (components == NULL)
         return false;
-    /* A genuine ZERO context is fully detached. Do not accept a public enum
-     * rewrite that hides the retained arrays of a live or resolved graph. */
-    if (components->state == SALTS_CONFIGURATOR_CONTEXT_ZERO &&
-        (components->deployments != NULL ||
-         components->deployment_count != 0u ||
-         components->selections != NULL ||
-         components->selection_count != 0u ||
-         components->instances != NULL ||
-         components->instance_capacity != 0u ||
-         components->dependencies != NULL ||
-         components->dependency_capacity != 0u ||
-         components->dependency_count != 0u ||
-         components->activation_order != NULL ||
-         components->activation_capacity != 0u ||
-         components->activation_count != 0u))
+    /* ZERO is reusable only as the canonical empty representation. FAILED
+     * and STOPPED with deployment_count==0 must likewise be detached: zeroing
+     * the public owner count must not hide retained instance storage. */
+    if ((components->state == SALTS_CONFIGURATOR_CONTEXT_ZERO ||
+         ((components->state == SALTS_CONFIGURATOR_CONTEXT_FAILED ||
+           components->state == SALTS_CONFIGURATOR_CONTEXT_STOPPED) &&
+          components->deployment_count == 0u)) &&
+        !service_host_configurator_storage_detached(components))
         return false;
     if (components->deployment_count > components->instance_capacity ||
         (components->deployment_count != 0u && components->instances == NULL))
@@ -408,6 +418,63 @@ static bool service_host_components_settled(
         const salts_configurator_instance *instance = &components->instances[i];
         if (instance->active ||
             !service_host_object_ref_is_empty(&instance->object))
+            return false;
+    }
+    return true;
+}
+
+static bool service_host_generation_publishable(
+    const salts_service_host_generation *generation) {
+    const salts_configurator_context *components;
+    const salts_service_host_generation_storage *storage;
+    size_t i;
+
+    if (generation == NULL)
+        return false;
+    components = &generation->components;
+    storage = &generation->storage;
+
+    /* BUILT is a public enum, not proof that the graph has reached ACTIVE.
+     * Revalidate graph/storage identity, active ObjectRefs and lease records
+     * before attaching a generation to a runtime. */
+    if (components->state != SALTS_CONFIGURATOR_CONTEXT_ACTIVE ||
+        components->deployment_count != generation->deployment_count ||
+        components->activation_count != components->deployment_count ||
+        components->deployment_count > storage->deployment_capacity ||
+        components->deployment_count > storage->instance_capacity ||
+        components->deployment_count > storage->activation_capacity ||
+        components->deployments != storage->deployments ||
+        components->instances != storage->instances ||
+        components->instance_capacity != storage->instance_capacity ||
+        components->dependencies != storage->dependencies ||
+        components->dependency_capacity != storage->dependency_capacity ||
+        components->activation_order != storage->activation_order ||
+        components->activation_capacity != storage->activation_capacity ||
+        components->dependency_count > components->dependency_capacity ||
+        !module_tail_is_clear(generation))
+        return false;
+
+    if ((components->deployment_count != 0u &&
+         (components->deployments == NULL || components->instances == NULL ||
+          components->activation_order == NULL)) ||
+        (components->dependency_capacity != 0u &&
+         components->dependencies == NULL))
+        return false;
+
+    for (i = 0u; i < generation->module_count; ++i) {
+        const salts_service_host_module *module = &storage->modules[i];
+        if (plugin_lease_is_zero(module->lease) ||
+            !cmeta_plugin_lease_valid(module->lease) ||
+            !plugin_ref_equal(module->plugin, module->lease.plugin) ||
+            module->manifest == NULL)
+            return false;
+    }
+
+    for (i = 0u; i < components->deployment_count; ++i) {
+        if (salts_configurator_deployment_status(
+                &components->deployments[i]) != SALTS_COMPONENT_OK ||
+            !components->instances[i].active ||
+            !cmeta_object_ref_valid(&components->instances[i].object))
             return false;
     }
     return true;
@@ -663,6 +730,7 @@ salts_service_host_status salts_service_host_runtime_publish(
     cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
 
     if (generation->state != SALTS_SERVICE_HOST_GENERATION_BUILT ||
+        !service_host_generation_publishable(generation) ||
         generation->runtime_owner != NULL ||
         generation->active_scopes != 0u ||
         generation->id <= runtime->last_generation_id) {
