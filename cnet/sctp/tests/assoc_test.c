@@ -874,7 +874,60 @@ static void simultaneous_signed_peer_change_denied(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void output_count_zeroed_before_owner_guard(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  uint8_t packet[1200] = {0}, payload[4] = {1u, 2u, 3u, 4u};
+  cnet_sctp_data_message message = {0};
+  cnet_sctp_data_bundle_item item = {0};
+  size_t written;
+  setup(&a, &b, &ca, &cb);
+  ca.on_owner = 0;
+  written = 99u;
+  assert(cnet_sctp_assoc_start(&a, 1u, packet, sizeof(packet), &written) ==
+      CNET_SCTP_ASSOC_OWNER);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_assoc_input(&a, 1u, packet, sizeof(packet), packet,
+      sizeof(packet), &written) == CNET_SCTP_ASSOC_OWNER);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_assoc_advance(&a, 1u, packet, sizeof(packet), &written) ==
+      CNET_SCTP_ASSOC_OWNER);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_assoc_send_message(&a, 1u, 0u, 51u, 0, payload,
+      sizeof(payload), packet, sizeof(packet), &written) == CNET_SCTP_ASSOC_OWNER);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_assoc_take_message(&a, &message, payload, sizeof(payload),
+      &written) == CNET_SCTP_ASSOC_OWNER);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_assoc_send_bundle(&a, 1u, &item, 1u, packet,
+      sizeof(packet), &written) == CNET_SCTP_ASSOC_OWNER);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_assoc_pump_message(&a, 1u, packet, sizeof(packet),
+      &written) == CNET_SCTP_ASSOC_OWNER);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_assoc_shutdown(&a, 1u, packet, sizeof(packet), &written) ==
+      CNET_SCTP_ASSOC_OWNER);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_assoc_window_update(&a, 1u, packet, sizeof(packet),
+      &written) == CNET_SCTP_ASSOC_OWNER);
+  assert(written == 0u);
+  ca.on_owner = 1;
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
+  output_count_zeroed_before_owner_guard();
   entropy_init_fail_closed();
   normal_handshake();
   simultaneous_init_keeps_owner_and_t1();
