@@ -110,6 +110,12 @@ suite("ServiceHost generation") {
         check_equal(salts_service_host_generation_recover(&generation),
                     SALTS_SERVICE_HOST_INVALID_STATE);
 
+        /* A forged public failure phase must not hide a retained malformed
+         * ObjectRef from the recovery ownership check. */
+        generation.components.failure.phase = SALTS_CONFIGURATOR_PHASE_INIT;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+
         /* Once the record is restored to the canonical empty representation,
          * the explicit recovery operation may clear the failed candidate. */
         instances[0].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
