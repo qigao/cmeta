@@ -581,7 +581,41 @@ static void multi_loss_one_recovery_epoch(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
+static void output_count_zeroed_before_owner_guard(void) {
+  cnet_sctp_data a, b;
+  test_owner oa = {1}, ob = {1};
+  uint8_t packet[1200] = {0}, payload[4] = {1u, 2u, 3u, 4u};
+  cnet_sctp_data_message message = {0};
+  size_t written;
+  pair_init(&a, &b, &oa, &ob, 100u, 300u);
+  oa.admitted = 0;
+  written = 99u;
+  assert(cnet_sctp_data_send(&a, 1u, 0u, 51u, 0, payload, sizeof(payload),
+      packet, sizeof(packet), &written) == CNET_SCTP_DATA_OWNER);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_data_send_bundle(&a, 1u, NULL, 1u, packet, sizeof(packet),
+      &written) == CNET_SCTP_DATA_OWNER);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_data_input(&a, 1u, packet, sizeof(packet), packet,
+      sizeof(packet), &written) == CNET_SCTP_DATA_OWNER);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_data_take(&a, &message, payload, sizeof(payload),
+      &written) == CNET_SCTP_DATA_OWNER);
+  assert(written == 0u);
+  written = 99u;
+  assert(cnet_sctp_data_advance(&a, 1u, packet, sizeof(packet),
+      &written) == CNET_SCTP_DATA_OWNER);
+  assert(written == 0u);
+  oa.admitted = 1;
+  assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
+}
+
 int main(void) {
+  output_count_zeroed_before_owner_guard();
   multi_loss_one_recovery_epoch();
   karn_gap_reneging_restore();
   karn_gap_ack_then_cumulative();
