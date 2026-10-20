@@ -955,7 +955,7 @@ static void unknown_chunk_actions_are_bounded_and_exact(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
   static const uint8_t value[] = {0xA5u, 0x5Au, 0xC3u};
-  const uint8_t types[] = {0x20u, 0x41u, 0x82u, 0xC3u};
+  const uint8_t types[] = {0x20u, 0x61u, 0xA2u, 0xE3u};
   size_t i;
   setup(&a, &b, &ca, &cb);
   /* Unknown-chunk actions are association traffic: give the response path
@@ -973,7 +973,7 @@ static void unknown_chunk_actions_are_bounded_and_exact(void) {
     assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
         packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memset(output, 0xCC, sizeof(output));
-    if (types[i] == 0x41u || types[i] == 0xC3u) {
+    if (types[i] == 0x61u || types[i] == 0xE3u) {
       assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
           tiny, sizeof(tiny), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
       assert(output_n == 0u && a.last_time_ms == prior_time);
@@ -983,7 +983,7 @@ static void unknown_chunk_actions_are_bounded_and_exact(void) {
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
     assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
     assert(a.last_time_ms == prior_time + 1u);
-    if (types[i] == 0x20u || types[i] == 0x82u) {
+    if (types[i] == 0x20u || types[i] == 0xA2u) {
       assert(output_n == 0u && output[0] == 0xCCu);
     } else {
       assert(output_n >= 24u);
