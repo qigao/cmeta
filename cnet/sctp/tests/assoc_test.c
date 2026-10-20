@@ -958,6 +958,10 @@ static void unknown_chunk_actions_are_bounded_and_exact(void) {
   const uint8_t types[] = {0x20u, 0x41u, 0x82u, 0xC3u};
   size_t i;
   setup(&a, &b, &ca, &cb);
+  /* Unknown-chunk actions are association traffic: give the response path
+   * a valid peer Verification Tag instead of testing an unstarted endpoint. */
+  a.state = CNET_SCTP_ASSOC_ESTABLISHED;
+  a.peer_tag = b.local_tag;
   for (i = 0u; i < sizeof(types); ++i) {
     cnet_sctp_wire_chunk chunk = {types[i], 0x5Au, value, sizeof(value)};
     cnet_sctp_wire_header h = {0};
@@ -973,11 +977,11 @@ static void unknown_chunk_actions_are_bounded_and_exact(void) {
       assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
           tiny, sizeof(tiny), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
       assert(output_n == 0u && a.last_time_ms == prior_time);
-      assert(a.state == CNET_SCTP_ASSOC_CLOSED && tiny[0] == 0xCCu);
+      assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED && tiny[0] == 0xCCu);
     }
     assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
         output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
-    assert(a.state == CNET_SCTP_ASSOC_CLOSED);
+    assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
     assert(a.last_time_ms == prior_time + 1u);
     if (types[i] == 0x20u || types[i] == 0x82u) {
       assert(output_n == 0u && output[0] == 0xCCu);
