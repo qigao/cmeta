@@ -63,9 +63,10 @@ cnet_sctp_dcep_status cnet_sctp_dcep_open(cnet_sctp_dcep *d,
     void *output, size_t capacity, size_t *written);
 
 /* Complete wire OPEN/ACK only; OPEN on an occupied or wrong-parity SID
- * rejects with no ACK. A successful OPEN returns the one-byte ACK payload.
- * A successful ACK returns zero bytes; caller sends its output using SCTP
- * DATA PPID=50 reliable ordered on the same SID. */
+ * rejects with no ACK and requires a reply buffer. A successful OPEN returns
+ * the one-byte ACK payload. A successful ACK returns zero bytes and does not
+ * require a reply buffer; caller sends output using SCTP DATA PPID=50 reliable
+ * ordered on the same SID. */
 cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
     uint16_t stream, const void *wire, size_t n,
     void *reply, size_t capacity, size_t *written);
