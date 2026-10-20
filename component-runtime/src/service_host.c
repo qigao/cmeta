@@ -396,11 +396,12 @@ static bool service_host_components_settled(
     const salts_configurator_context *components) {
     size_t i;
 
-    if (components == NULL)
+    if (components == NULL || components->activation_count != 0u)
         return false;
     /* ZERO is reusable only as the canonical empty representation. FAILED
      * and STOPPED with deployment_count==0 must likewise be detached: zeroing
-     * the public owner count must not hide retained instance storage. */
+     * the public owner count must not hide retained instance storage. An
+     * unsettled activation plan also blocks a repaired FAILED drain retry. */
     if ((components->state == SALTS_CONFIGURATOR_CONTEXT_ZERO ||
          ((components->state == SALTS_CONFIGURATOR_CONTEXT_FAILED ||
            components->state == SALTS_CONFIGURATOR_CONTEXT_STOPPED) &&
