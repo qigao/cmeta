@@ -1058,7 +1058,8 @@ salts_service_host_status salts_service_host_generation_drain(
         runtime->attached_generations == 0u ||
         (generation->state != SALTS_SERVICE_HOST_GENERATION_DRAINING &&
          !(generation->state == SALTS_SERVICE_HOST_GENERATION_FAILED &&
-           generation->components.state == SALTS_CONFIGURATOR_CONTEXT_STOPPED))) {
+           (generation->components.state == SALTS_CONFIGURATOR_CONTEXT_FAILED ||
+            generation->components.state == SALTS_CONFIGURATOR_CONTEXT_STOPPED)))) {
         cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_INVALID_STATE;
     }
@@ -1070,8 +1071,10 @@ salts_service_host_status salts_service_host_generation_drain(
 
     /* Validate the full active teardown plan while still under the runtime
      * lock. A corrupted activation index or dependency slice must be rejected
-     * before context_stop() can index caller-owned storage. For a retry after
-     * successful graph stop, require the canonical settled representation. */
+     * before context_stop() can index caller-owned storage. A FAILED generation
+     * may retry only after its FAILED/STOPPED Configurator records prove every
+     * instance-capacity slot settled; this is the explicit repair path when a
+     * Provider deactivation corrupted an ObjectRef during an earlier drain. */
     if ((generation->state == SALTS_SERVICE_HOST_GENERATION_DRAINING &&
          !service_host_generation_publishable(generation)) ||
         (generation->state == SALTS_SERVICE_HOST_GENERATION_FAILED &&
