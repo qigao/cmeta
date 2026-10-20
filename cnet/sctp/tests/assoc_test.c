@@ -951,6 +951,52 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void mixed_unknown_known_bundles_fail_closed(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  static const uint8_t unknown_value[] = {0xA5u, 0x5Au, 0xC3u};
+  static const uint8_t data_value[12] = {0};
+  static const uint8_t types[][3] = {
+    {0x20u, 0u, 0u},    /* unknown, DATA, DATA */
+    {0u, 0x61u, 0u},    /* DATA, reporting unknown, DATA */
+    {0u, 0u, 0xE3u}     /* DATA, DATA, reporting unknown */
+  };
+  size_t case_i;
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_ESTABLISHED;
+  a.peer_tag = b.local_tag;
+  for (case_i = 0u; case_i < sizeof(types) / sizeof(types[0]); ++case_i) {
+    cnet_sctp_wire_chunk chunks[3];
+    uint8_t packet[128] = {0}, output[128];
+    size_t packet_n = 0u, output_n = 99u, i;
+    uint64_t prior_time = a.last_time_ms;
+    for (i = 0u; i < 3u; ++i) {
+      chunks[i].type = types[case_i][i];
+      chunks[i].flags = 0u;
+      if (chunks[i].type == 0u) {
+        chunks[i].value = data_value;
+        chunks[i].value_size = sizeof(data_value);
+      } else {
+        chunks[i].value = unknown_value;
+        chunks[i].value_size = sizeof(unknown_value);
+      }
+    }
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 3u,
+        packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    memset(output, 0xCC, sizeof(output));
+    assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+        output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+    assert(output_n == 0u);
+    assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+    assert(a.last_time_ms == prior_time);
+    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+  }
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void unknown_chunks_do_not_preempt_t5(void) {
   size_t case_i;
   for (case_i = 0u; case_i < 2u; ++case_i) {
@@ -1176,6 +1222,7 @@ static void unsupported_control_preserves_time_watermark(void) {
 
 int main(void) {
   malformed_shutdown_bundle_does_not_preempt_t5();
+  mixed_unknown_known_bundles_fail_closed();
   unknown_chunks_do_not_preempt_t5();
   unknown_chunk_actions_are_bounded_and_exact();
   unknown_multi_chunk_actions_are_transactional();
