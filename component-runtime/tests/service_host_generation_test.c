@@ -163,6 +163,77 @@ suite("ServiceHost generation") {
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
     }
 
+    it("rejects forged INIT recovery while an actual ObjectRef remains live") {
+        test_provider_state logger;
+        salts_component_provider_binding provider;
+        salts_configurator_deployment deployment;
+        salts_configurator_deployment local_deployments[1];
+        salts_configurator_instance live_instances[2] = {{0}};
+        size_t order[1] = {0u};
+        salts_service_host_generation candidate = {0};
+
+        test_provider_state_init(&logger, 29, NULL);
+        provider = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+        local_deployments[0] = deployment;
+        live_instances[0].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
+        live_instances[1].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
+        check_equal(test_logger_create(
+            &logger, NULL, NULL, NULL, 0u, &live_instances[1].object), CMETA_OK);
+        live_instances[1].active = true;
+
+        candidate.state = SALTS_SERVICE_HOST_GENERATION_FAILED;
+        candidate.deployment_count = 1u;
+        candidate.storage = (salts_service_host_generation_storage){
+            local_deployments, 1u, live_instances, 2u, NULL, 0u,
+            order, 1u, NULL, 0u
+        };
+        candidate.components =
+            (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
+        candidate.components.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+        candidate.components.failure.phase = SALTS_CONFIGURATOR_PHASE_ACTIVATE;
+        candidate.components.deployments = local_deployments;
+        candidate.components.deployment_count = 1u;
+        candidate.components.instances = live_instances;
+        candidate.components.instance_capacity = 2u;
+        candidate.components.activation_order = order;
+        candidate.components.activation_capacity = 1u;
+
+        check_true(cmeta_object_ref_valid(&live_instances[1].object));
+        check_equal(salts_service_host_generation_recover(&candidate),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+        check_equal(logger.destroys, 0u);
+
+        /* Forging INIT must not make the outer ServiceHost helper trust the
+         * mutable phase in place of scanning the actual live ObjectRef. */
+        candidate.components.failure.phase = SALTS_CONFIGURATOR_PHASE_INIT;
+        check_equal(salts_service_host_generation_recover(&candidate),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+        check_equal(candidate.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_true(candidate.storage.instances == live_instances);
+        check_true(live_instances[1].active);
+        check_true(cmeta_object_ref_valid(&live_instances[1].object));
+        check_equal(logger.destroys, 0u);
+
+        /* A truncated public count must not hide that same live tail. */
+        candidate.components.deployment_count = 0u;
+        check_equal(salts_service_host_generation_recover(&candidate),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+        check_true(cmeta_object_ref_valid(&live_instances[1].object));
+        candidate.components.deployment_count = 1u;
+
+        test_deactivate(&logger, &live_instances[1].object);
+        live_instances[1].active = false;
+        cmeta_object_release(&live_instances[1].object);
+        check_false(cmeta_object_ref_valid(&live_instances[1].object));
+        check_equal(logger.destroys, 1u);
+        check_equal(salts_service_host_generation_recover(&candidate),
+                    SALTS_SERVICE_HOST_OK);
+        check_equal(candidate.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
+        check_null(candidate.storage.instances);
+    }
+
     it("retains storage when failed create leaves a noncanonical ObjectRef") {
         test_provider_state logger;
         salts_component_provider_binding provider;
