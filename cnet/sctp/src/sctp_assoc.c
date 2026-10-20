@@ -60,12 +60,14 @@ static int recognized_chunk_type(uint8_t type) {
     case 0u: case 1u: case 2u: case 3u: case 4u: case 5u:
     case 6u: case 7u: case 8u: case 9u: case 10u: case 11u:
     case 12u: case 13u: case 14u:
+    case 15u:  /* AUTH, RFC 4895; registered but unsupported here */
     case 64u:  /* I-DATA, RFC 8260 */
     case 65u:  /* DTLS, temporary IANA registration; unsupported here */
     case 128u: /* ASCONF-ACK, RFC 5061 */
-    case 193u: /* ASCONF, RFC 5061 */
     case 130u: /* RE-CONFIG, RFC 6525 */
+    case 132u: /* PAD, RFC 4820; registered but unsupported here */
     case 192u: /* FORWARD-TSN, RFC 3758 */
+    case 193u: /* ASCONF, RFC 5061 */
     case 194u: /* I-FORWARD-TSN, RFC 8260 */
       return 1;
     default:
