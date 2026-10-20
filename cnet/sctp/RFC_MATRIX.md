@@ -25,6 +25,22 @@ Evidence is scoped narrowly: **M1 wire = tested framing**; **M2 private = Owner-
 | RFC 8841 SDP | **Not implemented** | Browser-facing SDP matrix |
 | RFC 6455 WebSocket | **Out of scope** | Useful CNet design reference only, not an SCTP wire replacement |
 
+## Unknown Chunk handling contract (RFC 9260 §3.2, §3.3.10.6)
+
+The wire module's top-two-bit helper is only an action-bit decoder; it is **not** an unknown-chunk policy. The association must first decide whether a Chunk Type is recognized by this implementation (including distinguishing recognized-but-unimplemented standard/extension types from genuinely unknown values), then apply the action bits only to genuinely unrecognized types.
+
+Required packet-level behavior before the association work can be considered RFC-complete:
+
+- `00`: stop processing this packet and discard this chunk plus all following chunks; do not dispatch a later DATA/control chunk.
+- `01`: same stop behavior, and report the unrecognized chunk with an ERROR cause code 6.
+- `10`: skip this chunk and continue examining the remaining packet, subject to the association's packet-wide preflight/transaction rules.
+- `11`: skip this chunk, continue, and report it with ERROR cause code 6.
+- Cause 6 is a 16-bit code followed by a 16-bit cause length; the cause-specific bytes contain the complete offending Chunk (type, flags, length, and value), not merely its value. The enclosing ERROR chunk length and packet CRC must include the final encoded cause.
+- Reporting must not create ERROR-on-ERROR/ABORT loops. Do not emit a partial ERROR or dispatch any later chunk before all framing, verification-tag, bundle-order, output-capacity, and state-commit preconditions are satisfied.
+- Tests must cover all four action values in first/middle/last positions; known-but-unimplemented types; ERROR/ABORT inputs; a reported chunk at output-capacity boundaries; and state, output bytes, timers, and time watermark on rejection. Unknown Chunk semantics remain **OPEN** until these are implemented and tested as a single transactional packet path.
+
+RFC source: [RFC 9260 §3.2 and §3.3.10.6](https://www.rfc-editor.org/rfc/rfc9260.html#section-3.3.10.6). The cause body is specified to carry the complete unrecognized Chunk. This note does not claim the current association implements the behavior.
+
 ## Source, license, language and ownership
 
 - Original **C11-only** RFC-first code. No third-party SCTP library source was copied/translated, no Rust/C++ protocol engine, FFI, Cargo, GN, cxx or new runtime.
