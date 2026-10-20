@@ -35,7 +35,7 @@ static cmeta_plugin_ref secondary_ref;
 static bool secondary_loaded;
 static salts_service_host_generation generation;
 static salts_configurator_deployment deployments[1];
-static salts_configurator_instance instances[1];
+static salts_configurator_instance instances[2];
 static salts_component_dependency dependencies[1];
 static size_t activation_order[1];
 static salts_service_host_module modules[1];
@@ -121,15 +121,17 @@ suite("ServiceHost generation") {
         /* An invalid ObjectRef is not proof that ownership storage is empty:
          * recovery must reject malformed nonzero state instead of erasing it. */
         instances[0] = (salts_configurator_instance){0};
-        instances[0].object.size = 0u;
+        instances[1].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
+        instances[1] = (salts_configurator_instance){0};
+        instances[1].object.size = 0u;
         generation.state = SALTS_SERVICE_HOST_GENERATION_FAILED;
         generation.components.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
         generation.components.failure.phase = SALTS_CONFIGURATOR_PHASE_CREATE;
         generation.components.deployment_count = 1u;
-        generation.components.instance_capacity = 1u;
+        generation.components.instance_capacity = 2u;
         generation.components.instances = instances;
 
-        check_false(cmeta_object_ref_valid(&instances[0].object));
+        check_false(cmeta_object_ref_valid(&instances[1].object));
         check_equal(salts_service_host_generation_recover(&generation),
                     SALTS_SERVICE_HOST_INVALID_STATE);
 
@@ -153,9 +155,9 @@ suite("ServiceHost generation") {
                     SALTS_SERVICE_HOST_INVALID_STATE);
         generation.components.deployment_count = 1u;
 
-        /* Once the record is restored to the canonical empty representation,
+        /* Once the hidden tail record is restored to the canonical empty representation,
          * the explicit recovery operation may clear the failed candidate. */
-        instances[0].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
+        instances[1].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
         check_equal(salts_service_host_generation_recover(&generation),
                     SALTS_SERVICE_HOST_OK);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
