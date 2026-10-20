@@ -146,10 +146,9 @@ static bool salts_configurator_object_ref_empty(
            object->lifecycle == NULL;
 }
 
-static bool salts_configurator_context_zero_is_clear(
+static bool salts_configurator_storage_detached(
     const salts_configurator_context *context) {
     return context != NULL &&
-           context->state == SALTS_CONFIGURATOR_CONTEXT_ZERO &&
            context->deployments == NULL &&
            context->deployment_count == 0u &&
            context->selections == NULL &&
@@ -164,11 +163,26 @@ static bool salts_configurator_context_zero_is_clear(
            context->activation_count == 0u;
 }
 
+static bool salts_configurator_context_zero_is_clear(
+    const salts_configurator_context *context) {
+    return context != NULL &&
+           context->state == SALTS_CONFIGURATOR_CONTEXT_ZERO &&
+           salts_configurator_storage_detached(context);
+}
+
 static bool salts_configurator_instances_settled(
     const salts_configurator_context *context) {
     size_t i;
 
     if (context == NULL)
+        return false;
+    /* A genuine FAILED/STOPPED zero-deployment context has already detached
+     * its borrowed arrays. Do not let deployment_count=0 hide retained
+     * storage and owner records during reuse. */
+    if ((context->state == SALTS_CONFIGURATOR_CONTEXT_FAILED ||
+         context->state == SALTS_CONFIGURATOR_CONTEXT_STOPPED) &&
+        context->deployment_count == 0u &&
+        !salts_configurator_storage_detached(context))
         return false;
     if (context->deployment_count > context->instance_capacity ||
         (context->deployment_count != 0u && context->instances == NULL))
