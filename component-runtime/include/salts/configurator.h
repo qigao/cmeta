@@ -101,9 +101,12 @@ const char *salts_configurator_status_string(salts_component_status status);
  * exclusively once all borrowed service views have expired.
  *
  * Caller-owned provider/storage arrays must remain alive while a context
- * is READY, RESOLVED or ACTIVE. Fully settled INIT/RESOLVE failures, completed
- * rollback, and successful stop detach those borrowed addresses before
- * returning, so the caller may reclaim the arrays. If rollback cannot prove
+ * is READY, RESOLVED or ACTIVE. `instance_capacity` is the actual backing
+ * capacity, not the active deployment count: on successful init every slot in
+ * `instances[0..instance_capacity)` is reset, and unused tail slots remain
+ * scratch storage with no live ObjectRefs. Fully settled INIT/RESOLVE failures,
+ * completed rollback, and successful stop detach those borrowed addresses
+ * before returning, so the caller may reclaim the arrays. If rollback cannot prove
  * that all ObjectRefs settled, FAILED retains the addresses and re-init is
  * rejected; the caller must preserve that backing storage.
  *
