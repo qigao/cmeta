@@ -934,9 +934,6 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     if (cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
         second.type != 3u || second.flags != 0u || second.value_size < 12u)
       return CNET_SCTP_ASSOC_PROTOCOL;
-    /* Validate SACK flags and fixed fields before any deadline transition. */
-    if (second.flags != 0u || second.value_size < 12u)
-      return CNET_SCTP_ASSOC_PROTOCOL;
   } else if (header.chunk_count > 1u &&
              chunk.type != 0u && chunk.type != 3u) {
     /* No arbitrary control chunks can be bundled with INIT, Cookie,
