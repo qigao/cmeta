@@ -356,7 +356,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DSALTS_INSTALLED_ROOT="$nupkg_probe/sdk/linux-x64"
           cmake --build "$nupkg_probe/build" --parallel 2
-          ctest --test-dir "$nupkg_probe/build" --no-tests=error --output-on-failure
+          ctest --test-dir "$nupkg_probe/build" --no-tests=error --output-on-failure --repeat until-fail:10
       - uses: actions/upload-artifact@v4
         with:
           name: salts-native-nuget
