@@ -430,7 +430,8 @@ static bool service_host_generation_publishable(
     size_t i;
     size_t j;
 
-    if (generation == NULL)
+    if (generation == NULL ||
+        (generation->module_count != 0u && generation->registry == NULL))
         return false;
     components = &generation->components;
     storage = &generation->storage;
