@@ -423,6 +423,25 @@ static bool service_host_components_settled(
     return true;
 }
 
+static bool service_host_deployment_valid(
+    const salts_configurator_deployment *deployment) {
+    const cmeta_component_desc *component;
+
+    if (deployment == NULL || deployment->provider == NULL ||
+        !salts_component_provider_binding_valid(deployment->provider))
+        return false;
+
+    component = deployment->provider->component;
+    if (component->config == NULL)
+        return deployment->config_data == NULL &&
+               deployment->config_value == NULL;
+
+    return deployment->config_data != NULL &&
+           deployment->config_value != NULL &&
+           cmeta_data_desc_valid(deployment->config_data) &&
+           cmeta_data_desc_equal(component->config, deployment->config_data);
+}
+
 static bool service_host_generation_publishable(
     const salts_service_host_generation *generation) {
     const salts_configurator_context *components;
@@ -489,8 +508,7 @@ static bool service_host_generation_publishable(
         if (instance->dependency_offset > components->dependency_count ||
             instance->dependency_count >
                 components->dependency_count - instance->dependency_offset ||
-            salts_configurator_deployment_status(
-                &components->deployments[i]) != SALTS_COMPONENT_OK ||
+            !service_host_deployment_valid(&components->deployments[i]) ||
             !instance->active ||
             !cmeta_object_ref_valid(&instance->object))
             return false;
