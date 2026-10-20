@@ -931,11 +931,9 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     status = shutdown_t5_abort(s, now, output, cap, written);
     return status == CNET_SCTP_ASSOC_EMPTY ? CNET_SCTP_ASSOC_OK : status;
   }
-  /* Once the header/tag gate passes, retain the monotonic anti-rollback
-   * watermark even if cookie authentication or a later chunk check fails. */
-  s->last_time_ms = now;
   if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_COOKIE_ECHO) {
-    /* COOKIE ECHO + advisory ERROR has its own bounded handshake rule. */
+    /* Validate the entire advisory ERROR before advancing the clock watermark
+     * or allowing COOKIE ECHO processing to begin. */
     if (cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
         !valid_cookie_echo_error(&second))
       return CNET_SCTP_ASSOC_PROTOCOL;
@@ -943,6 +941,8 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     if (cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
         second.type != 3u || second.flags != 0u || second.value_size < 12u)
       return CNET_SCTP_ASSOC_PROTOCOL;
+    /* Bundle shape is fully checked before the stateful handler is entered. */
+    s->last_time_ms = now;
     return handle_shutdown_sack_bundle(s, now, &header, &chunk, &second,
         output, cap, written);
   } else if (header.chunk_count > 1u &&
@@ -951,6 +951,10 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
      * SHUTDOWN or ABORT in the private Association profile. */
     return CNET_SCTP_ASSOC_PROTOCOL;
   }
+  /* Framing, ports, tag and supported bundle shape are now preflighted.
+   * Authentication and state-specific validation may still reject the packet,
+   * but a malformed bundled ERROR above must not advance this watermark. */
+  s->last_time_ms = now;
   switch (chunk.type) {
     case 0u: /* DATA */
     case 3u: /* SACK */
