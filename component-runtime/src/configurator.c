@@ -128,12 +128,11 @@ static void salts_configurator_instance_reset(salts_configurator_instance *insta
     instance->active = false;
 }
 
-/* A public state enum and activation_count are not, by themselves, proof that
- * teardown authority is gone. For a graph that passed INIT, verify the
- * caller-owned instance prefix contains no live flags or ObjectRefs before
- * allowing FAILED/STOPPED context reuse. INIT-phase failures never published
- * objects and may have validated only a prefix of the caller array, so don't
- * inspect the unvisited tail in that case. */
+/* A public state enum, activation_count, or failure phase is not by itself
+ * proof that teardown authority is gone. A genuine INIT-phase failure has
+ * already detached all borrowed arrays in salts_component_fail(); therefore
+ * its settled representation is an empty prefix, not a phase-based bypass.
+ * Verify every retained instance record before allowing FAILED/STOPPED reuse. */
 static bool salts_configurator_object_ref_empty(
     const cmeta_object_ref *object) {
     return object != NULL &&
@@ -153,9 +152,6 @@ static bool salts_configurator_instances_settled(
 
     if (context == NULL)
         return false;
-    if (context->state == SALTS_CONFIGURATOR_CONTEXT_FAILED &&
-        context->failure.phase == SALTS_CONFIGURATOR_PHASE_INIT)
-        return true;
     if (context->deployment_count > context->instance_capacity ||
         (context->deployment_count != 0u && context->instances == NULL))
         return false;
