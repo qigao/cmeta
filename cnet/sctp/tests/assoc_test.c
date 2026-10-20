@@ -908,7 +908,51 @@ static void simultaneous_signed_peer_change_denied(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  cnet_sctp_wire_chunk chunks[2];
+  uint8_t shutdown_value[4] = {0u, 0u, 0u, 1u};
+  uint8_t malformed_sack[8] = {0};
+  uint8_t packet[256], output[256];
+  size_t packet_n = 0u, output_n = 0u;
+  uint64_t prior_time;
+
+  setup(&a, &b, &ca, &cb);
+  /* Drive the Association into the deadline edge without depending on a
+   * peer's unrelated shutdown choreography. The input packet still uses the
+   * actual wire encoder and this Association's expected Verification Tag. */
+  a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+  a.t5_shutdown_deadline_ms = 1000u;
+  a.deadline_ms = 1000u;
+  a.last_time_ms = 10u;
+  prior_time = a.last_time_ms;
+  chunks[0].type = 7u; /* SHUTDOWN */
+  chunks[0].flags = 0u;
+  chunks[0].value = shutdown_value;
+  chunks[0].value_size = sizeof(shutdown_value);
+  chunks[1].type = 3u; /* SACK with an invalid, undersized fixed header */
+  chunks[1].flags = 0u;
+  chunks[1].value = malformed_sack;
+  chunks[1].value_size = sizeof(malformed_sack);
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 2u,
+      packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+
+  assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+      output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+  assert(output_n == 0u);
+  assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+  assert(a.t5_shutdown_deadline_ms == 1000u);
+  assert(a.last_time_ms == prior_time);
+
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
+  malformed_shutdown_bundle_does_not_preempt_t5();
   entropy_init_fail_closed();
   normal_handshake();
   simultaneous_init_keeps_owner_and_t1();
