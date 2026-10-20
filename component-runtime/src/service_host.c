@@ -408,13 +408,13 @@ static bool service_host_components_settled(
         !service_host_configurator_storage_detached(components))
         return false;
     if (components->deployment_count > components->instance_capacity ||
-        (components->deployment_count != 0u && components->instances == NULL))
+        (components->instance_capacity != 0u && components->instances == NULL))
         return false;
 
-    /* Match Configurator's canonical-empty invariant, not merely its public
-     * validity predicate: an invalid but nonzero ObjectRef must not be
-     * mistaken for settled ownership and overwritten during recovery/reuse. */
-    for (i = 0u; i < components->deployment_count; ++i) {
+    /* Match Configurator's canonical-empty invariant across the entire backing
+     * capacity. A truncated deployment_count must not hide a live ObjectRef
+     * later in caller-owned scratch storage. */
+    for (i = 0u; i < components->instance_capacity; ++i) {
         const salts_configurator_instance *instance = &components->instances[i];
         if (instance->active ||
             !service_host_object_ref_is_empty(&instance->object))
@@ -475,7 +475,9 @@ static bool service_host_generation_publishable(
         !module_tail_is_clear(generation))
         return false;
 
-    if ((components->deployment_count != 0u &&
+    if ((components->instance_capacity != 0u && components->instances == NULL) ||
+        (components->activation_capacity != 0u && components->activation_order == NULL) ||
+        (components->deployment_count != 0u &&
          (components->deployments == NULL || components->instances == NULL ||
           components->activation_order == NULL)) ||
         (components->dependency_capacity != 0u &&
@@ -511,6 +513,15 @@ static bool service_host_generation_publishable(
             !service_host_deployment_valid(&components->deployments[i]) ||
             !instance->active ||
             !cmeta_object_ref_valid(&instance->object))
+            return false;
+    }
+    for (i = components->deployment_count;
+         i < components->instance_capacity; ++i) {
+        const salts_configurator_instance *instance = &components->instances[i];
+        if (instance->active ||
+            !service_host_object_ref_is_empty(&instance->object) ||
+            instance->dependency_offset != 0u ||
+            instance->dependency_count != 0u)
             return false;
     }
     return true;
