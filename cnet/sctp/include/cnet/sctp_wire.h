@@ -63,7 +63,8 @@ uint32_t cnet_sctp_wire_crc32c(const void *data, size_t size);
 
 /* Validates complete framing and checksum before publishing borrowed views.
  * No allocation, mutation, external transport, timers or background threads.
- * SCTP association semantics and unknown-chunk actions are NOT implemented.
+ * Association-level unknown-chunk action execution is NOT implemented; the
+ * action-bit classifier above does not validate Chunk Type recognition.
  */
 cnet_sctp_wire_status cnet_sctp_wire_decode(
     const void *packet, size_t packet_size,
