@@ -50,7 +50,7 @@ Evidence is scoped narrowly: **M1 wire = tested framing**; **M2 private = Owner-
 
 ## Release gates (all still open)
 
-Previously green checkpoint `78ec9c5a177a92e10d4143e81fd4e1a106f399fd` is historical only. After subsequent wire-preflight and malformed-bundle clock-watermark changes, re-run and inspect exact-HEAD CNet SCTP prototype, Salts CI, and immutable build provenance. Even a green run does not establish independent shutdown interoperability or release readiness.
+The exact-HEAD checkpoint `e39692e1229d53c5f563d5d2d57dcdfc418ba966` was verified on 2026-10-20: [CNet SCTP C11 prototype #39420509804](https://github.com/qigao/salts/actions/runs/39420509804) passed all five jobs (Linux/macOS/Windows wire, sanitizer-source, pinned-GmSSL Cookie-MAC); [Salts CI #39420509894](https://github.com/qigao/salts/actions/runs/39420509894) passed; immutable build provenance #39420509791 passed. The earlier `78ec9c5a177a92e10d4143e81fd4e1a106f399fd` checkpoint remains historical only. Green CI validates this bounded implementation and source graph, not independent shutdown interoperability or release readiness.
 
 1. Complete RFC 9260 state machine, robust authenticated cookies and full parameter/unknown-chunk policy.
 2. RFC 8261 GmSSL/DTLS integration with independent browser/libwebrtc wire interoperability.
