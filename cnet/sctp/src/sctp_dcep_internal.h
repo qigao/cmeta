@@ -45,6 +45,9 @@ typedef struct cnet_sctp_dcep {
   void *context;
 } cnet_sctp_dcep;
 
+/* Caller supplies zero-initialized storage. Reinitializing an active
+ * instance returns BUSY without modifying it; after stop, storage must be
+ * explicitly zeroed by the Owner before reuse. */
 cnet_sctp_dcep_status cnet_sctp_dcep_init(cnet_sctp_dcep *d,
     uint16_t streams, int is_dtls_client,
     cnet_sctp_dcep_owner_fn is_owner, void *context);
