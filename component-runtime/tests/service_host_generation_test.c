@@ -50,13 +50,14 @@ static cmeta_status test_logger_create_noncanonical(
     const salts_component_dependency *dependencies,
     size_t dependency_count,
     cmeta_object_ref *out_instance) {
-    (void)provider_context;
+    test_provider_state *state = (test_provider_state *)provider_context;
     (void)config_data;
     (void)config_value;
     (void)dependencies;
     (void)dependency_count;
-    if (out_instance == NULL)
+    if (state == NULL || out_instance == NULL)
         return CMETA_INVALID_ARGUMENT;
+    ++state->creates;
     out_instance->size = 0u;
     return CMETA_CALLBACK_ERROR;
 }
@@ -179,8 +180,8 @@ suite("ServiceHost generation") {
                     SALTS_CONFIGURATOR_CONTEXT_FAILED);
         check_equal(generation.components.failure.phase,
                     SALTS_CONFIGURATOR_PHASE_CREATE);
-        check_equal(generation.components.instances, instances);
-        check_equal(generation.storage.instances, instances);
+        check_true(generation.components.instances == instances);
+        check_true(generation.storage.instances == instances);
         check_equal(generation.module_count, (size_t)0u);
         check_equal(instances[0].object.size, (size_t)0u);
         check_equal(salts_service_host_generation_recover(&generation),
@@ -194,7 +195,7 @@ suite("ServiceHost generation") {
                     SALTS_SERVICE_HOST_OK);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
         check_null(generation.storage.instances);
-        check_equal(logger.creates, 0u);
+        check_equal(logger.creates, 1u);
     }
 
     it("rejects module capacity before acquiring any Plugin lease") {
