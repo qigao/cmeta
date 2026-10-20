@@ -654,4 +654,77 @@ suite("ServiceHost generation publication") {
         check_equal(cmeta_plugin_registry_destroy(
             &registry), CMETA_PLUGIN_OK);
     }
+
+    it("rejects forged STOPPED during drain while a live ObjectRef remains") {
+        const cmeta_plugin_registry_config registry_config = {1};
+        cmeta_plugin_registry registry = {0};
+        cmeta_plugin_ref ref;
+        cmeta_plugin_lifecycle_info info;
+        publication_generation_fixture generation = {0};
+        salts_service_host_runtime runtime = {0};
+        salts_service_host_generation *retired = NULL;
+        bool quiet = false;
+
+        check_equal(cmeta_plugin_registry_init(
+            &registry, &registry_config), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_load(
+            &registry, COMPONENT_PROVIDER_PLUGIN_PATH, &ref), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_start(
+            &registry, ref), CMETA_PLUGIN_OK);
+        check_equal(build_generation(
+            &generation, UINT64_C(51), &registry, ref), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_runtime_init(
+            &runtime), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_runtime_publish(
+            &runtime, &generation.generation, &retired), SALTS_SERVICE_HOST_OK);
+        check_null(retired);
+        check_equal(salts_service_host_runtime_close(
+            &runtime, &retired), SALTS_SERVICE_HOST_OK);
+        check_true(retired == &generation.generation);
+        check_equal(generation.generation.state,
+                    SALTS_SERVICE_HOST_GENERATION_DRAINING);
+        check_true(generation.instances[0].active);
+        check_true(cmeta_object_ref_valid(&generation.instances[0].object));
+
+        /* A stale/miswritten STOPPED marker is not evidence that context_stop
+         * has released the graph. Drain must not unload the DSO or forget the
+         * caller-owned ObjectRef storage on this inconsistent state. */
+        generation.generation.state = SALTS_SERVICE_HOST_GENERATION_FAILED;
+        generation.generation.components.state = SALTS_CONFIGURATOR_CONTEXT_STOPPED;
+        check_equal(salts_service_host_generation_drain(
+            &runtime, &generation.generation),
+            SALTS_SERVICE_HOST_COMPONENT_ERROR);
+        check_equal(generation.generation.state,
+                    SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_true(generation.instances[0].active);
+        check_true(cmeta_object_ref_valid(&generation.instances[0].object));
+        check_true(generation.generation.storage.instances == generation.instances);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)1u);
+
+        /* Restore the real active/draining states, then perform normal teardown. */
+        generation.generation.state = SALTS_SERVICE_HOST_GENERATION_DRAINING;
+        generation.generation.components.state = SALTS_CONFIGURATOR_CONTEXT_ACTIVE;
+        check_equal(salts_service_host_generation_drain(
+            &runtime, &generation.generation), SALTS_SERVICE_HOST_OK);
+        check_false(generation.instances[0].active);
+        check_false(cmeta_object_ref_valid(&generation.instances[0].object));
+        check_null(generation.generation.storage.instances);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+        check_equal(salts_service_host_runtime_destroy(
+            &runtime), SALTS_SERVICE_HOST_OK);
+
+        check_equal(cmeta_plugin_registry_request_stop(
+            &registry, ref), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_poll_quiescent(
+            &registry, ref, &quiet), CMETA_PLUGIN_OK);
+        check_true(quiet);
+        check_equal(cmeta_plugin_registry_unload(
+            &registry, ref), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_destroy(
+            &registry), CMETA_PLUGIN_OK);
+    }
 }
