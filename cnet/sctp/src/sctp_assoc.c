@@ -869,15 +869,25 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     status = shutdown_t5_abort(s, now, output, cap, written);
     return status == CNET_SCTP_ASSOC_EMPTY ? CNET_SCTP_ASSOC_OK : status;
   }
-  /* The external clock advances even when incoming bytes are rejected: an
-   * invalid/expired cookie must not enable a later clock rollback replay. */
-  s->last_time_ms = now;
   if (cnet_sctp_wire_decode(packet, packet_size, &header, &decoder) !=
       CNET_SCTP_WIRE_OK) return CNET_SCTP_ASSOC_PROTOCOL;
   if (header.source_port != s->config.remote_port ||
       header.destination_port != s->config.local_port ||
       cnet_sctp_wire_next_chunk(&decoder, &chunk) != CNET_SCTP_WIRE_OK)
     return CNET_SCTP_ASSOC_PROTOCOL;
+  /* RFC 9260 §8.5 (Verified Erratum 7852): validate the packet Verification
+   * Tag before changing association state or processing any chunk. INIT is
+   * the sole supported exception and must carry the zero tag. The wire
+   * decoder already rejects bundling INIT. For all other chunks this bounded
+   * profile accepts only the local tag; unsupported T-bit ABORT variants
+   * remain rejected rather than opening a second path. */
+  if ((chunk.type == SCTP_TYPE_INIT && header.verification_tag != 0u) ||
+      (chunk.type != SCTP_TYPE_INIT &&
+       header.verification_tag != s->local_tag))
+    return CNET_SCTP_ASSOC_PROTOCOL;
+  /* Once the header/tag gate passes, retain the monotonic anti-rollback
+   * watermark even if cookie authentication or a later chunk check fails. */
+  s->last_time_ms = now;
   if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_COOKIE_ECHO) {
     /* COOKIE ECHO + advisory ERROR has its own bounded handshake rule. */
     if (cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
