@@ -445,7 +445,7 @@ static bool service_host_deployment_valid(
 static bool service_host_component_has_role(
     const cmeta_component_desc *component,
     const cmeta_interface_desc *interface_desc,
-    cmeta_component_capability_role role) {
+    bool requires_role) {
     size_t i;
 
     if (!cmeta_component_desc_valid(component) ||
@@ -453,7 +453,10 @@ static bool service_host_component_has_role(
         return false;
     for (i = 0u; i < component->capability_count; ++i) {
         const cmeta_component_capability *capability = &component->capabilities[i];
-        if (capability->role == role &&
+        const bool role_matches = requires_role
+            ? capability->role == CMETA_COMPONENT_REQUIRES
+            : capability->role == CMETA_COMPONENT_PROVIDES;
+        if (role_matches &&
             cmeta_interface_desc_equal(capability->interface_desc, interface_desc))
             return true;
     }
@@ -565,10 +568,10 @@ static bool service_host_generation_publishable(
                 dependency->provider_interfaces != provider->interfaces ||
                 !service_host_component_has_role(
                     consumer->component, dependency->interface_desc,
-                    CMETA_COMPONENT_REQUIRES) ||
+                    true) ||
                 !service_host_component_has_role(
                     provider->component, dependency->interface_desc,
-                    CMETA_COMPONENT_PROVIDES))
+                    false))
                 return false;
         }
     }
