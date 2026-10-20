@@ -20,6 +20,14 @@ static void reliable_open_ack(void) {
   size_t no = 0u, na = 0u;
   assert(cnet_sctp_dcep_init(&client, 8u, 1, owned, &a) == CNET_SCTP_DCEP_OK);
   assert(cnet_sctp_dcep_init(&server, 8u, 0, owned, &b) == CNET_SCTP_DCEP_OK);
+  no = 99u;
+  a.admitted = 0;
+  assert(cnet_sctp_dcep_open(&client, 0u, 0x00u, 256u, 0u,
+      label, sizeof(label), protocol, sizeof(protocol),
+      open, sizeof(open), &no) == CNET_SCTP_DCEP_OWNER);
+  assert(no == 0u && client.channels[0].state == 0u);
+  a.admitted = 1;
+  no = 99u;
   assert(cnet_sctp_dcep_open(&client, 0u, 0x00u, 256u, 0u,
       label, sizeof(label), protocol, sizeof(protocol),
       open, 11u, &no) == CNET_SCTP_DCEP_CAPACITY);
@@ -52,11 +60,18 @@ static void reliable_open_ack(void) {
   assert(cnet_sctp_dcep_ready(&server, 0u));
   assert(server.channels[0].label_size == sizeof(label));
   assert(memcmp(server.channels[0].label, label, sizeof(label)) == 0);
+  no = 99u;
   assert(cnet_sctp_dcep_input(&client, 0u, ack, na,
-      open, sizeof(open), &no) == CNET_SCTP_DCEP_OK);
+      NULL, 0u, &no) == CNET_SCTP_DCEP_OK);
   assert(no == 0u && cnet_sctp_dcep_ready(&client, 0u));
+  na = 99u;
+  assert(cnet_sctp_dcep_input(&server, 0u, NULL, 0u,
+      ack, sizeof(ack), &na) == CNET_SCTP_DCEP_INVALID);
+  assert(na == 0u);
+  na = 99u;
   assert(cnet_sctp_dcep_input(&server, 0u, open, 0u,
       ack, sizeof(ack), &na) == CNET_SCTP_DCEP_INVALID);
+  assert(na == 0u);
   assert(cnet_sctp_dcep_input(&server, 0u, ack, 1u,
       open, sizeof(open), &no) == CNET_SCTP_DCEP_PROTOCOL);
   assert(cnet_sctp_dcep_stop(&client) == CNET_SCTP_DCEP_OK);
