@@ -64,6 +64,8 @@ RFC source: [RFC 9260 §3.2 and §3.3.10.6](https://www.rfc-editor.org/rfc/rfc92
   project vcpkg registry; the action used to provision it is also SHA-pinned.
   The existing Rust/C++-free design and unchanged production SDK remain intact.
 
+The subsequent matrix checkpoint `ef0b8f029c4c61aa26b66053416a59e19fbe7a17` is now verified: [CNet SCTP C11 prototype #39437117238](https://github.com/qigao/salts/actions/runs/39437117238) passed all five jobs (Linux/macOS/Windows wire, sanitizer-source, pinned-GmSSL Cookie-MAC); [Salts CI #39437117033](https://github.com/qigao/salts/actions/runs/39437117033) and immutable build provenance #39437116609 passed. ACE candidate #39437116517 was skipped and is not counted as a pass. This commit only records the policy matrix; unknown-chunk action execution is still not implemented.
+
 ## Release gates (all still open)
 
 The exact-HEAD checkpoint `a98b50526a8d4133a7a2b5fc7786e638a05a3dab` was verified on 2026-10-20: [CNet SCTP C11 prototype #39427751448](https://github.com/qigao/salts/actions/runs/39427751448) passed all five jobs (Linux/macOS/Windows wire, sanitizer-source, pinned-GmSSL Cookie-MAC); [Salts CI #39427751574](https://github.com/qigao/salts/actions/runs/39427751574) passed; immutable build provenance #39427751331 passed. This source/test checkpoint adds `malformed_shutdown_bundle_does_not_preempt_t5`, asserting malformed SHUTDOWN+undersized SACK at the T5 deadline produces no output and leaves state/deadline/time watermark unchanged. The earlier `78ec9c5a177a92e10d4143e81fd4e1a106f399fd` checkpoint remains historical only. Green CI validates this bounded implementation and source graph, not independent shutdown interoperability or release readiness.
