@@ -1,7 +1,23 @@
 #include "service_host_publication_fixture.h"
+#include "configurator_test_fixture.h"
 #include "tinytest.h"
 #include <salts/native_io_ace_token.h>
 #include <cmeta/ace_interceptor.h>
+
+/* Preserve an ObjectRef copy so this adversarial Provider can corrupt the
+ * caller-owned record during deactivate. The test later restores the saved
+ * reference, settles it explicitly, and retries attached-generation drain. */
+static cmeta_object_ref service_host_saved_object_ref;
+
+static void service_host_corrupt_object_ref_on_deactivate(
+    void *context, const cmeta_object_ref *instance) {
+    test_provider_state *state = (test_provider_state *)context;
+    if (state == NULL || instance == NULL)
+        return;
+    ++state->deactivates;
+    service_host_saved_object_ref = *instance;
+    ((cmeta_object_ref *)(void *)instance)->size = 0u;
+}
 
 /* The ACT has NO authority to own/release this borrowed Plugin Scope.
  * The component runtime's lease stays authoritative until observed terminal
@@ -781,6 +797,84 @@ suite("ServiceHost generation publication") {
             &registry, ref), CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_destroy(
             &registry), CMETA_PLUGIN_OK);
+    }
+
+    it("retries attached drain after repairing a failed deactivation ObjectRef") {
+        const cmeta_plugin_registry_config registry_config = {1};
+        cmeta_plugin_registry local_registry = {0};
+        cmeta_plugin_ref ref;
+        cmeta_plugin_lifecycle_info info;
+        test_provider_state provider_state;
+        salts_component_provider_binding provider;
+        salts_configurator_deployment deployment;
+        salts_service_host_generation generation = {0};
+        salts_configurator_instance instances[1] = {{0}};
+        salts_component_dependency dependencies[1] = {{0}};
+        size_t activation_order[1] = {0u};
+        const salts_service_host_generation_storage storage = {
+            &deployment, 1u, instances, 1u, dependencies, 1u,
+            activation_order, 1u, NULL, 0u
+        };
+        salts_service_host_runtime runtime = {0};
+        salts_service_host_generation *previous = NULL;
+
+        test_provider_state_init(&provider_state, 31, NULL);
+        provider = TEST_PROVIDER_BINDING(TestLogger, &provider_state, test_logger_create);
+        provider.deactivate = service_host_corrupt_object_ref_on_deactivate;
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+        service_host_saved_object_ref = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
+
+        check_equal(cmeta_plugin_registry_init(&local_registry, &registry_config), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_load(&local_registry, COMPONENT_PROVIDER_PLUGIN_PATH, &ref), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_start(&local_registry, ref), CMETA_PLUGIN_OK);
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(71), &local_registry, &storage,
+            &deployment, 1u, NULL, 0u, NULL, 0u), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_runtime_init(&runtime), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_runtime_publish(&runtime, &generation, &previous), SALTS_SERVICE_HOST_OK);
+        check_null(previous);
+        check_true(runtime.current == &generation);
+        check_true(instances[0].active);
+        check_true(cmeta_object_ref_valid(&instances[0].object));
+
+        check_equal(salts_service_host_runtime_close(&runtime, &previous), SALTS_SERVICE_HOST_OK);
+        check_true(previous == &generation);
+        check_equal(salts_service_host_generation_drain(&runtime, &generation),
+                    SALTS_SERVICE_HOST_COMPONENT_ERROR);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_equal(generation.components.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
+        check_equal(generation.components.activation_count, (size_t)0u);
+        check_false(instances[0].active);
+        check_false(cmeta_object_ref_valid(&instances[0].object));
+        check_true(cmeta_object_ref_valid(&service_host_saved_object_ref));
+        check_equal(provider_state.deactivates, 1u);
+        check_equal(provider_state.destroys, 0u);
+        check_null(runtime.current);
+        check_equal(runtime.attached_generations, (size_t)1u);
+
+        /* Repair ownership without asking ServiceHost to discard it: restore
+         * the saved handle and explicitly settle that ObjectRef. */
+        instances[0].object = service_host_saved_object_ref;
+        check_equal(cmeta_object_release(&instances[0].object), CMETA_OK);
+        check_false(cmeta_object_ref_valid(&instances[0].object));
+        check_equal(provider_state.destroys, 1u);
+        check_equal(salts_service_host_generation_drain(&runtime, &generation),
+                    SALTS_SERVICE_HOST_OK);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
+        check_null(generation.storage.instances);
+        check_equal(runtime.attached_generations, (size_t)0u);
+        check_equal(salts_service_host_runtime_destroy(&runtime), SALTS_SERVICE_HOST_OK);
+
+        check_equal(cmeta_plugin_registry_get_lifecycle(&local_registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+        check_equal(cmeta_plugin_registry_request_stop(&local_registry, ref), CMETA_PLUGIN_OK);
+        {
+            bool quiet = false;
+            check_equal(cmeta_plugin_registry_poll_quiescent(&local_registry, ref, &quiet), CMETA_PLUGIN_OK);
+            check_true(quiet);
+        }
+        check_equal(cmeta_plugin_registry_unload(&local_registry, ref), CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_destroy(&local_registry), CMETA_PLUGIN_OK);
     }
 
     it("rejects forged STOPPED during drain while a live ObjectRef remains") {
