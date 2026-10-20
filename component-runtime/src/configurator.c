@@ -522,6 +522,8 @@ salts_component_status salts_configurator_context_init(
 
     if ((deployment_count != 0u &&
          (deployments == NULL || instances == NULL || activation_order == NULL)) ||
+        (instance_capacity != 0u && instances == NULL) ||
+        (activation_capacity != 0u && activation_order == NULL) ||
         (selection_count != 0u && selections == NULL) ||
         (dependency_capacity != 0u && dependencies == NULL))
         return salts_component_fail(
@@ -565,7 +567,6 @@ salts_component_status salts_configurator_context_init(
                     SALTS_COMPONENT_INDEX_NONE, CMETA_OK);
         }
 
-        salts_configurator_instance_reset(&instances[i]);
     }
 
     for (i = 0u; i < selection_count; ++i) {
@@ -611,6 +612,12 @@ salts_component_status salts_configurator_context_init(
                     consumer_index, i, CMETA_OK);
         }
     }
+
+    /* The entire caller-provided capacity is Configurator scratch storage.
+     * Initialize unused slots too, so a truncated public deployment_count
+     * cannot later conceal an ObjectRef in the tail during reuse. */
+    for (i = 0u; i < instance_capacity; ++i)
+        salts_configurator_instance_reset(&instances[i]);
 
     context->state = SALTS_CONFIGURATOR_CONTEXT_READY;
     return SALTS_COMPONENT_OK;
