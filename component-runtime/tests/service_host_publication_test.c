@@ -680,6 +680,7 @@ suite("ServiceHost generation publication") {
         cmeta_plugin_registry registry = {0};
         cmeta_plugin_ref ref;
         cmeta_plugin_lifecycle_info info;
+        publication_generation_fixture current = {0};
         publication_generation_fixture candidate = {0};
         publication_generation_fixture sentinel = {0};
         salts_service_host_runtime runtime = {0};
@@ -693,21 +694,30 @@ suite("ServiceHost generation publication") {
         check_equal(cmeta_plugin_registry_start(
             &registry, ref), CMETA_PLUGIN_OK);
         check_equal(build_generation(
+            &current, UINT64_C(60), &registry, ref), SALTS_SERVICE_HOST_OK);
+        check_equal(build_generation(
             &candidate, UINT64_C(61), &registry, ref), SALTS_SERVICE_HOST_OK);
         check_equal(salts_service_host_runtime_init(
             &runtime), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_runtime_publish(
+            &runtime, &current.generation, &previous), SALTS_SERVICE_HOST_OK);
+        check_null(previous);
+        check_true(runtime.current == &current.generation);
+        check_equal(runtime.attached_generations, (size_t)1u);
         check_true(candidate.instances[0].active);
         check_true(cmeta_object_ref_valid(&candidate.instances[0].object));
 
         /* A forged BUILT generation state cannot compensate for a graph that
-         * is no longer ACTIVE; failed admission preserves caller outputs. */
+         * is no longer ACTIVE. Failed admission preserves both the published
+         * generation and the caller's out_previous value. */
+        previous = &sentinel.generation;
         candidate.generation.components.state = SALTS_CONFIGURATOR_CONTEXT_STOPPED;
         check_equal(salts_service_host_runtime_publish(
             &runtime, &candidate.generation, &previous),
             SALTS_SERVICE_HOST_INVALID_STATE);
         check_true(previous == &sentinel.generation);
-        check_null(runtime.current);
-        check_equal(runtime.attached_generations, (size_t)0u);
+        check_true(runtime.current == &current.generation);
+        check_equal(runtime.attached_generations, (size_t)1u);
         check_true(candidate.instances[0].active);
         check_true(cmeta_object_ref_valid(&candidate.instances[0].object));
 
@@ -717,8 +727,8 @@ suite("ServiceHost generation publication") {
             &runtime, &candidate.generation, &previous),
             SALTS_SERVICE_HOST_INVALID_STATE);
         check_true(previous == &sentinel.generation);
-        check_null(runtime.current);
-        check_equal(runtime.attached_generations, (size_t)0u);
+        check_true(runtime.current == &current.generation);
+        check_equal(runtime.attached_generations, (size_t)1u);
 
         candidate.activation_order[0] = 0u;
         candidate.instances[0].dependency_offset = SIZE_MAX;
@@ -726,21 +736,28 @@ suite("ServiceHost generation publication") {
             &runtime, &candidate.generation, &previous),
             SALTS_SERVICE_HOST_INVALID_STATE);
         check_true(previous == &sentinel.generation);
-        check_null(runtime.current);
-        check_equal(runtime.attached_generations, (size_t)0u);
+        check_true(runtime.current == &current.generation);
+        check_equal(runtime.attached_generations, (size_t)1u);
 
-        /* Repair only the deliberately corrupted test fields; normal lifecycle
-         * teardown still owns all objects and the Plugin lease. */
+        /* Repair only the deliberately corrupted test fields; valid N+1
+         * publishes atomically, then both generations use normal drain. */
         candidate.instances[0].dependency_offset = 0u;
         check_equal(salts_service_host_runtime_publish(
             &runtime, &candidate.generation, &previous),
             SALTS_SERVICE_HOST_OK);
-        check_null(previous);
+        check_true(previous == &current.generation);
+        check_true(runtime.current == &candidate.generation);
+        check_equal(runtime.attached_generations, (size_t)2u);
+
         check_equal(salts_service_host_runtime_close(
             &runtime, &previous), SALTS_SERVICE_HOST_OK);
         check_true(previous == &candidate.generation);
+        check_null(runtime.current);
+        check_equal(salts_service_host_generation_drain(
+            &runtime, &current.generation), SALTS_SERVICE_HOST_OK);
         check_equal(salts_service_host_generation_drain(
             &runtime, &candidate.generation), SALTS_SERVICE_HOST_OK);
+        check_equal(runtime.attached_generations, (size_t)0u);
         check_equal(salts_service_host_runtime_destroy(
             &runtime), SALTS_SERVICE_HOST_OK);
         check_equal(cmeta_plugin_registry_get_lifecycle(
