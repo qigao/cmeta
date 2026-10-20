@@ -67,6 +67,7 @@ static void reliable_open_ack(void) {
   assert(na == 0u && server.channels[2].state == 0u);
   b.admitted = 1;
   no = 99u;
+  na = 1u; /* Preserve the ACK length; the rejected call correctly zeroed it. */
   assert(cnet_sctp_dcep_input(&client, 0u, ack, na,
       NULL, 0u, &no) == CNET_SCTP_DCEP_OK);
   assert(no == 0u && cnet_sctp_dcep_ready(&client, 0u));
