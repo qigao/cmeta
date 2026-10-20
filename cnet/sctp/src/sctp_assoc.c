@@ -863,12 +863,6 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK)
     return status;
-  if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
-      s->t5_shutdown_deadline_ms != 0u &&
-      now >= s->t5_shutdown_deadline_ms) {
-    status = shutdown_t5_abort(s, now, output, cap, written);
-    return status == CNET_SCTP_ASSOC_EMPTY ? CNET_SCTP_ASSOC_OK : status;
-  }
   if (cnet_sctp_wire_decode(packet, packet_size, &header, &decoder) !=
       CNET_SCTP_WIRE_OK) return CNET_SCTP_ASSOC_PROTOCOL;
   if (header.source_port != s->config.remote_port ||
@@ -885,6 +879,15 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       (chunk.type != SCTP_TYPE_INIT &&
        header.verification_tag != s->local_tag))
     return CNET_SCTP_ASSOC_PROTOCOL;
+  /* A packet-triggered T5 action is also a state transition. Do not let a
+   * wrong-tag packet trigger it; the Owner's advance() path remains the
+   * independent way to service an expired deadline. */
+  if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+      s->t5_shutdown_deadline_ms != 0u &&
+      now >= s->t5_shutdown_deadline_ms) {
+    status = shutdown_t5_abort(s, now, output, cap, written);
+    return status == CNET_SCTP_ASSOC_EMPTY ? CNET_SCTP_ASSOC_OK : status;
+  }
   /* Once the header/tag gate passes, retain the monotonic anti-rollback
    * watermark even if cookie authentication or a later chunk check fails. */
   s->last_time_ms = now;
