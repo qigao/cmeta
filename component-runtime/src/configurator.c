@@ -146,6 +146,24 @@ static bool salts_configurator_object_ref_empty(
            object->lifecycle == NULL;
 }
 
+static bool salts_configurator_context_zero_is_clear(
+    const salts_configurator_context *context) {
+    return context != NULL &&
+           context->state == SALTS_CONFIGURATOR_CONTEXT_ZERO &&
+           context->deployments == NULL &&
+           context->deployment_count == 0u &&
+           context->selections == NULL &&
+           context->selection_count == 0u &&
+           context->instances == NULL &&
+           context->instance_capacity == 0u &&
+           context->dependencies == NULL &&
+           context->dependency_capacity == 0u &&
+           context->dependency_count == 0u &&
+           context->activation_order == NULL &&
+           context->activation_capacity == 0u &&
+           context->activation_count == 0u;
+}
+
 static bool salts_configurator_instances_settled(
     const salts_configurator_context *context) {
     size_t i;
@@ -380,6 +398,11 @@ salts_component_status salts_configurator_context_init(
      * reusable state carrying entries is inconsistent and may still own
      * ObjectRefs; do not overwrite its teardown authority. */
     if (context->activation_count != 0u)
+        return SALTS_COMPONENT_INVALID_STATE;
+    /* ZERO is valid only as the canonical empty initial representation. Merely
+     * forging the enum must not erase retained arrays or ObjectRef ownership. */
+    if (context->state == SALTS_CONFIGURATOR_CONTEXT_ZERO &&
+        !salts_configurator_context_zero_is_clear(context))
         return SALTS_COMPONENT_INVALID_STATE;
     if ((context->state == SALTS_CONFIGURATOR_CONTEXT_STOPPED ||
          context->state == SALTS_CONFIGURATOR_CONTEXT_FAILED) &&
