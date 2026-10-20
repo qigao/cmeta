@@ -185,10 +185,12 @@ static bool salts_configurator_instances_settled(
         !salts_configurator_storage_detached(context))
         return false;
     if (context->deployment_count > context->instance_capacity ||
-        (context->deployment_count != 0u && context->instances == NULL))
+        (context->instance_capacity != 0u && context->instances == NULL))
         return false;
 
-    for (i = 0u; i < context->deployment_count; ++i) {
+    /* Scan the whole backing store. deployment_count is caller-owned state
+     * and truncating it must not hide a still-live tail ObjectRef. */
+    for (i = 0u; i < context->instance_capacity; ++i) {
         const salts_configurator_instance *instance = &context->instances[i];
         if (instance->active ||
             !salts_configurator_object_ref_empty(&instance->object))
@@ -349,6 +351,8 @@ static bool salts_configurator_activation_plan_valid(
         context->deployment_count > context->activation_capacity ||
         context->activation_count != context->deployment_count ||
         context->dependency_count > context->dependency_capacity ||
+        (context->instance_capacity != 0u && context->instances == NULL) ||
+        (context->activation_capacity != 0u && context->activation_order == NULL) ||
         (context->deployment_count != 0u &&
          (context->deployments == NULL || context->instances == NULL ||
           context->activation_order == NULL)) ||
@@ -379,6 +383,15 @@ static bool salts_configurator_activation_plan_valid(
     }
     if (expected_dependency_offset != context->dependency_count)
         return false;
+
+    for (i = context->deployment_count; i < context->instance_capacity; ++i) {
+        const salts_configurator_instance *instance = &context->instances[i];
+        if (instance->active ||
+            !salts_configurator_object_ref_empty(&instance->object) ||
+            instance->dependency_offset != 0u ||
+            instance->dependency_count != 0u)
+            return false;
+    }
 
     for (i = 0u; i < context->activation_count; ++i) {
         const size_t component_index = context->activation_order[i];
@@ -633,6 +646,8 @@ static bool salts_configurator_ready_context_valid(
         context->deployment_count > context->activation_capacity ||
         context->dependency_count != 0u ||
         context->activation_count != 0u ||
+        (context->instance_capacity != 0u && context->instances == NULL) ||
+        (context->activation_capacity != 0u && context->activation_order == NULL) ||
         (context->deployment_count != 0u &&
          (context->deployments == NULL || context->instances == NULL ||
           context->activation_order == NULL)) ||
@@ -659,6 +674,15 @@ static bool salts_configurator_ready_context_valid(
                     deployment->provider->component->stable_id,
                     context->deployments[j].provider->component->stable_id) == 0)
                 return false;
+    }
+
+    for (i = context->deployment_count; i < context->instance_capacity; ++i) {
+        const salts_configurator_instance *instance = &context->instances[i];
+        if (instance->active ||
+            !salts_configurator_object_ref_empty(&instance->object) ||
+            instance->dependency_offset != 0u ||
+            instance->dependency_count != 0u)
+            return false;
     }
 
     for (i = 0u; i < context->selection_count; ++i) {
