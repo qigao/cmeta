@@ -878,6 +878,14 @@ salts_service_host_status salts_service_host_generation_drain(
         component_status =
             salts_configurator_context_stop(&generation->components);
 
+    /* A FAILED+STOPPED state is accepted for retry only after an earlier
+     * successful graph stop. The public state field is not proof of that:
+     * confirm the retained instance prefix is settled before releasing any
+     * Plugin lease or clearing generation storage. */
+    if (component_status == SALTS_COMPONENT_OK &&
+        !service_host_components_settled(&generation->components))
+        component_status = SALTS_COMPONENT_INVALID_STATE;
+
     if (component_status != SALTS_COMPONENT_OK) {
         generation->failure.component_status = component_status;
         cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
