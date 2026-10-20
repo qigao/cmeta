@@ -1196,7 +1196,8 @@ static void unsupported_control_preserves_time_watermark(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
   static const uint8_t value[] = {0xA5u, 0x5Au};
-  const uint8_t types[] = {4u, 65u}; /* HEARTBEAT and registered DTLS */
+  /* HEARTBEAT, registered AUTH, temporary registered DTLS, and PAD. */
+  const uint8_t types[] = {4u, 15u, 65u, 132u};
   size_t i;
   setup(&a, &b, &ca, &cb);
   for (i = 0u; i < sizeof(types); ++i) {
