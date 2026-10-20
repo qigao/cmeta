@@ -428,6 +428,7 @@ static bool service_host_generation_publishable(
     const salts_configurator_context *components;
     const salts_service_host_generation_storage *storage;
     size_t i;
+    size_t j;
 
     if (generation == NULL)
         return false;
@@ -470,11 +471,27 @@ static bool service_host_generation_publishable(
             return false;
     }
 
+    /* Activation order is used later during stop/rollback. Reject any
+     * out-of-range or duplicate index before this generation gains runtime
+     * authority, rather than risking an out-of-bounds teardown. */
+    for (i = 0u; i < components->activation_count; ++i) {
+        const size_t component_index = components->activation_order[i];
+        if (component_index >= components->deployment_count)
+            return false;
+        for (j = 0u; j < i; ++j)
+            if (components->activation_order[j] == component_index)
+                return false;
+    }
+
     for (i = 0u; i < components->deployment_count; ++i) {
-        if (salts_configurator_deployment_status(
+        const salts_configurator_instance *instance = &components->instances[i];
+        if (instance->dependency_offset > components->dependency_count ||
+            instance->dependency_count >
+                components->dependency_count - instance->dependency_offset ||
+            salts_configurator_deployment_status(
                 &components->deployments[i]) != SALTS_COMPONENT_OK ||
-            !components->instances[i].active ||
-            !cmeta_object_ref_valid(&components->instances[i].object))
+            !instance->active ||
+            !cmeta_object_ref_valid(&instance->object))
             return false;
     }
     return true;
