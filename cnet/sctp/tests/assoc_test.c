@@ -265,6 +265,14 @@ static void clock_owner_and_timeout(void) {
   int exists = 0;
   setup(&a, &b, &ca, &cb);
   ca.on_owner = 0;
+  n = 99u;
+  assert(cnet_sctp_assoc_input(&a, 0u, init, sizeof(init), out, sizeof(out), &n) ==
+         CNET_SCTP_ASSOC_OWNER);
+  assert(n == 0u);
+  n = 99u;
+  assert(cnet_sctp_assoc_advance(&a, 0u, out, sizeof(out), &n) ==
+         CNET_SCTP_ASSOC_OWNER);
+  assert(n == 0u);
   assert(cnet_sctp_assoc_start(&a, 0u, init, sizeof(init), &init_n) ==
          CNET_SCTP_ASSOC_OWNER);
   ca.on_owner = 1;
