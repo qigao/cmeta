@@ -897,6 +897,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   cnet_sctp_wire_chunk chunk;
   cnet_sctp_wire_chunk second;
   cnet_sctp_assoc_status status;
+  uint64_t prior_time;
   if (written) *written = 0u;
   status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
@@ -958,6 +959,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   /* Framing, ports, tag and supported bundle shape are now preflighted.
    * Authentication and state-specific validation may still reject the packet,
    * but malformed bundle members above must not advance this watermark. */
+  prior_time = s->last_time_ms;
   s->last_time_ms = now;
   switch (chunk.type) {
     case 0u: /* DATA */
@@ -1026,7 +1028,11 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       s->last_time_ms = now;
       return CNET_SCTP_ASSOC_OK;
     default:
-      return CNET_SCTP_ASSOC_PROTOCOL; /* unsupported control chunk */
+      /* Unsupported control chunks have no handler-side effects. Roll back
+       * the provisional time watermark so rejection is observationally inert.
+       * Unknown-Chunk RFC action-bit handling remains a separate open gate. */
+      s->last_time_ms = prior_time;
+      return CNET_SCTP_ASSOC_PROTOCOL;
   }
 }
 
