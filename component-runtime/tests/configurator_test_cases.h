@@ -261,6 +261,80 @@ suite("Salts static Component Configurator") {
         (void)value;
     }
 
+    it("rejects reuse when truncated deployment_count hides a live tail ObjectRef") {
+        test_provider_state first;
+        test_provider_state second;
+        salts_component_provider_binding providers[2];
+        salts_configurator_deployment deployments[2];
+        salts_configurator_instance instances[2];
+        size_t order[2];
+        salts_configurator_context context = SALTS_CONFIGURATOR_CONTEXT_INIT;
+
+        test_provider_state_init(&first, 13, NULL);
+        test_provider_state_init(&second, 17, NULL);
+        providers[0] = TEST_PROVIDER_BINDING(
+            TestLogger, &first, test_logger_create);
+        providers[1] = TEST_PROVIDER_BINDING(
+            TestLoggerAlt, &second, test_logger_create);
+        deployments[0] = TEST_DEPLOYMENT(&providers[0], NULL, NULL);
+        deployments[1] = TEST_DEPLOYMENT(&providers[1], NULL, NULL);
+
+        check_equal(salts_configurator_context_init(
+            &context, deployments, 2u, NULL, 0u, instances, 2u,
+            NULL, 0u, order, 2u), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_start(&context), SALTS_COMPONENT_OK);
+        check_true(instances[0].active);
+        check_true(instances[1].active);
+        check_true(cmeta_object_ref_valid(&instances[0].object));
+        check_true(cmeta_object_ref_valid(&instances[1].object));
+
+        /* Settle the visible prefix slot explicitly, leaving the later slot
+         * as the only owner. A prefix-only reuse check would miss this lease. */
+        providers[0].deactivate(providers[0].provider_context, &instances[0].object);
+        instances[0].active = false;
+        cmeta_object_release(&instances[0].object);
+        check_false(cmeta_object_ref_valid(&instances[0].object));
+        check_false(instances[0].active);
+        check_true(instances[1].active);
+        check_true(cmeta_object_ref_valid(&instances[1].object));
+        check_equal(first.destroys, 1u);
+        check_equal(second.destroys, 0u);
+
+        context.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+        context.failure.phase = SALTS_CONFIGURATOR_PHASE_ACTIVATE;
+        context.activation_count = 0u;
+        context.deployment_count = 1u;
+        check_equal(salts_configurator_context_init(
+            &context, deployments, 2u, NULL, 0u, instances, 2u,
+            NULL, 0u, order, 2u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
+        check_equal(context.deployment_count, (size_t)1u);
+        check_false(instances[0].active);
+        check_false(cmeta_object_ref_valid(&instances[0].object));
+        check_true(instances[1].active);
+        check_true(cmeta_object_ref_valid(&instances[1].object));
+        check_equal(second.destroys, 0u);
+
+        /* After repairing the remaining owner, reuse is legal and normal
+         * lifecycle cleanup still destroys each newly created value once. */
+        providers[1].deactivate(providers[1].provider_context, &instances[1].object);
+        instances[1].active = false;
+        cmeta_object_release(&instances[1].object);
+        check_false(cmeta_object_ref_valid(&instances[1].object));
+        check_equal(second.destroys, 1u);
+        context.deployment_count = 2u;
+        check_equal(salts_configurator_context_init(
+            &context, deployments, 2u, NULL, 0u, instances, 2u,
+            NULL, 0u, order, 2u), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_start(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_stop(&context), SALTS_COMPONENT_OK);
+        check_equal(first.destroys, 2u);
+        check_equal(second.destroys, 2u);
+        check_null(context.instances);
+    }
+
     it("rejects provider binding ABI mismatch before resolution") {
         test_provider_state logger;
         salts_component_provider_binding provider;
