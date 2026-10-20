@@ -854,10 +854,11 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   cnet_sctp_wire_decoder decoder;
   cnet_sctp_wire_chunk chunk;
   cnet_sctp_wire_chunk second;
-  cnet_sctp_assoc_status status = guard(s);
+  cnet_sctp_assoc_status status;
+  if (written) *written = 0u;
+  status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (!packet || !output || !written) return CNET_SCTP_ASSOC_INVALID;
-  *written = 0u;
   if (s->state == CNET_SCTP_ASSOC_STOPPED || s->state == CNET_SCTP_ASSOC_FAILED)
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK)
@@ -967,11 +968,12 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
 
 cnet_sctp_assoc_status cnet_sctp_assoc_advance(cnet_sctp_assoc *s,
     uint64_t now, uint8_t *output, size_t cap, size_t *written) {
-  cnet_sctp_assoc_status status = guard(s);
+  cnet_sctp_assoc_status status;
   uint64_t next_rto;
+  if (written) *written = 0u;
+  status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (!output || !written) return CNET_SCTP_ASSOC_INVALID;
-  *written = 0u;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
   if (s->state == CNET_SCTP_ASSOC_STOPPED || s->state == CNET_SCTP_ASSOC_FAILED)
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
