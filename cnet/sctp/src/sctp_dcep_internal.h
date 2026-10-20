@@ -5,6 +5,8 @@
 #include <stdint.h>
 
 /* RFC 8832 DCEP control plane. Private C11, no heap or external timer.
+ * Caller MUST zero-initialize the object before its first init; init checks
+ * the magic value to reject repeated initialization of a live object.
  * All DCEP packets MUST travel as reliable ordered SCTP DATA PPID=50 on
  * their selected SID. Channel close/reuse requires RFC 6525 Stream Reset,
  * not merely deleting a local channel record.
@@ -60,9 +62,11 @@ cnet_sctp_dcep_status cnet_sctp_dcep_open(cnet_sctp_dcep *d,
     void *output, size_t capacity, size_t *written);
 
 /* Complete wire OPEN/ACK only; OPEN on an occupied or wrong-parity SID
- * rejects with no ACK. A successful OPEN returns the one-byte ACK payload.
- * A successful ACK returns zero bytes; caller sends its output using SCTP
- * DATA PPID=50 reliable ordered on the same SID. */
+ * rejects with no ACK. A successful OPEN returns the one-byte ACK payload
+ * and requires non-NULL reply storage. A successful ACK returns zero bytes
+ * and permits reply == NULL. If written is non-NULL, it is zeroed before
+ * every failure return. Caller sends output using SCTP DATA PPID=50 reliable
+ * ordered on the same SID. */
 cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
     uint16_t stream, const void *wire, size_t n,
     void *reply, size_t capacity, size_t *written);
