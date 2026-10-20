@@ -150,6 +150,17 @@ suite("Salts static Component Configurator") {
         check_true(cmeta_object_ref_valid(&instance.object));
         check_equal(logger.destroys, 0u);
 
+        /* ZERO is also public mutable state. It is reusable only if the
+         * context's storage fields are canonically empty. */
+        context.state = SALTS_CONFIGURATOR_CONTEXT_ZERO;
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_ZERO);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(logger.destroys, 0u);
+
         /* Restore the valid live owner state and settle it normally. */
         context.state = SALTS_CONFIGURATOR_CONTEXT_ACTIVE;
         context.activation_count = 1u;
