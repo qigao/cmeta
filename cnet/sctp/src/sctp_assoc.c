@@ -49,6 +49,58 @@ static cnet_sctp_assoc_status guard(cnet_sctp_assoc *s) {
   if (s->in_progress) return CNET_SCTP_ASSOC_BUSY;
   return CNET_SCTP_ASSOC_OK;
 }
+/* RFC-defined and registered extension types are not "unknown" merely
+ * because this bounded Association profile has no handler for them. */
+static int recognized_chunk_type(uint8_t type) {
+  switch (type) {
+    case 0u: case 1u: case 2u: case 3u: case 4u: case 5u:
+    case 6u: case 7u: case 8u: case 9u: case 10u: case 11u:
+    case 12u: case 13u: case 14u:
+    case 64u:  /* I-DATA, RFC 8260 */
+    case 128u: /* ASCONF, RFC 5061 */
+    case 130u: /* RE-CONFIG, RFC 6525 */
+    case 192u: /* FORWARD-TSN, RFC 3758 */
+    case 194u: /* I-FORWARD-TSN, RFC 8260 */
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+/* Handle an unknown single Chunk only after framing, ports and Verification
+ * Tag have been validated. Multi-Chunk packets remain behind the stricter
+ * bundle preflight until the full legal-combination matrix is implemented. */
+static cnet_sctp_assoc_status handle_unknown_single_chunk(
+    cnet_sctp_assoc *s, uint64_t now, const cnet_sctp_wire_chunk *chunk,
+    uint8_t *out, size_t cap, size_t *written) {
+  cnet_sctp_wire_unknown_action action =
+      cnet_sctp_wire_unknown_chunk_action(chunk->type);
+  if (action == CNET_SCTP_WIRE_UNKNOWN_STOP_DISCARD ||
+      action == CNET_SCTP_WIRE_UNKNOWN_SKIP) {
+    s->last_time_ms = now;
+    return CNET_SCTP_ASSOC_OK;
+  }
+  {
+    uint8_t cause[CNET_SCTP_WIRE_MAX_PACKET_BYTES];
+    size_t raw_size = chunk->value_size + 4u;
+    size_t cause_size = raw_size + 4u;
+    size_t response_size = 0u;
+    cnet_sctp_assoc_status status;
+    const uint8_t *raw = chunk->value - 4u;
+    if (raw_size > UINT16_MAX - 4u || cause_size > sizeof(cause))
+      return CNET_SCTP_ASSOC_CAPACITY;
+    wr16(cause, 6u); /* Unrecognized Chunk Type */
+    wr16(cause + 2u, (uint16_t)cause_size);
+    memcpy(cause + 4u, raw, raw_size); /* Type, Flags, Length, Value */
+    status = encode_one(s, s->peer_tag, SCTP_TYPE_ERROR, cause, cause_size,
+        out, cap, &response_size);
+    if (status != CNET_SCTP_ASSOC_OK) return status;
+    *written = response_size;
+    s->last_time_ms = now;
+    return CNET_SCTP_ASSOC_OK;
+  }
+}
+
 static cnet_sctp_assoc_status check_time(cnet_sctp_assoc *s, uint64_t now) {
   return now < s->last_time_ms ? CNET_SCTP_ASSOC_CLOCK : CNET_SCTP_ASSOC_OK;
 }
@@ -940,6 +992,12 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     /* No arbitrary control chunks can be bundled with INIT, Cookie,
      * SHUTDOWN or ABORT in the private Association profile. */
     return CNET_SCTP_ASSOC_PROTOCOL;
+  }
+  /* Unknown Chunk action bits are meaningful only for unrecognized types.
+   * Known-but-unimplemented controls (e.g. HEARTBEAT) still take the
+   * unsupported-control rejection path and must never be misreported. */
+  if (header.chunk_count == 1u && !recognized_chunk_type(chunk.type)) {
+    return handle_unknown_single_chunk(s, now, &chunk, output, cap, written);
   }
   /* A packet-triggered T5 action is also a state transition. Run it only
    * after every Chunk in the bounded packet has passed structural preflight;
