@@ -616,6 +616,83 @@ salts_component_status salts_configurator_context_init(
     return SALTS_COMPONENT_OK;
 }
 
+static bool salts_configurator_ready_context_valid(
+    const salts_configurator_context *context) {
+    size_t i;
+    size_t j;
+
+    if (context == NULL ||
+        context->deployment_count > context->instance_capacity ||
+        context->deployment_count > context->activation_capacity ||
+        context->dependency_count != 0u ||
+        context->activation_count != 0u ||
+        (context->deployment_count != 0u &&
+         (context->deployments == NULL || context->instances == NULL ||
+          context->activation_order == NULL)) ||
+        (context->selection_count != 0u && context->selections == NULL) ||
+        (context->dependency_capacity != 0u && context->dependencies == NULL))
+        return false;
+
+    /* READY is pre-resolution: no instance, dependency slice, or activation
+     * plan may already own lifecycle state. Check bounds and backing storage
+     * before the resolver dereferences caller-owned arrays. */
+    for (i = 0u; i < context->deployment_count; ++i) {
+        const salts_configurator_instance *instance = &context->instances[i];
+        const salts_configurator_deployment *deployment = &context->deployments[i];
+
+        if (salts_configurator_deployment_status(deployment) != SALTS_COMPONENT_OK ||
+            instance->active ||
+            !salts_configurator_object_ref_empty(&instance->object) ||
+            instance->dependency_offset != 0u ||
+            instance->dependency_count != 0u)
+            return false;
+
+        for (j = 0u; j < i; ++j)
+            if (strcmp(
+                    deployment->provider->component->stable_id,
+                    context->deployments[j].provider->component->stable_id) == 0)
+                return false;
+    }
+
+    for (i = 0u; i < context->selection_count; ++i) {
+        const salts_configurator_selection *selection = &context->selections[i];
+        size_t consumer_index;
+        size_t provider_index;
+
+        if (selection->consumer_component_id == NULL ||
+            selection->consumer_component_id[0] == '\0' ||
+            selection->provider_component_id == NULL ||
+            selection->provider_component_id[0] == '\0' ||
+            !cmeta_interface_desc_valid(selection->requirement))
+            return false;
+
+        consumer_index = salts_component_find_id(
+            context, selection->consumer_component_id);
+        provider_index = salts_component_find_id(
+            context, selection->provider_component_id);
+        if (consumer_index == SALTS_COMPONENT_INDEX_NONE ||
+            provider_index == SALTS_COMPONENT_INDEX_NONE ||
+            !salts_component_requires(
+                context->deployments[consumer_index].provider->component,
+                selection->requirement) ||
+            !salts_component_provides(
+                context->deployments[provider_index].provider->component,
+                selection->requirement))
+            return false;
+
+        for (j = 0u; j < i; ++j)
+            if (strcmp(
+                    context->selections[j].consumer_component_id,
+                    selection->consumer_component_id) == 0 &&
+                cmeta_interface_desc_equal(
+                    context->selections[j].requirement,
+                    selection->requirement))
+                return false;
+    }
+
+    return true;
+}
+
 salts_component_status salts_configurator_context_resolve(
     salts_configurator_context *context) {
     size_t required_total = 0u;
@@ -624,7 +701,8 @@ salts_component_status salts_configurator_context_resolve(
 
     if (context == NULL)
         return SALTS_COMPONENT_INVALID_ARGUMENT;
-    if (context->state != SALTS_CONFIGURATOR_CONTEXT_READY)
+    if (context->state != SALTS_CONFIGURATOR_CONTEXT_READY ||
+        !salts_configurator_ready_context_valid(context))
         return SALTS_COMPONENT_INVALID_STATE;
 
     context->failure = salts_configurator_failure_none();
