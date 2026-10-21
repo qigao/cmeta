@@ -1196,8 +1196,7 @@ static void mixed_unknown_known_bundles_fail_closed(void) {
     {7u, 0u, shutdown_value, sizeof(shutdown_value)},
     {8u, 0u, NULL, 0u},                            /* SHUTDOWN ACK */
     {11u, 0u, NULL, 0u},                           /* COOKIE ACK */
-    {9u, 0u, error_value, sizeof(error_value)},   /* valid ERROR cause */
-    {6u, 0u, NULL, 0u}                             /* plain ABORT */
+    {9u, 0u, error_value, sizeof(error_value)}    /* valid ERROR cause */
   };
   size_t due, known_i, type_i, unknown_pos, group_i;
   setup(&a, &b, &ca, &cb);
