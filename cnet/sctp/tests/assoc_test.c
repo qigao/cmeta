@@ -198,6 +198,42 @@ static void retag_single_chunk_flags(uint8_t *packet, size_t size,
   memcpy(packet, revised, written);
 }
 
+/* A stateful caller is permitted to retry the identical INIT at the same
+ * monotonic time when the INIT ACK does not fit. A stateless response must
+ * not silently commit the Association time watermark on CAPACITY. */
+static void init_ack_capacity_preserves_input_watermark(void) {
+  cnet_sctp_assoc a, b, before;
+  test_context ca, cb;
+  uint8_t packet[1200], output[1200];
+  size_t packet_n = 0u, output_n = 123u, i;
+  const uint64_t now = 20u;
+
+  setup(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_start(&a, 10u, packet, sizeof(packet),
+      &packet_n) == CNET_SCTP_ASSOC_OK);
+  assert(packet_n == 32u && b.state == CNET_SCTP_ASSOC_CLOSED);
+  memcpy(&before, &b, sizeof(before));
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&b, now, packet, packet_n, output, 8u,
+      &output_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(output_n == 0u && memcmp(&b, &before, sizeof(before)) == 0);
+  for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+  assert(cb.mac_calls == 0); /* early output capacity gate, no signing */
+
+  assert(cnet_sctp_assoc_input(&b, now, packet, packet_n,
+      output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
+  assert(output_n > 0u && b.state == CNET_SCTP_ASSOC_CLOSED &&
+      b.last_time_ms == now && cb.mac_calls > 0);
+  output_n = 123u;
+  assert(cnet_sctp_assoc_input(&b, now - 1u, packet, packet_n,
+      output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_CLOCK);
+  assert(output_n == 0u && b.last_time_ms == now);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void normal_handshake(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -2099,6 +2135,7 @@ static void shutdown_capacity_retries_are_transactional(void) {
 }
 
 int main(void) {
+  init_ack_capacity_preserves_input_watermark();
   shutdown_capacity_retries_are_transactional();
   malformed_shutdown_bundle_does_not_preempt_t5();
   mixed_unknown_known_bundles_fail_closed();

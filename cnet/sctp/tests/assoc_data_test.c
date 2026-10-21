@@ -123,6 +123,48 @@ static void retag_control_packet(uint8_t *packet, size_t size,
   memcpy(packet, modified, written);
 }
 
+/* Output backpressure for a single accepted DATA Chunk must not move
+ * the Association Owner clock while its bounded DATA TCB is unchanged.
+ * The same packet/time and a larger SACK buffer must succeed once only. */
+static void single_data_sack_capacity_preserves_input_watermark(void) {
+  cnet_sctp_assoc a, b, before;
+  test_context ca = {0}, cb = {0};
+  const uint8_t message = 'w';
+  uint8_t packet[1200], sack[1200], reply[1200], payload[8];
+  cnet_sctp_data_message meta = {0};
+  size_t packet_n = 0u, sack_n = 123u, reply_n = 0u, payload_n = 0u;
+  size_t i;
+
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_send_message(&a, 6u, 0u, 53u, 0,
+      &message, 1u, packet, sizeof(packet), &packet_n) ==
+      CNET_SCTP_ASSOC_OK);
+  memcpy(&before, &b, sizeof(before));
+  memset(sack, 0xCC, sizeof(sack));
+  assert(cnet_sctp_assoc_input(&b, 7u, packet, packet_n,
+      sack, 1u, &sack_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(sack_n == 0u && memcmp(&b, &before, sizeof(before)) == 0);
+  for (i = 0u; i < sizeof(sack); ++i) assert(sack[i] == 0xCCu);
+  assert(cnet_sctp_assoc_input(&b, 7u, packet, packet_n,
+      sack, sizeof(sack), &sack_n) == CNET_SCTP_ASSOC_OK);
+  assert(sack_n > 0u && b.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+      b.last_time_ms == 7u && b.data.last_time_ms == 7u &&
+      b.data.buffered_rx == 1u);
+  assert(cnet_sctp_assoc_input(&a, 8u, sack, sack_n,
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_ASSOC_OK);
+  assert(reply_n == 0u && a.data.in_flight == 0u);
+  assert(cnet_sctp_assoc_take_message(&b, &meta, payload,
+      sizeof(payload), &payload_n) == CNET_SCTP_ASSOC_OK);
+  assert(payload_n == 1u && payload[0] == message &&
+      meta.stream_sequence == 0u && meta.stream_id == 0u);
+  assert(cnet_sctp_assoc_take_message(&b, &meta, payload,
+      sizeof(payload), &payload_n) == CNET_SCTP_ASSOC_EMPTY);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void real_assoc_send_sack_and_t3(void) {
   cnet_sctp_assoc a, b;
   test_context ca = {0}, cb = {0};
@@ -1271,6 +1313,7 @@ static void shutdown_sent_duplicate_data_does_not_reset_budget(void) {
 }
 
 int main(void) {
+  single_data_sack_capacity_preserves_input_watermark();
   post_cookie_bundled_data();
   shutdown_no_inflight_and_t2();
   shutdown_t5_absolute_guard();

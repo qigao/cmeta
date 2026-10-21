@@ -338,15 +338,15 @@ static cnet_sctp_assoc_status data_result(cnet_sctp_data_status status) {
   }
 }
 
-/* Input dispatch provisionally advances last_time_ms before calling a
- * bounded handler. Only OK commits ordinary input; CAPACITY preserves the
- * valid packet's invocation watermark for retryable output backpressure, and
- * EXPIRED preserves the absolute expiry decision. Every other result rolls
- * the provisional watermark back, including future error/status additions. */
+/* Dispatch may provisionally set the Owner's monotonic input watermark.
+ * Only a completed input (OK) or terminal expiry (EXPIRED) commits it.
+ * In particular, a CAPACITY refusal from a bounded DATA/SACK handler or
+ * staged handshake response published NO reply and NO TCB transaction:
+ * the caller must be able to retry with a larger output at the SAME time,
+ * without an otherwise invisible clock advance. */
 static cnet_sctp_assoc_status dispatch_result(cnet_sctp_assoc *s,
     cnet_sctp_assoc_status status, uint64_t prior_time) {
   if (status != CNET_SCTP_ASSOC_OK &&
-      status != CNET_SCTP_ASSOC_CAPACITY &&
       status != CNET_SCTP_ASSOC_EXPIRED)
     s->last_time_ms = prior_time;
   return status;
