@@ -540,8 +540,6 @@ static void karn_gap_reneging_restore(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
-/* Two missing TSNs must not cause repeated congestion-window reductions
- * inside the same recovery epoch. Each retransmit remains Owner-driven. */
 /* Deterministic network adversary: lose two lower TSNs, deliver three
  * higher TSNs out of order, duplicate each DATA and replay its SACK.
  * The expected Gap/duplicate fields are authored independently of the
@@ -605,8 +603,21 @@ static void reorder_duplicate_sacks_require_distinct_loss_evidence(void) {
     assert(a.tx[1].missing_reports == stage + 1u);
     assert(a.in_flight == 4u - stage);
 
-    /* The duplicate receiver packet reports one duplicate TSN but
-     * consumes neither another receive ticket nor another byte. */
+    /* A duplicate DATA also owes a duplicate SACK. If its response
+     * cannot fit, input and advertised window must remain uncommitted;
+     * the same clock tick and packet can then be retried without loss. */
+    {
+      uint8_t tiny[1] = {0xCCu};
+      size_t refused = 123u;
+      uint64_t before = b.last_time_ms;
+      assert(cnet_sctp_data_input(&b, received_at + 2u,
+          packets[index], np[index], tiny, sizeof(tiny), &refused) ==
+          CNET_SCTP_DATA_CAPACITY);
+      assert(refused == 0u && tiny[0] == 0xCCu);
+      assert(b.last_time_ms == before);
+      assert(b.cumulative_rx == 99u && b.rx_gaps == expected_mask);
+      assert(b.buffered_rx == stage + 1u);
+    }
     assert(cnet_sctp_data_input(&b, received_at + 2u,
         packets[index], np[index], sack, sizeof(sack), &ns) ==
         CNET_SCTP_DATA_OK);
@@ -707,6 +718,8 @@ static void reorder_duplicate_sacks_require_distinct_loss_evidence(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
+/* Two missing TSNs must not cause repeated congestion-window reductions
+ * inside the same recovery epoch. Each retransmit remains Owner-driven. */
 static void multi_loss_one_recovery_epoch(void) {
   cnet_sctp_data a, b;
   test_owner oa = {0}, ob = {0};
