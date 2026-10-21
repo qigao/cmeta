@@ -1487,6 +1487,74 @@ static void unknown_report_variable_lengths_preserve_tlv_and_padding(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* Wire accepts at most 128 Chunks in this private bounded profile.
+ * An all-unknown, all-SKIP packet must traverse complete Association
+ * preflight without allocating a report or touching the DATA engine.
+ * An independently appended 129th Chunk with a valid CRC fails before
+ * dispatch, with no output or time/state commit. */
+static void max_unknown_skip_chunk_count_is_transactional(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  cnet_sctp_wire_chunk chunks[CNET_SCTP_WIRE_MAX_CHUNKS];
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  uint8_t packet[12u + 4u * (CNET_SCTP_WIRE_MAX_CHUNKS + 1u)];
+  uint8_t output[64];
+  size_t packet_n = 0u, output_n = 17u, i;
+  uint64_t previous_time;
+  uint32_t checksum;
+
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_ESTABLISHED;
+  a.peer_tag = b.local_tag;
+  for (i = 0u; i < CNET_SCTP_WIRE_MAX_CHUNKS; ++i) {
+    chunks[i].type = 0xA2u;
+    chunks[i].flags = 0x5Au;
+    chunks[i].value = NULL;
+    chunks[i].value_size = 0u;
+  }
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks,
+      CNET_SCTP_WIRE_MAX_CHUNKS, packet, sizeof(packet), &packet_n) ==
+      CNET_SCTP_WIRE_OK);
+  assert(packet_n == 12u + 4u * CNET_SCTP_WIRE_MAX_CHUNKS);
+  memset(output, 0xCC, sizeof(output));
+  previous_time = a.last_time_ms;
+  assert(cnet_sctp_assoc_input(&a, previous_time + 1u, packet, packet_n,
+      output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
+  assert(output_n == 0u && output[0] == 0xCCu &&
+      output[sizeof(output) - 1u] == 0xCCu);
+  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+      a.last_time_ms == previous_time + 1u);
+
+  packet[packet_n] = 0xA2u;
+  packet[packet_n + 1u] = 0x5Au;
+  packet[packet_n + 2u] = 0u;
+  packet[packet_n + 3u] = 4u;
+  memset(packet + 8u, 0, 4u);
+  checksum = cnet_sctp_wire_crc32c(packet, packet_n + 4u);
+  packet[8] = (uint8_t)checksum;
+  packet[9] = (uint8_t)(checksum >> 8);
+  packet[10] = (uint8_t)(checksum >> 16);
+  packet[11] = (uint8_t)(checksum >> 24);
+  assert(cnet_sctp_wire_decode(packet, packet_n + 4u,
+      &header, &decoder) == CNET_SCTP_WIRE_CAPACITY);
+
+  previous_time = a.last_time_ms;
+  output_n = 17u;
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&a, previous_time + 1u, packet,
+      packet_n + 4u, output, sizeof(output), &output_n) ==
+      CNET_SCTP_ASSOC_PROTOCOL);
+  assert(output_n == 0u && output[0] == 0xCCu &&
+      output[sizeof(output) - 1u] == 0xCCu);
+  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+      a.last_time_ms == previous_time);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void unknown_report_dense_capacity_boundary(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -1850,6 +1918,7 @@ int main(void) {
   unknown_multi_chunk_actions_are_transactional();
   unknown_report_variable_lengths_preserve_tlv_and_padding();
   unknown_report_dense_capacity_boundary();
+  max_unknown_skip_chunk_count_is_transactional();
   error_and_abort_never_create_response_loops();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();

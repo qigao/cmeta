@@ -144,6 +144,69 @@ static void test_multiple_chunks_and_padding(void) {
   assert(output.value_size == 3u);
 }
 
+/* The 128-Chunk cap is this library's bounded Wire profile, not an
+ * RFC-wide maximum. Probe the exact admitted limit and one beyond it.
+ * The CRC for the 128-Chunk vector was calculated independently from its
+ * fixed port/tag/type/flags/length bytes (CRC32C = 0xd0465356). */
+static void test_max_chunk_count_and_no_partial_decode(void) {
+  cnet_sctp_wire_chunk chunks[CNET_SCTP_WIRE_MAX_CHUNKS + 1u];
+  cnet_sctp_wire_header header, before_header;
+  cnet_sctp_wire_decoder decoder, before_decoder;
+  cnet_sctp_wire_chunk view = {0};
+  uint8_t packet[12u + 4u * (CNET_SCTP_WIRE_MAX_CHUNKS + 1u)];
+  const size_t full_count = CNET_SCTP_WIRE_MAX_CHUNKS;
+  const size_t full_size = 12u + 4u * CNET_SCTP_WIRE_MAX_CHUNKS;
+  size_t written = 99u, i;
+
+  for (i = 0u; i < full_count + 1u; ++i) {
+    chunks[i].type = 0xA2u; /* RFC 9260 §3.2 unknown SKIP action bits */
+    chunks[i].flags = 0x5Au;
+    chunks[i].value = NULL;
+    chunks[i].value_size = 0u;
+  }
+  memset(packet, 0xCC, sizeof(packet));
+  assert(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
+      chunks, full_count + 1u, packet, sizeof(packet), &written) ==
+      CNET_SCTP_WIRE_CAPACITY);
+  assert(written == 0u && packet[0] == 0xCCu &&
+      packet[sizeof(packet) - 1u] == 0xCCu);
+
+  assert(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
+      chunks, full_count, packet, full_size - 1u, &written) ==
+      CNET_SCTP_WIRE_CAPACITY);
+  assert(written == 0u && packet[0] == 0xCCu);
+  assert(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
+      chunks, full_count, packet, full_size, &written) ==
+      CNET_SCTP_WIRE_OK);
+  assert(written == full_size);
+  assert(packet[8] == 0x56u && packet[9] == 0x53u &&
+      packet[10] == 0x46u && packet[11] == 0xD0u);
+  assert(cnet_sctp_wire_decode(packet, written, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK && header.chunk_count == full_count);
+  for (i = 0u; i < full_count; ++i) {
+    assert(cnet_sctp_wire_next_chunk(&decoder, &view) == CNET_SCTP_WIRE_OK);
+    assert(view.type == 0xA2u && view.flags == 0x5Au &&
+        view.value_size == 0u);
+  }
+  assert(cnet_sctp_wire_next_chunk(&decoder, &view) == CNET_SCTP_WIRE_END);
+
+  /* A separate, CRC-valid 129th Chunk reaches the decode count gate.
+   * Caller-owned parsed outputs are only published after full validation. */
+  packet[full_size] = 0xA2u;
+  packet[full_size + 1u] = 0x5Au;
+  packet[full_size + 2u] = 0u;
+  packet[full_size + 3u] = 4u;
+  seal(packet, full_size + 4u);
+  memset(&header, 0xCC, sizeof(header));
+  memset(&decoder, 0xCC, sizeof(decoder));
+  before_header = header;
+  before_decoder = decoder;
+  assert(cnet_sctp_wire_decode(packet, full_size + 4u,
+      &header, &decoder) == CNET_SCTP_WIRE_CAPACITY);
+  assert(memcmp(&header, &before_header, sizeof(header)) == 0 &&
+      memcmp(&decoder, &before_decoder, sizeof(decoder)) == 0);
+}
+
 static void test_reject_and_no_partial_write(void) {
   static const uint8_t init[] = {
     0x11u, 0x22u, 0x33u, 0x44u, 0, 0, 0, 1,
@@ -214,6 +277,7 @@ static void test_truncation_and_mutations(void) {
 }
 
 int main(void) {
+  test_max_chunk_count_and_no_partial_decode();
   test_unknown_chunk_action_bits();
   test_unknown_chunk_types_in_packet_order();
   test_crc_and_init();
