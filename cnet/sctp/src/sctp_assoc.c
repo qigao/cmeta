@@ -383,8 +383,9 @@ static int assoc_chunk_shape_valid(const cnet_sctp_wire_chunk *chunk) {
   if (!chunk) return 0;
   switch (chunk->type) {
     case 0u: /* DATA */
-      return (chunk->flags & 0xF8u) == 0u &&
-          chunk->value_size >= 13u;
+      /* RFC 9260 3.3.1: the high reserved bits are ignored and I=1
+       * requests immediate acknowledgement. Both are legal on receive. */
+      return chunk->value_size >= 13u;
     case SCTP_TYPE_INIT:
     case SCTP_TYPE_INIT_ACK:
       if (chunk->flags != 0u ||

@@ -1012,7 +1012,8 @@ static void post_cookie_bundled_data(void) {
   }
   assert(a.data.next_tsn == ca.tsn + 3u); /* rollover: fffffffe -> 1 */
   memcpy(broken, chunks, sizeof(broken));
-  broken[2].flags = 0x80u;
+  /* DATA without user bytes is malformed. Reserved/I bits are NOT. */
+  broken[2].value_size = 12u;
   assert(cnet_sctp_wire_encode(a.config.local_port,
       a.config.remote_port, a.peer_tag, broken, 3u,
       combined, sizeof(combined), &n) == CNET_SCTP_WIRE_OK);
@@ -1020,6 +1021,9 @@ static void post_cookie_bundled_data(void) {
       sack, sizeof(sack), &ns) == CNET_SCTP_ASSOC_PROTOCOL);
   assert(ns == 0u && b.data.buffered_rx == 0u &&
       b.data.cumulative_rx == ca.tsn - 1u);
+  /* The private sender transmits clean flags, while the receiver must
+   * accept DATA reserved bits and I=1 inside a legal DATA bundle. */
+  chunks[1].flags = (uint8_t)(chunks[1].flags | 0xF8u);
   assert(cnet_sctp_wire_encode(a.config.local_port,
       a.config.remote_port, a.peer_tag, chunks, 3u,
       combined, sizeof(combined), &n) == CNET_SCTP_WIRE_OK);

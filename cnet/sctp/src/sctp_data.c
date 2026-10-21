@@ -460,17 +460,17 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
   cnet_sctp_data_status status;
   unsigned int i;
   int duplicate = 0;
-  if ((ch->flags & (uint8_t)~(DATA_B | DATA_E | DATA_U)) != 0u ||
-      ch->value_size < DATA_HEADER + 1u)
+  /* RFC 9260 3.3.1: ignore reserved DATA bits, and accept the I bit.
+   * This owner-local receiver already emits an immediate SACK for DATA. */
+  if (ch->value_size < DATA_HEADER + 1u)
     return CNET_SCTP_DATA_PROTOCOL; /* fragments legal, empty RFC DATA not */
   bytes = ch->value_size - DATA_HEADER;
   if (bytes > CNET_SCTP_DATA_PAYLOAD_MAX) return CNET_SCTP_DATA_CAPACITY;
   tsn = rd32(ch->value);
   stream = rd16(ch->value + 4u);
-  ssn = rd16(ch->value + 6u);
+  /* With U=1 the wire SSN is explicitly ignored by the receiver. */
+  ssn = (ch->flags & DATA_U) != 0u ? 0u : rd16(ch->value + 6u);
   if (stream >= d->config.inbound_streams) return CNET_SCTP_DATA_PROTOCOL;
-  if ((ch->flags & DATA_U) != 0u && ssn != 0u)
-    return CNET_SCTP_DATA_PROTOCOL;
   mask = d->rx_gaps;
   prospective_cum = d->cumulative_rx;
   /* Unsigned RFC serial arithmetic also rejects the ambiguous half-wrap. */
@@ -526,7 +526,8 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
     slot->ssn = ssn;
     slot->ppid = rd32(ch->value + 8u);
     slot->unordered = (ch->flags & DATA_U) != 0u;
-    slot->flags = ch->flags;
+    /* Only U/B/E affect reassembly; never retain reserved/I bits as state. */
+    slot->flags = (uint8_t)(ch->flags & (DATA_B | DATA_E | DATA_U));
     slot->used = 1u;
     d->buffered_rx += bytes;
     d->cumulative_rx = prospective_cum;

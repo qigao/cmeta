@@ -138,6 +138,86 @@ static void gap_sack_wrap_t3_ordering(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
+/* RFC 9260 3.3.1: reserved DATA flags are ignored on receive, the I
+ * bit is accepted (this bounded profile emits SACK synchronously), and
+ * an unordered DATA wire SSN is not an admission constraint. Mutate
+ * checksum-correct, retained sender packets rather than changing the
+ * sender's normal zero-reserved-bit encoding. */
+static void data_reserved_i_and_unordered_ssn_are_ignored(void) {
+  cnet_sctp_data a, b;
+  test_owner oa = {0}, ob = {0};
+  uint8_t ordered[1200], unordered[1200], sack[1200], reply[1200], msg[8];
+  const uint8_t o = 'o', u = 'u';
+  cnet_sctp_data_message meta = {0};
+  cnet_sctp_wire_chunk ch = {0};
+  size_t no = 0u, nu = 0u, ns = 0u, nr = 0u, nm = 0u;
+
+  pair_init(&a, &b, &oa, &ob, 100u, 300u);
+  assert(cnet_sctp_data_send(&a, 1u, 0u, 53u, 0,
+      &o, 1u, ordered, sizeof(ordered), &no) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_send(&a, 2u, 1u, 54u, 1,
+      &u, 1u, unordered, sizeof(unordered), &nu) == CNET_SCTP_DATA_OK);
+  assert(ordered[13] == 3u && unordered[13] == 7u);
+  /* DATA B/E/U are low three bits; 0xF0 are ignored reserved bits
+   * and 0x08 is the optional I bit. */
+  ordered[13] |= 0xF8u;
+  unordered[13] |= 0xF8u;
+  /* DATA SSN field sits at packet offsets 22-23; U=1 ignores it. */
+  unordered[22] = 0xBEu;
+  unordered[23] = 0xEFu;
+  reseal(ordered, no);
+  reseal(unordered, nu);
+  inspect(ordered, no, 0u, b.config.local_tag, &ch);
+  assert(ch.flags == 0xFBu && rd16(ch.value + 6u) == 0u);
+  inspect(unordered, nu, 0u, b.config.local_tag, &ch);
+  assert(ch.flags == 0xFFu && rd16(ch.value + 6u) == 0xBEEFu);
+
+  /* A later unordered TSN arrives first and is delivered immediately. */
+  assert(cnet_sctp_data_input(&b, 3u, unordered, nu,
+      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  inspect(sack, ns, 3u, a.config.local_tag, &ch);
+  assert(ch.flags == 0u && rd32(ch.value) == 99u);
+  assert(rd16(ch.value + 8u) == 1u && rd16(ch.value + 10u) == 0u);
+  assert(rd16(ch.value + 12u) == 2u && rd16(ch.value + 14u) == 2u);
+  assert(cnet_sctp_data_take(&b, &meta, msg, sizeof(msg), &nm) ==
+      CNET_SCTP_DATA_OK);
+  assert(meta.unordered && meta.stream_id == 1u &&
+      meta.stream_sequence == 0u && meta.ppid == 54u);
+  assert(nm == 1u && msg[0] == u);
+  assert(cnet_sctp_data_take(&b, &meta, msg, sizeof(msg), &nm) ==
+      CNET_SCTP_DATA_EMPTY);
+  assert(cnet_sctp_data_input(&a, 4u, sack, ns,
+      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(nr == 0u && a.in_flight == 1u && a.tx[1].gap_acked);
+
+  /* Filling the lower TSN closes the gap without double-delivery. */
+  assert(cnet_sctp_data_input(&b, 5u, ordered, no,
+      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  inspect(sack, ns, 3u, a.config.local_tag, &ch);
+  assert(ch.flags == 0u && rd32(ch.value) == 101u);
+  assert(rd16(ch.value + 8u) == 0u && rd16(ch.value + 10u) == 0u);
+  assert(cnet_sctp_data_take(&b, &meta, msg, sizeof(msg), &nm) ==
+      CNET_SCTP_DATA_OK);
+  assert(!meta.unordered && meta.stream_id == 0u &&
+      meta.stream_sequence == 0u && meta.ppid == 53u);
+  assert(nm == 1u && msg[0] == o);
+  assert(cnet_sctp_data_input(&a, 6u, sack, ns,
+      reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(nr == 0u && a.last_ack == 101u && a.in_flight == 0u &&
+      a.t3_deadline_ms == 0u && cnet_sctp_data_outbound_drained(&a));
+
+  assert(cnet_sctp_data_input(&b, 7u, unordered, nu,
+      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  inspect(sack, ns, 3u, a.config.local_tag, &ch);
+  assert(ch.flags == 0u && ch.value_size == 16u);
+  assert(rd32(ch.value) == 101u && rd16(ch.value + 8u) == 0u &&
+      rd16(ch.value + 10u) == 1u && rd32(ch.value + 12u) == 101u);
+  assert(cnet_sctp_data_take(&b, &meta, msg, sizeof(msg), &nm) ==
+      CNET_SCTP_DATA_EMPTY);
+  assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
+}
+
 static void unordered_priority_and_capacity(void) {
   cnet_sctp_data a, b;
   test_owner oa = {0}, ob = {0};
@@ -958,6 +1038,7 @@ static void multi_loss_one_recovery_epoch(void) {
 }
 
 int main(void) {
+  data_reserved_i_and_unordered_ssn_are_ignored();
   hand_authored_sack_rejections_preserve_t3();
   reorder_duplicate_sacks_require_distinct_loss_evidence();
   multi_loss_one_recovery_epoch();
