@@ -1218,6 +1218,21 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   if (!assoc_packet_shape_preflight(&preflight_decoder,
       header.chunk_count))
     return CNET_SCTP_ASSOC_PROTOCOL;
+  /* The limited unknown-only ERROR/SKIP path belongs to a live,
+   * post-COOKIE association. During CLOSED/COOKIE-WAIT/COOKIE-ECHOED, an
+   * unrecognized packet is not authenticated association traffic and may
+   * not emit an ERROR with an unset peer tag or advance the Owner clock.
+   * Full RFC 9260 8.4 OOTB/T-bit ABORT handling is a separate open gate;
+   * fail closed here rather than fabricating a reflected-tag response. */
+  if (all_unknown &&
+      (s->peer_tag == 0u ||
+       (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
+        s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
+        s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+        s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED &&
+        s->state != CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT)))
+    return CNET_SCTP_ASSOC_PROTOCOL;
+
   /* A packet-triggered T5 action is also a state transition. Run it only
    * after every Chunk in the bounded packet has passed structural preflight;
    * wrong-tag or malformed bundled packets cannot trigger an ABORT. The

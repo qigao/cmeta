@@ -1275,6 +1275,58 @@ static void unknown_chunks_do_not_preempt_t5(void) {
   }
 }
 
+/* Unknown-only packets cannot be admitted as normal Association DATA
+ * before an authenticated COOKIE exchange. In particular, CLOSED and
+ * COOKIE-WAIT have no peer Verification Tag to use in an ERROR response.
+ * COOKIE-ECHOED knows the peer tag but still has not completed admission.
+ * This is the private fail-closed subset, not complete RFC 9260 OOTB. */
+static void unknown_pre_cookie_packets_fail_closed(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  static const uint8_t value[] = {0xA5u};
+  static const uint8_t types[] = {0x20u, 0x61u, 0xA2u, 0xE3u};
+  static const cnet_sctp_assoc_state states[] = {
+    CNET_SCTP_ASSOC_CLOSED,
+    CNET_SCTP_ASSOC_COOKIE_WAIT,
+    CNET_SCTP_ASSOC_COOKIE_ECHOED
+  };
+  size_t state_i, type_i, count;
+  setup(&a, &b, &ca, &cb);
+  for (state_i = 0u; state_i < sizeof(states) / sizeof(states[0]);
+       ++state_i) {
+    for (type_i = 0u; type_i < sizeof(types); ++type_i) {
+      for (count = 1u; count <= 2u; ++count) {
+        cnet_sctp_wire_chunk chunks[2];
+        uint8_t packet[64] = {0}, output[64];
+        cnet_sctp_assoc before;
+        size_t packet_n = 0u, output_n = 99u, i;
+        a.state = states[state_i];
+        a.peer_tag = state_i == 2u ? b.local_tag : 0u;
+        chunks[0].type = types[type_i];
+        chunks[0].flags = 0x5Au;
+        chunks[0].value = value;
+        chunks[0].value_size = sizeof(value);
+        chunks[1] = chunks[0];
+        assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+            chunks, count, packet, sizeof(packet), &packet_n) ==
+            CNET_SCTP_WIRE_OK);
+        memcpy(&before, &a, sizeof(before));
+        memset(output, 0xCC, sizeof(output));
+        assert(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
+            packet, packet_n, output, sizeof(output), &output_n) ==
+            CNET_SCTP_ASSOC_PROTOCOL);
+        assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+        for (i = 0u; i < sizeof(output); ++i)
+          assert(output[i] == 0xCCu);
+      }
+    }
+  }
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void unknown_chunk_actions_are_bounded_and_exact(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -2052,6 +2104,7 @@ int main(void) {
   mixed_unknown_known_bundles_fail_closed();
   unknown_chunks_do_not_preempt_t5();
   unknown_chunk_actions_are_bounded_and_exact();
+  unknown_pre_cookie_packets_fail_closed();
   unknown_single_report_packet_ceiling_is_transactional();
   unknown_multi_chunk_actions_are_transactional();
   unknown_report_variable_lengths_preserve_tlv_and_padding();
