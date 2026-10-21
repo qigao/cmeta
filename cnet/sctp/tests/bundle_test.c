@@ -78,13 +78,19 @@ static void multi_data_atomicity(void) {
   }
   n = pack(&p.a, 1, chunks, 3u, combined, sizeof(combined));
   memcpy(corrupt, chunks, sizeof(corrupt));
-  corrupt[2].flags = 0x80u;
+  /* The third DATA has no user byte. Unlike its ignored reserved flag
+   * bits, this really violates RFC 9260's nonempty DATA requirement.
+   * Preflight must reject the final chunk without admitting the first two. */
+  corrupt[2].value_size = 12u;
   ns = pack(&p.a, 1, corrupt, 3u, combined, sizeof(combined));
   memcpy(&before, &p.b, sizeof(before));
   nr = 0u;
   assert(cnet_sctp_data_input(&p.b, 10u, combined, ns, sack,
       sizeof(sack), &nr) == CNET_SCTP_DATA_PROTOCOL);
   assert(nr == 0u && memcmp(&before, &p.b, sizeof(before)) == 0);
+  /* Receive-side reserved DATA flags and the I bit must not invalidate
+   * an otherwise legal DATA bundle. The sender's own packets stay clean. */
+  chunks[1].flags = (uint8_t)(chunks[1].flags | 0xF8u);
   n = pack(&p.a, 1, chunks, 3u, combined, sizeof(combined));
   assert(cnet_sctp_data_input(&p.b, 10u, combined, n, sack, 8u,
       &nr) == CNET_SCTP_DATA_CAPACITY);
