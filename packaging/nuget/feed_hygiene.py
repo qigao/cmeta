@@ -20,6 +20,9 @@ RIDS = frozenset({
 })
 RC_SHA = re.compile(r"^2[.]3[.]0-rc[.]sha[0-9a-f]{40}$")
 OFFICIAL = re.compile(r"^2[.]3[.]0(?:-rc[.][1-9][0-9]*)?$")
+PUBLIC_RELEASE_VERSION = re.compile(
+    r"^[0-9]+[.][0-9]+[.][0-9]+(?:-rc[.][1-9][0-9]*)?$"
+)
 RC_MARKER = "sdk"
 PUBLISHING = ".github/workflows/native-sdk-rc-release.yml"
 CANDIDATES = (
@@ -29,6 +32,8 @@ REQUIRED_TAG_CHECKS = (
     "refs/tags/v",
     "test \"$TAG\" = \"v$RELEASE_VERSION\"",
     "Verify NuGet contents, version and source SHA",
+    "Refuse existing NuGet package version",
+    "publish-unique",
     "linux-x64", "linux-arm64", "windows-x64", "macos-arm64",
     "android-arm64-v8a", "ios-arm64",
 )
@@ -79,6 +84,8 @@ def check_policy(root: Path) -> dict[str, Any]:
         ensure(x in publisher, f"tagged release missing guard {x!r}")
     ensure("dotnet nuget push" in publisher and "packages: write" in publisher,
            "official six-RID tag workflow must remain the only public publisher")
+    ensure("--skip-duplicate" not in publisher,
+           "official publication must fail instead of accepting existing NuGet bytes")
     ensure("on:" in publisher or "'on':" in publisher,
            "official tag workflow lacks trigger declaration")
     for path in (root / ".github/workflows").glob("*.yml"):
@@ -142,6 +149,29 @@ def load_versions(path: Path) -> list[dict[str, Any]]:
         ensure(all(isinstance(v, dict) for v in obj), "bad version records")
         result.extend(obj)
     return result
+
+
+def require_version_absent(version: str, versions_json: Path) -> dict[str, Any]:
+    """Fail closed before pushing a tagged artifact into the public NuGet feed.
+
+    Existing versions never count as successful publication: even if the
+    remote package is identical, a partial historical publish needs a
+    separately reviewed recovery rather than an implicit skip or overwrite.
+    """
+    ensure(PUBLIC_RELEASE_VERSION.fullmatch(version) is not None,
+           f"not an official tagged version: {version!r}")
+    ensure(versions_json.read_text(encoding="utf-8").strip() != "",
+           "empty GitHub Packages inventory; cannot verify version absence")
+    records = load_versions(versions_json)
+    ensure(all(isinstance(item.get("name"), str)
+               and isinstance(item.get("id"), int)
+               and item["id"] > 0 for item in records),
+           "malformed GitHub Packages version metadata")
+    ensure(not any(item["name"].lower() == version.lower() for item in records),
+           f"NuGet version {version} already exists; reject conflicting or "
+           "unverified bytes and do not create a GitHub Release")
+    return {"status": "PASS", "new_version": version,
+            "existing_versions_checked": len(records)}
 
 
 def audit_versions(path: Path, clean: bool) -> dict[str, Any]:
@@ -357,10 +387,31 @@ def self_test(root: Path) -> dict[str, Any]:
         report = audit_versions(listing, clean=False)
         ensure(len(report["unsafe_rc_sha"]) == 1,
                "feed-version listing did not isolate sha prerelease")
+        allowed = require_version_absent("2.3.0-rc.18", listing)
+        ensure(allowed["status"] == "PASS" and allowed["existing_versions_checked"] == 2,
+               "new official RC rejected by publisher gate")
+        try:
+            require_version_absent("2.3.0-rc.15", listing)
+        except FeedPolicyError as exc:
+            ensure("already exists" in str(exc),
+                   "version collision failed for the wrong reason")
+        else:
+            raise FeedPolicyError("existing official RC silently admitted for publication")
+        listing.write_text("")
+        try:
+            require_version_absent("2.3.0-rc.18", listing)
+        except FeedPolicyError as exc:
+            ensure("empty GitHub Packages inventory" in str(exc),
+                   "missing inventory failed for the wrong reason")
+        else:
+            raise FeedPolicyError("missing package inventory incorrectly admitted")
     return {"status": "PASS", "fixture_rc_sha": version,
             "scenarios": ["single-RID reject", "six-RID protected",
                           "official-numeric-RC protected",
-                          "GitHub versions listing", "no candidate feed publishers"]}
+                          "GitHub versions listing", "no candidate feed publishers",
+                          "new official version admitted",
+                          "existing official version rejected",
+                          "missing feed inventory rejected"]}
 
 
 def main() -> int:
@@ -373,6 +424,9 @@ def main() -> int:
     i = commands.add_parser("inspect-dir")
     i.add_argument("version")
     i.add_argument("package_directory", type=Path)
+    pu = commands.add_parser("publish-unique")
+    pu.add_argument("version")
+    pu.add_argument("versions_json", type=Path)
     fr = commands.add_parser("floating-restore")
     fr.add_argument("project_assets_json", type=Path)
     fr.add_argument("nuget_packages_root", type=Path)
@@ -388,6 +442,8 @@ def main() -> int:
             output = self_test(args.repo_root)
         elif args.command == "inspect-dir":
             output = inspect_extracted(args.version, args.package_directory)
+        elif args.command == "publish-unique":
+            output = require_version_absent(args.version, args.versions_json)
         elif args.command == "floating-restore":
             output = audit_floating_resolution(args.project_assets_json, args.nuget_packages_root)
         elif args.command == "floating-self-test":
