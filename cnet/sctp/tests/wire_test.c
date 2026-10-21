@@ -275,6 +275,75 @@ static void test_abort_data_bundle_rejected(void) {
       CNET_SCTP_WIRE_OK && header.chunk_count == 2u);
 }
 
+/* RFC 9260 §3.3.7 forbids bundling INIT, INIT ACK, or SHUTDOWN COMPLETE
+ * with ABORT. Test both chunk orders, with independent CRC-valid peer bytes. */
+static void test_abort_standalone_control_chunks_cannot_bundle(void) {
+  static const uint8_t init_value[16] = {
+    0x11u, 0x22u, 0x33u, 0x44u, /* Initiate Tag */
+    0u, 0u, 0x10u, 0u,          /* a_rwnd = 4096 */
+    0u, 1u, 0u, 1u,              /* stream counts */
+    0u, 0u, 0u, 5u               /* initial TSN */
+  };
+  const uint8_t types[3] = {1u, 2u, 14u};
+  size_t type_i, order, i;
+  for (type_i = 0u; type_i < sizeof(types); ++type_i) {
+    const size_t control_length = types[type_i] == 14u ? 4u : 20u;
+    for (order = 0u; order < 2u; ++order) {
+      cnet_sctp_wire_chunk pair[2];
+      uint8_t output[64], packet[64];
+      size_t written = 123u, packet_n = 12u + control_length + 4u;
+      cnet_sctp_wire_header header, before_header;
+      cnet_sctp_wire_decoder decoder, before_decoder;
+      size_t control_offset = order == 0u ? 12u : 16u;
+      size_t abort_offset = order == 0u ? 12u + control_length : 12u;
+
+      pair[0].type = order == 0u ? types[type_i] : 6u;
+      pair[0].flags = order == 0u ? 0u : 1u;
+      pair[0].value = order == 0u && types[type_i] != 14u ?
+          init_value : NULL;
+      pair[0].value_size = order == 0u && types[type_i] != 14u ?
+          sizeof(init_value) : 0u;
+      pair[1].type = order == 0u ? 6u : types[type_i];
+      pair[1].flags = order == 0u ? 1u : 0u;
+      pair[1].value = order != 0u && types[type_i] != 14u ?
+          init_value : NULL;
+      pair[1].value_size = order != 0u && types[type_i] != 14u ?
+          sizeof(init_value) : 0u;
+
+      memset(output, 0xCC, sizeof(output));
+      assert(cnet_sctp_wire_encode(5000u, 5001u, 0u, pair, 2u,
+          output, sizeof(output), &written) == CNET_SCTP_WIRE_MALFORMED);
+      assert(written == 0u && output[0] == 0xCCu &&
+          output[sizeof(output) - 1u] == 0xCCu);
+
+      memset(packet, 0, sizeof(packet));
+      packet[0] = 0x13u; packet[1] = 0x88u; /* source port */
+      packet[2] = 0x13u; packet[3] = 0x89u; /* destination port */
+      /* Verification Tag zero permits an INIT fixture; ABORT uses T=1. */
+      packet[abort_offset] = 6u;
+      packet[abort_offset + 1u] = 1u;
+      packet[abort_offset + 2u] = 0u;
+      packet[abort_offset + 3u] = 4u;
+      packet[control_offset] = types[type_i];
+      packet[control_offset + 1u] = 0u;
+      packet[control_offset + 2u] = (uint8_t)(control_length >> 8);
+      packet[control_offset + 3u] = (uint8_t)control_length;
+      if (types[type_i] != 14u)
+        memcpy(packet + control_offset + 4u, init_value, sizeof(init_value));
+      seal(packet, packet_n);
+      memset(&header, 0xCC, sizeof(header));
+      memset(&decoder, 0xCC, sizeof(decoder));
+      before_header = header;
+      before_decoder = decoder;
+      assert(cnet_sctp_wire_decode(packet, packet_n, &header, &decoder) ==
+          CNET_SCTP_WIRE_MALFORMED);
+      assert(memcmp(&header, &before_header, sizeof(header)) == 0 &&
+          memcmp(&decoder, &before_decoder, sizeof(decoder)) == 0);
+      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+    }
+  }
+}
+
 static void test_reject_and_no_partial_write(void) {
   static const uint8_t init[] = {
     0x11u, 0x22u, 0x33u, 0x44u, 0, 0, 0, 1,
@@ -351,6 +420,7 @@ int main(void) {
   test_crc_and_init();
   test_multiple_chunks_and_padding();
   test_abort_data_bundle_rejected();
+  test_abort_standalone_control_chunks_cannot_bundle();
   test_reject_and_no_partial_write();
   test_truncation_and_mutations();
   puts("cnet SCTP RFC 9260 wire M1: PASS (not protocol interoperability)");
