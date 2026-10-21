@@ -2382,7 +2382,7 @@ static void chunks_after_abort_are_ignored(void) {
 static void unknown_chunk_actions_before_abort_are_respected(void) {
   static const uint8_t unknown_value[2] = {0xA5u, 0x5Au};
   static const uint8_t reason[4] = {0u, 12u, 0u, 4u};
-  const uint8_t types[2] = {0x41u, 0x82u};
+  const uint8_t types[2] = {0x41u, 0xA2u};
   size_t k, i;
   for (k = 0u; k < 2u; ++k) {
     cnet_sctp_assoc a, b, before;
