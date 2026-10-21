@@ -75,9 +75,10 @@ static int recognized_chunk_type(uint8_t type) {
   }
 }
 
-/* Handle an unknown single Chunk only after framing, ports and Verification
- * Tag have been validated. Multi-Chunk packets remain behind the stricter
- * bundle preflight until the full legal-combination matrix is implemented. */
+/* Handle the bounded single-unknown-Chunk subset after framing, ports and
+ * Verification Tag validation. All-unknown multi-Chunk packets use the
+ * separate transactional handler below; mixed unknown/recognized bundles
+ * remain fail-closed until the full legal-combination/transaction matrix exists. */
 static cnet_sctp_assoc_status handle_unknown_single_chunk(
     cnet_sctp_assoc *s, uint64_t now, const cnet_sctp_wire_chunk *chunk,
     uint8_t *out, size_t cap, size_t *written) {
