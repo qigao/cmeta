@@ -91,3 +91,10 @@ The follow-up RFC clarification commit `a90054b50a2be7463b6946756de08eadb7395b02
 4. Independent malformed-input fuzz, actual cryptographic oracle, effective-source ASan/UBSan/TSan.
 5. Windows IOCP, macOS, Linux x64/arm64, Android, iOS full installed SDK qualification with immutable source graph.
 6. Separate TurboMedia #227 exclusive usrsctp cutover; **no fallback**, no production merge/release before approval.
+
+
+## Latest exact-HEAD checkpoint (2026-10-21)
+
+The bounded transactional-dispatch/T5 syntax-preflight checkpoint `87f91981c5a5189ec91eb5e6950eecf7a7fad3f4` is verified: [CNet SCTP C11 prototype #39532536748](https://github.com/qigao/salts/actions/runs/39532536748) **SUCCESS 5/5** (Ubuntu/macOS/Windows, source ASan/UBSan, pinned-GmSSL Cookie-MAC isolation); [immutable shared-build provenance #39532536840](https://github.com/qigao/salts/actions/runs/39532536840) **SUCCESS**; [Salts CI #39532536825](https://github.com/qigao/salts/actions/runs/39532536825) **SUCCESS for selected checks**, including Android ARM64 Release, iOS ARM64 Release and final `CI result`. Formal, package, benchmarks, ServiceHost installed ABI, six-RID ABI identity and SDK publication are **SKIPPED**, not passed; ACE candidate #39532536699 was skipped.
+
+The tested scope covers bounded malformed-packet preflight before packet-triggered T5 and transactional rejection/watermark behavior, including malformed SACK Gap Ack Block lengths and ordering, malformed DATA in a bundle, empty registered HEARTBEAT/ERROR, and invalid-state SHUTDOWN+SACK. This is not complete RFC 9260 conformance, independent wire interoperability, fuzz qualification, installed SDK ABI validation or release readiness. PR #1182 remains Draft/Open; do not merge, publish, release or cut over.
