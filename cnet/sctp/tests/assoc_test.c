@@ -2079,9 +2079,9 @@ static void shutdown_capacity_retries_are_transactional(void) {
   assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
       tiny, sizeof(tiny), &ack_n) == CNET_SCTP_ASSOC_CAPACITY);
   assert(ack_n == 0u && tiny[0] == 0xCCu);
-   /* Valid preflighted input advances the monotonic clock watermark even
-    * when output backpressure requires retry; protocol state stays unchanged. */
-   assert(b.last_time_ms == 8u);
+  /* A capacity refusal has not accepted this SHUTDOWN or published its
+   * ACK. The full protocol/clock transaction must remain retryable. */
+  assert(b.last_time_ms == before.last_time_ms);
   assert(b.state == before.state &&
       b.deadline_ms == before.deadline_ms &&
       b.t5_shutdown_deadline_ms == before.t5_shutdown_deadline_ms &&
@@ -2103,7 +2103,8 @@ static void shutdown_capacity_retries_are_transactional(void) {
       b.data.buffered_rx == before.data.buffered_rx);
   assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
       ack_packet, sizeof(ack_packet), &ack_n) == CNET_SCTP_ASSOC_OK);
-  assert(ack_n > 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT);
+  assert(ack_n > 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT &&
+      b.last_time_ms == 8u);
   prior_deadline = b.deadline_ms;
 
   /* A duplicate SHUTDOWN must not restart T2 or consume retry budget until
