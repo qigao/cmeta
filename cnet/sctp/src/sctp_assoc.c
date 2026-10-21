@@ -1153,10 +1153,13 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       return handle_cookie_echo(s, now, &header, &chunk, output, cap, written);
     case SCTP_TYPE_ABORT:
       /* This private M2 path handles only a plain ABORT using the
-       * expected tag. It never responds to ABORT with another ABORT. */
+       * expected tag. It never responds to ABORT with another ABORT.
+       * Rejected ABORTs must not commit the provisional time watermark. */
       if (header.verification_tag != s->local_tag || chunk.flags != 0u ||
-          chunk.value_size != 0u || s->state == CNET_SCTP_ASSOC_CLOSED)
+          chunk.value_size != 0u || s->state == CNET_SCTP_ASSOC_CLOSED) {
+        s->last_time_ms = prior_time;
         return CNET_SCTP_ASSOC_PROTOCOL;
+      }
       if (s->data_ready) {
         (void)cnet_sctp_data_stop(&s->data);
         memset(&s->data, 0, sizeof(s->data));
