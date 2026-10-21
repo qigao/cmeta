@@ -254,6 +254,29 @@ static int valid_cookie_echo_error(const cnet_sctp_wire_chunk *chunk) {
   return pos == chunk->value_size;
 }
 
+/* Validate SACK's internal length and ordered gap-block encoding without
+ * mutating a DATA TCB. This preflight must run before the absolute T5 path:
+ * malformed SACK bytes are not allowed to trigger a shutdown ABORT. */
+static int valid_sack_shape(const cnet_sctp_wire_chunk *chunk) {
+  uint16_t blocks, duplicates, previous_end = 0u;
+  size_t i, expected;
+  if (!chunk || chunk->type != 3u || chunk->flags != 0u ||
+      chunk->value_size < 12u) return 0;
+  blocks = rd16(chunk->value + 8u);
+  duplicates = rd16(chunk->value + 10u);
+  if (blocks > 16u) return 0;
+  expected = 12u + 4u * ((size_t)blocks + (size_t)duplicates);
+  if (chunk->value_size != expected) return 0;
+  for (i = 0u; i < blocks; ++i) {
+    const uint8_t *p = chunk->value + 12u + 4u * i;
+    const uint16_t first = rd16(p);
+    const uint16_t last = rd16(p + 2u);
+    if (first == 0u || first <= previous_end || last < first) return 0;
+    previous_end = last;
+  }
+  return 1;
+}
+
 /* The DATA engine borrows the existing handshake's single Owner and tags.
  * Nothing here opens a socket, starts a worker, or changes SCTP wire format.
  * Peer stream counts and rwnd are authenticated by INIT ACK/State Cookie. */
@@ -1095,8 +1118,10 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
         return CNET_SCTP_ASSOC_PROTOCOL;
     } else if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_SHUTDOWN) {
       if (cnet_sctp_wire_next_chunk(&decoder, &second) != CNET_SCTP_WIRE_OK ||
-          second.type != 3u || second.flags != 0u || second.value_size < 12u)
+          !valid_sack_shape(&second))
         return CNET_SCTP_ASSOC_PROTOCOL;
+    } else if (chunk.type == 3u && !valid_sack_shape(&chunk)) {
+      return CNET_SCTP_ASSOC_PROTOCOL;
     } else if (header.chunk_count > 1u &&
                chunk.type != 0u && chunk.type != 3u) {
       /* No arbitrary control chunks can be bundled with INIT, Cookie,
