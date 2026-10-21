@@ -207,6 +207,74 @@ static void test_max_chunk_count_and_no_partial_decode(void) {
       memcmp(&decoder, &before_decoder, sizeof(decoder)) == 0);
 }
 
+/* RFC 9260 §3.3.7 / §6.10 permits ABORT with control chunks but forbids
+ * bundling any DATA chunk with ABORT. Validate both wire orders without
+ * partially writing output or publishing parsed decoder state. */
+static void test_abort_data_bundle_rejected(void) {
+  uint8_t data_value[13] = {0};
+  uint8_t sack_value[12] = {0};
+  uint8_t output[64], packet[64];
+  cnet_sctp_wire_header header, before_header;
+  cnet_sctp_wire_decoder decoder, before_decoder;
+  cnet_sctp_wire_chunk allowed[2] = {
+    {3u, 0u, sack_value, sizeof(sack_value)},
+    {6u, 0u, NULL, 0u}
+  };
+  cnet_sctp_wire_chunk forbidden[2][2] = {
+    {{6u, 0u, NULL, 0u}, {0u, 3u, data_value, sizeof(data_value)}},
+    {{0u, 3u, data_value, sizeof(data_value)}, {6u, 0u, NULL, 0u}}
+  };
+  size_t written = 99u, order;
+
+  memset(output, 0xCC, sizeof(output));
+  for (order = 0u; order < 2u; ++order) {
+    written = 99u;
+    assert(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
+        forbidden[order], 2u, output, sizeof(output), &written) ==
+        CNET_SCTP_WIRE_MALFORMED);
+    assert(written == 0u && output[0] == 0xCCu &&
+        output[sizeof(output) - 1u] == 0xCCu);
+
+    /* Construct the invalid packet independently of the encoder so decode
+     * is tested against CRC-valid peer bytes after the encoder is fixed. */
+    memset(packet, 0, sizeof(packet));
+    packet[0] = 0x13u; packet[1] = 0x88u; /* source port 5000 */
+    packet[2] = 0x13u; packet[3] = 0x89u; /* destination port 5001 */
+    packet[4] = 0x12u; packet[5] = 0x34u;
+    packet[6] = 0x56u; packet[7] = 0x78u;
+    {
+      const size_t abort_offset = order == 0u ? 12u : 32u;
+      const size_t data_offset = order == 0u ? 16u : 12u;
+      packet[abort_offset] = 6u;
+      packet[abort_offset + 1u] = 0u;
+      packet[abort_offset + 2u] = 0u;
+      packet[abort_offset + 3u] = 4u;
+      packet[data_offset] = 0u;
+      packet[data_offset + 1u] = 3u;
+      packet[data_offset + 2u] = 0u;
+      packet[data_offset + 3u] = 17u;
+      memset(packet + data_offset + 4u, 0, sizeof(data_value));
+      packet[data_offset + 16u] = 0xA5u;
+    }
+    seal(packet, 36u);
+    memset(&header, 0xCC, sizeof(header));
+    memset(&decoder, 0xCC, sizeof(decoder));
+    before_header = header;
+    before_decoder = decoder;
+    assert(cnet_sctp_wire_decode(packet, 36u, &header, &decoder) ==
+        CNET_SCTP_WIRE_MALFORMED);
+    assert(memcmp(&header, &before_header, sizeof(header)) == 0 &&
+        memcmp(&decoder, &before_decoder, sizeof(decoder)) == 0);
+  }
+
+  /* Control-before-ABORT remains legal; do not over-restrict ABORT to a
+   * standalone chunk, because RFC 9260 allows control chunks before it. */
+  assert(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
+      allowed, 2u, output, sizeof(output), &written) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_wire_decode(output, written, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK && header.chunk_count == 2u);
+}
+
 static void test_reject_and_no_partial_write(void) {
   static const uint8_t init[] = {
     0x11u, 0x22u, 0x33u, 0x44u, 0, 0, 0, 1,
@@ -282,6 +350,7 @@ int main(void) {
   test_unknown_chunk_types_in_packet_order();
   test_crc_and_init();
   test_multiple_chunks_and_padding();
+  test_abort_data_bundle_rejected();
   test_reject_and_no_partial_write();
   test_truncation_and_mutations();
   puts("cnet SCTP RFC 9260 wire M1: PASS (not protocol interoperability)");

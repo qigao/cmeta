@@ -6,8 +6,10 @@
 enum { SCTP_HEADER_BYTES = 12, SCTP_CHUNK_HEADER_BYTES = 4 };
 
 enum {
+  SCTP_CHUNK_DATA = 0,
   SCTP_CHUNK_INIT = 1,
   SCTP_CHUNK_INIT_ACK = 2,
+  SCTP_CHUNK_ABORT = 6,
   SCTP_CHUNK_SHUTDOWN_COMPLETE = 14
 };
 
@@ -119,6 +121,8 @@ cnet_sctp_wire_status cnet_sctp_wire_decode(
   size_t next;
   size_t count = 0u;
   uint8_t first_type = 0;
+  int has_data = 0;
+  int has_abort = 0;
   if (!bytes || !header || !decoder) return CNET_SCTP_WIRE_EINVAL;
   if (packet_size > CNET_SCTP_WIRE_MAX_PACKET_BYTES)
     return CNET_SCTP_WIRE_CAPACITY;
@@ -141,6 +145,11 @@ cnet_sctp_wire_status cnet_sctp_wire_decode(
         CNET_SCTP_WIRE_OK)
       return CNET_SCTP_WIRE_MALFORMED;
     if (count == 1u) first_type = type;
+    if (type == SCTP_CHUNK_DATA) has_data = 1;
+    if (type == SCTP_CHUNK_ABORT) has_abort = 1;
+    /* RFC 9260 §§3.3.7/6.10: ABORT may be bundled with control chunks,
+     * but it MUST NOT share a packet with any DATA chunk. */
+    if (has_data && has_abort) return CNET_SCTP_WIRE_MALFORMED;
     if ((count > 1u && (standalone_chunk(first_type) || standalone_chunk(type))) ||
         (type == SCTP_CHUNK_INIT &&
          (local.verification_tag != 0u || value_size < 16u ||
@@ -188,6 +197,8 @@ cnet_sctp_wire_status cnet_sctp_wire_encode(
   uint8_t *packet = (uint8_t *)destination;
   size_t position = SCTP_HEADER_BYTES;
   size_t i;
+  int has_data = 0;
+  int has_abort = 0;
   if (!packet || !written || !chunks || chunk_count == 0u ||
       source_port == 0u || destination_port == 0u)
     return CNET_SCTP_WIRE_EINVAL;
@@ -201,6 +212,10 @@ cnet_sctp_wire_status cnet_sctp_wire_encode(
       return CNET_SCTP_WIRE_EINVAL;
     if (chunks[i].value_size > UINT16_MAX - SCTP_CHUNK_HEADER_BYTES)
       return CNET_SCTP_WIRE_CAPACITY;
+    if (chunks[i].type == SCTP_CHUNK_DATA) has_data = 1;
+    if (chunks[i].type == SCTP_CHUNK_ABORT) has_abort = 1;
+    /* RFC 9260 §§3.3.7/6.10: ABORT may accompany control chunks, but never DATA. */
+    if (has_data && has_abort) return CNET_SCTP_WIRE_MALFORMED;
     if ((chunk_count != 1u && standalone_chunk(chunks[i].type)) ||
         (chunks[i].type == SCTP_CHUNK_INIT &&
          (verification_tag != 0u || chunks[i].value_size < 16u ||
