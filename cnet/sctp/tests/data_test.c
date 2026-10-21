@@ -327,7 +327,6 @@ static void hand_authored_sack_rejections_preserve_t3(void) {
     {99u,0u,0u,0u,0u,0u,0u,16u,0u}, /* extra unclaimed bytes */
     {99u,17u,0u,1u,1u,0u,0u,80u,0u}, /* >16 gap blocks */
     {99u,0u,1u,0u,0u,0u,0u,12u,0u}, /* missing duplicate TSN */
-    {99u,0u,33u,0u,0u,0u,0u,144u,0u}, /* >32 duplicates */
     {99u,1u,0u,0u,1u,0u,0u,16u,0xA5u},
       /* invalid zero-offset gap remains invalid when SACK flags are ignored */
     {UINT32_C(0x80000063),0u,0u,0u,0u,0u,0u,12u,0u},
@@ -1037,9 +1036,53 @@ static void multi_loss_one_recovery_epoch(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
+/* A SACK's Duplicate TSN list is bounded by the encoded Chunk length, not
+ * by the number of DATA chunks this endpoint can buffer concurrently. */
+static void sack_duplicate_list_can_exceed_rx_slots(void) {
+  cnet_sctp_data a, b;
+  test_owner oa = {0}, ob = {0};
+  const uint8_t payload = 'd';
+  uint8_t data_packet[1200], body[12u + 4u * (CNET_SCTP_DATA_RX_SLOTS + 1u)];
+  uint8_t sack_packet[256], reply[1200];
+  cnet_sctp_wire_chunk sack = {0};
+  size_t data_size = 0u, sack_size = 0u, reply_size = 123u, i;
+
+  pair_init(&a, &b, &oa, &ob, 100u, 300u);
+  assert(cnet_sctp_data_send(&a, 1u, 0u, 51u, 0, &payload, 1u,
+      data_packet, sizeof(data_packet), &data_size) == CNET_SCTP_DATA_OK);
+  assert(data_size != 0u && a.tx[0].used && a.tx[0].tsn == 100u);
+
+  memset(body, 0, sizeof(body));
+  sack_test_be32(body, 99u);       /* no cumulative acknowledgement */
+  sack_test_be32(body + 4u, 32768u);
+  sack_test_be16(body + 8u, 0u);  /* no Gap Ack Blocks */
+  sack_test_be16(body + 10u,
+      (uint16_t)(CNET_SCTP_DATA_RX_SLOTS + 1u));
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS + 1u; ++i)
+    sack_test_be32(body + 12u + 4u * i, 100u); /* repeated duplicate TSN */
+
+  sack.type = 3u;
+  sack.flags = 0xA5u; /* RFC 9260: SACK flags are ignored on receipt. */
+  sack.value = body;
+  sack.value_size = sizeof(body);
+  assert(cnet_sctp_wire_encode(b.config.local_port, b.config.remote_port,
+      a.config.local_tag, &sack, 1u, sack_packet, sizeof(sack_packet),
+      &sack_size) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_data_input(&a, 2u, sack_packet, sack_size, reply,
+      sizeof(reply), &reply_size) == CNET_SCTP_DATA_OK);
+  assert(reply_size == 0u && a.last_time_ms == 2u);
+  assert(a.last_ack == 99u && a.peer_rwnd == 32768u);
+  assert(a.in_flight == 1u && a.tx[0].used && a.tx[0].tsn == 100u);
+  assert(a.t3_deadline_ms == 101u); /* a duplicate report does not restart T3 */
+
+  assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
+}
+
 int main(void) {
   data_reserved_i_and_unordered_ssn_are_ignored();
   hand_authored_sack_rejections_preserve_t3();
+  sack_duplicate_list_can_exceed_rx_slots();
   reorder_duplicate_sacks_require_distinct_loss_evidence();
   multi_loss_one_recovery_epoch();
   karn_gap_reneging_restore();
