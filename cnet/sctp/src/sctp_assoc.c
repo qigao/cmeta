@@ -448,6 +448,38 @@ static int assoc_packet_shape_preflight(
   }
   return 1;
 }
+/* ABORT is terminal. Validate every control before the first ABORT, then
+ * ignore later Chunk semantics as required by RFC 9260 Section 3.3.7.
+ * Wire decoding has already checked framing and the DATA+ABORT prohibition. */
+static int assoc_abort_bundle_preflight(
+    const cnet_sctp_wire_decoder *decoded, size_t count, size_t abort_index) {
+  cnet_sctp_wire_decoder cursor;
+  size_t i;
+  if (!decoded || count == 0u || abort_index >= count) return 0;
+  cursor = *decoded;
+  for (i = 0u; i <= abort_index; ++i) {
+    cnet_sctp_wire_chunk chunk;
+    if (cnet_sctp_wire_next_chunk(&cursor, &chunk) != CNET_SCTP_WIRE_OK)
+      return 0;
+    if (i == abort_index)
+      return chunk.type == SCTP_TYPE_ABORT && assoc_chunk_shape_valid(&chunk);
+    if (chunk.type == 0u || chunk.type == SCTP_TYPE_INIT ||
+        chunk.type == SCTP_TYPE_INIT_ACK ||
+        chunk.type == SCTP_TYPE_SHUTDOWN_COMPLETE)
+      return 0;
+    if (!recognized_chunk_type(chunk.type)) {
+      cnet_sctp_wire_unknown_action action =
+          cnet_sctp_wire_unknown_chunk_action(chunk.type);
+      if (action == CNET_SCTP_WIRE_UNKNOWN_STOP_DISCARD ||
+          action == CNET_SCTP_WIRE_UNKNOWN_STOP_REPORT)
+        return 0;
+      continue;
+    }
+    if (!assoc_chunk_shape_valid(&chunk)) return 0;
+  }
+  return 0;
+}
+
 static cnet_sctp_assoc_status publish_packet(uint8_t *output, size_t cap,
     size_t *written, const uint8_t *scratch, size_t size) {
   if (size > cap) return CNET_SCTP_ASSOC_CAPACITY;
@@ -1151,9 +1183,10 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   cnet_sctp_wire_chunk chunk;
   cnet_sctp_wire_chunk second;
   cnet_sctp_wire_chunk terminal_chunk = {0};
+  cnet_sctp_wire_decoder terminal_cursor;
   cnet_sctp_assoc_status status;
   uint64_t prior_time;
-  size_t i;
+  size_t i, terminal_index = 0u;
   int all_unknown, terminal_abort = 0;
   if (written) *written = 0u;
   status = guard(s);
@@ -1178,19 +1211,20 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   classify_decoder = decoder;
   if (cnet_sctp_wire_next_chunk(&decoder, &chunk) != CNET_SCTP_WIRE_OK)
     return CNET_SCTP_ASSOC_PROTOCOL;
-  /* RFC 9260 §8.5.1 applies to packets containing ABORT, including one
-   * permitted control preceding it. Identify the bounded terminal bundle
-   * without acting on either Chunk before full packet-shape preflight. */
-  if (header.chunk_count == 1u && chunk.type == SCTP_TYPE_ABORT) {
-    terminal_chunk = chunk;
-    terminal_abort = 1;
-  } else if (header.chunk_count == 2u &&
-             (chunk.type == 3u || chunk.type == SCTP_TYPE_ERROR)) {
-    cnet_sctp_wire_decoder tail = decoder;
-    if (cnet_sctp_wire_next_chunk(&tail, &terminal_chunk) !=
+  /* Find the first ABORT. Its index defines which Chunks are processed;
+   * later Chunks are framing-checked by Wire but semantically ignored. */
+  terminal_cursor = preflight_decoder;
+  for (i = 0u; i < header.chunk_count; ++i) {
+    cnet_sctp_wire_chunk candidate;
+    if (cnet_sctp_wire_next_chunk(&terminal_cursor, &candidate) !=
         CNET_SCTP_WIRE_OK)
       return CNET_SCTP_ASSOC_PROTOCOL;
-    terminal_abort = terminal_chunk.type == SCTP_TYPE_ABORT;
+    if (candidate.type == SCTP_TYPE_ABORT) {
+      terminal_chunk = candidate;
+      terminal_index = i;
+      terminal_abort = 1;
+      break;
+    }
   }
   /* INIT uses tag zero. Plain ABORT uses our local tag; reflected T=1
    * ABORT uses the nonzero Peer Tag. All other packet types use Local Tag. */
@@ -1204,6 +1238,25 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       return CNET_SCTP_ASSOC_PROTOCOL;
   } else if (header.verification_tag != s->local_tag) {
     return CNET_SCTP_ASSOC_PROTOCOL;
+  }
+  if (terminal_abort) {
+    if (!assoc_abort_bundle_preflight(&preflight_decoder,
+        header.chunk_count, terminal_index))
+      return CNET_SCTP_ASSOC_PROTOCOL;
+    if (s->state == CNET_SCTP_ASSOC_CLOSED)
+      return CNET_SCTP_ASSOC_PROTOCOL;
+    if (s->data_ready) {
+      (void)cnet_sctp_data_stop(&s->data);
+      memset(&s->data, 0, sizeof(s->data));
+      s->data_ready = 0u;
+    }
+    s->state = CNET_SCTP_ASSOC_FAILED;
+    s->deadline_ms = 0u;
+    s->t5_shutdown_deadline_ms = 0u;
+    s->saved_size = 0u;
+    memset(s->saved_packet, 0, sizeof(s->saved_packet));
+    s->last_time_ms = now;
+    return CNET_SCTP_ASSOC_OK;
   }
   /* Classify the complete packet before dispatch. Unknown-only bundles
    * have a narrow transactional action handler; packets mixing unknown and
@@ -1243,7 +1296,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
         return CNET_SCTP_ASSOC_PROTOCOL;
     } else if (chunk.type == 3u && !valid_sack_shape(&chunk)) {
       return CNET_SCTP_ASSOC_PROTOCOL;
-    } else if (header.chunk_count > 1u && !terminal_abort &&
+    } else if (header.chunk_count > 1u &&
                chunk.type != 0u && chunk.type != 3u) {
       /* No arbitrary control chunks can be bundled with INIT, Cookie,
        * SHUTDOWN or ABORT in the private Association profile. */
@@ -1270,27 +1323,6 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
         s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED &&
         s->state != CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT)))
     return CNET_SCTP_ASSOC_PROTOCOL;
-
-  /* RFC 9260 §§3.3.7/8.5.1/9.1: validated single ABORT, SACK+ABORT and
-   * ERROR+ABORT terminate silently before T5. Never commit the first
-   * control to a TCB that is about to be destroyed or publish any response. */
-  if (terminal_abort) {
-    /* The complete packet shape, including any Causes, has been checked. */
-    if (s->state == CNET_SCTP_ASSOC_CLOSED)
-      return CNET_SCTP_ASSOC_PROTOCOL;
-    if (s->data_ready) {
-      (void)cnet_sctp_data_stop(&s->data);
-      memset(&s->data, 0, sizeof(s->data));
-      s->data_ready = 0u;
-    }
-    s->state = CNET_SCTP_ASSOC_FAILED;
-    s->deadline_ms = 0u;
-    s->t5_shutdown_deadline_ms = 0u;
-    s->saved_size = 0u;
-    memset(s->saved_packet, 0, sizeof(s->saved_packet));
-    s->last_time_ms = now;
-    return CNET_SCTP_ASSOC_OK;
-  }
 
   /* A packet-triggered T5 action is also a state transition. Run it only
    * after every Chunk in the bounded packet has passed structural preflight;
