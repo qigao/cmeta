@@ -180,6 +180,202 @@ static void unordered_priority_and_capacity(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
+/* SACK body bytes below are authored independently of the SCTP DATA
+ * peer, rather than round-tripped through its packet generator. A separate
+ * fixed-wire known-answer pair also exercises checksum, length and TSN
+ * handling without calling the prototype wire encoder. */
+static void sack_test_be16(uint8_t *p, uint16_t n) {
+  p[0] = (uint8_t)(n >> 8);
+  p[1] = (uint8_t)n;
+}
+static void sack_test_be32(uint8_t *p, uint32_t n) {
+  p[0] = (uint8_t)(n >> 24);
+  p[1] = (uint8_t)(n >> 16);
+  p[2] = (uint8_t)(n >> 8);
+  p[3] = (uint8_t)n;
+}
+
+static void hand_authored_sack_rejections_preserve_t3(void) {
+  cnet_sctp_data a, b, before;
+  test_owner oa = {0}, ob = {0};
+  const uint8_t values[] = {'a', 'b', 'c'};
+  uint8_t packets[3][1200], wire[256], response[1200];
+  size_t np[3] = {0}, packet_n = 0u, response_n = 0u, i, edge;
+  cnet_sctp_wire_chunk ch = {0};
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  /* These exact 32/28-byte wire fixtures were constructed separately,
+   * using SCTP common header 5001->5000, VTag 0x11223344 and reflected
+   * CRC32C with a zero checksum field. The embedded checksum bytes are
+   * in SCTP little-endian order. No local peer or encoder generates them.
+   * Gap: cumulative=100, rwnd=32768, Gap Ack Block=[2,2].
+   * Final: cumulative=102, rwnd=32768, zero gaps/duplicates.
+   * Stale: cumulative=99, rwnd=32768, zero gaps/duplicates. */
+  static const uint8_t gap_sack_wire[] = {
+    0x13u,0x89u,0x13u,0x88u,0x11u,0x22u,0x33u,0x44u,
+    0x7Au,0xA6u,0x4Bu,0xE6u,0x03u,0x00u,0x00u,0x14u,
+    0x00u,0x00u,0x00u,0x64u,0x00u,0x00u,0x80u,0x00u,
+    0x00u,0x01u,0x00u,0x00u,0x00u,0x02u,0x00u,0x02u
+  };
+  static const uint8_t final_sack_wire[] = {
+    0x13u,0x89u,0x13u,0x88u,0x11u,0x22u,0x33u,0x44u,
+    0xF7u,0x48u,0x6Bu,0x1Au,0x03u,0x00u,0x00u,0x10u,
+    0x00u,0x00u,0x00u,0x66u,0x00u,0x00u,0x80u,0x00u,
+    0x00u,0x00u,0x00u,0x00u
+  };
+  static const uint8_t stale_sack_wire[] = {
+    0x13u,0x89u,0x13u,0x88u,0x11u,0x22u,0x33u,0x44u,
+    0x8Cu,0x5Cu,0x9Au,0x30u,0x03u,0x00u,0x00u,0x10u,
+    0x00u,0x00u,0x00u,0x63u,0x00u,0x00u,0x80u,0x00u,
+    0x00u,0x00u,0x00u,0x00u
+  };
+  static const struct {
+    uint32_t cumulative;
+    uint16_t blocks, duplicates;
+    uint16_t start0, end0, start1, end1;
+    size_t payload_bytes;
+    uint8_t flags;
+  } invalid[] = {
+    {103u,0u,0u,0u,0u,0u,0u,12u,0u}, /* ACK of unsent TSN */
+    {99u,1u,0u,0u,1u,0u,0u,16u,0u}, /* gap starts at zero */
+    {99u,1u,0u,2u,1u,0u,0u,16u,0u}, /* reversed gap */
+    {99u,1u,0u,4u,4u,0u,0u,16u,0u}, /* gap beyond sent TSN */
+    {99u,2u,0u,1u,2u,2u,3u,20u,0u}, /* overlapping gaps */
+    {99u,2u,0u,2u,3u,1u,1u,20u,0u}, /* unordered gaps */
+    {99u,1u,0u,1u,1u,0u,0u,12u,0u}, /* missing gap bytes */
+    {99u,0u,0u,0u,0u,0u,0u,16u,0u}, /* extra unclaimed bytes */
+    {99u,17u,0u,1u,1u,0u,0u,80u,0u}, /* >16 gap blocks */
+    {99u,0u,1u,0u,0u,0u,0u,12u,0u}, /* missing duplicate TSN */
+    {99u,0u,33u,0u,0u,0u,0u,144u,0u}, /* >32 duplicates */
+    {99u,0u,0u,0u,0u,0u,0u,12u,1u}, /* reserved SACK flags */
+    {UINT32_C(0x80000063),0u,0u,0u,0u,0u,0u,12u,0u},
+      /* ambiguous serial-number half-wrap */
+    {102u,1u,0u,1u,1u,0u,0u,16u,0u}
+      /* gap refers past already cumulative-ACKed sent span */
+  };
+
+  pair_init(&a, &b, &oa, &ob, 100u, 300u);
+  for (i = 0u; i < 3u; ++i)
+    assert(cnet_sctp_data_send(&a, 1u + i, 0u, 51u, 0,
+        values + i, 1u, packets[i], sizeof(packets[i]), &np[i]) ==
+        CNET_SCTP_DATA_OK);
+  assert(a.last_ack == 99u && a.in_flight == 3u);
+  assert(a.t3_deadline_ms == 101u && a.rto_ms == 100u);
+
+  assert(cnet_sctp_wire_decode(gap_sack_wire, sizeof(gap_sack_wire),
+      &header, &decoder) == CNET_SCTP_WIRE_OK);
+  assert(header.source_port == 5001u && header.destination_port == 5000u &&
+      header.verification_tag == a.config.local_tag && header.chunk_count == 1u);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &ch) == CNET_SCTP_WIRE_OK);
+  assert(ch.type == 3u && ch.value_size == 16u &&
+      rd32(ch.value) == 100u && rd16(ch.value + 12u) == 2u &&
+      rd16(ch.value + 14u) == 2u);
+  assert(cnet_sctp_wire_decode(final_sack_wire, sizeof(final_sack_wire),
+      &header, &decoder) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_wire_decode(stale_sack_wire, sizeof(stale_sack_wire),
+      &header, &decoder) == CNET_SCTP_WIRE_OK);
+
+  /* Every malformed-but-CRC-valid SACK is rejected before processing T3,
+   * both one tick before expiry and exactly on the deadline. */
+  for (edge = 0u; edge < 2u; ++edge) {
+    for (i = 0u; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+      uint8_t body[12u + 33u * 4u] = {0};
+      cnet_sctp_wire_chunk sack = {0};
+      size_t j;
+      sack_test_be32(body, invalid[i].cumulative);
+      sack_test_be32(body + 4u, 32768u);
+      sack_test_be16(body + 8u, invalid[i].blocks);
+      sack_test_be16(body + 10u, invalid[i].duplicates);
+      sack_test_be16(body + 12u, invalid[i].start0);
+      sack_test_be16(body + 14u, invalid[i].end0);
+      sack_test_be16(body + 16u, invalid[i].start1);
+      sack_test_be16(body + 18u, invalid[i].end1);
+      sack.type = 3u;
+      sack.flags = invalid[i].flags;
+      sack.value = body;
+      sack.value_size = invalid[i].payload_bytes;
+      assert(cnet_sctp_wire_encode(5001u, 5000u, a.config.local_tag,
+          &sack, 1u, wire, sizeof(wire), &packet_n) == CNET_SCTP_WIRE_OK);
+      /* Isolate SACK semantic rejection from mere checksum failure. */
+      assert(cnet_sctp_wire_decode(wire, packet_n, &header, &decoder) ==
+          CNET_SCTP_WIRE_OK);
+      memcpy(&before, &a, sizeof(before));
+      memset(response, 0xCC, sizeof(response));
+      response_n = 123u;
+      assert(cnet_sctp_data_input(&a, edge ? 101u : 100u,
+          wire, packet_n, response, sizeof(response), &response_n) ==
+          CNET_SCTP_DATA_PROTOCOL);
+      assert(response_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+      for (j = 0u; j < sizeof(response); ++j)
+        assert(response[j] == 0xCCu);
+    }
+  }
+
+  /* Corrupt a fixed-wire known-answer packet WITHOUT recomputing CRC. */
+  {
+    uint8_t corrupted[sizeof(gap_sack_wire)];
+    memcpy(corrupted, gap_sack_wire, sizeof(corrupted));
+    corrupted[19] ^= 0x01u;
+    assert(cnet_sctp_wire_decode(corrupted, sizeof(corrupted),
+        &header, &decoder) == CNET_SCTP_WIRE_CHECKSUM);
+    memcpy(&before, &a, sizeof(before));
+    memset(response, 0xCC, sizeof(response));
+    response_n = 123u;
+    assert(cnet_sctp_data_input(&a, 101u, corrupted, sizeof(corrupted),
+        response, sizeof(response), &response_n) == CNET_SCTP_DATA_PROTOCOL);
+    assert(response_n == 0u && response[0] == 0xCCu &&
+        memcmp(&a, &before, sizeof(before)) == 0);
+  }
+
+  /* Only explicit Owner advance may emit the due T3 retransmission.
+   * A too-small destination at the exact deadline must be retryable. */
+  memcpy(&before, &a, sizeof(before));
+  memset(response, 0xCC, sizeof(response));
+  response_n = 123u;
+  assert(cnet_sctp_data_advance(&a, 101u, response, np[0] - 1u,
+      &response_n) == CNET_SCTP_DATA_CAPACITY);
+  assert(response_n == 0u && response[0] == 0xCCu &&
+      memcmp(&a, &before, sizeof(before)) == 0);
+  assert(cnet_sctp_data_advance(&a, 101u, response, sizeof(response),
+      &response_n) == CNET_SCTP_DATA_OK);
+  assert(response_n == np[0] &&
+      memcmp(response, packets[0], np[0]) == 0);
+  assert(a.tx[0].retransmits == 1u && a.t3_wait_ack);
+  assert(a.rto_ms == 200u && a.t3_deadline_ms == 301u);
+
+  /* Positives use only the fixed, independently checksumed wire fixtures.
+   * A cumulative ACK for the T3 retransmit clears its admission barrier;
+   * a later Gap ACK does not prematurely release the retained TSN 102. */
+  memset(response, 0xCC, sizeof(response));
+  assert(cnet_sctp_data_input(&a, 102u, gap_sack_wire,
+      sizeof(gap_sack_wire), response, sizeof(response), &response_n) ==
+      CNET_SCTP_DATA_OK);
+  assert(response_n == 0u && response[0] == 0xCCu);
+  assert(a.last_ack == 100u && !a.tx[0].used && a.tx[1].used &&
+      a.tx[2].used && a.tx[2].gap_acked && a.tx[2].ack_counted);
+  assert(!a.t3_wait_ack && a.in_flight == 1u);
+  assert(a.t3_deadline_ms == 302u && a.rto_ms == 200u);
+  assert(cnet_sctp_data_input(&a, 103u, final_sack_wire,
+      sizeof(final_sack_wire), response, sizeof(response), &response_n) ==
+      CNET_SCTP_DATA_OK);
+  assert(response_n == 0u && a.last_ack == 102u);
+  assert(a.in_flight == 0u && a.t3_deadline_ms == 0u);
+  assert(cnet_sctp_data_outbound_drained(&a));
+
+  /* A valid but outdated SACK is ignored instead of rewinding the
+   * cumulative acknowledgement, T3 or monotonic Owner clock. */
+  memcpy(&before, &a, sizeof(before));
+  memset(response, 0xCC, sizeof(response));
+  response_n = 123u;
+  assert(cnet_sctp_data_input(&a, 104u, stale_sack_wire,
+      sizeof(stale_sack_wire), response, sizeof(response), &response_n) ==
+      CNET_SCTP_DATA_OK);
+  assert(response_n == 0u && response[0] == 0xCCu &&
+      memcmp(&a, &before, sizeof(before)) == 0);
+  assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
+}
+
 static void invalid_sack_and_t3_budget(void) {
   cnet_sctp_data a, b;
   test_owner oa = {0}, ob = {0};
@@ -760,6 +956,7 @@ static void multi_loss_one_recovery_epoch(void) {
 }
 
 int main(void) {
+  hand_authored_sack_rejections_preserve_t3();
   reorder_duplicate_sacks_require_distinct_loss_evidence();
   multi_loss_one_recovery_epoch();
   karn_gap_reneging_restore();
