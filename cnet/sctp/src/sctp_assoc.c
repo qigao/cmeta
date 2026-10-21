@@ -357,6 +357,77 @@ static int good_init_fields(const uint8_t *v, size_t len) {
   return len >= 16u && rd32(v) != 0u && rd32(v + 4u) >= 1500u &&
          rd16(v + 8u) != 0u && rd16(v + 10u) != 0u;
 }
+
+/* Basic syntax preflight for the chunk subset this Association understands.
+ * T5 is an absolute deadline, but malformed supported Chunks must not use it
+ * as a side effect before their own parser would reject them. */
+static int valid_error_cause_vector(const cnet_sctp_wire_chunk *chunk) {
+  size_t pos = 0u;
+  if (!chunk || chunk->type != SCTP_TYPE_ERROR || chunk->flags != 0u)
+    return 0;
+  while (pos < chunk->value_size) {
+    size_t len, padded;
+    if (chunk->value_size - pos < 4u) return 0;
+    len = rd16(chunk->value + pos + 2u);
+    if (len < 4u || len > chunk->value_size - pos) return 0;
+    padded = (len + 3u) & ~(size_t)3u;
+    if (padded > chunk->value_size - pos) return 0;
+    pos += padded;
+  }
+  return pos == chunk->value_size;
+}
+
+static int assoc_chunk_shape_valid(const cnet_sctp_wire_chunk *chunk) {
+  cnet_sctp_init_param_view params;
+  cnet_sctp_init_param_status parsed;
+  if (!chunk) return 0;
+  switch (chunk->type) {
+    case 0u: /* DATA */
+      return (chunk->flags & (uint8_t)~7u) == 0u &&
+          chunk->value_size >= 13u;
+    case SCTP_TYPE_INIT:
+    case SCTP_TYPE_INIT_ACK:
+      if (chunk->flags != 0u ||
+          !good_init_fields(chunk->value, chunk->value_size)) return 0;
+      parsed = cnet_sctp_init_params_preflight(chunk->value,
+          chunk->value_size, chunk->type == SCTP_TYPE_INIT_ACK, &params);
+      return parsed == CNET_SCTP_INIT_PARAMS_OK ||
+          parsed == CNET_SCTP_INIT_PARAMS_ABORT_REQUIRED;
+    case 3u: /* SACK */
+      return valid_sack_shape(chunk);
+    case SCTP_TYPE_ABORT:
+      return chunk->flags == 0u && chunk->value_size == 0u;
+    case SCTP_TYPE_SHUTDOWN:
+      return chunk->flags == 0u && chunk->value_size == 4u;
+    case SCTP_TYPE_SHUTDOWN_ACK:
+    case SCTP_TYPE_COOKIE_ACK:
+    case SCTP_TYPE_SHUTDOWN_COMPLETE:
+      return chunk->flags == 0u && chunk->value_size == 0u;
+    case SCTP_TYPE_ERROR:
+      return valid_error_cause_vector(chunk);
+    case SCTP_TYPE_COOKIE_ECHO:
+      return chunk->flags == 0u &&
+          chunk->value_size == CNET_SCTP_ASSOC_COOKIE_BYTES;
+    default:
+      /* Unknown and recognized-but-unimplemented extensions have no
+       * private parser; their framing and bundle position are still checked. */
+      return 1;
+  }
+}
+
+static int assoc_packet_shape_preflight(
+    const cnet_sctp_wire_decoder *decoded, size_t count) {
+  cnet_sctp_wire_decoder cursor;
+  size_t i;
+  if (!decoded || count == 0u) return 0;
+  cursor = *decoded;
+  for (i = 0u; i < count; ++i) {
+    cnet_sctp_wire_chunk chunk;
+    if (cnet_sctp_wire_next_chunk(&cursor, &chunk) != CNET_SCTP_WIRE_OK ||
+        !assoc_chunk_shape_valid(&chunk)) return 0;
+  }
+  return 1;
+}
 static cnet_sctp_assoc_status publish_packet(uint8_t *output, size_t cap,
     size_t *written, const uint8_t *scratch, size_t size) {
   if (size > cap) return CNET_SCTP_ASSOC_CAPACITY;
@@ -1132,6 +1203,9 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   /* Unknown Chunk action bits are meaningful only for unrecognized types.
    * Known-but-unimplemented controls (e.g. HEARTBEAT) still take the
    * unsupported-control rejection path and must never be misreported. */
+  if (!assoc_packet_shape_preflight(&preflight_decoder,
+      header.chunk_count))
+    return CNET_SCTP_ASSOC_PROTOCOL;
   /* A packet-triggered T5 action is also a state transition. Run it only
    * after every Chunk in the bounded packet has passed structural preflight;
    * wrong-tag or malformed bundled packets cannot trigger an ABORT. The
