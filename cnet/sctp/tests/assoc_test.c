@@ -1309,6 +1309,72 @@ static void unknown_multi_chunk_actions_are_transactional(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void unknown_report_variable_lengths_preserve_tlv_and_padding(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  static const uint8_t p0[] = {0xA1u};
+  static const uint8_t p1[] = {0xB1u, 0xB2u, 0xB3u, 0xB4u};
+  static const uint8_t p2[] = {0xC1u, 0xC2u, 0xC3u, 0xC4u, 0xC5u};
+  const uint8_t *payloads[] = {p0, p1, p2};
+  const size_t payload_sizes[] = {sizeof(p0), sizeof(p1), sizeof(p2)};
+  const uint8_t types[] = {0xE3u, 0xE3u, 0x61u};
+  const uint8_t flags[] = {0x11u, 0x22u, 0x33u};
+  const size_t cause_sizes[] = {9u, 12u, 13u};
+  const size_t padded_sizes[] = {12u, 12u, 16u};
+  cnet_sctp_wire_chunk chunks[3];
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk response = {0};
+  uint8_t packet[128] = {0}, output[256];
+  size_t packet_n = 0u, output_n = 0u, i, cause_pos = 0u;
+  uint64_t now;
+
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_ESTABLISHED;
+  a.peer_tag = b.local_tag;
+  now = a.last_time_ms + 1u;
+  for (i = 0u; i < 3u; ++i) {
+    chunks[i].type = types[i];
+    chunks[i].flags = flags[i];
+    chunks[i].value = payloads[i];
+    chunks[i].value_size = payload_sizes[i];
+  }
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 3u,
+      packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&a, now, packet, packet_n, output,
+      sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
+  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED && a.last_time_ms == now);
+  assert(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == 1u);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &response) == CNET_SCTP_WIRE_OK);
+  assert(response.type == 9u && response.flags == 0u);
+  assert(response.value_size == padded_sizes[0] + padded_sizes[1] +
+      padded_sizes[2]);
+
+  /* Exercise ERROR-cause lengths 9, 12 and 13: the first needs three
+   * padding bytes, the second none, and the last is padded to 16 bytes. */
+  for (i = 0u; i < 3u; ++i) {
+    const uint8_t *cause = response.value + cause_pos;
+    size_t raw_chunk_size = 4u + payload_sizes[i];
+    size_t j;
+    assert(cause[0] == 0u && cause[1] == 6u);
+    assert(cause[2] == 0u && cause[3] == cause_sizes[i]);
+    assert(cause[4] == types[i] && cause[5] == flags[i]);
+    assert(cause[6] == 0u && cause[7] == raw_chunk_size);
+    assert(memcmp(cause + 8u, payloads[i], payload_sizes[i]) == 0);
+    for (j = cause_sizes[i]; j < padded_sizes[i]; ++j)
+      assert(cause[j] == 0u);
+    cause_pos += padded_sizes[i];
+  }
+  assert(cause_pos == response.value_size);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void error_and_abort_never_create_response_loops(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -1585,6 +1651,7 @@ int main(void) {
   unknown_chunks_do_not_preempt_t5();
   unknown_chunk_actions_are_bounded_and_exact();
   unknown_multi_chunk_actions_are_transactional();
+  unknown_report_variable_lengths_preserve_tlv_and_padding();
   error_and_abort_never_create_response_loops();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
