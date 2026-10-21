@@ -448,6 +448,24 @@ static int assoc_packet_shape_preflight(
   }
   return 1;
 }
+/* HEARTBEAT and HEARTBEAT ACK carry exactly one Heartbeat Info TLV.
+ * The final TLV may omit its own padding from Chunk Length. This validator is
+ * used only before a terminal ABORT; it does not enable ordinary HB dispatch. */
+static int valid_heartbeat_abort_prefix(const cnet_sctp_wire_chunk *chunk) {
+  size_t length, padded;
+  if (!chunk || (chunk->type != 4u && chunk->type != 5u) ||
+      chunk->value_size < 4u || rd16(chunk->value) != 1u)
+    return 0;
+  length = rd16(chunk->value + 2u);
+  if (length < 4u || length > chunk->value_size) return 0;
+  padded = (length + 3u) & ~(size_t)3u;
+  if (padded > chunk->value_size) {
+    if (length != chunk->value_size) return 0;
+    padded = length;
+  }
+  return padded == chunk->value_size;
+}
+
 /* ABORT is terminal. Validate every control before the first ABORT, then
  * ignore later Chunk semantics as required by RFC 9260 Section 3.3.7.
  * Wire decoding has already checked framing and the DATA+ABORT prohibition. */
@@ -475,7 +493,9 @@ static int assoc_abort_bundle_preflight(
         return 0;
       continue;
     }
-    if (!assoc_chunk_shape_valid(&chunk)) return 0;
+    if ((chunk.type == 4u || chunk.type == 5u) ?
+        !valid_heartbeat_abort_prefix(&chunk) :
+        !assoc_chunk_shape_valid(&chunk)) return 0;
   }
   return 0;
 }
