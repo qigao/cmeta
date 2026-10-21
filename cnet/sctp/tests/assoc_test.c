@@ -177,6 +177,27 @@ static void entropy_init_fail_closed(void) {
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
 }
 
+/* Re-encode one borrowed Chunk with incoming ignored flag bits and a
+ * fresh checksum without altering the sender's retained wire packet. */
+static void retag_single_chunk_flags(uint8_t *packet, size_t size,
+    uint8_t flags) {
+  uint8_t revised[CNET_SCTP_ASSOC_MAX_PACKET];
+  cnet_sctp_wire_header h = {0};
+  cnet_sctp_wire_decoder d = {0};
+  cnet_sctp_wire_chunk ch = {0};
+  size_t written = 0u;
+  assert(packet && size <= sizeof(revised));
+  assert(cnet_sctp_wire_decode(packet, size, &h, &d) == CNET_SCTP_WIRE_OK);
+  assert(h.chunk_count == 1u);
+  assert(cnet_sctp_wire_next_chunk(&d, &ch) == CNET_SCTP_WIRE_OK);
+  ch.flags = flags;
+  assert(cnet_sctp_wire_encode(h.source_port, h.destination_port,
+      h.verification_tag, &ch, 1u, revised, sizeof(revised),
+      &written) == CNET_SCTP_WIRE_OK);
+  assert(written == size);
+  memcpy(packet, revised, written);
+}
+
 static void normal_handshake(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -195,6 +216,7 @@ static void normal_handshake(void) {
   assert(cnet_sctp_assoc_start(&a, 10u, wire_init, sizeof(wire_init), &n_init) ==
          CNET_SCTP_ASSOC_OK);
   assert(n_init == 32u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  retag_single_chunk_flags(wire_init, n_init, 0x80u); /* INIT */
   assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
          CNET_SCTP_ASSOC_OK);
   assert(has_deadline && deadline == 110u);
@@ -204,12 +226,14 @@ static void normal_handshake(void) {
   assert(cnet_sctp_assoc_input(&b, 20u, wire_init, n_init,
                                wire_ack, sizeof(wire_ack), &n_ack) == CNET_SCTP_ASSOC_OK);
   assert(n_ack == 124u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  retag_single_chunk_flags(wire_ack, n_ack, 0xA0u); /* INIT ACK */
   assert(cnet_sctp_assoc_input(&a, 30u, wire_ack, n_ack,
                                wire_echo, 4u, &n_echo) == CNET_SCTP_ASSOC_CAPACITY);
   assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
   assert(cnet_sctp_assoc_input(&a, 30u, wire_ack, n_ack,
                                wire_echo, sizeof(wire_echo), &n_echo) == CNET_SCTP_ASSOC_OK);
   assert(n_echo == 104u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+  retag_single_chunk_flags(wire_echo, n_echo, 0xF0u); /* COOKIE ECHO */
   assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
          CNET_SCTP_ASSOC_OK);
   assert(has_deadline && deadline == 130u);
@@ -241,6 +265,7 @@ static void normal_handshake(void) {
   assert(cnet_sctp_assoc_input(&b, 50u, wire_echo, n_echo,
                                wire_ack, sizeof(wire_ack), &n_ack) == CNET_SCTP_ASSOC_OK);
   assert(n_ack == n_ok && memcmp(wire_ack, wire_ok, n_ack) == 0);
+  retag_single_chunk_flags(wire_ok, n_ok, 0xC0u); /* COOKIE ACK */
   assert(cnet_sctp_assoc_input(&a, 55u, wire_ok, n_ok,
                                forged, sizeof(forged), &n_forged) == CNET_SCTP_ASSOC_OK);
   assert(n_forged == 0u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_ESTABLISHED);
@@ -560,6 +585,29 @@ static void init_tlv_wire_gate(void) {
   assert(cnet_sctp_assoc_advance(&a, 103u, scratch,
                                  sizeof(scratch), &encoded_n) == CNET_SCTP_ASSOC_OK);
   assert(encoded_n == echo_n && memcmp(echo, scratch, echo_n) == 0);
+  /* The saved T1 packet remains byte-identical. A separate on-wire copy
+   * has ignored flags on both COOKIE ECHO and advisory ERROR. */
+  {
+    cnet_sctp_wire_header framed = {0};
+    cnet_sctp_wire_decoder reader = {0};
+    cnet_sctp_wire_chunk flagged[2];
+    uint8_t modified[CNET_SCTP_ASSOC_MAX_PACKET];
+    size_t changed = 0u;
+    assert(cnet_sctp_wire_decode(scratch, encoded_n, &framed, &reader) ==
+        CNET_SCTP_WIRE_OK && framed.chunk_count == 2u);
+    assert(cnet_sctp_wire_next_chunk(&reader, &flagged[0]) ==
+        CNET_SCTP_WIRE_OK);
+    assert(cnet_sctp_wire_next_chunk(&reader, &flagged[1]) ==
+        CNET_SCTP_WIRE_OK);
+    assert(flagged[0].type == 10u && flagged[1].type == 9u);
+    flagged[0].flags = 0xA0u;
+    flagged[1].flags = 0xF0u;
+    assert(cnet_sctp_wire_encode(framed.source_port,
+        framed.destination_port, framed.verification_tag, flagged, 2u,
+        modified, sizeof(modified), &changed) == CNET_SCTP_WIRE_OK);
+    assert(changed == encoded_n);
+    memcpy(scratch, modified, changed);
+  }
   assert(cnet_sctp_assoc_input(&b, 104u, scratch, encoded_n, confirm,
                                sizeof(confirm), &confirm_n) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_input(&a, 105u, confirm, confirm_n, scratch,
@@ -1620,8 +1668,9 @@ static void error_and_abort_never_create_response_loops(void) {
   assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
   assert(a.last_time_ms == prior_time);
 
-  /* A valid plain ABORT terminates locally and MUST NOT provoke a response. */
-  chunk.flags = 0u;
+  /* A valid plain T=0 ABORT with ignored reserved flags terminates locally
+   * without an ABORT response. T=1 remains rejected above. */
+  chunk.flags = 0x80u;
   assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));

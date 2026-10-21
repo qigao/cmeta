@@ -362,7 +362,8 @@ static int good_init_fields(const uint8_t *v, size_t len) {
  * as a side effect before their own parser would reject them. */
 static int valid_error_cause_vector(const cnet_sctp_wire_chunk *chunk) {
   size_t pos = 0u;
-  if (!chunk || chunk->type != SCTP_TYPE_ERROR || chunk->flags != 0u ||
+  /* ERROR Chunk Flags are ignored on receipt (RFC 9260 3.3.10). */
+  if (!chunk || chunk->type != SCTP_TYPE_ERROR ||
       chunk->value_size < 4u)
     return 0;
   while (pos < chunk->value_size) {
@@ -388,8 +389,8 @@ static int assoc_chunk_shape_valid(const cnet_sctp_wire_chunk *chunk) {
       return chunk->value_size >= 13u;
     case SCTP_TYPE_INIT:
     case SCTP_TYPE_INIT_ACK:
-      if (chunk->flags != 0u ||
-          !good_init_fields(chunk->value, chunk->value_size)) return 0;
+      /* INIT/INIT ACK flags are sent as zero and ignored on receipt. */
+      if (!good_init_fields(chunk->value, chunk->value_size)) return 0;
       parsed = cnet_sctp_init_params_preflight(chunk->value,
           chunk->value_size, chunk->type == SCTP_TYPE_INIT_ACK, &params);
       return parsed == CNET_SCTP_INIT_PARAMS_OK ||
@@ -397,18 +398,20 @@ static int assoc_chunk_shape_valid(const cnet_sctp_wire_chunk *chunk) {
     case 3u: /* SACK */
       return valid_sack_shape(chunk);
     case SCTP_TYPE_ABORT:
-      return chunk->flags == 0u && chunk->value_size == 0u;
+      /* Only T=0 supported; ignore the seven reserved ABORT bits. */
+      return (chunk->flags & 1u) == 0u && chunk->value_size == 0u;
     case SCTP_TYPE_SHUTDOWN:
-      return chunk->flags == 0u && chunk->value_size == 4u;
+      return chunk->value_size == 4u;
     case SCTP_TYPE_SHUTDOWN_ACK:
     case SCTP_TYPE_COOKIE_ACK:
+      return chunk->value_size == 0u;
     case SCTP_TYPE_SHUTDOWN_COMPLETE:
-      return chunk->flags == 0u && chunk->value_size == 0u;
+      /* T=1 remains outside the bounded profile; other bits ignored. */
+      return (chunk->flags & 1u) == 0u && chunk->value_size == 0u;
     case SCTP_TYPE_ERROR:
       return valid_error_cause_vector(chunk);
     case SCTP_TYPE_COOKIE_ECHO:
-      return chunk->flags == 0u &&
-          chunk->value_size == CNET_SCTP_ASSOC_COOKIE_BYTES;
+      return chunk->value_size == CNET_SCTP_ASSOC_COOKIE_BYTES;
     default:
       /* A registered but unimplemented control has no private parser, so
        * its payload cannot qualify for a packet-triggered T5 transition.
@@ -935,7 +938,7 @@ static cnet_sctp_assoc_status handle_shutdown(cnet_sctp_assoc *s,
     size_t *written) {
   cnet_sctp_data candidate;
   cnet_sctp_assoc_status status;
-  if (header->verification_tag != s->local_tag || chunk->flags != 0u ||
+  if (header->verification_tag != s->local_tag ||
       chunk->value_size != 4u || !s->data_ready)
     return CNET_SCTP_ASSOC_PROTOCOL;
   if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT) {
@@ -980,7 +983,7 @@ static cnet_sctp_assoc_status handle_shutdown_ack(cnet_sctp_assoc *s,
     size_t *written) {
   cnet_sctp_assoc_status status;
   if (header->verification_tag != s->local_tag ||
-      chunk->flags != 0u || chunk->value_size != 0u ||
+      chunk->value_size != 0u ||
       (s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
        s->state != CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT))
     return CNET_SCTP_ASSOC_PROTOCOL;
@@ -1285,8 +1288,9 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       /* This private M2 path handles only a plain ABORT using the
        * expected tag. It never responds to ABORT with another ABORT.
        * Rejected ABORTs must not commit the provisional time watermark. */
-      if (header.verification_tag != s->local_tag || chunk.flags != 0u ||
-          chunk.value_size != 0u || s->state == CNET_SCTP_ASSOC_CLOSED) {
+      if (header.verification_tag != s->local_tag ||
+          (chunk.flags & 1u) != 0u || chunk.value_size != 0u ||
+          s->state == CNET_SCTP_ASSOC_CLOSED) {
         s->last_time_ms = prior_time;
         return CNET_SCTP_ASSOC_PROTOCOL;
       }
@@ -1320,8 +1324,8 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
           output, cap, written), prior_time);
     case SCTP_TYPE_SHUTDOWN_COMPLETE:
       if (header.chunk_count != 1u ||
-          header.verification_tag != s->local_tag || chunk.flags != 0u ||
-          chunk.value_size != 0u ||
+          header.verification_tag != s->local_tag ||
+          (chunk.flags & 1u) != 0u || chunk.value_size != 0u ||
           s->state != CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT) {
         s->last_time_ms = prior_time;
         return CNET_SCTP_ASSOC_PROTOCOL;

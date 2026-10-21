@@ -102,6 +102,27 @@ static void ready_pair(cnet_sctp_assoc *a, cnet_sctp_assoc *b,
   assert(a->data.next_tsn == UINT32_C(0xfffffffe));
   assert(a->data.cumulative_rx == 999u);
 }
+/* Valid CRC32C on an incoming control with nonzero reserved flags,
+ * without mutating the actual Owner-retained outgoing control. */
+static void retag_control_packet(uint8_t *packet, size_t size,
+    uint8_t flags) {
+  uint8_t modified[CNET_SCTP_ASSOC_MAX_PACKET];
+  cnet_sctp_wire_header h = {0};
+  cnet_sctp_wire_decoder d = {0};
+  cnet_sctp_wire_chunk ch = {0};
+  size_t written = 0u;
+  assert(packet && size <= sizeof(modified));
+  assert(cnet_sctp_wire_decode(packet, size, &h, &d) == CNET_SCTP_WIRE_OK);
+  assert(h.chunk_count == 1u);
+  assert(cnet_sctp_wire_next_chunk(&d, &ch) == CNET_SCTP_WIRE_OK);
+  ch.flags = flags;
+  assert(cnet_sctp_wire_encode(h.source_port, h.destination_port,
+      h.verification_tag, &ch, 1u, modified, sizeof(modified),
+      &written) == CNET_SCTP_WIRE_OK);
+  assert(written == size);
+  memcpy(packet, modified, written);
+}
+
 static void real_assoc_send_sack_and_t3(void) {
   cnet_sctp_assoc a, b;
   test_context ca = {0}, cb = {0};
@@ -516,6 +537,7 @@ static void shutdown_no_inflight_and_t2(void) {
   cnet_sctp_assoc a, b;
   test_context ca = {0}, cb = {0};
   uint8_t req[1200], ack[1200], complete[1200], retry[1200];
+  uint8_t flagged_ack[1200];
   size_t nq = 0u, na = 0u, nc = 0u, nr = 0u;
   uint64_t deadline = 0u, saved_deadline;
   int has_deadline = 0;
@@ -535,6 +557,7 @@ static void shutdown_no_inflight_and_t2(void) {
       sizeof(retry), &nr) == CNET_SCTP_ASSOC_OK);
   assert(nr == nq && memcmp(req, retry, nr) == 0 &&
       a.deadline_ms == 306u);
+  retag_control_packet(req, nq, 0x80u); /* SHUTDOWN reserved */
   assert(cnet_sctp_assoc_input(&b, 107u, req, nq,
       ack, 10u, &na) == CNET_SCTP_ASSOC_CAPACITY);
   assert(na == 0u && b.state == CNET_SCTP_ASSOC_ESTABLISHED);
@@ -548,16 +571,19 @@ static void shutdown_no_inflight_and_t2(void) {
   assert(nc == na && memcmp(complete, ack, na) == 0 &&
       b.deadline_ms == saved_deadline + 1u);
   saved_deadline = b.deadline_ms; /* duplicate SHUTDOWN restarted T2 */
-  assert(cnet_sctp_assoc_input(&a, 109u, ack, na,
+  memcpy(flagged_ack, ack, na);
+  retag_control_packet(flagged_ack, na, 0x40u); /* SHUTDOWN ACK */
+  assert(cnet_sctp_assoc_input(&a, 109u, flagged_ack, na,
       complete, 10u, &nc) == CNET_SCTP_ASSOC_CAPACITY);
   assert(nc == 0u && a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
-  assert(cnet_sctp_assoc_input(&a, 109u, ack, na,
+  assert(cnet_sctp_assoc_input(&a, 109u, flagged_ack, na,
       complete, sizeof(complete), &nc) == CNET_SCTP_ASSOC_OK);
   assert(nc == 16u && shutdown_chunk_type(complete, nc) == 14u);
   assert(a.state == CNET_SCTP_ASSOC_STOPPED && cnet_sctp_assoc_drained(&a));
   assert(cnet_sctp_assoc_advance(&b, saved_deadline, retry,
       sizeof(retry), &nr) == CNET_SCTP_ASSOC_OK);
   assert(nr == na && memcmp(retry, ack, na) == 0);
+  retag_control_packet(complete, nc, 0x80u); /* COMPLETE T=0, reserved */
   assert(cnet_sctp_assoc_input(&b, saved_deadline + 1u,
       complete, nc, retry, sizeof(retry), &nr) == CNET_SCTP_ASSOC_OK);
   assert(nr == 0u && b.state == CNET_SCTP_ASSOC_STOPPED &&
