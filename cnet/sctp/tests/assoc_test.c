@@ -1227,11 +1227,13 @@ static void unknown_multi_chunk_actions_are_transactional(void) {
     {0xA2u, 0x20u, 0xE3u}, /* skip, then stop/discard */
     {0xA2u, 0x61u, 0xE3u}, /* skip, then stop/report */
     {0xA2u, 0xE3u, 0xA2u}, /* skip/report in the middle */
+    {0xE3u, 0x20u, 0xA2u}, /* preserve earlier report before stop/discard */
+    {0xE3u, 0x61u, 0xA2u}, /* preserve earlier report and report stop/report */
     {0xE3u, 0xE3u, 0xA2u}, /* collect two reports */
     {0xA2u, 0xA2u, 0xA2u}  /* skip all */
   };
   static const uint8_t report_masks[] = {
-    0u, 1u, 0u, 2u, 2u, 3u, 0u
+    0u, 1u, 0u, 2u, 2u, 1u, 3u, 3u, 0u
   };
   size_t case_i;
   setup(&a, &b, &ca, &cb);
