@@ -405,8 +405,9 @@ static int assoc_chunk_shape_valid(const cnet_sctp_wire_chunk *chunk) {
     case 3u: /* SACK */
       return valid_sack_shape(chunk);
     case SCTP_TYPE_ABORT:
-      /* Only T=0 supported; ignore the seven reserved ABORT bits. */
-      return (chunk->flags & 1u) == 0u && chunk->value_size == 0u;
+      /* All reserved ABORT flag bits are ignored. The T bit is validated
+       * together with the received packet Verification Tag before dispatch. */
+      return chunk->value_size == 0u;
     case SCTP_TYPE_SHUTDOWN:
       return chunk->value_size == 4u;
     case SCTP_TYPE_SHUTDOWN_ACK:
@@ -1163,16 +1164,22 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   classify_decoder = decoder;
   if (cnet_sctp_wire_next_chunk(&decoder, &chunk) != CNET_SCTP_WIRE_OK)
     return CNET_SCTP_ASSOC_PROTOCOL;
-  /* RFC 9260 §8.5 (Verified Erratum 7852): validate the packet Verification
-   * Tag before changing association state or processing any chunk. INIT is
-   * the sole supported exception and must carry the zero tag. The wire
-   * decoder already rejects bundling INIT. For all other chunks this bounded
-   * profile accepts only the local tag; unsupported T-bit ABORT variants
-   * remain rejected rather than opening a second path. */
-  if ((chunk.type == SCTP_TYPE_INIT && header.verification_tag != 0u) ||
-      (chunk.type != SCTP_TYPE_INIT &&
-       header.verification_tag != s->local_tag))
+  /* RFC 9260 §8.5.1: INIT uses tag 0. A standalone ABORT with T=0
+   * uses our local tag; with T=1 it reflects our peer's tag. Reject an
+   * unset peer tag rather than admitting a forged zero-tag ABORT. Other
+   * chunks and unsupported ABORT bundles retain the original local-tag
+   * rule; this is not general OOTB response handling. */
+  if (chunk.type == SCTP_TYPE_INIT) {
+    if (header.verification_tag != 0u)
+      return CNET_SCTP_ASSOC_PROTOCOL;
+  } else if (chunk.type == SCTP_TYPE_ABORT && header.chunk_count == 1u) {
+    const uint32_t expected_tag = (chunk.flags & 1u) ?
+        s->peer_tag : s->local_tag;
+    if (expected_tag == 0u || header.verification_tag != expected_tag)
+      return CNET_SCTP_ASSOC_PROTOCOL;
+  } else if (header.verification_tag != s->local_tag) {
     return CNET_SCTP_ASSOC_PROTOCOL;
+  }
   /* Classify the complete packet before dispatch. Unknown-only bundles
    * have a narrow transactional action handler; packets mixing unknown and
    * recognized types remain fail-closed until the full RFC transaction matrix
@@ -1239,15 +1246,12 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
         s->state != CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT)))
     return CNET_SCTP_ASSOC_PROTOCOL;
 
-  /* RFC 9260 Section 9.1: never reply to a packet containing ABORT.
-   * A validated plain ABORT must terminate the local TCB even at the exact
-   * T5 deadline. Check it before the Owner's packet-triggered T5 ABORT path,
-   * or two peers racing to close could echo ABORT to one another. Unsupported
-   * T-bit and malformed/bundled ABORTs are already rejected by preflight. */
+  /* RFC 9260 §§8.5.1/9.1: both authenticated plain and reflected-tag
+   * single ABORTs terminate locally without sending another ABORT, even at
+   * the absolute T5 deadline. Tag/T rules have already been checked above.
+   * Unsupported bundled ABORT and error-cause handling remain separate. */
   if (header.chunk_count == 1u && chunk.type == SCTP_TYPE_ABORT) {
-    if (header.verification_tag != s->local_tag ||
-        (chunk.flags & 1u) != 0u || chunk.value_size != 0u ||
-        s->state == CNET_SCTP_ASSOC_CLOSED)
+    if (chunk.value_size != 0u || s->state == CNET_SCTP_ASSOC_CLOSED)
       return CNET_SCTP_ASSOC_PROTOCOL;
     if (s->data_ready) {
       (void)cnet_sctp_data_stop(&s->data);
@@ -1337,7 +1341,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       return dispatch_result(s, handle_cookie_echo(s, now, &header, &chunk,
           output, cap, written), prior_time);
     case SCTP_TYPE_ABORT:
-      /* Admitted plain ABORT was handled before packet-triggered T5.
+      /* Admitted single ABORT was handled before packet-triggered T5.
        * Retain fail-closed behavior if a new bundle class reaches dispatch. */
       s->last_time_ms = prior_time;
       return CNET_SCTP_ASSOC_PROTOCOL;

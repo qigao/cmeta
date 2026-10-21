@@ -2053,6 +2053,89 @@ static void incoming_abort_wins_over_absolute_t5(void) {
   }
 }
 
+/* RFC 9260 §8.5.1: T=1 reflects the peer's Verification Tag.
+ * The peer tag must be nonzero, and the packet never triggers an ABORT reply.
+ * Exercise both ordinary ESTABLISHED traffic and the absolute T5 race. */
+static void reflected_tag_abort_is_accepted_without_reply(void) {
+  size_t case_i, i;
+  for (case_i = 0u; case_i < 2u; ++case_i) {
+    cnet_sctp_assoc a, b, before;
+    test_context ca, cb;
+    cnet_sctp_wire_chunk abort_chunk = {6u, 0x81u, NULL, 0u};
+    uint8_t packet[64] = {0}, output[64];
+    size_t packet_n = 0u, output_n = 123u;
+    uint64_t now = case_i == 0u ? 20u : 1000u;
+    setup(&a, &b, &ca, &cb);
+    a.state = case_i == 0u ?
+        CNET_SCTP_ASSOC_ESTABLISHED : CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+    a.peer_tag = b.local_tag;
+    a.last_time_ms = 10u;
+    a.t5_shutdown_deadline_ms = case_i == 0u ? 0u : 1000u;
+    a.deadline_ms = case_i == 0u ? 0u : 1000u;
+
+    /* T=0 with the reflected peer tag is not authenticated. */
+    abort_chunk.flags = 0x80u;
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.peer_tag, &abort_chunk,
+        1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    memcpy(&before, &a, sizeof(before));
+    memset(output, 0xCC, sizeof(output));
+    assert(cnet_sctp_assoc_input(&a, now, packet, packet_n, output,
+        sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+    assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+
+    /* T=1 with the local tag is also invalid. */
+    abort_chunk.flags = 0x81u;
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &abort_chunk,
+        1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    output_n = 123u;
+    assert(cnet_sctp_assoc_input(&a, now, packet, packet_n, output,
+        sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+    assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+
+    /* Correct reflected tag: single silent local teardown. */
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.peer_tag, &abort_chunk,
+        1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    output_n = 123u;
+    assert(cnet_sctp_assoc_input(&a, now, packet, packet_n, output,
+        sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
+    assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED);
+    assert(a.t5_shutdown_deadline_ms == 0u && a.deadline_ms == 0u &&
+        a.last_time_ms == now);
+    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  }
+
+  /* Pre-cookie state has no admitted peer Verification Tag. Reject any
+   * reflected ABORT tagged zero, without emitting a packet or admitting time. */
+  {
+    cnet_sctp_assoc a, b, before;
+    test_context ca, cb;
+    cnet_sctp_wire_chunk abort_chunk = {6u, 1u, NULL, 0u};
+    uint8_t packet[64], output[64];
+    size_t packet_n = 0u, output_n = 123u;
+    setup(&a, &b, &ca, &cb);
+    assert(a.peer_tag == 0u);
+    assert(cnet_sctp_wire_encode(5001u, 5000u, 0u, &abort_chunk,
+        1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    memcpy(&before, &a, sizeof(before));
+    memset(output, 0xCC, sizeof(output));
+    assert(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
+        packet, packet_n, output, sizeof(output), &output_n) ==
+        CNET_SCTP_ASSOC_PROTOCOL);
+    assert(output_n == 0u && output[0] == 0xCCu &&
+        memcmp(&a, &before, sizeof(before)) == 0);
+    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  }
+}
+
 static void error_and_abort_never_create_response_loops(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -2138,8 +2221,8 @@ static void error_and_abort_never_create_response_loops(void) {
   assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
   assert(a.last_time_ms == prior_time);
 
-  /* T-bit ABORT is outside this profile's plain-ABORT subset. Reject it
-   * transactionally rather than accidentally treating it as a valid abort. */
+  /* T=1 with the LOCAL tag is invalid: only the reflected PEER tag
+   * may pass RFC 9260 §8.5.1. Rejection remains transactional. */
   chunk.flags = 1u;
   assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
@@ -2151,7 +2234,7 @@ static void error_and_abort_never_create_response_loops(void) {
   assert(a.last_time_ms == prior_time);
 
   /* A valid plain T=0 ABORT with ignored reserved flags terminates locally
-   * without an ABORT response. T=1 remains rejected above. */
+   * without an ABORT response. Valid reflected-tag T=1 is tested separately. */
   chunk.flags = 0x80u;
   assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
@@ -2342,6 +2425,7 @@ int main(void) {
   oversized_input_cannot_preempt_absolute_t5();
   error_and_abort_never_create_response_loops();
   incoming_abort_wins_over_absolute_t5();
+  reflected_tag_abort_is_accepted_without_reply();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();
