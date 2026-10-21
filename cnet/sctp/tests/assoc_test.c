@@ -1473,8 +1473,9 @@ static void shutdown_capacity_retries_are_transactional(void) {
       sizeof(cookie_ack), &cookie_ack_n) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_input(&a, 5u, cookie_ack, cookie_ack_n, ack_packet,
       sizeof(ack_packet), &ack_n) == CNET_SCTP_ASSOC_OK);
-  assert(cnet_sctp_assoc_input(&b, 6u, ack_packet, ack_n, echo,
-      sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
+  /* COOKIE-ACK completes the active side locally; this M2 path emits no
+   * fourth handshake packet. The passive side was established on COOKIE-ECHO. */
+  assert(ack_n == 0u);
   assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
   assert(b.state == CNET_SCTP_ASSOC_ESTABLISHED);
 
