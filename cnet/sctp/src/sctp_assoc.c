@@ -308,6 +308,15 @@ static cnet_sctp_assoc_status data_result(cnet_sctp_data_status status) {
   }
 }
 
+/* Input dispatch provisionally advances last_time_ms before calling a
+ * bounded handler. Commit that watermark only for accepted packets; handler
+ * errors may include protocol, authentication, capacity or clock failures. */
+static cnet_sctp_assoc_status dispatch_result(cnet_sctp_assoc *s,
+    cnet_sctp_assoc_status status, uint64_t prior_time) {
+  if (status != CNET_SCTP_ASSOC_OK) s->last_time_ms = prior_time;
+  return status;
+}
+
 static void prepare_init(const cnet_sctp_assoc *s, uint8_t value[16]) {
   wr32(value, s->local_tag);
   wr32(value + 4u, s->config.receive_window);
@@ -1139,8 +1148,8 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
             s->last_time_ms = prior_time;
             return CNET_SCTP_ASSOC_PROTOCOL;
           }
-          return handle_shutdown_sent_data(s, now, packet, packet_size,
-              output, cap, written);
+          return dispatch_result(s, handle_shutdown_sent_data(s, now,
+              packet, packet_size, output, cap, written), prior_time);
         }
         if (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
             s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING) {
@@ -1153,14 +1162,18 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
         s->last_time_ms = prior_time;
         return CNET_SCTP_ASSOC_PROTOCOL;
       }
-      return data_result(cnet_sctp_data_input(&s->data, now, packet,
-          packet_size, output, cap, written));
+      return dispatch_result(s, data_result(cnet_sctp_data_input(
+          &s->data, now, packet, packet_size, output, cap, written)),
+          prior_time);
     case SCTP_TYPE_INIT:
-      return handle_init(s, now, &header, &chunk, output, cap, written);
+      return dispatch_result(s, handle_init(s, now, &header, &chunk,
+          output, cap, written), prior_time);
     case SCTP_TYPE_INIT_ACK:
-      return handle_init_ack(s, now, &header, &chunk, output, cap, written);
+      return dispatch_result(s, handle_init_ack(s, now, &header, &chunk,
+          output, cap, written), prior_time);
     case SCTP_TYPE_COOKIE_ECHO:
-      return handle_cookie_echo(s, now, &header, &chunk, output, cap, written);
+      return dispatch_result(s, handle_cookie_echo(s, now, &header, &chunk,
+          output, cap, written), prior_time);
     case SCTP_TYPE_ABORT:
       /* This private M2 path handles only a plain ABORT using the
        * expected tag. It never responds to ABORT with another ABORT.
@@ -1182,19 +1195,22 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       memset(s->saved_packet, 0, sizeof(s->saved_packet));
       return CNET_SCTP_ASSOC_OK;
     case SCTP_TYPE_COOKIE_ACK:
-      return handle_cookie_ack(s, now, &header, &chunk);
+      return dispatch_result(s, handle_cookie_ack(s, now, &header, &chunk),
+          prior_time);
     case SCTP_TYPE_SHUTDOWN:
       if (header.chunk_count != 1u) {
         s->last_time_ms = prior_time;
         return CNET_SCTP_ASSOC_PROTOCOL;
       }
-      return handle_shutdown(s, now, &header, &chunk, output, cap, written);
+      return dispatch_result(s, handle_shutdown(s, now, &header, &chunk,
+          output, cap, written), prior_time);
     case SCTP_TYPE_SHUTDOWN_ACK:
       if (header.chunk_count != 1u) {
         s->last_time_ms = prior_time;
         return CNET_SCTP_ASSOC_PROTOCOL;
       }
-      return handle_shutdown_ack(s, now, &header, &chunk, output, cap, written);
+      return dispatch_result(s, handle_shutdown_ack(s, now, &header, &chunk,
+          output, cap, written), prior_time);
     case SCTP_TYPE_SHUTDOWN_COMPLETE:
       if (header.chunk_count != 1u ||
           header.verification_tag != s->local_tag || chunk.flags != 0u ||
