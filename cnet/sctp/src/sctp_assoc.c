@@ -367,19 +367,26 @@ static int good_init_fields(const uint8_t *v, size_t len) {
 /* Basic syntax preflight for the chunk subset this Association understands.
  * T5 is an absolute deadline, but malformed supported Chunks must not use it
  * as a side effect before their own parser would reject them. */
-static int valid_error_cause_vector(const cnet_sctp_wire_chunk *chunk) {
+/* ERROR requires one or more causes; ABORT can omit them entirely.
+ * Both use the RFC 9260 variable-length Cause TLV framing. A final Cause
+ * need not carry its own padding inside the Chunk Length (§3.2.1/§3.2).
+ * Invalid cause lengths cannot be used to trigger packet-path T5. */
+static int valid_cause_vector(const cnet_sctp_wire_chunk *chunk) {
   size_t pos = 0u;
-  /* ERROR Chunk Flags are ignored on receipt (RFC 9260 3.3.10). */
-  if (!chunk || chunk->type != SCTP_TYPE_ERROR ||
-      chunk->value_size < 4u)
+  if (!chunk ||
+      (chunk->type != SCTP_TYPE_ERROR && chunk->type != SCTP_TYPE_ABORT) ||
+      (chunk->type == SCTP_TYPE_ERROR && chunk->value_size < 4u))
     return 0;
   while (pos < chunk->value_size) {
-    size_t len, padded;
-    if (chunk->value_size - pos < 4u) return 0;
+    size_t len, padded, remaining = chunk->value_size - pos;
+    if (remaining < 4u) return 0;
     len = rd16(chunk->value + pos + 2u);
-    if (len < 4u || len > chunk->value_size - pos) return 0;
+    if (len < 4u || len > remaining) return 0;
     padded = (len + 3u) & ~(size_t)3u;
-    if (padded > chunk->value_size - pos) return 0;
+    if (padded > remaining) {
+      if (len != remaining) return 0;
+      padded = len; /* final Cause's padding omitted from Chunk Length */
+    }
     pos += padded;
   }
   return pos == chunk->value_size;
@@ -405,9 +412,9 @@ static int assoc_chunk_shape_valid(const cnet_sctp_wire_chunk *chunk) {
     case 3u: /* SACK */
       return valid_sack_shape(chunk);
     case SCTP_TYPE_ABORT:
-      /* All reserved ABORT flag bits are ignored. The T bit is validated
-       * together with the received packet Verification Tag before dispatch. */
-      return chunk->value_size == 0u;
+      /* The T bit is verified with the packet Verification Tag. An ABORT
+       * may contain any well-framed number of Error Cause TLVs. */
+      return valid_cause_vector(chunk);
     case SCTP_TYPE_SHUTDOWN:
       return chunk->value_size == 4u;
     case SCTP_TYPE_SHUTDOWN_ACK:
@@ -417,7 +424,7 @@ static int assoc_chunk_shape_valid(const cnet_sctp_wire_chunk *chunk) {
       /* T=1 remains outside the bounded profile; other bits ignored. */
       return (chunk->flags & 1u) == 0u && chunk->value_size == 0u;
     case SCTP_TYPE_ERROR:
-      return valid_error_cause_vector(chunk);
+      return valid_cause_vector(chunk);
     case SCTP_TYPE_COOKIE_ECHO:
       return chunk->value_size == CNET_SCTP_ASSOC_COOKIE_BYTES;
     default:
@@ -1251,7 +1258,8 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
    * the absolute T5 deadline. Tag/T rules have already been checked above.
    * Unsupported bundled ABORT and error-cause handling remain separate. */
   if (header.chunk_count == 1u && chunk.type == SCTP_TYPE_ABORT) {
-    if (chunk.value_size != 0u || s->state == CNET_SCTP_ASSOC_CLOSED)
+    /* The entire optional Cause vector has already been validated above. */
+    if (s->state == CNET_SCTP_ASSOC_CLOSED)
       return CNET_SCTP_ASSOC_PROTOCOL;
     if (s->data_ready) {
       (void)cnet_sctp_data_stop(&s->data);

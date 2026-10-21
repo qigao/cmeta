@@ -2136,6 +2136,95 @@ static void reflected_tag_abort_is_accepted_without_reply(void) {
   }
 }
 
+/* RFC 9260 §3.3.7: ABORT can carry zero or more Error Causes. A final
+ * Cause may be unpadded in the Chunk Length, while earlier causes are
+ * padded to 4-byte boundaries. Neither valid nor malformed ABORT packets
+ * may trigger an ABORT response at the absolute shutdown deadline. */
+static void abort_optional_error_causes_are_transactional(void) {
+  static const uint8_t last_unpadded[] = {
+    0u, 12u, 0u, 7u, 'u', 'l', 'p'
+  };
+  static const uint8_t padded_multi[] = {
+    0u, 12u, 0u, 7u, 'u', 'l', 'p', 0u,
+    0u, 13u, 0u, 4u
+  };
+  static const uint8_t short_length[] = {0u, 12u, 0u, 3u};
+  static const uint8_t long_length[] = {0u, 12u, 0u, 8u};
+  static const uint8_t bad_trailing[] = {0u, 12u, 0u, 4u, 0xA5u};
+  const struct {
+    const uint8_t *value;
+    size_t size;
+    uint8_t flags;
+  } valid[] = {
+    {last_unpadded, sizeof(last_unpadded), 0u},
+    {padded_multi, sizeof(padded_multi), 1u}
+  };
+  const struct {
+    const uint8_t *value;
+    size_t size;
+  } invalid[] = {
+    {short_length, sizeof(short_length)},
+    {long_length, sizeof(long_length)},
+    {bad_trailing, sizeof(bad_trailing)}
+  };
+  size_t i, j, k;
+  for (i = 0u; i < sizeof(valid) / sizeof(valid[0]); ++i) {
+    cnet_sctp_assoc a, b;
+    test_context ca, cb;
+    cnet_sctp_wire_chunk chunk = {6u, valid[i].flags,
+        valid[i].value, valid[i].size};
+    uint8_t packet[64], output[64];
+    size_t packet_n = 0u, output_n = 123u;
+    setup(&a, &b, &ca, &cb);
+    a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+    a.peer_tag = b.local_tag;
+    a.t5_shutdown_deadline_ms = 1000u;
+    a.deadline_ms = 1000u;
+    a.last_time_ms = 10u;
+    assert(cnet_sctp_wire_encode(5001u, 5000u,
+        (chunk.flags & 1u) ? a.peer_tag : a.local_tag, &chunk, 1u,
+        packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    memset(output, 0xCC, sizeof(output));
+    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
+        sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
+    assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+        a.deadline_ms == 0u && a.t5_shutdown_deadline_ms == 0u &&
+        a.last_time_ms == 1000u);
+    for (j = 0u; j < sizeof(output); ++j) assert(output[j] == 0xCCu);
+    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  }
+
+  for (i = 0u; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+    cnet_sctp_assoc a, b, before;
+    test_context ca, cb;
+    cnet_sctp_wire_chunk chunk = {6u, 0u,
+        invalid[i].value, invalid[i].size};
+    uint8_t packet[64], output[64];
+    size_t packet_n = 0u, output_n = 123u;
+    setup(&a, &b, &ca, &cb);
+    a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+    a.peer_tag = b.local_tag;
+    a.t5_shutdown_deadline_ms = 1000u;
+    a.deadline_ms = 1000u;
+    a.last_time_ms = 10u;
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk,
+        1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    memcpy(&before, &a, sizeof(before));
+    memset(output, 0xCC, sizeof(output));
+    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
+        sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+    assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+    for (k = 0u; k < sizeof(output); ++k) assert(output[k] == 0xCCu);
+    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  }
+}
+
 static void error_and_abort_never_create_response_loops(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -2426,6 +2515,7 @@ int main(void) {
   error_and_abort_never_create_response_loops();
   incoming_abort_wins_over_absolute_t5();
   reflected_tag_abort_is_accepted_without_reply();
+  abort_optional_error_causes_are_transactional();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();
