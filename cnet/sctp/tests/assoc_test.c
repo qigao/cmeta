@@ -2468,6 +2468,81 @@ static void unknown_chunk_actions_before_abort_are_respected(void) {
   }
 }
 
+/* HEARTBEAT and HEARTBEAT ACK are permitted controls before ABORT, but
+ * their mandatory Heartbeat Info TLV must be valid. Since the packet contains
+ * ABORT, a valid heartbeat must not generate a HEARTBEAT ACK response. */
+static void heartbeat_before_abort_requires_valid_info_tlv(void) {
+  static const uint8_t valid_info[8] = {0u, 1u, 0u, 8u, 0xA5u, 0x5Au, 0xC3u, 0x3Cu};
+  static const uint8_t wrong_type[8] = {0u, 2u, 0u, 8u, 0xA5u, 0x5Au, 0xC3u, 0x3Cu};
+  static const uint8_t short_length[4] = {0u, 1u, 0u, 3u};
+  const uint8_t heartbeat_types[2] = {4u, 5u};
+  const uint8_t *bad_values[2] = {wrong_type, short_length};
+  const size_t bad_sizes[2] = {sizeof(wrong_type), sizeof(short_length)};
+  size_t type_i, bad_i, i;
+
+  for (type_i = 0u; type_i < 2u; ++type_i) {
+    cnet_sctp_assoc a, b;
+    test_context ca, cb;
+    cnet_sctp_wire_chunk chunks[2] = {
+      {0u, 0u, valid_info, sizeof(valid_info)},
+      {6u, 0u, NULL, 0u}
+    };
+    uint8_t packet[64], output[64];
+    size_t packet_n = 0u, output_n = 123u;
+    setup(&a, &b, &ca, &cb);
+    a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+    a.peer_tag = b.local_tag;
+    a.last_time_ms = 10u;
+    a.t5_shutdown_deadline_ms = 1000u;
+    a.deadline_ms = 1000u;
+    chunks[0].type = heartbeat_types[type_i];
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+        chunks, 2u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    memset(output, 0xCC, sizeof(output));
+    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+        output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
+    assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+        a.last_time_ms == 1000u && a.t5_shutdown_deadline_ms == 0u);
+    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  }
+
+  for (type_i = 0u; type_i < 2u; ++type_i) {
+    for (bad_i = 0u; bad_i < 2u; ++bad_i) {
+      cnet_sctp_assoc a, b, before;
+      test_context ca, cb;
+      cnet_sctp_wire_chunk chunks[2] = {
+        {0u, 0u, bad_values[bad_i], bad_sizes[bad_i]},
+        {6u, 0u, NULL, 0u}
+      };
+      uint8_t packet[64], output[64];
+      size_t packet_n = 0u, output_n = 123u;
+      setup(&a, &b, &ca, &cb);
+      a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+      a.peer_tag = b.local_tag;
+      a.last_time_ms = 10u;
+      a.t5_shutdown_deadline_ms = 1000u;
+      a.deadline_ms = 1000u;
+      chunks[0].type = heartbeat_types[type_i];
+      assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+          chunks, 2u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+      memcpy(&before, &a, sizeof(before));
+      memset(output, 0xCC, sizeof(output));
+      assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+          output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+      assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+      assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+      assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+      assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+      assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+    }
+  }
+}
+
 static void error_and_abort_never_create_response_loops(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -2764,6 +2839,7 @@ int main(void) {
   chunks_after_abort_are_ignored();
   unknown_chunk_actions_before_abort_are_respected();
   malformed_wire_tail_after_abort_preserves_owner();
+  heartbeat_before_abort_requires_valid_info_tlv();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();
