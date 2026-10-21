@@ -1218,6 +1218,20 @@ static void error_and_abort_never_create_response_loops(void) {
   assert(a.state == CNET_SCTP_ASSOC_CLOSED);
   assert(a.last_time_ms == prior_time);
 
+  /* SHUTDOWN COMPLETE is valid only in SHUTDOWN-ACK-SENT. A rejected
+   * control in any other state must not commit the provisional watermark. */
+  chunk.type = 14u;
+  chunk.value = NULL;
+  chunk.value_size = 0u;
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+      packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+      output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+  assert(output_n == 0u && output[0] == 0xCCu);
+  assert(a.state == CNET_SCTP_ASSOC_CLOSED);
+  assert(a.last_time_ms == prior_time);
+
   a.state = CNET_SCTP_ASSOC_ESTABLISHED;
   a.peer_tag = b.local_tag;
   chunk.type = 9u;
