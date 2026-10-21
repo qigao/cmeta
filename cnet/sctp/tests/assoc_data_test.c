@@ -1315,8 +1315,66 @@ static void shutdown_sent_duplicate_data_does_not_reset_budget(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* Exercise the relaxed Duplicate TSN list bound through the full Owner
+ * Association path, including packet preflight and T3 transaction rules. */
+static void association_accepts_sack_duplicate_list_beyond_rx_slots(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  const uint8_t payload = 'd';
+  uint8_t data_packet[1200], body[12u + 4u * (CNET_SCTP_DATA_RX_SLOTS + 1u)];
+  uint8_t sack_packet[256], reply[1200];
+  cnet_sctp_wire_chunk sack = {0};
+  size_t data_size = 0u, sack_size = 0u, reply_size = 123u, i;
+  uint32_t cumulative, duplicate_tsn;
+  uint64_t prior_t3;
+
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_send_message(&a, 6u, 0u, 51u, 0, &payload, 1u,
+      data_packet, sizeof(data_packet), &data_size) == CNET_SCTP_ASSOC_OK);
+  assert(data_size != 0u && a.data.tx[0].used);
+  cumulative = a.data.last_ack;
+  duplicate_tsn = a.data.tx[0].tsn;
+  prior_t3 = a.data.t3_deadline_ms;
+
+  memset(body, 0, sizeof(body));
+  body[0] = (uint8_t)(cumulative >> 24);
+  body[1] = (uint8_t)(cumulative >> 16);
+  body[2] = (uint8_t)(cumulative >> 8);
+  body[3] = (uint8_t)cumulative;
+  body[4] = 0u; body[5] = 0u; body[6] = 0x20u; body[7] = 0u; /* rwnd=8192 */
+  body[10] = 0u;
+  body[11] = (uint8_t)(CNET_SCTP_DATA_RX_SLOTS + 1u);
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS + 1u; ++i) {
+    uint8_t *p = body + 12u + 4u * i;
+    p[0] = (uint8_t)(duplicate_tsn >> 24);
+    p[1] = (uint8_t)(duplicate_tsn >> 16);
+    p[2] = (uint8_t)(duplicate_tsn >> 8);
+    p[3] = (uint8_t)duplicate_tsn;
+  }
+  sack.type = 3u;
+  sack.flags = 0xA5u;
+  sack.value = body;
+  sack.value_size = sizeof(body);
+  assert(cnet_sctp_wire_encode(b.config.local_port, b.config.remote_port,
+      a.local_tag, &sack, 1u, sack_packet, sizeof(sack_packet),
+      &sack_size) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_assoc_input(&a, 7u, sack_packet, sack_size, reply,
+      sizeof(reply), &reply_size) == CNET_SCTP_ASSOC_OK);
+  assert(reply_size == 0u && a.last_time_ms == 7u &&
+      a.data.last_time_ms == 7u);
+  assert(a.data.last_ack == cumulative && a.data.in_flight == 1u &&
+      a.data.tx[0].used && a.data.tx[0].tsn == duplicate_tsn);
+  assert(a.data.t3_deadline_ms == prior_t3);
+
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
   single_data_sack_capacity_preserves_input_watermark();
+  association_accepts_sack_duplicate_list_beyond_rx_slots();
   post_cookie_bundled_data();
   shutdown_no_inflight_and_t2();
   shutdown_t5_absolute_guard();
