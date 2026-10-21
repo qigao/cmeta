@@ -208,12 +208,13 @@ static void hand_authored_sack_rejections_preserve_t3(void) {
    * using SCTP common header 5001->5000, VTag 0x11223344 and reflected
    * CRC32C with a zero checksum field. The embedded checksum bytes are
    * in SCTP little-endian order. No local peer or encoder generates them.
-   * Gap: cumulative=100, rwnd=32768, Gap Ack Block=[2,2].
+   * Gap: cumulative=100, rwnd=32768, Gap Ack Block=[2,2], flags=0x5A
+   * (RFC 9260 3.3.4 requires receivers to ignore SACK flag bits).
    * Final: cumulative=102, rwnd=32768, zero gaps/duplicates.
    * Stale: cumulative=99, rwnd=32768, zero gaps/duplicates. */
   static const uint8_t gap_sack_wire[] = {
     0x13u,0x89u,0x13u,0x88u,0x11u,0x22u,0x33u,0x44u,
-    0x7Au,0xA6u,0x4Bu,0xE6u,0x03u,0x00u,0x00u,0x14u,
+    0xEDu,0x07u,0xE2u,0x38u,0x03u,0x5Au,0x00u,0x14u,
     0x00u,0x00u,0x00u,0x64u,0x00u,0x00u,0x80u,0x00u,
     0x00u,0x01u,0x00u,0x00u,0x00u,0x02u,0x00u,0x02u
   };
@@ -247,7 +248,8 @@ static void hand_authored_sack_rejections_preserve_t3(void) {
     {99u,17u,0u,1u,1u,0u,0u,80u,0u}, /* >16 gap blocks */
     {99u,0u,1u,0u,0u,0u,0u,12u,0u}, /* missing duplicate TSN */
     {99u,0u,33u,0u,0u,0u,0u,144u,0u}, /* >32 duplicates */
-    {99u,0u,0u,0u,0u,0u,0u,12u,1u}, /* reserved SACK flags */
+    {99u,1u,0u,0u,1u,0u,0u,16u,0xA5u},
+      /* invalid zero-offset gap remains invalid when SACK flags are ignored */
     {UINT32_C(0x80000063),0u,0u,0u,0u,0u,0u,12u,0u},
       /* ambiguous serial-number half-wrap */
     {102u,1u,0u,1u,1u,0u,0u,16u,0u}
@@ -267,7 +269,7 @@ static void hand_authored_sack_rejections_preserve_t3(void) {
   assert(header.source_port == 5001u && header.destination_port == 5000u &&
       header.verification_tag == a.config.local_tag && header.chunk_count == 1u);
   assert(cnet_sctp_wire_next_chunk(&decoder, &ch) == CNET_SCTP_WIRE_OK);
-  assert(ch.type == 3u && ch.value_size == 16u &&
+  assert(ch.type == 3u && ch.flags == 0x5Au && ch.value_size == 16u &&
       rd32(ch.value) == 100u && rd16(ch.value + 12u) == 2u &&
       rd16(ch.value + 14u) == 2u);
   assert(cnet_sctp_wire_decode(final_sack_wire, sizeof(final_sack_wire),

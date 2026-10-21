@@ -130,8 +130,27 @@ static void real_assoc_send_sack_and_t3(void) {
   assert(memcmp(event, text, sizeof(text)) == 0);
   assert(cnet_sctp_assoc_take_message(&b, &meta, event, sizeof(event), &ne) ==
          CNET_SCTP_ASSOC_EMPTY);
-  assert(cnet_sctp_assoc_input(&a, 8u, sack, ns, answer, sizeof(answer), &nr) ==
-         CNET_SCTP_ASSOC_OK);
+  /* RFC 9260 3.3.4: the peer transmits zero SACK flags, but the
+   * receiving Association must ignore reserved flags. Re-encode the
+   * already authenticated SACK with nonzero flags and a correct CRC. */
+  {
+    cnet_sctp_wire_header sack_header = {0};
+    cnet_sctp_wire_decoder sack_decoder = {0};
+    cnet_sctp_wire_chunk sack_chunk = {0};
+    uint8_t flagged[1200];
+    size_t flagged_n = 0u;
+    assert(cnet_sctp_wire_decode(sack, ns, &sack_header, &sack_decoder) ==
+        CNET_SCTP_WIRE_OK && sack_header.chunk_count == 1u);
+    assert(cnet_sctp_wire_next_chunk(&sack_decoder, &sack_chunk) ==
+        CNET_SCTP_WIRE_OK && sack_chunk.type == 3u);
+    sack_chunk.flags = 0xA5u;
+    assert(cnet_sctp_wire_encode(sack_header.source_port,
+        sack_header.destination_port, sack_header.verification_tag,
+        &sack_chunk, 1u, flagged, sizeof(flagged), &flagged_n) ==
+        CNET_SCTP_WIRE_OK);
+    assert(cnet_sctp_assoc_input(&a, 8u, flagged, flagged_n,
+        answer, sizeof(answer), &nr) == CNET_SCTP_ASSOC_OK);
+  }
   assert(nr == 0u && a.data.in_flight == 0u);
   assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
          CNET_SCTP_ASSOC_OK);
@@ -814,12 +833,26 @@ static void shutdown_sent_bundles_gap_sack(void) {
       response, sizeof(response), &nresponse) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_wire_decode(response, nresponse, &header, &decoder) ==
       CNET_SCTP_WIRE_OK && header.chunk_count == 2u);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
-      chunk.type == 7u);
-  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
-      chunk.type == 3u);
-  assert(cnet_sctp_assoc_input(&b, 11u, response, nresponse,
-      ack, sizeof(ack), &nack) == CNET_SCTP_ASSOC_OK);
+  /* SHUTDOWN+SACK has a separate Association preflight. Prove that
+   * ignored SACK flag bits do not reject a well-formed legal bundle. */
+  {
+    cnet_sctp_wire_chunk flagged_chunks[2];
+    uint8_t flagged_packet[1200];
+    size_t flagged_n = 0u;
+    assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) ==
+        CNET_SCTP_WIRE_OK && chunk.type == 7u);
+    flagged_chunks[0] = chunk;
+    assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) ==
+        CNET_SCTP_WIRE_OK && chunk.type == 3u);
+    flagged_chunks[1] = chunk;
+    flagged_chunks[1].flags = 0x5Au;
+    assert(cnet_sctp_wire_encode(header.source_port,
+        header.destination_port, header.verification_tag,
+        flagged_chunks, 2u, flagged_packet, sizeof(flagged_packet),
+        &flagged_n) == CNET_SCTP_WIRE_OK);
+    assert(cnet_sctp_assoc_input(&b, 11u, flagged_packet, flagged_n,
+        ack, sizeof(ack), &nack) == CNET_SCTP_ASSOC_OK);
+  }
   assert(nack == 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED &&
       b.data.in_flight == 1u);
 

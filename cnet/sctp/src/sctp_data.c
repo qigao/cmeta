@@ -583,7 +583,8 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
   int t3_acknowledged = 0;
   int probe_cumul_acked = 0;
   const int was_probing = d->probe_active != 0u;
-  if (ch->flags != 0u || ch->value_size < 12u)
+  /* RFC 9260 3.3.4: SACK Chunk Flags are ignored on receipt. */
+  if (ch->value_size < 12u)
     return CNET_SCTP_DATA_PROTOCOL;
   cumulative = rd32(ch->value);
   peer_window = rd32(ch->value + 4u);

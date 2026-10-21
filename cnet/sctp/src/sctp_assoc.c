@@ -260,8 +260,8 @@ static int valid_cookie_echo_error(const cnet_sctp_wire_chunk *chunk) {
 static int valid_sack_shape(const cnet_sctp_wire_chunk *chunk) {
   uint16_t blocks, duplicates, previous_end = 0u;
   size_t i, expected;
-  if (!chunk || chunk->type != 3u || chunk->flags != 0u ||
-      chunk->value_size < 12u) return 0;
+  /* RFC 9260 3.3.4: reserved SACK flags do not invalidate a received SACK. */
+  if (!chunk || chunk->type != 3u || chunk->value_size < 12u) return 0;
   blocks = rd16(chunk->value + 8u);
   duplicates = rd16(chunk->value + 10u);
   if (blocks > 16u) return 0;
