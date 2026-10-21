@@ -1453,6 +1453,76 @@ static void unsupported_control_preserves_time_watermark(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void shutdown_capacity_retries_are_transactional(void) {
+  cnet_sctp_assoc a, b, before;
+  test_context ca, cb;
+  uint8_t init[1200], init_ack[1200], echo[1200], cookie_ack[1200];
+  uint8_t shutdown_packet[1200], ack_packet[1200], tiny[1] = {0xCCu};
+  size_t init_n = 0u, init_ack_n = 0u, echo_n = 0u, cookie_ack_n = 0u;
+  size_t shutdown_n = 0u, ack_n = 0u;
+  uint64_t prior_deadline;
+
+  setup(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_start(&a, 1u, init, sizeof(init), &init_n) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 2u, init, init_n, init_ack,
+      sizeof(init_ack), &init_ack_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 3u, init_ack, init_ack_n, echo,
+      sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 4u, echo, echo_n, cookie_ack,
+      sizeof(cookie_ack), &cookie_ack_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&a, 5u, cookie_ack, cookie_ack_n, ack_packet,
+      sizeof(ack_packet), &ack_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 6u, ack_packet, ack_n, echo,
+      sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
+  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(b.state == CNET_SCTP_ASSOC_ESTABLISHED);
+
+  /* First SHUTDOWN: capacity refusal must leave the complete Association
+   * byte-for-byte unchanged so the same timestamp can be retried. */
+  before = a;
+  tiny[0] = 0xCCu;
+  assert(cnet_sctp_assoc_shutdown(&a, 7u, tiny, sizeof(tiny), &shutdown_n) ==
+      CNET_SCTP_ASSOC_CAPACITY);
+  assert(shutdown_n == 0u && tiny[0] == 0xCCu);
+  assert(memcmp(&a, &before, sizeof(a)) == 0);
+  assert(cnet_sctp_assoc_shutdown(&a, 7u, shutdown_packet,
+      sizeof(shutdown_packet), &shutdown_n) == CNET_SCTP_ASSOC_OK);
+  assert(shutdown_n > 0u && a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+
+  /* Inbound SHUTDOWN needs to publish SHUTDOWN-ACK before committing the
+   * candidate cumulative-ACK/data state, state transition, or T2 deadline. */
+  before = b;
+  tiny[0] = 0xCCu;
+  assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
+      tiny, sizeof(tiny), &ack_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(ack_n == 0u && tiny[0] == 0xCCu);
+  assert(memcmp(&b, &before, sizeof(b)) == 0);
+  assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
+      ack_packet, sizeof(ack_packet), &ack_n) == CNET_SCTP_ASSOC_OK);
+  assert(ack_n > 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT);
+  prior_deadline = b.deadline_ms;
+
+  /* A duplicate SHUTDOWN must not restart T2 or consume retry budget until
+   * its saved ACK has been admitted to the caller's output buffer. */
+  before = b;
+  tiny[0] = 0xCCu;
+  assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
+      tiny, sizeof(tiny), &ack_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(ack_n == 0u && tiny[0] == 0xCCu);
+  assert(memcmp(&b, &before, sizeof(b)) == 0);
+  assert(b.deadline_ms == prior_deadline);
+  assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
+      ack_packet, sizeof(ack_packet), &ack_n) == CNET_SCTP_ASSOC_OK);
+  assert(ack_n > 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT);
+  assert(b.deadline_ms == 108u);
+
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
   malformed_shutdown_bundle_does_not_preempt_t5();
   mixed_unknown_known_bundles_fail_closed();
