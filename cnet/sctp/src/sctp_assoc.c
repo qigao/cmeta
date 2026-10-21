@@ -460,7 +460,8 @@ static cnet_sctp_assoc_status publish_packet(uint8_t *output, size_t cap,
  * handler can mutate state or call the DATA engine. This is the deliberately
  * supported private bundle subset, not the complete RFC 9260 matrix:
  * DATA-only, or a leading SACK followed by DATA, COOKIE-ECHO + advisory
- * ERROR, and SHUTDOWN + SACK. All other multi-control bundles are rejected. */
+ * ERROR, SHUTDOWN + SACK, and SACK/ERROR followed by ABORT. Other
+ * multi-control ABORT bundles remain fail-closed pending RFC qualification. */
 static int assoc_bundle_preflight(const cnet_sctp_wire_decoder *decoded,
     size_t count) {
   cnet_sctp_wire_decoder cursor;
@@ -477,6 +478,11 @@ static int assoc_bundle_preflight(const cnet_sctp_wire_decoder *decoded,
     if (cnet_sctp_wire_next_chunk(&pair, &first) != CNET_SCTP_WIRE_OK ||
         cnet_sctp_wire_next_chunk(&pair, &second) != CNET_SCTP_WIRE_OK)
       return 0;
+    /* Two bounded control-before-ABORT combinations. The leading control
+     * is validated but does not commit state when ABORT terminates the TCB. */
+    if ((first.type == 3u || first.type == SCTP_TYPE_ERROR) &&
+        second.type == SCTP_TYPE_ABORT)
+      return 1;
     if (first.type == SCTP_TYPE_COOKIE_ECHO)
       return second.type == SCTP_TYPE_ERROR;
     if (first.type == SCTP_TYPE_SHUTDOWN)
@@ -1144,10 +1150,11 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   cnet_sctp_wire_decoder classify_decoder;
   cnet_sctp_wire_chunk chunk;
   cnet_sctp_wire_chunk second;
+  cnet_sctp_wire_chunk terminal_chunk = {0};
   cnet_sctp_assoc_status status;
   uint64_t prior_time;
   size_t i;
-  int all_unknown;
+  int all_unknown, terminal_abort = 0;
   if (written) *written = 0u;
   status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
@@ -1171,16 +1178,27 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   classify_decoder = decoder;
   if (cnet_sctp_wire_next_chunk(&decoder, &chunk) != CNET_SCTP_WIRE_OK)
     return CNET_SCTP_ASSOC_PROTOCOL;
-  /* RFC 9260 §8.5.1: INIT uses tag 0. A standalone ABORT with T=0
-   * uses our local tag; with T=1 it reflects our peer's tag. Reject an
-   * unset peer tag rather than admitting a forged zero-tag ABORT. Other
-   * chunks and unsupported ABORT bundles retain the original local-tag
-   * rule; this is not general OOTB response handling. */
+  /* RFC 9260 §8.5.1 applies to packets containing ABORT, including one
+   * permitted control preceding it. Identify the bounded terminal bundle
+   * without acting on either Chunk before full packet-shape preflight. */
+  if (header.chunk_count == 1u && chunk.type == SCTP_TYPE_ABORT) {
+    terminal_chunk = chunk;
+    terminal_abort = 1;
+  } else if (header.chunk_count == 2u &&
+             (chunk.type == 3u || chunk.type == SCTP_TYPE_ERROR)) {
+    cnet_sctp_wire_decoder tail = decoder;
+    if (cnet_sctp_wire_next_chunk(&tail, &terminal_chunk) !=
+        CNET_SCTP_WIRE_OK)
+      return CNET_SCTP_ASSOC_PROTOCOL;
+    terminal_abort = terminal_chunk.type == SCTP_TYPE_ABORT;
+  }
+  /* INIT uses tag zero. Plain ABORT uses our local tag; reflected T=1
+   * ABORT uses the nonzero Peer Tag. All other packet types use Local Tag. */
   if (chunk.type == SCTP_TYPE_INIT) {
     if (header.verification_tag != 0u)
       return CNET_SCTP_ASSOC_PROTOCOL;
-  } else if (chunk.type == SCTP_TYPE_ABORT && header.chunk_count == 1u) {
-    const uint32_t expected_tag = (chunk.flags & 1u) ?
+  } else if (terminal_abort) {
+    const uint32_t expected_tag = (terminal_chunk.flags & 1u) ?
         s->peer_tag : s->local_tag;
     if (expected_tag == 0u || header.verification_tag != expected_tag)
       return CNET_SCTP_ASSOC_PROTOCOL;
@@ -1225,7 +1243,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
         return CNET_SCTP_ASSOC_PROTOCOL;
     } else if (chunk.type == 3u && !valid_sack_shape(&chunk)) {
       return CNET_SCTP_ASSOC_PROTOCOL;
-    } else if (header.chunk_count > 1u &&
+    } else if (header.chunk_count > 1u && !terminal_abort &&
                chunk.type != 0u && chunk.type != 3u) {
       /* No arbitrary control chunks can be bundled with INIT, Cookie,
        * SHUTDOWN or ABORT in the private Association profile. */
@@ -1253,12 +1271,11 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
         s->state != CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT)))
     return CNET_SCTP_ASSOC_PROTOCOL;
 
-  /* RFC 9260 §§8.5.1/9.1: both authenticated plain and reflected-tag
-   * single ABORTs terminate locally without sending another ABORT, even at
-   * the absolute T5 deadline. Tag/T rules have already been checked above.
-   * Unsupported bundled ABORT and error-cause handling remain separate. */
-  if (header.chunk_count == 1u && chunk.type == SCTP_TYPE_ABORT) {
-    /* The entire optional Cause vector has already been validated above. */
+  /* RFC 9260 §§3.3.7/8.5.1/9.1: validated single ABORT, SACK+ABORT and
+   * ERROR+ABORT terminate silently before T5. Never commit the first
+   * control to a TCB that is about to be destroyed or publish any response. */
+  if (terminal_abort) {
+    /* The complete packet shape, including any Causes, has been checked. */
     if (s->state == CNET_SCTP_ASSOC_CLOSED)
       return CNET_SCTP_ASSOC_PROTOCOL;
     if (s->data_ready) {
