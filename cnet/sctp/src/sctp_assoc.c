@@ -309,11 +309,17 @@ static cnet_sctp_assoc_status data_result(cnet_sctp_data_status status) {
 }
 
 /* Input dispatch provisionally advances last_time_ms before calling a
- * bounded handler. Commit that watermark only for accepted packets; handler
- * errors may include protocol, authentication, capacity or clock failures. */
+ * bounded handler. Roll back rejected/malformed/authentication-failed input
+ * and clock refusal. Preserve the watermark for CAPACITY (valid input whose
+ * reply is backpressured) and EXPIRED (an absolute-time decision); both are
+ * observable outcomes that must not permit time to move backward. */
 static cnet_sctp_assoc_status dispatch_result(cnet_sctp_assoc *s,
     cnet_sctp_assoc_status status, uint64_t prior_time) {
-  if (status != CNET_SCTP_ASSOC_OK) s->last_time_ms = prior_time;
+  if (status == CNET_SCTP_ASSOC_PROTOCOL ||
+      status == CNET_SCTP_ASSOC_AUTH ||
+      status == CNET_SCTP_ASSOC_CLOCK ||
+      status == CNET_SCTP_ASSOC_INVALID)
+    s->last_time_ms = prior_time;
   return status;
 }
 
