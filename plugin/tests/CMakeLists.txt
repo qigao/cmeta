@@ -1,5 +1,24 @@
 include("${CMAKE_CURRENT_LIST_DIR}/native_tests.cmake")
 
+# Real passive Provider DSO: owner-lifetime contract without optional CMetaNative.
+add_library(cmeta_plugin_registry_lifetime_fixture SHARED
+  registry_lifetime_fixture.c)
+target_link_libraries(cmeta_plugin_registry_lifetime_fixture
+  PRIVATE Salts::PluginABI)
+set_target_properties(cmeta_plugin_registry_lifetime_fixture PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+  FOLDER "plugin/tests/fixtures")
+cmake_add_test(cmeta_plugin_registry_lifetime_test
+  SOURCES registry_lifetime_test.c
+  LIBS Salts::Plugin Salts::TinyTest
+  DEFS
+    "PLUGIN_REGISTRY_LIFETIME_PATH=\"$<TARGET_FILE:cmeta_plugin_registry_lifetime_fixture>\""
+  FOLDER "plugin/tests")
+add_dependencies(cmeta_plugin_registry_lifetime_test
+  cmeta_plugin_registry_lifetime_fixture)
+set_target_properties(cmeta_plugin_registry_lifetime_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
 if(WIN32)
   add_library(cmeta_plugin_windows_dependency SHARED windows_dependency.c)
   target_compile_definitions(cmeta_plugin_windows_dependency PRIVATE
