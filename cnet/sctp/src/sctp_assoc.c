@@ -362,7 +362,8 @@ static int good_init_fields(const uint8_t *v, size_t len) {
  * as a side effect before their own parser would reject them. */
 static int valid_error_cause_vector(const cnet_sctp_wire_chunk *chunk) {
   size_t pos = 0u;
-  if (!chunk || chunk->type != SCTP_TYPE_ERROR || chunk->flags != 0u)
+  if (!chunk || chunk->type != SCTP_TYPE_ERROR || chunk->flags != 0u ||
+      chunk->value_size < 4u)
     return 0;
   while (pos < chunk->value_size) {
     size_t len, padded;
