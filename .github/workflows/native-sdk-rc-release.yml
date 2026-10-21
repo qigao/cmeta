@@ -186,6 +186,20 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      # Reject a pre-existing version before any upload. Never confuse an
+      # already-published feed package with the current immutable tag artifact.
+      # A partial prior publication needs an explicit, audited recovery path.
+      - name: Refuse existing NuGet package version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --paginate '/users/qigao/packages/nuget/Salts.Native/versions?per_page=100' \
+            > "$RUNNER_TEMP/salts-published-versions.json"
+          python3 packaging/nuget/feed_hygiene.py publish-unique \
+            "$RELEASE_VERSION" "$RUNNER_TEMP/salts-published-versions.json"
+
       - name: Publish immutable NuGet package
         shell: bash
         env:
@@ -198,7 +212,7 @@ jobs:
             --name github --username qigao --password "$GITHUB_TOKEN" \
             --store-password-in-clear-text --configfile "$config"
           dotnet nuget push "dist/Salts.Native.$RELEASE_VERSION.nupkg" \
-            --api-key "$GITHUB_TOKEN" --source github --skip-duplicate --configfile "$config"
+            --api-key "$GITHUB_TOKEN" --source github --configfile "$config"
 
       - name: Publish GitHub prerelease or stable release
         shell: bash
