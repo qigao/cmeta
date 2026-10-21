@@ -1148,6 +1148,12 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK)
     return status;
+  /* This private Owner-local Association uses a fixed 1200-byte path MTU.
+   * The public Wire decoder is independently permitted larger packets;
+   * never let an oversized single unknown/SKIP Chunk bypass the internal
+   * DATA and ERROR response ceilings or commit the input clock watermark. */
+  if (packet_size > CNET_SCTP_ASSOC_MAX_PACKET)
+    return CNET_SCTP_ASSOC_CAPACITY;
   if (cnet_sctp_wire_decode(packet, packet_size, &header, &decoder) !=
       CNET_SCTP_WIRE_OK) return CNET_SCTP_ASSOC_PROTOCOL;
   if (header.source_port != s->config.remote_port ||

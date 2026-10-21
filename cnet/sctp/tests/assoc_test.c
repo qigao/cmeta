@@ -1720,6 +1720,57 @@ static void max_unknown_skip_chunk_count_is_transactional(void) {
  * eight-byte Unrecognized-Chunk causes: one bounded 1040-byte ERROR.
  * A one-byte undersized caller buffer must publish nothing, and retry at
  * the same Owner time must produce an exact wire response. */
+/* A 1200-byte unknown SKIP packet fits the private Association. The
+ * public Wire parser also accepts a CRC-correct 1204-byte packet, but
+ * Association input MUST reject it before unknown actions or time commit.
+ * The inbound bound must not depend on whether a REPORT is requested. */
+static void oversized_unknown_skip_packet_is_not_admitted(void) {
+  cnet_sctp_assoc a, b, before;
+  test_context ca, cb;
+  uint8_t value[1188], packet[1204], output[64];
+  cnet_sctp_wire_header h = {0};
+  cnet_sctp_wire_decoder d = {0};
+  cnet_sctp_wire_chunk unknown = {0xA2u, 0x5Au, value, 1184u};
+  size_t packet_n = 0u, output_n = 123u, i;
+
+  for (i = 0u; i < sizeof(value); ++i) value[i] = (uint8_t)i;
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_ESTABLISHED;
+  a.peer_tag = b.local_tag;
+
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown,
+      1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  assert(packet_n == CNET_SCTP_ASSOC_MAX_PACKET);
+  assert(cnet_sctp_wire_decode(packet, packet_n, &h, &d) == CNET_SCTP_WIRE_OK);
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
+      packet, packet_n, output, sizeof(output), &output_n) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+      a.last_time_ms == 1u);
+  for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+
+  unknown.value_size = 1188u;
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown,
+      1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  assert(packet_n == CNET_SCTP_ASSOC_MAX_PACKET + 4u);
+  assert(cnet_sctp_wire_decode(packet, packet_n, &h, &d) == CNET_SCTP_WIRE_OK);
+
+  memcpy(&before, &a, sizeof(before));
+  memset(output, 0xCC, sizeof(output));
+  output_n = 123u;
+  assert(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
+      packet, packet_n, output, sizeof(output), &output_n) ==
+      CNET_SCTP_ASSOC_CAPACITY);
+  assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+  for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void max_unknown_report_chunk_count_is_transactional(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -2149,6 +2200,7 @@ int main(void) {
   unknown_report_dense_capacity_boundary();
   max_unknown_skip_chunk_count_is_transactional();
   max_unknown_report_chunk_count_is_transactional();
+  oversized_unknown_skip_packet_is_not_admitted();
   error_and_abort_never_create_response_loops();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
