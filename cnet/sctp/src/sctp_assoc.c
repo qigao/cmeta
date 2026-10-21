@@ -1127,8 +1127,10 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
            s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
            s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
            s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
-           s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED))
+           s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED)) {
+        s->last_time_ms = prior_time;
         return CNET_SCTP_ASSOC_PROTOCOL;
+      }
       if (chunk.type == 0u) {
         if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT) {
           if (header.verification_tag != s->local_tag)
