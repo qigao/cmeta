@@ -964,6 +964,34 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
     assert(a.last_time_ms == prior_time);
   }
 
+  /* DATA bundles also require syntax validation for every member before
+   * T5. The first DATA is well formed; the trailing DATA is too short. */
+  {
+    uint8_t valid_data[13] = {0u};
+    uint8_t malformed_data[12] = {0u};
+    a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+    a.t5_shutdown_deadline_ms = 1000u;
+    a.deadline_ms = 1000u;
+    a.last_time_ms = prior_time;
+    chunks[0].type = 0u;
+    chunks[0].flags = 3u;
+    chunks[0].value = valid_data;
+    chunks[0].value_size = sizeof(valid_data);
+    chunks[1].type = 0u;
+    chunks[1].flags = 3u;
+    chunks[1].value = malformed_data;
+    chunks[1].value_size = sizeof(malformed_data);
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 2u,
+        packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    memset(output, 0xCC, sizeof(output));
+    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+        output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+    assert(output_n == 0u && output[0] == 0xCCu);
+    assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+    assert(a.t5_shutdown_deadline_ms == 1000u);
+    assert(a.last_time_ms == prior_time);
+  }
+
   /* Length >= 12 is not enough: a declared gap block must fit in the SACK
    * body before the absolute T5 action can preempt this malformed packet. */
   {
