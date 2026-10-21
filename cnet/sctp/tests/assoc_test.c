@@ -2336,6 +2336,91 @@ static void malformed_control_abort_bundle_preserves_owner(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* RFC 9260 §3.3.7: the first valid ABORT is terminal. Semantic fields in
+ * later chunks are ignored, while framing and CRC for the whole packet are
+ * still required by the Wire decoder. */
+static void chunks_after_abort_are_ignored(void) {
+  static const uint8_t sack_body[12] = {0};
+  static const uint8_t error_body[4] = {0u, 1u, 0u, 4u};
+  static const uint8_t reason[7] = {0u, 12u, 0u, 7u, 'b', 'y', 'e'};
+  static const uint8_t ignored_unknown_value[2] = {0xA5u, 0x5Au};
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  cnet_sctp_wire_chunk chunks[5] = {
+    {3u, 0xA5u, sack_body, sizeof(sack_body)},
+    {9u, 0xA5u, error_body, sizeof(error_body)},
+    {6u, 0u, reason, sizeof(reason)},
+    {4u, 0u, NULL, 0u}, /* malformed HEARTBEAT, after terminal ABORT */
+    {0x41u, 0x5Au, ignored_unknown_value, sizeof(ignored_unknown_value)}
+  };
+  uint8_t packet[128], output[128];
+  size_t packet_n = 0u, output_n = 123u, i;
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+  a.peer_tag = b.local_tag;
+  a.last_time_ms = 10u;
+  a.t5_shutdown_deadline_ms = 1000u;
+  a.deadline_ms = 1000u;
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+      chunks, 5u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  memset(output, 0xCC, sizeof(output));
+  /* No response capacity is needed for a received ABORT, even exactly at T5. */
+  assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+      output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
+  assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+      a.last_time_ms == 1000u && a.deadline_ms == 0u &&
+      a.t5_shutdown_deadline_ms == 0u);
+  for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
+/* Unknown STOP actions before ABORT stop packet processing; unknown SKIP
+ * actions continue to the ABORT. Neither path ever sends an ERROR response
+ * because the packet contains ABORT. */
+static void unknown_chunk_actions_before_abort_are_respected(void) {
+  static const uint8_t unknown_value[2] = {0xA5u, 0x5Au};
+  static const uint8_t reason[4] = {0u, 12u, 0u, 4u};
+  const uint8_t types[2] = {0x41u, 0x82u};
+  size_t k, i;
+  for (k = 0u; k < 2u; ++k) {
+    cnet_sctp_assoc a, b, before;
+    test_context ca, cb;
+    cnet_sctp_wire_chunk chunks[2] = {
+      {0u, 0u, unknown_value, sizeof(unknown_value)},
+      {6u, 0u, reason, sizeof(reason)}
+    };
+    uint8_t packet[64], output[64];
+    size_t packet_n = 0u, output_n = 123u;
+    setup(&a, &b, &ca, &cb);
+    a.state = CNET_SCTP_ASSOC_ESTABLISHED;
+    a.peer_tag = b.local_tag;
+    a.last_time_ms = 10u;
+    chunks[0].type = types[k];
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+        chunks, 2u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    memcpy(&before, &a, sizeof(before));
+    memset(output, 0xCC, sizeof(output));
+    if (k == 0u) {
+      assert(cnet_sctp_assoc_input(&a, 11u, packet, packet_n,
+          output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+      assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+    } else {
+      assert(cnet_sctp_assoc_input(&a, 11u, packet, packet_n,
+          output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
+      assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+          a.last_time_ms == 11u);
+    }
+    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  }
+}
+
 static void error_and_abort_never_create_response_loops(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -2629,6 +2714,8 @@ int main(void) {
   abort_optional_error_causes_are_transactional();
   control_before_abort_is_silent_and_transactional();
   malformed_control_abort_bundle_preserves_owner();
+  chunks_after_abort_are_ignored();
+  unknown_chunk_actions_before_abort_are_respected();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();
