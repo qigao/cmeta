@@ -1066,45 +1066,109 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* A valid checksum and individually well-formed Chunk payloads must not
+ * grant a mixed unknown/recognized packet access to the private M2 dispatch.
+ * Reject every action-bit family and position before touching a TCB, including
+ * at the absolute T5 edge (a malformed/unsupported bundle cannot abort it). */
+static void assert_mixed_bundle_rejected_without_commit(cnet_sctp_assoc *a,
+    const cnet_sctp_wire_chunk *chunks, size_t count, uint64_t now) {
+  cnet_sctp_assoc before;
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  uint8_t packet[256] = {0}, output[256];
+  size_t packet_n = 0u, output_n = 123u, i;
+
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a->local_tag, chunks, count,
+      packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_wire_decode(packet, packet_n, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == count);
+  memcpy(&before, a, sizeof(before));
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(a, now, packet, packet_n, output,
+      sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+  assert(output_n == 0u);
+  assert(memcmp(a, &before, sizeof(before)) == 0);
+  for (i = 0u; i < sizeof(output); ++i)
+    assert(output[i] == 0xCCu);
+}
+
 static void mixed_unknown_known_bundles_fail_closed(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
   static const uint8_t unknown_value[] = {0xA5u, 0x5Au, 0xC3u};
-  static const uint8_t data_value[12] = {0};
-  static const uint8_t types[][3] = {
-    {0x20u, 0u, 0u},    /* unknown, DATA, DATA */
-    {0u, 0x61u, 0u},    /* DATA, reporting unknown, DATA */
-    {0u, 0u, 0xE3u}     /* DATA, DATA, reporting unknown */
+  /* Unlike the former 12-byte DATA fixture, these DATA chunks contain the
+   * required 12-byte fixed header plus nonempty user data. */
+  static const uint8_t data_value[13] = {
+    0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0xA5u
   };
-  size_t case_i;
+  static const uint8_t sack_value[12] = {0u};
+  static const uint8_t shutdown_value[4] = {0u, 0u, 0u, 1u};
+  static const uint8_t error_value[4] = {0u, 1u, 0u, 4u};
+  static const uint8_t unknown_types[] = {0x20u, 0x61u, 0xA2u, 0xE3u};
+  const cnet_sctp_wire_chunk known[] = {
+    {0u, 3u, data_value, sizeof(data_value)},     /* valid DATA */
+    {3u, 0u, sack_value, sizeof(sack_value)},     /* valid empty SACK */
+    {7u, 0u, shutdown_value, sizeof(shutdown_value)},
+    {8u, 0u, NULL, 0u},                            /* SHUTDOWN ACK */
+    {11u, 0u, NULL, 0u},                           /* COOKIE ACK */
+    {9u, 0u, error_value, sizeof(error_value)},   /* valid ERROR cause */
+    {6u, 0u, NULL, 0u}                             /* plain ABORT */
+  };
+  size_t due, known_i, type_i, unknown_pos, group_i;
   setup(&a, &b, &ca, &cb);
-  a.state = CNET_SCTP_ASSOC_ESTABLISHED;
   a.peer_tag = b.local_tag;
-  for (case_i = 0u; case_i < sizeof(types) / sizeof(types[0]); ++case_i) {
-    cnet_sctp_wire_chunk chunks[3];
-    uint8_t packet[128] = {0}, output[128];
-    size_t packet_n = 0u, output_n = 99u, i;
-    uint64_t prior_time = a.last_time_ms;
-    for (i = 0u; i < 3u; ++i) {
-      chunks[i].type = types[case_i][i];
-      chunks[i].flags = 0u;
-      if (chunks[i].type == 0u) {
-        chunks[i].value = data_value;
-        chunks[i].value_size = sizeof(data_value);
-      } else {
-        chunks[i].value = unknown_value;
-        chunks[i].value_size = sizeof(unknown_value);
+
+  for (due = 0u; due < 2u; ++due) {
+    /* Exercise ordinary established traffic and the T5 shutdown edge.
+     * Each rejection must leave even the absolute T5 deadline unchanged. */
+    a.state = due ? CNET_SCTP_ASSOC_SHUTDOWN_SENT :
+        CNET_SCTP_ASSOC_ESTABLISHED;
+    a.last_time_ms = 10u;
+    a.t5_shutdown_deadline_ms = due ? 1000u : 0u;
+    a.deadline_ms = due ? 1000u : 0u;
+    for (known_i = 0u; known_i < sizeof(known) / sizeof(known[0]);
+         ++known_i) {
+      for (type_i = 0u; type_i < sizeof(unknown_types); ++type_i) {
+        cnet_sctp_wire_chunk unknown = {
+          unknown_types[type_i], 0x5Au, unknown_value,
+          sizeof(unknown_value)
+        };
+        for (unknown_pos = 0u; unknown_pos < 2u; ++unknown_pos) {
+          cnet_sctp_wire_chunk chunks[2];
+          chunks[unknown_pos] = unknown;
+          chunks[1u - unknown_pos] = known[known_i];
+          assert_mixed_bundle_rejected_without_commit(&a, chunks, 2u,
+              due ? 1000u : 11u);
+        }
       }
     }
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 3u,
-        packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
-    memset(output, 0xCC, sizeof(output));
-    assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
-        output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
-    assert(output_n == 0u);
-    assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
-    assert(a.last_time_ms == prior_time);
-    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+
+    /* Cover unknown Chunk insertion before, between or after otherwise
+     * supported DATA+DATA and leading-SACK+DATA sequences. */
+    for (group_i = 0u; group_i < 2u; ++group_i) {
+      for (type_i = 0u; type_i < sizeof(unknown_types); ++type_i) {
+        for (unknown_pos = 0u; unknown_pos < 3u; ++unknown_pos) {
+          cnet_sctp_wire_chunk chunks[3];
+          cnet_sctp_wire_chunk first = group_i == 0u ? known[0] : known[1];
+          cnet_sctp_wire_chunk second = known[0];
+          cnet_sctp_wire_chunk unknown = {
+            unknown_types[type_i], 0x5Au, unknown_value,
+            sizeof(unknown_value)
+          };
+          size_t pos, next_known = 0u;
+          for (pos = 0u; pos < 3u; ++pos) {
+            if (pos == unknown_pos) {
+              chunks[pos] = unknown;
+            } else {
+              chunks[pos] = next_known++ == 0u ? first : second;
+            }
+          }
+          assert_mixed_bundle_rejected_without_commit(&a, chunks, 3u,
+              due ? 1000u : 11u);
+        }
+      }
+    }
   }
   assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
