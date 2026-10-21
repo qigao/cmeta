@@ -1486,7 +1486,15 @@ static void shutdown_capacity_retries_are_transactional(void) {
   assert(cnet_sctp_assoc_shutdown(&a, 7u, tiny, sizeof(tiny), &shutdown_n) ==
       CNET_SCTP_ASSOC_CAPACITY);
   assert(shutdown_n == 0u && tiny[0] == 0xCCu);
-  assert(memcmp(&a, &before, sizeof(a)) == 0);
+  assert(a.state == before.state && a.last_time_ms == before.last_time_ms &&
+      a.deadline_ms == before.deadline_ms &&
+      a.t5_shutdown_deadline_ms == before.t5_shutdown_deadline_ms &&
+      a.current_rto_ms == before.current_rto_ms && a.local_tag == before.local_tag &&
+      a.initial_tsn == before.initial_tsn && a.peer_tag == before.peer_tag &&
+      a.peer_initial_tsn == before.peer_initial_tsn &&
+      a.saved_size == before.saved_size && a.retransmits == before.retransmits &&
+      a.in_progress == before.in_progress && a.data_ready == before.data_ready &&
+      memcmp(a.saved_packet, before.saved_packet, sizeof(a.saved_packet)) == 0);
   assert(cnet_sctp_assoc_shutdown(&a, 7u, shutdown_packet,
       sizeof(shutdown_packet), &shutdown_n) == CNET_SCTP_ASSOC_OK);
   assert(shutdown_n > 0u && a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
@@ -1498,7 +1506,15 @@ static void shutdown_capacity_retries_are_transactional(void) {
   assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
       tiny, sizeof(tiny), &ack_n) == CNET_SCTP_ASSOC_CAPACITY);
   assert(ack_n == 0u && tiny[0] == 0xCCu);
-  assert(memcmp(&b, &before, sizeof(b)) == 0);
+  assert(b.state == before.state && b.last_time_ms == before.last_time_ms &&
+      b.deadline_ms == before.deadline_ms &&
+      b.t5_shutdown_deadline_ms == before.t5_shutdown_deadline_ms &&
+      b.current_rto_ms == before.current_rto_ms && b.local_tag == before.local_tag &&
+      b.initial_tsn == before.initial_tsn && b.peer_tag == before.peer_tag &&
+      b.peer_initial_tsn == before.peer_initial_tsn &&
+      b.saved_size == before.saved_size && b.retransmits == before.retransmits &&
+      b.in_progress == before.in_progress && b.data_ready == before.data_ready &&
+      memcmp(b.saved_packet, before.saved_packet, sizeof(b.saved_packet)) == 0);
   assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
       ack_packet, sizeof(ack_packet), &ack_n) == CNET_SCTP_ASSOC_OK);
   assert(ack_n > 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT);
@@ -1511,7 +1527,15 @@ static void shutdown_capacity_retries_are_transactional(void) {
   assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
       tiny, sizeof(tiny), &ack_n) == CNET_SCTP_ASSOC_CAPACITY);
   assert(ack_n == 0u && tiny[0] == 0xCCu);
-  assert(memcmp(&b, &before, sizeof(b)) == 0);
+  assert(b.state == before.state && b.last_time_ms == before.last_time_ms &&
+      b.deadline_ms == before.deadline_ms &&
+      b.t5_shutdown_deadline_ms == before.t5_shutdown_deadline_ms &&
+      b.current_rto_ms == before.current_rto_ms && b.local_tag == before.local_tag &&
+      b.initial_tsn == before.initial_tsn && b.peer_tag == before.peer_tag &&
+      b.peer_initial_tsn == before.peer_initial_tsn &&
+      b.saved_size == before.saved_size && b.retransmits == before.retransmits &&
+      b.in_progress == before.in_progress && b.data_ready == before.data_ready &&
+      memcmp(b.saved_packet, before.saved_packet, sizeof(b.saved_packet)) == 0);
   assert(b.deadline_ms == prior_deadline);
   assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
       ack_packet, sizeof(ack_packet), &ack_n) == CNET_SCTP_ASSOC_OK);
