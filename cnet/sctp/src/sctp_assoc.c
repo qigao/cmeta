@@ -1133,18 +1133,24 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       }
       if (chunk.type == 0u) {
         if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT) {
-          if (header.verification_tag != s->local_tag)
+          if (header.verification_tag != s->local_tag) {
+            s->last_time_ms = prior_time;
             return CNET_SCTP_ASSOC_PROTOCOL;
+          }
           return handle_shutdown_sent_data(s, now, packet, packet_size,
               output, cap, written);
         }
         if (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
-            s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING)
+            s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING) {
+          s->last_time_ms = prior_time;
           return CNET_SCTP_ASSOC_PROTOCOL;
+        }
       } else if (s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
                  s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
-                 s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED)
+                 s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED) {
+        s->last_time_ms = prior_time;
         return CNET_SCTP_ASSOC_PROTOCOL;
+      }
       return data_result(cnet_sctp_data_input(&s->data, now, packet,
           packet_size, output, cap, written));
     case SCTP_TYPE_INIT:
@@ -1176,17 +1182,25 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     case SCTP_TYPE_COOKIE_ACK:
       return handle_cookie_ack(s, now, &header, &chunk);
     case SCTP_TYPE_SHUTDOWN:
-      if (header.chunk_count != 1u) return CNET_SCTP_ASSOC_PROTOCOL;
+      if (header.chunk_count != 1u) {
+        s->last_time_ms = prior_time;
+        return CNET_SCTP_ASSOC_PROTOCOL;
+      }
       return handle_shutdown(s, now, &header, &chunk, output, cap, written);
     case SCTP_TYPE_SHUTDOWN_ACK:
-      if (header.chunk_count != 1u) return CNET_SCTP_ASSOC_PROTOCOL;
+      if (header.chunk_count != 1u) {
+        s->last_time_ms = prior_time;
+        return CNET_SCTP_ASSOC_PROTOCOL;
+      }
       return handle_shutdown_ack(s, now, &header, &chunk, output, cap, written);
     case SCTP_TYPE_SHUTDOWN_COMPLETE:
       if (header.chunk_count != 1u ||
           header.verification_tag != s->local_tag || chunk.flags != 0u ||
           chunk.value_size != 0u ||
-          s->state != CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT)
+          s->state != CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT) {
+        s->last_time_ms = prior_time;
         return CNET_SCTP_ASSOC_PROTOCOL;
+      }
       finish_shutdown(s);
       s->last_time_ms = now;
       return CNET_SCTP_ASSOC_OK;
