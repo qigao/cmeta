@@ -1524,6 +1524,7 @@ static void shutdown_capacity_retries_are_transactional(void) {
 }
 
 int main(void) {
+  shutdown_capacity_retries_are_transactional();
   malformed_shutdown_bundle_does_not_preempt_t5();
   mixed_unknown_known_bundles_fail_closed();
   unknown_chunks_do_not_preempt_t5();
