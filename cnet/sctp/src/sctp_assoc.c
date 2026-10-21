@@ -409,9 +409,10 @@ static int assoc_chunk_shape_valid(const cnet_sctp_wire_chunk *chunk) {
       return chunk->flags == 0u &&
           chunk->value_size == CNET_SCTP_ASSOC_COOKIE_BYTES;
     default:
-      /* Unknown and recognized-but-unimplemented extensions have no
-       * private parser; their framing and bundle position are still checked. */
-      return 1;
+      /* A registered but unimplemented control has no private parser, so
+       * its payload cannot qualify for a packet-triggered T5 transition.
+       * Truly unknown Chunks still use their RFC action bits after T5. */
+      return !recognized_chunk_type(chunk->type);
   }
 }
 
