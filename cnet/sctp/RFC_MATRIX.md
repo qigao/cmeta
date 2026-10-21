@@ -102,3 +102,17 @@ The follow-up RFC clarification commit `a90054b50a2be7463b6946756de08eadb7395b02
 The bounded transactional-dispatch/T5 syntax-preflight checkpoint `87f91981c5a5189ec91eb5e6950eecf7a7fad3f4` is verified: [CNet SCTP C11 prototype #39532536748](https://github.com/qigao/salts/actions/runs/39532536748) **SUCCESS 5/5** (Ubuntu/macOS/Windows, source ASan/UBSan, pinned-GmSSL Cookie-MAC isolation); [immutable shared-build provenance #39532536840](https://github.com/qigao/salts/actions/runs/39532536840) **SUCCESS**; [Salts CI #39532536825](https://github.com/qigao/salts/actions/runs/39532536825) **SUCCESS for selected checks**, including Android ARM64 Release, iOS ARM64 Release and final `CI result`. Formal, package, benchmarks, ServiceHost installed ABI, six-RID ABI identity and SDK publication are **SKIPPED**, not passed; ACE candidate #39532536699 was skipped.
 
 The tested scope covers bounded malformed-packet preflight before packet-triggered T5 and transactional rejection/watermark behavior, including malformed SACK Gap Ack Block lengths and ordering, malformed DATA in a bundle, empty registered HEARTBEAT/ERROR, and invalid-state SHUTDOWN+SACK. This is not complete RFC 9260 conformance, independent wire interoperability, fuzz qualification, installed SDK ABI validation or release readiness. PR #1182 remains Draft/Open; do not merge, publish, release or cut over.
+
+## ABORT terminal boundary checkpoint (2026-10-22)
+
+The private C11 Association now handles a bounded terminal ABORT packet according to RFC 9260 §§3.3.7, 8.5.1, and 9.1:
+
+- The first ABORT in a packet defines the terminal boundary. The entire packet still must pass CRC32c and Wire framing checks; malformed trailing framing rejects the packet without TCB or clock mutation.
+- DATA+ABORT is rejected by the Wire layer. INIT, INIT ACK, and SHUTDOWN COMPLETE remain standalone-only and cannot be bundled with ABORT.
+- Before ABORT, only shape-validated controls in this private profile are admitted. Unknown STOP/STOP+REPORT actions stop packet processing; unknown SKIP/SKIP+REPORT actions continue to ABORT without emitting ERROR, because a packet containing ABORT must not trigger a response.
+- The ABORT itself must pass its Cause-TLV shape check and T-bit Verification Tag rule. A valid ABORT terminates locally and silently before packet-triggered T5, even with zero output capacity.
+- Chunk semantics after ABORT are ignored. This does **not** bypass full packet framing/CRC validation and does not claim arbitrary registered-control support.
+
+Regression coverage includes SACK+ERROR+ABORT, malformed preceding controls and malformed ABORT Causes at T5, both T-bit modes, unknown action bits before ABORT, semantically malformed HEARTBEAT and unknown STOP+REPORT after ABORT, malformed trailing Chunk Length, and Wire rejection of INIT/INIT ACK/SHUTDOWN COMPLETE bundled with ABORT in both orders.
+
+The implementation is still a **bounded private subset**. Semantic processing/ULP reporting of preceding controls, full OOTB response generation, independent peer interoperability, fuzz/TSan, M3 PR-SCTP/reset/interleaving, and installed-SDK/six-RID qualification remain OPEN. PR #1182 remains Draft/Open; do not merge, publish, release, or cut over.
