@@ -1754,6 +1754,14 @@ static void oversized_input_cannot_preempt_absolute_t5(void) {
       CNET_SCTP_WIRE_OK);
   memcpy(&before, &a, sizeof(before));
   memset(output, 0xCC, sizeof(output));
+  /* Admission must reject oversized input before T5 both immediately before
+   * and exactly at the absolute deadline; neither call advances Owner time. */
+  assert(cnet_sctp_assoc_input(&a, 999u, packet, packet_n, output,
+      sizeof(output), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+  for (i = 0u; i < sizeof(output); ++i)
+    assert(output[i] == 0xCCu);
+  output_n = 123u;
   assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
       sizeof(output), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
   assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
