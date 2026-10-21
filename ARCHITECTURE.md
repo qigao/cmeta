@@ -1,7 +1,7 @@
 # Salts Canonical Architecture
 
 **Status:** canonical repository and ecosystem architecture  
-**Updated:** 2026-09-27
+**Updated:** 2026-10-19
 
 This document defines Salts module ownership, public target boundaries,
 dependency direction, and the relationship between the Salts foundation and
@@ -248,6 +248,45 @@ runtime target。Layer 2/3 共同属于 CFlow；Layer 1 是 CMeta 语义工具�
 CSerde 是 Salts 的 format-neutral token foundation。Native binding 位于
 SaltsUtils DataBind，并通过 installed CMeta/CSerde 单向依赖 Salts。
 Plugin 是独立的 module-lifecycle primitive，与 CFlow 无直接依赖。
+
+### Canonical component lifecycle runtime
+
+The installed Configurator/ServiceHost design has one ownership chain:
+
+```text
+CMeta
+  immutable type / Interface / FunctionDesc / component capability metadata
+      |
+      +--> Salts::Configurator
+      |      provider selection, dependency validation, start/rollback/stop
+      |      for one static graph
+      |
+      +--> Salts::ServiceHost
+      |      candidate generation, atomic publication, Scope admission,
+      |      in-flight drain and per-generation Plugin lease settlement
+      |              |
+      |              +--> Salts::Plugin
+      |                     sole DSO load, Registry, lease/quiescence,
+      |                     stop and unload authority
+      |
+      +--> static provider bindings (in-process descriptor validation)
+```
+
+Configurator does not load DSOs or publish generations. ServiceHost does not
+implement another loader: dynamic Provider discovery starts from an already
+loaded/started Plugin in the supplied Registry, acquires a lease before using
+borrowed Provider metadata, and releases that lease only after component
+teardown. CMeta descriptors describe contracts; they do not own runtime
+instances or retain callbacks.
+
+The supported installed targets are `Salts::Configurator`,
+`Salts::ServiceHost`, `Salts::ComponentProviderABI` and `Salts::PluginABI`.
+Historical ACE freeze documents and test names may retain the former
+`ComponentPlugin` label; it is not a supported installed target or a fallback
+path. The current six-RID SDK and installed-consumer release gates are tracked
+in [ServiceHost SDK audit PR #1260](https://github.com/qigao/salts/pull/1260),
+and the unpublished-generation cleanup failure contract is tracked in
+[issue #1261](https://github.com/qigao/salts/issues/1261).
 
 `tinytest/`、vendor、build tools 与 Lean/formal generation 属于测试、构建或验证平面，
 不进入上面的 runtime ownership 图。设备采集、串口、QueryVM 与格式/协议 parser 由

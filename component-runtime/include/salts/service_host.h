@@ -87,6 +87,10 @@ typedef struct salts_service_host_generation {
 
     salts_service_host_generation_storage storage;
     size_t deployment_count;
+    /* Prefix length of retained module-owner records. On a partial cleanup
+     * failure this shrinks as individual leases settle; only unsettled or
+     * malformed ownership records remain in [0, module_count), and every slot
+     * in [module_count, storage.module_capacity) is canonical zero. */
     size_t module_count;
 
     salts_service_host_runtime *runtime_owner;
@@ -112,8 +116,9 @@ typedef struct salts_service_host_scope {
  * generations are drained. Do not copy/move a live scope; a copied scope is
  * rejected without changing its generation's admission count. One original
  * owner releases it exactly once. Services borrowed from it expire at release.
- * The additional owner-address field is a post-3.0 ABI change and must not
- * ship as a silent 3.0.x-compatible update.
+ * The owner-address field is part of the canonical ServiceHost epoch-1
+ * layout. It is not compatible with any earlier unpublished prototype layout;
+ * consumers must use the headers and library from one immutable SDK.
  *
  * After init, publish/close/acquire/release/drain synchronize runtime admission
  * and generation counts. Each scope is used by one thread at a time; provider
@@ -149,6 +154,19 @@ salts_service_host_status salts_service_host_generation_build(
     size_t selection_count);
 
 salts_service_host_status salts_service_host_generation_discard(
+    salts_service_host_generation *generation);
+
+/* Retry cleanup for an unpublished FAILED generation after its owner has
+ * repaired the underlying lease/ownership fault. Requires exclusive access,
+ * no runtime owner or active scopes, and a ZERO, fully rolled-back FAILED, or
+ * STOPPED Configurator context with activation_count == 0.
+ *
+ * Only remaining authoritative Plugin leases are retried; this function never
+ * starts/stops a live graph, loads/unloads a DSO, or retries automatically.
+ * On failure the generation stays FAILED and unsettled module records/storage
+ * remain owned by the caller. On success ownership is settled and the
+ * generation becomes DRAINED/reusable. Attached generations use generation_drain. */
+salts_service_host_status salts_service_host_generation_recover(
     salts_service_host_generation *generation);
 
 /* Initialize a zero-initialized runtime. RESOURCE_ERROR means the platform

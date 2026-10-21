@@ -163,29 +163,9 @@ jobs:
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R "^(test_salts_(unicode|idna)($|_)|cnet_name_lookup(_dns)?_test$)"
           if errorlevel 1 exit /b 1
-      # Branch-only conformance of original #1234 FR Provider DSO and strict
-      # borrowed service admission against #1235 already merged into master.
-      - name: Requalify original Configurator/ServiceHost Candidate (Unix)
-        if: ${{ !cancelled() && (github.head_ref == 'review/component-runtime-mainline-requal' || (github.head_ref == 'review/component-runtime-mainline-installed-abi' || github.head_ref == 'review/servicehost-installed-dso-conformance')) && steps.build_unix.outcome == 'success' && matrix.execution && (matrix.family == 'linux' || matrix.family == 'mac') }}
-        shell: bash
-        timeout-minutes: 15
-        run: |
-          set -euo pipefail
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R '^cmeta_native_(configurator_candidate|service_host_candidate|component_candidate)_'
-      - name: Requalify original Configurator/ServiceHost Candidate (Windows)
-        if: ${{ !cancelled() && (github.head_ref == 'review/component-runtime-mainline-requal' || (github.head_ref == 'review/component-runtime-mainline-installed-abi' || github.head_ref == 'review/servicehost-installed-dso-conformance')) && steps.build_windows.outcome == 'success' && matrix.execution && matrix.family == 'windows' }}
-        shell: cmd
-        timeout-minutes: 15
-        run: |
-          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --no-tests=error --output-on-failure --timeout 120 -R "^cmeta_native_(configurator_candidate|service_host_candidate|component_candidate)_"
-          if errorlevel 1 exit /b 1
       # First-party code in a single sanitizer build; no prebuilt Salts SDKs.
       - name: Audit source-instrumented ServiceHost dependency closure
-        if: ${{ !cancelled() && github.head_ref == 'review/servicehost-fullsource-sanitizers' && matrix.sanitizer != '' && steps.build_unix.outcome == 'success' }}
+        if: ${{ !cancelled() && github.head_ref == 'review/servicehost-canonical-sdk-audit' && matrix.sanitizer != '' && steps.build_unix.outcome == 'success' }}
         shell: bash
         timeout-minutes: 5
         env:
@@ -199,15 +179,12 @@ jobs:
           db = pathlib.Path(os.environ["SANITIZER_BUILD_DIR"]) / "compile_commands.json"
           rows = json.loads(db.read_text(encoding="utf-8"))
           required = {
-              "ServiceHost and Configurator": ("component-runtime/src/",),
-              "ServiceHost real DSO tests": ("component-runtime/tests/",),
-              "Original Component": ("component/src/",),
-              "Original ComponentPlugin": ("component-plugin/src/",),
-              "Plugin loader": ("plugin/src/",),
-              "CMeta": ("cmeta/",),
-              "Platform": ("platform/src/",),
-              "CFlow": ("cflow/src/",),
-              "CNet": ("cnet/src/",),
+              "Configurator/ServiceHost implementation": ("component-runtime/src/",),
+              "ServiceHost C11/C++17 and DSO tests": ("component-runtime/tests/",),
+              "Plugin loader and Registry": ("plugin/src/",),
+              "CMeta descriptor and ABI contracts": ("cmeta/",),
+              "Platform mutex/resource adapter": ("platform/src/",),
+              "NativeIO publication-test dependency": ("native-io/src/",),
           }
           kind = os.environ["SANITIZER_KIND"]
           expected = ("-fsanitize=thread",) if kind == "tsan" else ("-fsanitize=address", "-fsanitize=undefined")
@@ -233,14 +210,14 @@ jobs:
               raise SystemExit("Missing first-party sanitizer closure: " + repr(missing[:12]))
           PY
       - name: Repeat ServiceHost under full-source Linux ASan/UBSan or TSan
-        if: ${{ !cancelled() && github.head_ref == 'review/servicehost-fullsource-sanitizers' && matrix.sanitizer != '' && steps.build_unix.outcome == 'success' }}
+        if: ${{ !cancelled() && github.head_ref == 'review/servicehost-canonical-sdk-audit' && matrix.sanitizer != '' && steps.build_unix.outcome == 'success' }}
         shell: bash
         timeout-minutes: 25
         run: |
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" --no-tests=error \
             --output-on-failure --timeout 120 --repeat until-fail:3 \
-            -R '^cmeta_native_(configurator_candidate|service_host_candidate|component_candidate)_'
+            -R '^cmeta_native_(configurator(_cpp)?_test|service_host_(generation|publication|concurrency|exclusive_fence|scope_cpp|runtime_failure)_test)$'
       - name: Run ACE sanitizer ownership contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.sanitizer != '' }}
         timeout-minutes: 30
@@ -249,7 +226,7 @@ jobs:
           set -euo pipefail
           ctest --preset "${{ matrix.preset }}" \
             --no-tests=error --output-on-failure --timeout 90 \
-            -R '^(cmeta_native_component_(test|cpp_test|plugin_(abi_test|abi_cpp_test|dso_test|generation_test|scope_cpp_test|publication_test|act_native_io_test|runtime_failure_test|concurrency_test))|cmeta_fastpath_(component|pattern)(_cpp)?_test|cmeta_ace_sync(_cpp)?_test|cmeta_ace_leader_followers_contract(_cpp)?_test|platform_ace_leader_followers(_cpp)?_test|native_io_readiness_(lifetime|accept)_test|native_io_header_cpp_test|thread_pool_test|thread_pool_lf_test|disruptor_test|concurrency_header_cpp_test|cflow_reactive_test|cflow_actor_test|cflow_ace_pipes_filters_test|cflow_ace_half_sync_async_test|cnet_ace_acceptor_connector_test|cnet_tcp_endpoint_test|cnet_(progress_strategy|owner_placement|destination_policy|client_pool|recovery_policy|managed_dial|handoff|manager|event|dispatcher|sg_hosted_gateway|sg_handoff_owner|external_gateway_owner|native_io_sharded_ownership|shards_multi_owner)_test)$'
+            -R '^(cmeta_native_(configurator(_cpp)?_test|service_host_(generation|publication|concurrency|exclusive_fence|scope_cpp|runtime_failure)_test|component_(test|cpp_test|plugin_(abi_test|abi_cpp_test|dso_test|generation_test|scope_cpp_test|publication_test|act_native_io_test|runtime_failure_test|concurrency_test)))|cmeta_fastpath_(component|pattern)(_cpp)?_test|cmeta_ace_sync(_cpp)?_test|cmeta_ace_leader_followers_contract(_cpp)?_test|platform_ace_leader_followers(_cpp)?_test|native_io_readiness_(lifetime|accept)_test|native_io_header_cpp_test|thread_pool_test|thread_pool_lf_test|disruptor_test|concurrency_header_cpp_test|cflow_reactive_test|cflow_actor_test|cflow_ace_pipes_filters_test|cflow_ace_half_sync_async_test|cnet_ace_acceptor_connector_test|cnet_tcp_endpoint_test|cnet_(progress_strategy|owner_placement|destination_policy|client_pool|recovery_policy|managed_dial|handoff|manager|event|dispatcher|sg_hosted_gateway|sg_handoff_owner|external_gateway_owner|native_io_sharded_ownership|shards_multi_owner)_test)$'
       # Full functional qualification and performance sampling are different
       # gates. CNet enables separately labeled benchmark CTests when native
       # benchmark binaries are built for downstream measurement. The host

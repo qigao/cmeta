@@ -42,8 +42,11 @@ Release was withdrawn; the interim 4.0.0 proposal is superseded.
 The long-lived ACE/CMeta Draft PR remains **DO NOT MERGE**.
 
 The 2.3.0 candidate replaces 2.2.x static CMeta Plugin declarations with
-canonical Component metadata and the bounded Configurator/ComponentPlugin
-runtime. This is a **source and native ABI break within SemVer major 2**.
+canonical Component metadata and the bounded Configurator/ServiceHost runtime.
+`Salts::Configurator` owns static graph activation; `Salts::ServiceHost`
+owns generation publication and Scope admission/drain, using the existing
+`Salts::Plugin` Registry and leases. This is a **source and native ABI break
+within SemVer major 2**.
 There are no compatibility aliases or legacy/fallback execution paths.
 
 To avoid accidentally mixing incompatible 2.2 and 2.3 binaries, SDK-owned

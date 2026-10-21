@@ -1,5 +1,5 @@
-#ifndef SALTS_CONFIGURATOR_CANDIDATE_TEST_CASES_H
-#define SALTS_CONFIGURATOR_CANDIDATE_TEST_CASES_H
+#ifndef SALTS_CONFIGURATOR_TEST_CASES_H
+#define SALTS_CONFIGURATOR_TEST_CASES_H
 
 #include "configurator_test_fixture.h"
 
@@ -54,6 +54,285 @@ suite("Salts static Component Configurator") {
         check_equal(logger.destroys, 1u);
         check_equal(app.destroys, 1u);
         check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_STOPPED);
+        check_equal(context.activation_count, (size_t)0u);
+    }
+
+    it("rejects corrupted activation and dependency metadata before lifecycle callbacks") {
+        test_provider_state logger;
+        salts_component_provider_binding provider;
+        salts_configurator_deployment deployment;
+        salts_configurator_instance instance;
+        size_t order;
+        salts_configurator_context context = SALTS_CONFIGURATOR_CONTEXT_INIT;
+
+        test_provider_state_init(&logger, 9, NULL);
+        provider = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_resolve(&context), SALTS_COMPONENT_OK);
+
+        /* The public activation index must be checked before start indexes it. */
+        order = SIZE_MAX;
+        check_equal(salts_configurator_context_start(&context),
+                    SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_RESOLVED);
+        check_equal(logger.creates, 0u);
+        check_false(instance.active);
+        check_false(cmeta_object_ref_valid(&instance.object));
+        check_equal(instance.object.size, sizeof(instance.object));
+        check_null(instance.object.object);
+
+        /* A forged dependency slice must fail before the first Provider call. */
+        order = 0u;
+        instance.dependency_offset = SIZE_MAX;
+        check_equal(salts_configurator_context_start(&context),
+                    SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_RESOLVED);
+        check_equal(logger.creates, 0u);
+        check_false(instance.active);
+        instance.dependency_offset = 0u;
+
+        check_equal(salts_configurator_context_start(&context), SALTS_COMPONENT_OK);
+        check_equal(logger.creates, 1u);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+
+        /* A forged READY marker must not let resolve() overwrite a live graph. */
+        context.state = SALTS_CONFIGURATOR_CONTEXT_READY;
+        context.activation_count = 0u;
+        check_equal(salts_configurator_context_resolve(&context),
+                    SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_READY);
+        check_equal(logger.creates, 1u);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        context.state = SALTS_CONFIGURATOR_CONTEXT_ACTIVE;
+        context.activation_count = 1u;
+
+        /* stop() must validate the same caller-owned index before teardown. */
+        order = SIZE_MAX;
+        check_equal(salts_configurator_context_stop(&context),
+                    SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_ACTIVE);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(logger.deactivates, 0u);
+        check_equal(logger.destroys, 0u);
+
+        order = 0u;
+        check_equal(salts_configurator_context_stop(&context), SALTS_COMPONENT_OK);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_STOPPED);
+        check_false(instance.active);
+        check_false(cmeta_object_ref_valid(&instance.object));
+        check_equal(logger.deactivates, 1u);
+        check_equal(logger.destroys, 1u);
+    }
+
+    it("refuses to reset a FAILED context with unsettled activation entries") {
+        test_provider_state logger;
+        salts_component_provider_binding provider;
+        salts_configurator_deployment deployment;
+        salts_configurator_instance instance;
+        size_t order;
+        salts_configurator_context context = SALTS_CONFIGURATOR_CONTEXT_INIT;
+
+        test_provider_state_init(&logger, 7, NULL);
+        provider = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_start(&context), SALTS_COMPONENT_OK);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(context.activation_count, (size_t)1u);
+
+        /* Model an inconsistent FAILED marker while ObjectRef teardown
+         * authority is still live. Init must reject without overwriting it. */
+        context.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
+        check_equal(context.activation_count, (size_t)1u);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(logger.destroys, 0u);
+
+        context.state = SALTS_CONFIGURATOR_CONTEXT_ACTIVE;
+        check_equal(salts_configurator_context_stop(&context), SALTS_COMPONENT_OK);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_STOPPED);
+        check_equal(context.activation_count, (size_t)0u);
+        check_null(context.deployments);
+        check_equal(context.deployment_count, (size_t)0u);
+        check_null(context.instances);
+        check_null(context.dependencies);
+        check_null(context.activation_order);
+        check_equal(logger.destroys, 1u);
+    }
+
+    it("refuses reuse of a FAILED context with live ObjectRefs even when activation_count is zero") {
+        test_provider_state logger;
+        salts_component_provider_binding provider;
+        salts_configurator_deployment deployment;
+        salts_configurator_instance instance;
+        size_t order;
+        salts_configurator_context context = SALTS_CONFIGURATOR_CONTEXT_INIT;
+        int value = 0;
+
+        test_provider_state_init(&logger, 7, NULL);
+        provider = TEST_PROVIDER_BINDING(
+            TestLogger, &logger, test_logger_create);
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_start(&context), SALTS_COMPONENT_OK);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+
+        /* A zero plan count and FAILED enum do not discharge the live instance.
+         * The reusable-state guard must inspect the owned ObjectRef prefix. */
+        context.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+        context.failure.phase = SALTS_CONFIGURATOR_PHASE_ACTIVATE;
+        context.activation_count = 0u;
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
+        check_equal(context.activation_count, (size_t)0u);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(logger.destroys, 0u);
+
+        /* The failure phase is public mutable state too: forging INIT must
+         * not bypass the retained ObjectRef check for this still-live graph. */
+        context.failure.phase = SALTS_CONFIGURATOR_PHASE_INIT;
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(logger.destroys, 0u);
+
+        /* Truncating the owner prefix to zero must not make retained arrays
+         * disappear from the reuse check. */
+        context.deployment_count = 0u;
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.deployment_count, (size_t)0u);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(logger.destroys, 0u);
+        context.deployment_count = 1u;
+
+        /* ZERO is also public mutable state. It is reusable only if the
+         * context's storage fields are canonically empty. */
+        context.state = SALTS_CONFIGURATOR_CONTEXT_ZERO;
+        check_equal(salts_configurator_context_init(
+            &context, &deployment, 1u, NULL, 0u, &instance, 1u,
+            NULL, 0u, &order, 1u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_ZERO);
+        check_true(instance.active);
+        check_true(cmeta_object_ref_valid(&instance.object));
+        check_equal(logger.destroys, 0u);
+
+        /* Restore the valid live owner state and settle it normally. */
+        context.state = SALTS_CONFIGURATOR_CONTEXT_ACTIVE;
+        context.activation_count = 1u;
+        context.failure = (salts_configurator_failure){0};
+        check_equal(salts_configurator_context_stop(&context), SALTS_COMPONENT_OK);
+        check_false(instance.active);
+        check_false(cmeta_object_ref_valid(&instance.object));
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_STOPPED);
+        check_equal(context.activation_count, (size_t)0u);
+        check_equal(logger.destroys, 1u);
+        (void)value;
+    }
+
+    it("rejects reuse when truncated deployment_count hides a live tail ObjectRef") {
+        test_provider_state first;
+        test_provider_state second;
+        salts_component_provider_binding providers[2];
+        salts_configurator_deployment deployments[2];
+        salts_configurator_instance instances[2];
+        size_t order[2];
+        salts_configurator_context context = SALTS_CONFIGURATOR_CONTEXT_INIT;
+
+        test_provider_state_init(&first, 13, NULL);
+        test_provider_state_init(&second, 17, NULL);
+        providers[0] = TEST_PROVIDER_BINDING(
+            TestLogger, &first, test_logger_create);
+        providers[1] = TEST_PROVIDER_BINDING(
+            TestLoggerAlt, &second, test_logger_create);
+        deployments[0] = TEST_DEPLOYMENT(&providers[0], NULL, NULL);
+        deployments[1] = TEST_DEPLOYMENT(&providers[1], NULL, NULL);
+
+        check_equal(salts_configurator_context_init(
+            &context, deployments, 2u, NULL, 0u, instances, 2u,
+            NULL, 0u, order, 2u), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_start(&context), SALTS_COMPONENT_OK);
+        check_true(instances[0].active);
+        check_true(instances[1].active);
+        check_true(cmeta_object_ref_valid(&instances[0].object));
+        check_true(cmeta_object_ref_valid(&instances[1].object));
+
+        /* Settle the visible prefix slot explicitly, leaving the later slot
+         * as the only owner. A prefix-only reuse check would miss this lease. */
+        providers[0].deactivate(providers[0].provider_context, &instances[0].object);
+        instances[0].active = false;
+        cmeta_object_release(&instances[0].object);
+        check_false(cmeta_object_ref_valid(&instances[0].object));
+        check_false(instances[0].active);
+        check_true(instances[1].active);
+        check_true(cmeta_object_ref_valid(&instances[1].object));
+        check_equal(first.destroys, 1u);
+        check_equal(second.destroys, 0u);
+
+        context.state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+        context.failure.phase = SALTS_CONFIGURATOR_PHASE_ACTIVATE;
+        context.activation_count = 0u;
+        context.deployment_count = 1u;
+        check_equal(salts_configurator_context_init(
+            &context, deployments, 2u, NULL, 0u, instances, 2u,
+            NULL, 0u, order, 2u), SALTS_COMPONENT_INVALID_STATE);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
+        check_equal(context.deployment_count, (size_t)1u);
+        check_false(instances[0].active);
+        check_false(cmeta_object_ref_valid(&instances[0].object));
+        check_true(instances[1].active);
+        check_true(cmeta_object_ref_valid(&instances[1].object));
+        check_equal(second.destroys, 0u);
+
+        /* After repairing the remaining owner, reuse is legal and normal
+         * lifecycle cleanup still destroys each newly created value once. */
+        providers[1].deactivate(providers[1].provider_context, &instances[1].object);
+        instances[1].active = false;
+        cmeta_object_release(&instances[1].object);
+        check_false(cmeta_object_ref_valid(&instances[1].object));
+        check_equal(second.destroys, 1u);
+        context.deployment_count = 2u;
+        check_equal(salts_configurator_context_init(
+            &context, deployments, 2u, NULL, 0u, instances, 2u,
+            NULL, 0u, order, 2u), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_resolve(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_start(&context), SALTS_COMPONENT_OK);
+        check_equal(salts_configurator_context_stop(&context), SALTS_COMPONENT_OK);
+        check_equal(first.destroys, 2u);
+        check_equal(second.destroys, 2u);
+        check_null(context.instances);
     }
 
     it("rejects provider binding ABI mismatch before resolution") {
@@ -129,6 +408,13 @@ suite("Salts static Component Configurator") {
         check_equal(salts_configurator_context_resolve(&context),
                     SALTS_COMPONENT_MISSING_PROVIDER);
         check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
+        /* Resolve failed before object creation; the context must not retain
+         * borrowed pointers after the call, because the caller may reclaim them. */
+        check_null(context.deployments);
+        check_equal(context.deployment_count, (size_t)0u);
+        check_null(context.instances);
+        check_null(context.dependencies);
+        check_null(context.activation_order);
     }
 
     it("rejects ambiguous providers instead of ranking implicitly") {
@@ -410,6 +696,11 @@ suite("Salts static Component Configurator") {
         check_equal(logger.resource_acquires, 1u);
         check_equal(logger.resource_releases, 1u);
         check_false(logger.resource_live);
+        check_null(context.deployments);
+        check_equal(context.deployment_count, (size_t)0u);
+        check_null(context.instances);
+        check_null(context.dependencies);
+        check_null(context.activation_order);
 
         /* STOPPED reuse is permitted only after owned resources are closed. */
         check_equal(salts_configurator_context_init(
@@ -448,6 +739,10 @@ suite("Salts static Component Configurator") {
         check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
         check_equal(logger.destroys, 1u);
         check_false(cmeta_object_ref_valid(&instance.object));
+        check_null(context.deployments);
+        check_equal(context.deployment_count, (size_t)0u);
+        check_null(context.instances);
+        check_null(context.activation_order);
 
         provider.create = test_logger_create;
         check_equal(salts_configurator_context_init(

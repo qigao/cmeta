@@ -41,20 +41,20 @@ typedef struct exclusive_generation_fixture {
 /* One control-plane bind per acquired scope. The typed dispatch is borrowed;
  * repeated hot calls do not resolve metadata or touch a registry. */
 typedef struct exclusive_bound_service {
-    component_plugin_value value;
+    service_host_provider_value value;
     uint64_t generation_id;
     bool live;
 } exclusive_bound_service;
 
 cmeta_component(ExclusiveDomainWriter,
-    cmeta_provides(component_plugin_value));
+    cmeta_provides(service_host_provider_value));
 
 static int exclusive_get(void *self) {
     return *(int *)self;
 }
 
 CMETA_IMPLEMENTS(
-    component_plugin_value,
+    service_host_provider_value,
     exclusive_writer_impl,
     0u,
     .get = exclusive_get);
@@ -68,11 +68,11 @@ static cmeta_status exclusive_project(
     if (object == NULL || out == NULL)
         return CMETA_INVALID_ARGUMENT;
     if (!cmeta_interface_desc_equal(
-            expected, component_plugin_value_interface()))
+            expected, service_host_provider_value_interface()))
         return CMETA_TRAIT_MISSING;
 
     out->size = sizeof(*out);
-    out->interface = component_plugin_value_interface();
+    out->interface = service_host_provider_value_interface();
     out->self = object->object;
     out->dispatch = &exclusive_writer_impl_vtable;
     return CMETA_OK;
@@ -153,16 +153,16 @@ static salts_service_host_status domain_bind_service(
     const salts_service_host_scope *scope,
     exclusive_bound_service *bound) {
     salts_configurator_service service;
-    component_plugin_value value = component_plugin_value_bind(NULL, NULL);
+    service_host_provider_value value = service_host_provider_value_bind(NULL, NULL);
     if (bound == NULL || bound->live ||
         salts_service_host_scope_generation_id(scope) == UINT64_C(0))
         return SALTS_SERVICE_HOST_INVALID_STATE;
     if (salts_service_host_scope_find_service_from(
             scope, "ExclusiveDomainWriter",
-            component_plugin_value_interface(),
+            service_host_provider_value_interface(),
             &service) != SALTS_SERVICE_HOST_OK)
         return SALTS_SERVICE_HOST_COMPONENT_ERROR;
-    if (component_plugin_value_borrow_from_object(
+    if (service_host_provider_value_borrow_from_object(
             service.object, service.interfaces, &value) != CMETA_OK)
         return SALTS_SERVICE_HOST_COMPONENT_ERROR;
     bound->value = value;
@@ -185,7 +185,7 @@ static int domain_read(
         return -1;
     }
     ++domain->accepted_reads;
-    return component_plugin_value_get(&bound->value);
+    return service_host_provider_value_get(&bound->value);
 }
 
 static salts_service_host_status build_exclusive_generation(
@@ -247,10 +247,10 @@ suite("ACE exclusive domain resource across Component generations") {
         /* Macro-generated canonical Strategy must use the same native
          * method signature; it does not create resource/module ownership. */
         {
-            component_plugin_value strategy =
-                exclusive_writer_impl_as_component_plugin_value(&n.provider.value);
-            check_true(component_plugin_value_valid(&strategy));
-            check_equal(component_plugin_value_get(&strategy), 17);
+            service_host_provider_value strategy =
+                exclusive_writer_impl_as_service_host_provider_value(&n.provider.value);
+            check_true(service_host_provider_value_valid(&strategy));
+            check_equal(service_host_provider_value_get(&strategy), 17);
         }
         check_equal(n.provider.activates, 1u);
         check_equal(next.provider.activates, 1u);

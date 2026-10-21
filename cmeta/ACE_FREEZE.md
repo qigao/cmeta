@@ -18,6 +18,17 @@ Long-lived `feature/cmeta-ace-patterns` [Draft PR #1013](https://github.com/qiga
 remains **DO NOT MERGE. DO NOT PUBLISH.** Feature freeze is **not** 2.3.0
 native SDK, downstream or stable release qualification.
 
+**Current-runtime mapping (2026-10-19):** the ownership graph below records the
+historical frozen ACE snapshot, where the generation owner was named
+`Salts::ComponentPlugin`. The canonical runtime now integrated in master
+exports `Salts::Configurator` for static graph resolution/activation and
+`Salts::ServiceHost` for generation publication, Scope admission/drain and
+settlement of Plugin leases. `Salts::Plugin` remains the sole DSO
+loader/Registry/quiescence/unload authority. Historical freeze evidence and
+test names are retained as historical evidence, not current target names;
+the current six-RID and installed-consumer release gates are tracked separately
+in [ServiceHost SDK audit PR #1260](https://github.com/qigao/salts/pull/1260).
+
 ## Frozen ownership graph
 
 ```text

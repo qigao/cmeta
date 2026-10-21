@@ -12,6 +12,27 @@ static salts_configurator_failure salts_configurator_failure_none(void) {
     return failure;
 }
 
+static bool salts_configurator_instances_settled(
+    const salts_configurator_context *context);
+
+static void salts_configurator_context_detach_storage(
+    salts_configurator_context *context) {
+    if (context == NULL)
+        return;
+    context->deployments = NULL;
+    context->deployment_count = 0u;
+    context->selections = NULL;
+    context->selection_count = 0u;
+    context->instances = NULL;
+    context->instance_capacity = 0u;
+    context->dependencies = NULL;
+    context->dependency_capacity = 0u;
+    context->dependency_count = 0u;
+    context->activation_order = NULL;
+    context->activation_capacity = 0u;
+    context->activation_count = 0u;
+}
+
 static salts_component_status salts_component_fail(
     salts_configurator_context *context,
     salts_component_status status,
@@ -25,6 +46,16 @@ static salts_component_status salts_component_fail(
         context->failure.dependency_index = dependency_index;
         context->failure.provider_status = provider_status;
         context->state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+
+        /* Init and Resolve cannot leave a live ObjectRef. Start failures reach
+         * this helper only after the failing instance is released and rollback
+         * is complete. Detach borrowed arrays only if that invariant holds;
+         * retain their addresses if teardown did not settle, so reuse is
+         * rejected rather than losing the remaining owner authority. */
+        if (phase == SALTS_CONFIGURATOR_PHASE_INIT ||
+            phase == SALTS_CONFIGURATOR_PHASE_RESOLVE ||
+            salts_configurator_instances_settled(context))
+            salts_configurator_context_detach_storage(context);
     }
     return status;
 }
@@ -95,6 +126,77 @@ static void salts_configurator_instance_reset(salts_configurator_instance *insta
     instance->dependency_offset = 0u;
     instance->dependency_count = 0u;
     instance->active = false;
+}
+
+/* A public state enum, activation_count, or failure phase is not by itself
+ * proof that teardown authority is gone. A genuine INIT-phase failure has
+ * already detached all borrowed arrays in salts_component_fail(); therefore
+ * its settled representation is an empty prefix, not a phase-based bypass.
+ * Verify every retained instance record before allowing FAILED/STOPPED reuse. */
+static bool salts_configurator_object_ref_empty(
+    const cmeta_object_ref *object) {
+    return object != NULL &&
+           object->size == sizeof(*object) &&
+           object->object == NULL &&
+           object->data == NULL &&
+           object->field_provider == NULL &&
+           object->operations == NULL &&
+           object->operation_provider == NULL &&
+           object->lifetime == CMETA_OBJECT_LIFETIME_NONE &&
+           object->lifecycle == NULL;
+}
+
+static bool salts_configurator_storage_detached(
+    const salts_configurator_context *context) {
+    return context != NULL &&
+           context->deployments == NULL &&
+           context->deployment_count == 0u &&
+           context->selections == NULL &&
+           context->selection_count == 0u &&
+           context->instances == NULL &&
+           context->instance_capacity == 0u &&
+           context->dependencies == NULL &&
+           context->dependency_capacity == 0u &&
+           context->dependency_count == 0u &&
+           context->activation_order == NULL &&
+           context->activation_capacity == 0u &&
+           context->activation_count == 0u;
+}
+
+static bool salts_configurator_context_zero_is_clear(
+    const salts_configurator_context *context) {
+    return context != NULL &&
+           context->state == SALTS_CONFIGURATOR_CONTEXT_ZERO &&
+           salts_configurator_storage_detached(context);
+}
+
+static bool salts_configurator_instances_settled(
+    const salts_configurator_context *context) {
+    size_t i;
+
+    if (context == NULL)
+        return false;
+    /* A genuine FAILED/STOPPED zero-deployment context has already detached
+     * its borrowed arrays. Do not let deployment_count=0 hide retained
+     * storage and owner records during reuse. */
+    if ((context->state == SALTS_CONFIGURATOR_CONTEXT_FAILED ||
+         context->state == SALTS_CONFIGURATOR_CONTEXT_STOPPED) &&
+        context->deployment_count == 0u &&
+        !salts_configurator_storage_detached(context))
+        return false;
+    if (context->deployment_count > context->instance_capacity ||
+        (context->instance_capacity != 0u && context->instances == NULL))
+        return false;
+
+    /* Scan the whole backing store. deployment_count is caller-owned state
+     * and truncating it must not hide a still-live tail ObjectRef. */
+    for (i = 0u; i < context->instance_capacity; ++i) {
+        const salts_configurator_instance *instance = &context->instances[i];
+        if (instance->active ||
+            !salts_configurator_object_ref_empty(&instance->object))
+            return false;
+    }
+    return true;
 }
 
 static bool salts_component_order_contains(
@@ -237,6 +339,111 @@ static cmeta_status salts_component_preflight_provides(
     return CMETA_OK;
 }
 
+static bool salts_configurator_activation_plan_valid(
+    const salts_configurator_context *context,
+    bool expect_active) {
+    size_t expected_dependency_offset = 0u;
+    size_t i;
+    size_t j;
+
+    if (context == NULL ||
+        context->deployment_count > context->instance_capacity ||
+        context->deployment_count > context->activation_capacity ||
+        context->activation_count != context->deployment_count ||
+        context->dependency_count > context->dependency_capacity ||
+        (context->instance_capacity != 0u && context->instances == NULL) ||
+        (context->activation_capacity != 0u && context->activation_order == NULL) ||
+        (context->deployment_count != 0u &&
+         (context->deployments == NULL || context->instances == NULL ||
+          context->activation_order == NULL)) ||
+        (context->dependency_capacity != 0u && context->dependencies == NULL))
+        return false;
+
+    /* Validate all bindings, instance states and dependency slices before any
+     * lifecycle callback or activation-order dereference occurs. The arrays
+     * are caller-owned, so a mutable count/offset cannot be trusted alone. */
+    for (i = 0u; i < context->deployment_count; ++i) {
+        const salts_configurator_instance *instance = &context->instances[i];
+        if (salts_configurator_deployment_status(&context->deployments[i]) !=
+                SALTS_COMPONENT_OK ||
+            instance->dependency_offset != expected_dependency_offset ||
+            instance->dependency_offset > context->dependency_count ||
+            instance->dependency_count >
+                context->dependency_count - instance->dependency_offset)
+            return false;
+
+        if (expect_active) {
+            if (!instance->active || !cmeta_object_ref_valid(&instance->object))
+                return false;
+        } else if (instance->active ||
+                   !salts_configurator_object_ref_empty(&instance->object)) {
+            return false;
+        }
+        expected_dependency_offset += instance->dependency_count;
+    }
+    if (expected_dependency_offset != context->dependency_count)
+        return false;
+
+    for (i = context->deployment_count; i < context->instance_capacity; ++i) {
+        const salts_configurator_instance *instance = &context->instances[i];
+        if (instance->active ||
+            !salts_configurator_object_ref_empty(&instance->object) ||
+            instance->dependency_offset != 0u ||
+            instance->dependency_count != 0u)
+            return false;
+    }
+
+    for (i = 0u; i < context->activation_count; ++i) {
+        const size_t component_index = context->activation_order[i];
+        if (component_index >= context->deployment_count)
+            return false;
+        for (j = 0u; j < i; ++j)
+            if (context->activation_order[j] == component_index)
+                return false;
+    }
+
+    for (i = 0u; i < context->deployment_count; ++i) {
+        const salts_configurator_instance *instance = &context->instances[i];
+        const salts_component_provider_binding *consumer =
+            salts_component_provider_at(context, i);
+        size_t dependency_index;
+
+        for (dependency_index = 0u;
+             dependency_index < instance->dependency_count;
+             ++dependency_index) {
+            const salts_component_dependency *dependency =
+                &context->dependencies[instance->dependency_offset + dependency_index];
+            const salts_component_provider_binding *provider;
+
+            if (dependency->consumer_index != i ||
+                dependency->provider_index >= context->deployment_count ||
+                !cmeta_interface_desc_valid(dependency->interface_desc))
+                return false;
+            provider = salts_component_provider_at(
+                context, dependency->provider_index);
+            if (consumer == NULL || provider == NULL ||
+                dependency->provider_component != provider->component ||
+                dependency->provider_instance !=
+                    &context->instances[dependency->provider_index].object ||
+                dependency->provider_interfaces != provider->interfaces ||
+                !salts_component_requires(
+                    consumer->component, dependency->interface_desc) ||
+                !salts_component_provides(
+                    provider->component, dependency->interface_desc))
+                return false;
+        }
+    }
+
+    /* A valid permutation is not sufficient: every provider must precede its
+     * consumer so start/rollback/stop all use the canonical dependency order. */
+    for (i = 0u; i < context->activation_count; ++i)
+        if (!salts_component_dependencies_ready(
+                context, context->activation_order[i], i))
+            return false;
+
+    return true;
+}
+
 static void salts_component_rollback(
     salts_configurator_context *context,
     size_t activated_count) {
@@ -307,12 +514,29 @@ salts_component_status salts_configurator_context_init(
         context->state != SALTS_CONFIGURATOR_CONTEXT_STOPPED &&
         context->state != SALTS_CONFIGURATOR_CONTEXT_FAILED)
         return SALTS_COMPONENT_INVALID_STATE;
+    /* activation_count is the resolved plan length while READY/RESOLVED/
+     * ACTIVE, and is cleared only after rollback or successful stop. A
+     * reusable state carrying entries is inconsistent and may still own
+     * ObjectRefs; do not overwrite its teardown authority. */
+    if (context->activation_count != 0u)
+        return SALTS_COMPONENT_INVALID_STATE;
+    /* ZERO is valid only as the canonical empty initial representation. Merely
+     * forging the enum must not erase retained arrays or ObjectRef ownership. */
+    if (context->state == SALTS_CONFIGURATOR_CONTEXT_ZERO &&
+        !salts_configurator_context_zero_is_clear(context))
+        return SALTS_COMPONENT_INVALID_STATE;
+    if ((context->state == SALTS_CONFIGURATOR_CONTEXT_STOPPED ||
+         context->state == SALTS_CONFIGURATOR_CONTEXT_FAILED) &&
+        !salts_configurator_instances_settled(context))
+        return SALTS_COMPONENT_INVALID_STATE;
 
     *context = (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
     context->failure = salts_configurator_failure_none();
 
     if ((deployment_count != 0u &&
          (deployments == NULL || instances == NULL || activation_order == NULL)) ||
+        (instance_capacity != 0u && instances == NULL) ||
+        (activation_capacity != 0u && activation_order == NULL) ||
         (selection_count != 0u && selections == NULL) ||
         (dependency_capacity != 0u && dependencies == NULL))
         return salts_component_fail(
@@ -356,7 +580,6 @@ salts_component_status salts_configurator_context_init(
                     SALTS_COMPONENT_INDEX_NONE, CMETA_OK);
         }
 
-        salts_configurator_instance_reset(&instances[i]);
     }
 
     for (i = 0u; i < selection_count; ++i) {
@@ -403,8 +626,102 @@ salts_component_status salts_configurator_context_init(
         }
     }
 
+    /* The entire caller-provided capacity is Configurator scratch storage.
+     * Initialize unused slots too, so a truncated public deployment_count
+     * cannot later conceal an ObjectRef in the tail during reuse. */
+    for (i = 0u; i < instance_capacity; ++i)
+        salts_configurator_instance_reset(&instances[i]);
+
     context->state = SALTS_CONFIGURATOR_CONTEXT_READY;
     return SALTS_COMPONENT_OK;
+}
+
+static bool salts_configurator_ready_context_valid(
+    const salts_configurator_context *context) {
+    size_t i;
+    size_t j;
+
+    if (context == NULL ||
+        context->deployment_count > context->instance_capacity ||
+        context->deployment_count > context->activation_capacity ||
+        context->dependency_count != 0u ||
+        context->activation_count != 0u ||
+        (context->instance_capacity != 0u && context->instances == NULL) ||
+        (context->activation_capacity != 0u && context->activation_order == NULL) ||
+        (context->deployment_count != 0u &&
+         (context->deployments == NULL || context->instances == NULL ||
+          context->activation_order == NULL)) ||
+        (context->selection_count != 0u && context->selections == NULL) ||
+        (context->dependency_capacity != 0u && context->dependencies == NULL))
+        return false;
+
+    /* READY is pre-resolution: no instance, dependency slice, or activation
+     * plan may already own lifecycle state. Check bounds and backing storage
+     * before the resolver dereferences caller-owned arrays. */
+    for (i = 0u; i < context->deployment_count; ++i) {
+        const salts_configurator_instance *instance = &context->instances[i];
+        const salts_configurator_deployment *deployment = &context->deployments[i];
+
+        if (salts_configurator_deployment_status(deployment) != SALTS_COMPONENT_OK ||
+            instance->active ||
+            !salts_configurator_object_ref_empty(&instance->object) ||
+            instance->dependency_offset != 0u ||
+            instance->dependency_count != 0u)
+            return false;
+
+        for (j = 0u; j < i; ++j)
+            if (strcmp(
+                    deployment->provider->component->stable_id,
+                    context->deployments[j].provider->component->stable_id) == 0)
+                return false;
+    }
+
+    for (i = context->deployment_count; i < context->instance_capacity; ++i) {
+        const salts_configurator_instance *instance = &context->instances[i];
+        if (instance->active ||
+            !salts_configurator_object_ref_empty(&instance->object) ||
+            instance->dependency_offset != 0u ||
+            instance->dependency_count != 0u)
+            return false;
+    }
+
+    for (i = 0u; i < context->selection_count; ++i) {
+        const salts_configurator_selection *selection = &context->selections[i];
+        size_t consumer_index;
+        size_t provider_index;
+
+        if (selection->consumer_component_id == NULL ||
+            selection->consumer_component_id[0] == '\0' ||
+            selection->provider_component_id == NULL ||
+            selection->provider_component_id[0] == '\0' ||
+            !cmeta_interface_desc_valid(selection->requirement))
+            return false;
+
+        consumer_index = salts_component_find_id(
+            context, selection->consumer_component_id);
+        provider_index = salts_component_find_id(
+            context, selection->provider_component_id);
+        if (consumer_index == SALTS_COMPONENT_INDEX_NONE ||
+            provider_index == SALTS_COMPONENT_INDEX_NONE ||
+            !salts_component_requires(
+                context->deployments[consumer_index].provider->component,
+                selection->requirement) ||
+            !salts_component_provides(
+                context->deployments[provider_index].provider->component,
+                selection->requirement))
+            return false;
+
+        for (j = 0u; j < i; ++j)
+            if (strcmp(
+                    context->selections[j].consumer_component_id,
+                    selection->consumer_component_id) == 0 &&
+                cmeta_interface_desc_equal(
+                    context->selections[j].requirement,
+                    selection->requirement))
+                return false;
+    }
+
+    return true;
 }
 
 salts_component_status salts_configurator_context_resolve(
@@ -415,7 +732,8 @@ salts_component_status salts_configurator_context_resolve(
 
     if (context == NULL)
         return SALTS_COMPONENT_INVALID_ARGUMENT;
-    if (context->state != SALTS_CONFIGURATOR_CONTEXT_READY)
+    if (context->state != SALTS_CONFIGURATOR_CONTEXT_READY ||
+        !salts_configurator_ready_context_valid(context))
         return SALTS_COMPONENT_INVALID_STATE;
 
     context->failure = salts_configurator_failure_none();
@@ -519,7 +837,8 @@ salts_component_status salts_configurator_context_start(
 
     if (context == NULL)
         return SALTS_COMPONENT_INVALID_ARGUMENT;
-    if (context->state != SALTS_CONFIGURATOR_CONTEXT_RESOLVED)
+    if (context->state != SALTS_CONFIGURATOR_CONTEXT_RESOLVED ||
+        !salts_configurator_activation_plan_valid(context, false))
         return SALTS_COMPONENT_INVALID_STATE;
 
     context->failure = salts_configurator_failure_none();
@@ -629,7 +948,8 @@ salts_component_status salts_configurator_context_stop(
 
     if (context == NULL)
         return SALTS_COMPONENT_INVALID_ARGUMENT;
-    if (context->state != SALTS_CONFIGURATOR_CONTEXT_ACTIVE)
+    if (context->state != SALTS_CONFIGURATOR_CONTEXT_ACTIVE ||
+        !salts_configurator_activation_plan_valid(context, true))
         return SALTS_COMPONENT_INVALID_STATE;
 
     order_index = context->activation_count;
@@ -652,6 +972,16 @@ salts_component_status salts_configurator_context_stop(
         cmeta_object_release(&instance->object);
     }
 
+    /* activation_count describes the resolved activation plan. Once all
+     * instances have been deactivated and released, STOPPED has no remaining
+     * activation entries and is safe to reuse or hand to ServiceHost cleanup.
+     * Do not retain borrowed array addresses beyond this boundary. */
+    context->activation_count = 0u;
+    if (!salts_configurator_instances_settled(context)) {
+        context->state = SALTS_CONFIGURATOR_CONTEXT_FAILED;
+        return SALTS_COMPONENT_INVALID_STATE;
+    }
+    salts_configurator_context_detach_storage(context);
     context->state = SALTS_CONFIGURATOR_CONTEXT_STOPPED;
     return SALTS_COMPONENT_OK;
 }

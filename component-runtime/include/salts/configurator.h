@@ -100,9 +100,19 @@ const char *salts_configurator_status_string(salts_component_status status);
  * (after successful stop) or FAILED context (after rollback) may be reused
  * exclusively once all borrowed service views have expired.
  *
- * Caller-owned provider/storage arrays must remain alive through stop.
- * This post-3.0 stricter contract changes source requirements for callers
- * that previously passed uninitialized automatic storage. */
+ * Caller-owned provider/storage arrays must remain alive while a context
+ * is READY, RESOLVED or ACTIVE. `instance_capacity` is the actual backing
+ * capacity, not the active deployment count: on successful init every slot in
+ * `instances[0..instance_capacity)` is reset, and unused tail slots remain
+ * scratch storage with no live ObjectRefs. Fully settled INIT/RESOLVE failures,
+ * completed rollback, and successful stop detach those borrowed addresses
+ * before returning, so the caller may reclaim the arrays. If rollback cannot prove
+ * that all ObjectRefs settled, FAILED retains the addresses and re-init is
+ * rejected; the caller must preserve that backing storage.
+ *
+ * This contract applies to the canonical Configurator API: explicitly
+ * initialize contexts before first use; never pass indeterminate automatic
+ * storage or reset a context while it retains ObjectRefs. */
 salts_component_status salts_configurator_context_init(
     salts_configurator_context *context,
     const salts_configurator_deployment *deployments,

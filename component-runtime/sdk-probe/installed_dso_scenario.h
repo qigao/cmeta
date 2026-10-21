@@ -39,15 +39,15 @@ static salts_service_host_status installed_build(
 }
 static int installed_scope_value(salts_service_host_scope *scope) {
     salts_configurator_service service;
-    component_plugin_value value = component_plugin_value_bind(NULL, NULL);
+    service_host_provider_value value = service_host_provider_value_bind(NULL, NULL);
     if (salts_service_host_scope_find_service(
-            scope, component_plugin_value_interface(), &service) !=
+            scope, service_host_provider_value_interface(), &service) !=
         SALTS_SERVICE_HOST_OK)
         return -1;
-    if (component_plugin_value_borrow_from_object(
+    if (service_host_provider_value_borrow_from_object(
             service.object, service.interfaces, &value) != CMETA_OK)
         return -2;
-    return component_plugin_value_get(&value);
+    return service_host_provider_value_get(&value);
 }
 static int installed_dso_run(int argc, char **argv) {
     const cmeta_plugin_registry_config config = {2u};

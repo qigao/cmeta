@@ -6,6 +6,9 @@ static_assert(SALTS_COMPONENT_RUNTIME_ABI_MAJOR == 1u, "unexpected ABI epoch");
 static_assert(SALTS_COMPONENT_RUNTIME_ABI_VERSION == 0x00010000u, "unexpected ABI version");
 int main()
 {
+    if (salts_service_host_generation_recover(nullptr) !=
+        SALTS_SERVICE_HOST_INVALID_ARGUMENT)
+        return 5;
     salts_service_host_runtime runtime = SALTS_SERVICE_HOST_RUNTIME_INIT;
     salts_service_host_abi_v1_0_required();
     if (salts_configurator_abi_context_size() != sizeof(salts_configurator_context) ||

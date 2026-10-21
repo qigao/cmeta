@@ -45,6 +45,10 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: pwsh
         run: ./cmake/ci/tests/test-cflow-test-scope.ps1
+      - name: Verify canonical ServiceHost qualification routing
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: ./cmake/ci/tests/test-servicehost-ci-scope.ps1
       - name: Classify changes
         id: select
         shell: pwsh
@@ -118,7 +122,7 @@ jobs:
     needs:
       - scope
       - native
-    if: (github.event_name == 'workflow_dispatch' && inputs.prepare_release) || (github.event_name == 'push' && (github.ref == 'refs/heads/release/salts-2.3-ace-cnet-review' || startsWith(github.ref, 'refs/tags/v')))
+    if: (github.event_name == 'pull_request' && github.head_ref == 'review/servicehost-canonical-sdk-audit') || (github.event_name == 'workflow_dispatch' && inputs.prepare_release) || (github.event_name == 'push' && (github.ref == 'refs/heads/release/salts-2.3-ace-cnet-review' || startsWith(github.ref, 'refs/tags/v')))
     uses: ./.github/workflows/sdk-package.yml
     with:
       version: ${{ needs.scope.outputs.version }}
@@ -150,7 +154,7 @@ jobs:
   servicehost_sdk_abi_probe:
     name: ServiceHost installed ABI / ${{ matrix.rid }}
     needs: [scope, native]
-    if: ${{ needs.native.result == 'success' && ((github.event_name == 'pull_request' && (github.head_ref == 'review/servicehost-release-tag-gate' || github.head_ref == 'review/servicehost-canonical-release-preflight')) || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.prepare_release)) }}
+    if: ${{ needs.native.result == 'success' && ((github.event_name == 'pull_request' && (github.head_ref == 'review/servicehost-release-tag-gate' || github.head_ref == 'review/servicehost-canonical-release-preflight' || github.head_ref == 'review/servicehost-canonical-sdk-audit')) || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.prepare_release)) }}
     strategy:
       fail-fast: false
       matrix:

@@ -1,14 +1,14 @@
 #include "service_host_fixture.h"
 #include <salts/plugin_decl.h>
 
-cmeta_component(ComponentPluginFixture,
-    cmeta_provides(component_plugin_value));
+cmeta_component(ServiceHostProviderFixture,
+    cmeta_provides(service_host_provider_value));
 
-cmeta_component(ComponentPluginAuxFixture,
-    cmeta_provides(component_plugin_aux));
+cmeta_component(ServiceHostProviderAuxFixture,
+    cmeta_provides(service_host_provider_aux));
 
-cmeta_component(ComponentPluginLegacyFixture,
-    cmeta_provides(component_plugin_legacy));
+cmeta_component(ServiceHostProviderLegacyFixture,
+    cmeta_provides(service_host_provider_legacy));
 
 static int fixture_value = COMPONENT_PROVIDER_VALUE;
 static int fixture_aux_value = COMPONENT_PROVIDER_AUX_VALUE;
@@ -18,13 +18,13 @@ static int fixture_value_get(void *self) {
 }
 
 CMETA_IMPLEMENTS(
-    component_plugin_value,
+    service_host_provider_value,
     fixture_value_impl,
     0u,
     .get = fixture_value_get);
 
 CMETA_IMPLEMENTS(
-    component_plugin_aux,
+    service_host_provider_aux,
     fixture_aux_impl,
     0u,
     .get = fixture_value_get);
@@ -41,15 +41,15 @@ static cmeta_status fixture_project(
     out->self = object->object;
 
     if (cmeta_interface_desc_equal(
-            expected, component_plugin_value_interface())) {
-        out->interface = component_plugin_value_interface();
+            expected, service_host_provider_value_interface())) {
+        out->interface = service_host_provider_value_interface();
         out->dispatch = &fixture_value_impl_vtable;
         return CMETA_OK;
     }
 
     if (cmeta_interface_desc_equal(
-            expected, component_plugin_aux_interface())) {
-        out->interface = component_plugin_aux_interface();
+            expected, service_host_provider_aux_interface())) {
+        out->interface = service_host_provider_aux_interface();
         out->dispatch = &fixture_aux_impl_vtable;
         return CMETA_OK;
     }
@@ -86,7 +86,7 @@ static cmeta_status SALTS_COMPONENT_CALL fixture_create(
 static const salts_component_provider_binding fixture_binding = {
     sizeof(salts_component_provider_binding),
     SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION,
-    cmeta_component_meta(ComponentPluginFixture),
+    cmeta_component_meta(ServiceHostProviderFixture),
     &fixture_value,
     &fixture_interfaces,
     fixture_create,
@@ -97,7 +97,7 @@ static const salts_component_provider_binding fixture_binding = {
 static const salts_component_provider_binding fixture_aux_binding = {
     sizeof(salts_component_provider_binding),
     SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION,
-    cmeta_component_meta(ComponentPluginAuxFixture),
+    cmeta_component_meta(ServiceHostProviderAuxFixture),
     &fixture_aux_value,
     &fixture_interfaces,
     fixture_create,
@@ -110,7 +110,7 @@ static const salts_component_provider_binding fixture_aux_binding = {
 static const salts_component_provider_binding fixture_legacy_binding = {
     sizeof(salts_component_provider_binding),
     SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION,
-    cmeta_component_meta(ComponentPluginLegacyFixture),
+    cmeta_component_meta(ServiceHostProviderLegacyFixture),
     &fixture_value,
     &fixture_interfaces,
     fixture_create,

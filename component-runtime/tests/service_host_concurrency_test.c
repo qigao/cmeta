@@ -103,7 +103,7 @@ static void drain_worker(void *arg) {
         drainer->runtime, drainer->generation);
 }
 
-suite("ComponentPlugin concurrent admission and drain") {
+suite("ServiceHost concurrent admission and drain") {
     static cmeta_plugin_registry registry;
     static cmeta_plugin_ref ref;
     static bool plugin_started;
@@ -220,6 +220,12 @@ suite("ComponentPlugin concurrent admission and drain") {
         check_equal(gate_wait(&gate, &gate.advanced), 0);
         check_equal(salts_service_host_generation_drain(&runtime, previous),
                     SALTS_SERVICE_HOST_OK);
+        check_null(previous->storage.deployments);
+        check_null(previous->storage.instances);
+        check_null(previous->storage.modules);
+        check_null(previous->components.deployments);
+        check_equal(previous->components.state,
+                    SALTS_CONFIGURATOR_CONTEXT_ZERO);
         check_equal(cmeta_plugin_registry_get_lifecycle(&registry, ref, &info), CMETA_PLUGIN_OK);
         check_equal(info.active_leases, (size_t)1u);
         check_equal(salts_service_host_runtime_close(&runtime, &previous),
@@ -244,6 +250,12 @@ suite("ComponentPlugin concurrent admission and drain") {
         }
         check_equal(salts_service_host_generation_drain(&runtime, previous),
                     SALTS_SERVICE_HOST_OK);
+        check_null(previous->storage.deployments);
+        check_null(previous->storage.instances);
+        check_null(previous->storage.modules);
+        check_null(previous->components.deployments);
+        check_equal(previous->components.state,
+                    SALTS_CONFIGURATOR_CONTEXT_ZERO);
         check_equal(cmeta_plugin_registry_get_lifecycle(&registry, ref, &info), CMETA_PLUGIN_OK);
         check_equal(info.active_leases, (size_t)0u);
         check_equal(runtime.active_scopes, (size_t)0u);

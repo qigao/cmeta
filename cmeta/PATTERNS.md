@@ -41,10 +41,14 @@ pattern authoring
 
 Runtime mechanism remains with its existing owner.
 
-The first implemented runtime consumer is the ACE-style Component Configurator
-specified in #1003 and integrated by PR #1010. CHttp, TurboFlow and TurboSCXML
-remain downstream conformance profiles, not sources of consumer-private
-component semantics.
+The current canonical runtime consumer is the ACE-style Configurator /
+ServiceHost composition: `Salts::Configurator` owns the static graph and
+`Salts::ServiceHost` owns published generations, Scope admission/drain and
+Plugin lease settlement. `Salts::Plugin` remains the sole dynamic loader and
+unload authority. Earlier ACE design records may use `ComponentPlugin` as a
+historical name; it is not an installed lifecycle target. CHttp, TurboFlow and
+TurboSCXML remain downstream conformance profiles, not sources of
+consumer-private component semantics.
 
 ### Interceptor native signature and FunctionAbi admission (post-freeze)
 
