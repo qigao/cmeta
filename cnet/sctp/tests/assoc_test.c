@@ -1375,6 +1375,90 @@ static void unknown_report_variable_lengths_preserve_tlv_and_padding(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void unknown_report_dense_capacity_boundary(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  static const uint8_t value[] = {0xA1u, 0xB2u, 0xC3u, 0xD4u};
+  static const size_t counts[] = {98u, 99u, 100u, 101u};
+  cnet_sctp_wire_chunk chunks[101];
+  uint8_t packet[1200], output[1201];
+  size_t case_i, i;
+
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_ESTABLISHED;
+  a.peer_tag = b.local_tag;
+  for (i = 0u; i < 101u; ++i) {
+    chunks[i].type = 0xE3u; /* unknown: skip and report */
+    chunks[i].flags = 0x5Au;
+    chunks[i].value = value;
+    chunks[i].value_size = sizeof(value);
+  }
+  for (case_i = 0u; case_i < sizeof(counts) / sizeof(counts[0]);
+       ++case_i) {
+    cnet_sctp_wire_header header = {0};
+    cnet_sctp_wire_decoder decoder = {0};
+    cnet_sctp_wire_chunk response = {0};
+    const size_t count = counts[case_i];
+    const uint64_t prior_time = a.last_time_ms;
+    const uint64_t now = prior_time + 1u;
+    size_t packet_n = 0u, output_n = 0u;
+
+    /* 101 valid input Chunks occupy only 820 bytes; their report causes
+     * exceed the bounded 1200-byte ERROR staging buffer. */
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks,
+        count, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    assert(packet_n == 12u + count * 8u);
+    memset(output, 0xCC, sizeof(output));
+
+    if (count == 98u) {
+      const size_t response_size = 12u + 4u + 98u * 12u;
+      /* The generated ERROR is 1192 bytes: reject 1191 without touching
+       * output or association, then admit exactly 1192 on the same clock. */
+      assert(response_size == 1192u);
+      assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+          output, response_size - 1u, &output_n) == CNET_SCTP_ASSOC_CAPACITY);
+      assert(output_n == 0u && output[0] == 0xCCu &&
+          output[response_size - 2u] == 0xCCu);
+      assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+          a.last_time_ms == prior_time);
+      assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+          output, response_size, &output_n) == CNET_SCTP_ASSOC_OK);
+      assert(output_n == response_size && output[response_size] == 0xCCu);
+      assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+          a.last_time_ms == now);
+      assert(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
+          CNET_SCTP_WIRE_OK);
+      assert(header.chunk_count == 1u);
+      assert(cnet_sctp_wire_next_chunk(&decoder, &response) ==
+          CNET_SCTP_WIRE_OK);
+      assert(response.type == 9u && response.flags == 0u);
+      assert(response.value_size == 98u * 12u);
+      for (i = 0u; i < 98u; ++i) {
+        const uint8_t *cause = response.value + i * 12u;
+        assert(cause[0] == 0u && cause[1] == 6u &&
+            cause[2] == 0u && cause[3] == 12u);
+        assert(cause[4] == 0xE3u && cause[5] == 0x5Au &&
+            cause[6] == 0u && cause[7] == 8u);
+        assert(memcmp(cause + 8u, value, sizeof(value)) == 0);
+      }
+    } else {
+      /* 99/100 reports fit the causes array but exceed the response
+       * packet; 101 exceeds the causes array itself. All fail closed. */
+      assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+          output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
+      assert(output_n == 0u && output[0] == 0xCCu &&
+          output[sizeof(output) - 1u] == 0xCCu);
+      assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED &&
+          a.last_time_ms == prior_time);
+    }
+  }
+
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void error_and_abort_never_create_response_loops(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -1652,6 +1736,7 @@ int main(void) {
   unknown_chunk_actions_are_bounded_and_exact();
   unknown_multi_chunk_actions_are_transactional();
   unknown_report_variable_lengths_preserve_tlv_and_padding();
+  unknown_report_dense_capacity_boundary();
   error_and_abort_never_create_response_loops();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
