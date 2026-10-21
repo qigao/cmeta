@@ -1110,7 +1110,9 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     return handle_unknown_multi_chunks(s, now, &preflight_decoder,
         header.chunk_count, output, cap, written);
   if (header.chunk_count == 2u && chunk.type == SCTP_TYPE_SHUTDOWN) {
-    s->last_time_ms = now;
+    /* The helper stages the full SHUTDOWN+SACK transaction. Do not commit
+     * the packet time before it succeeds: rejected state/data gates must be
+     * observationally inert just like the staged TCB and output buffer. */
     return handle_shutdown_sack_bundle(s, now, &header, &chunk, &second,
         output, cap, written);
   }
