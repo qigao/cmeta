@@ -1192,6 +1192,49 @@ static void unknown_multi_chunk_actions_are_transactional(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void error_and_abort_never_create_response_loops(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  static const uint8_t error_value[] = {0u, 1u, 0u, 4u};
+  cnet_sctp_wire_chunk chunk = {9u, 0u, error_value, sizeof(error_value)};
+  uint8_t packet[64] = {0}, output[64];
+  size_t packet_n = 0u, output_n = 0u;
+  uint64_t prior_time;
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_ESTABLISHED;
+  a.peer_tag = b.local_tag;
+  prior_time = a.last_time_ms;
+
+  /* ERROR is recognized but not implemented by this profile. Reject it
+   * without replying with another ERROR or mutating the association. */
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+      packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+      output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+  assert(output_n == 0u && output[0] == 0xCCu);
+  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(a.last_time_ms == prior_time);
+
+  /* A valid ABORT terminates locally and MUST NOT provoke an ABORT response. */
+  chunk.type = 6u;
+  chunk.value = NULL;
+  chunk.value_size = 0u;
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+      packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+      output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
+  assert(output_n == 0u && output[0] == 0xCCu);
+  assert(a.state == CNET_SCTP_ASSOC_FAILED);
+  assert(a.last_time_ms == prior_time + 1u);
+
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void unsupported_control_preserves_time_watermark(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -1230,6 +1273,7 @@ int main(void) {
   unknown_chunks_do_not_preempt_t5();
   unknown_chunk_actions_are_bounded_and_exact();
   unknown_multi_chunk_actions_are_transactional();
+  error_and_abort_never_create_response_loops();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();
