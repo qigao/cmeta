@@ -542,6 +542,171 @@ static void karn_gap_reneging_restore(void) {
 
 /* Two missing TSNs must not cause repeated congestion-window reductions
  * inside the same recovery epoch. Each retransmit remains Owner-driven. */
+/* Deterministic network adversary: lose two lower TSNs, deliver three
+ * higher TSNs out of order, duplicate each DATA and replay its SACK.
+ * The expected Gap/duplicate fields are authored independently of the
+ * receiver's SACK builder; repeated evidence must not count toward Fast
+ * Retransmit or postpone T3. Then recover both losses and deliver once. */
+static void reorder_duplicate_sacks_require_distinct_loss_evidence(void) {
+  cnet_sctp_data a, b;
+  test_owner oa = {0}, ob = {0};
+  uint8_t packets[5][1200], sack[1200], reply[1200];
+  uint8_t retransmit0[1200], retransmit1[1200], message[1024];
+  const uint8_t payloads[5] = {'a', 'b', 'c', 'd', 'e'};
+  cnet_sctp_data_message meta = {0};
+  cnet_sctp_wire_chunk ch = {0};
+  size_t np[5] = {0}, ns = 0u, nr = 0u;
+  size_t nret0 = 0u, nret1 = 0u, nm = 0u;
+  uint64_t deadline = 0u;
+  int has_deadline = 0;
+  unsigned int i, stage;
+
+  pair_init(&a, &b, &oa, &ob, 100u, 300u);
+  for (i = 0u; i < 5u; ++i) {
+    assert(cnet_sctp_data_send(&a, 1u + i, 0u, 51u, 0,
+        payloads + i, 1u, packets[i], sizeof(packets[i]), &np[i]) ==
+        CNET_SCTP_DATA_OK);
+    inspect(packets[i], np[i], 0u, b.config.local_tag, &ch);
+    assert(rd32(ch.value) == 100u + i);
+  }
+  assert(cnet_sctp_data_deadline(&a, &deadline, &has_deadline) ==
+      CNET_SCTP_DATA_OK);
+  assert(has_deadline && deadline == 101u);
+
+  /* TSNs 100 and 101 are lost on the wire. Only NEW Gap ACKs of
+   * 102, 103 and 104 supply the three distinct missing indications. */
+  for (stage = 0u; stage < 3u; ++stage) {
+    const unsigned int index = 2u + stage;
+    const uint64_t received_at = 10u + stage * 10u;
+    const uint32_t expected_tsn = 102u + stage;
+    const uint16_t expected_gap_end = (uint16_t)(3u + stage);
+    const uint32_t expected_mask =
+        (UINT32_C(1) << (stage + 3u)) - 4u;
+    const uint32_t expected_window =
+        (uint32_t)((CNET_SCTP_DATA_RX_SLOTS - (stage + 1u)) *
+                   CNET_SCTP_DATA_PAYLOAD_MAX);
+
+    assert(cnet_sctp_data_input(&b, received_at, packets[index], np[index],
+        sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+    inspect(sack, ns, 3u, a.config.local_tag, &ch);
+    assert(ch.value_size == 16u && rd32(ch.value) == 99u);
+    assert(rd32(ch.value + 4u) == expected_window);
+    assert(rd16(ch.value + 8u) == 1u && rd16(ch.value + 10u) == 0u);
+    assert(rd16(ch.value + 12u) == 3u &&
+        rd16(ch.value + 14u) == expected_gap_end);
+    assert(b.cumulative_rx == 99u && b.rx_gaps == expected_mask);
+    assert(b.buffered_rx == stage + 1u);
+
+    memset(reply, 0xCC, sizeof(reply));
+    assert(cnet_sctp_data_input(&a, received_at + 1u, sack, ns,
+        reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+    assert(nr == 0u && reply[0] == 0xCCu);
+    assert(a.tx[0].missing_reports == stage + 1u);
+    assert(a.tx[1].missing_reports == stage + 1u);
+    assert(a.in_flight == 4u - stage);
+
+    /* The duplicate receiver packet reports one duplicate TSN but
+     * consumes neither another receive ticket nor another byte. */
+    assert(cnet_sctp_data_input(&b, received_at + 2u,
+        packets[index], np[index], sack, sizeof(sack), &ns) ==
+        CNET_SCTP_DATA_OK);
+    inspect(sack, ns, 3u, a.config.local_tag, &ch);
+    assert(ch.value_size == 20u && rd32(ch.value) == 99u);
+    assert(rd32(ch.value + 4u) == expected_window);
+    assert(rd16(ch.value + 8u) == 1u && rd16(ch.value + 10u) == 1u);
+    assert(rd16(ch.value + 12u) == 3u &&
+        rd16(ch.value + 14u) == expected_gap_end);
+    assert(rd32(ch.value + 16u) == expected_tsn);
+    assert(b.cumulative_rx == 99u && b.rx_gaps == expected_mask);
+    assert(b.buffered_rx == stage + 1u);
+
+    /* Deliver the duplicate report AND replay the identical SACK.
+     * Neither arrival can manufacture another missing indication. */
+    for (i = 0u; i < 2u; ++i) {
+      memset(reply, 0xCC, sizeof(reply));
+      assert(cnet_sctp_data_input(&a, received_at + 3u + i, sack, ns,
+          reply, sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+      assert(nr == 0u && reply[0] == 0xCCu);
+      assert(a.tx[0].missing_reports == stage + 1u);
+      assert(a.tx[1].missing_reports == stage + 1u);
+      assert(a.in_flight == 4u - stage);
+      assert(a.t3_deadline_ms == 101u);
+      assert(!a.recovery_active);
+      assert(a.tx[0].pending_retransmit == (stage == 2u));
+      assert(a.tx[1].pending_retransmit == (stage == 2u));
+    }
+  }
+  /* Three distinct higher ACKs permit Owner-pulled fast retransmission
+   * before T3; replays did not reset that original 101ms timer. */
+  assert(cnet_sctp_data_deadline(&a, &deadline, &has_deadline) ==
+      CNET_SCTP_DATA_OK);
+  assert(has_deadline && deadline == a.last_time_ms);
+  assert(cnet_sctp_data_advance(&a, 35u, retransmit0,
+      sizeof(retransmit0), &nret0) == CNET_SCTP_DATA_OK);
+  assert(nret0 == np[0] &&
+      memcmp(retransmit0, packets[0], nret0) == 0);
+  assert(a.recovery_active && a.recovery_exit_tsn == 104u);
+  assert(a.t3_deadline_ms == 135u);
+  assert(cnet_sctp_data_advance(&a, 36u, retransmit1,
+      sizeof(retransmit1), &nret1) == CNET_SCTP_DATA_OK);
+  assert(nret1 == np[1] &&
+      memcmp(retransmit1, packets[1], nret1) == 0);
+  assert(a.t3_deadline_ms == 135u); /* later loss does not restart T3 */
+  assert(cnet_sctp_data_advance(&a, 37u, reply, sizeof(reply), &nr) ==
+      CNET_SCTP_DATA_OK);
+  assert(nr == 0u && a.t3_deadline_ms == 135u);
+
+  /* Fill TSN 100, then 101. The receiver must emit a narrower Gap ACK,
+   * then one cumulative acknowledgement of all five unique DATA TSNs. */
+  assert(cnet_sctp_data_input(&b, 40u, retransmit0, nret0,
+      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  inspect(sack, ns, 3u, a.config.local_tag, &ch);
+  assert(ch.value_size == 16u && rd32(ch.value) == 100u);
+  assert(rd16(ch.value + 8u) == 1u && rd16(ch.value + 10u) == 0u);
+  assert(rd16(ch.value + 12u) == 2u && rd16(ch.value + 14u) == 4u);
+  assert(cnet_sctp_data_input(&a, 41u, sack, ns, reply,
+      sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(nr == 0u && !a.tx[0].used && a.tx[1].used);
+
+  assert(cnet_sctp_data_input(&b, 42u, retransmit1, nret1,
+      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  inspect(sack, ns, 3u, a.config.local_tag, &ch);
+  assert(ch.value_size == 12u && rd32(ch.value) == 104u);
+  assert(rd16(ch.value + 8u) == 0u && rd16(ch.value + 10u) == 0u);
+  assert(cnet_sctp_data_input(&a, 43u, sack, ns, reply,
+      sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(nr == 0u && a.last_ack == 104u && a.in_flight == 0u);
+  assert(a.t3_deadline_ms == 0u && !a.recovery_active);
+  assert(cnet_sctp_data_outbound_drained(&a));
+  assert(b.cumulative_rx == 104u && b.rx_gaps == 0u);
+  assert(b.buffered_rx == 5u);
+
+  for (i = 0u; i < 5u; ++i) {
+    assert(cnet_sctp_data_take(&b, &meta, message, sizeof(message), &nm) ==
+        CNET_SCTP_DATA_OK);
+    assert(meta.tsn == 100u + i && meta.stream_sequence == (uint16_t)i);
+    assert(meta.stream_id == 0u && meta.ppid == 51u && !meta.unordered);
+    assert(nm == 1u && message[0] == payloads[i]);
+  }
+  assert(b.buffered_rx == 0u);
+  /* Late duplicates after complete delivery can only produce duplicate
+   * SACKs; they must not redeliver to the application or restart T3. */
+  assert(cnet_sctp_data_input(&b, 50u, packets[2], np[2],
+      sack, sizeof(sack), &ns) == CNET_SCTP_DATA_OK);
+  inspect(sack, ns, 3u, a.config.local_tag, &ch);
+  assert(ch.value_size == 16u && rd32(ch.value) == 104u);
+  assert(rd16(ch.value + 8u) == 0u && rd16(ch.value + 10u) == 1u);
+  assert(rd32(ch.value + 12u) == 102u);
+  assert(cnet_sctp_data_input(&a, 51u, sack, ns, reply,
+      sizeof(reply), &nr) == CNET_SCTP_DATA_OK);
+  assert(nr == 0u && a.in_flight == 0u && a.t3_deadline_ms == 0u);
+  assert(cnet_sctp_data_take(&b, &meta, message, sizeof(message), &nm) ==
+      CNET_SCTP_DATA_EMPTY);
+
+  assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
+}
+
 static void multi_loss_one_recovery_epoch(void) {
   cnet_sctp_data a, b;
   test_owner oa = {0}, ob = {0};
@@ -582,6 +747,7 @@ static void multi_loss_one_recovery_epoch(void) {
 }
 
 int main(void) {
+  reorder_duplicate_sacks_require_distinct_loss_evidence();
   multi_loss_one_recovery_epoch();
   karn_gap_reneging_restore();
   karn_gap_ack_then_cumulative();
