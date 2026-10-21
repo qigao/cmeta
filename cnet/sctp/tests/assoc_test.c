@@ -1457,9 +1457,10 @@ static void shutdown_capacity_retries_are_transactional(void) {
   cnet_sctp_assoc a, b, before;
   test_context ca, cb;
   uint8_t init[1200], init_ack[1200], echo[1200], cookie_ack[1200];
+  uint8_t data_packet[1200], data_ack[1200];
   uint8_t shutdown_packet[1200], ack_packet[1200], tiny[1] = {0xCCu};
   size_t init_n = 0u, init_ack_n = 0u, echo_n = 0u, cookie_ack_n = 0u;
-  size_t shutdown_n = 0u, ack_n = 0u;
+  size_t data_n = 0u, data_ack_n = 0u, shutdown_n = 0u, ack_n = 0u;
   uint64_t prior_deadline;
 
   setup(&a, &b, &ca, &cb);
@@ -1479,8 +1480,22 @@ static void shutdown_capacity_retries_are_transactional(void) {
   assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
   assert(b.state == CNET_SCTP_ASSOC_ESTABLISHED);
 
-  /* First SHUTDOWN: capacity refusal must leave the complete Association
-   * byte-for-byte unchanged so the same timestamp can be retried. */
+  /* Leave one outbound DATA TSN retained at b, while a has received it and
+   * generated (but not delivered) the SACK. The later SHUTDOWN cumulative TSN
+   * therefore drains b's TX ticket only if the input transaction commits. */
+  assert(cnet_sctp_assoc_send_message(&b, 6u, 0u, 51u, 0,
+      "x", 1u, data_packet, sizeof(data_packet), &data_n) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(data_n > 0u && b.data.tx[0].used);
+  assert(cnet_sctp_assoc_input(&a, 6u, data_packet, data_n,
+      data_ack, sizeof(data_ack), &data_ack_n) == CNET_SCTP_ASSOC_OK);
+  assert(data_ack_n > 0u && a.data.buffered_rx == 1u);
+  /* Deliberately do not deliver data_ack to b: SHUTDOWN will cumulatively
+   * acknowledge this retained TSN on b, exercising candidate DATA-state
+   * rollback when SHUTDOWN-ACK cannot be published. */
+
+  /* First SHUTDOWN: capacity refusal must leave protocol state unchanged
+   * so the same timestamp can be retried. */
   before = a;
   tiny[0] = 0xCCu;
   assert(cnet_sctp_assoc_shutdown(&a, 7u, tiny, sizeof(tiny), &shutdown_n) ==
@@ -1518,6 +1533,16 @@ static void shutdown_capacity_retries_are_transactional(void) {
       b.saved_size == before.saved_size && b.retransmits == before.retransmits &&
       b.in_progress == before.in_progress && b.data_ready == before.data_ready &&
       memcmp(b.saved_packet, before.saved_packet, sizeof(b.saved_packet)) == 0);
+  assert(b.data.tx[0].used == before.data.tx[0].used &&
+      b.data.tx[0].tsn == before.data.tx[0].tsn &&
+      b.data.tx[0].packet_size == before.data.tx[0].packet_size &&
+      memcmp(b.data.tx[0].packet, before.data.tx[0].packet,
+          sizeof(b.data.tx[0].packet)) == 0 &&
+      b.data.in_flight == before.data.in_flight &&
+      b.data.next_tsn == before.data.next_tsn &&
+      b.data.last_ack == before.data.last_ack &&
+      b.data.cumulative_rx == before.data.cumulative_rx &&
+      b.data.buffered_rx == before.data.buffered_rx);
   assert(cnet_sctp_assoc_input(&b, 8u, shutdown_packet, shutdown_n,
       ack_packet, sizeof(ack_packet), &ack_n) == CNET_SCTP_ASSOC_OK);
   assert(ack_n > 0u && b.state == CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT);
