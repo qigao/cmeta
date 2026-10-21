@@ -1000,6 +1000,12 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
     a.t5_shutdown_deadline_ms = 1000u;
     a.deadline_ms = 1000u;
     a.last_time_ms = prior_time;
+    /* Restore the first Chunk's live storage after the prior block-scoped
+     * DATA test; never carry a pointer beyond that test's lifetime. */
+    chunks[0].type = 7u;
+    chunks[0].flags = 0u;
+    chunks[0].value = shutdown_value;
+    chunks[0].value_size = sizeof(shutdown_value);
     malformed_full_header_sack[9] = 1u; /* one block, no block bytes */
     chunks[1].value = malformed_full_header_sack;
     chunks[1].value_size = sizeof(malformed_full_header_sack);
