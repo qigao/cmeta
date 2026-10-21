@@ -1020,6 +1020,27 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
     assert(a.last_time_ms == prior_time);
   }
 
+  /* A registered control that this profile cannot validate (an empty
+   * HEARTBEAT lacks the required Heartbeat Info parameter) also cannot
+   * trigger packet-path T5. The independent Owner advance path still owns
+   * the absolute deadline. */
+  {
+    cnet_sctp_wire_chunk heartbeat = {4u, 0u, NULL, 0u};
+    a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+    a.t5_shutdown_deadline_ms = 1000u;
+    a.deadline_ms = 1000u;
+    a.last_time_ms = prior_time;
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &heartbeat, 1u,
+        packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    memset(output, 0xCC, sizeof(output));
+    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+        output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+    assert(output_n == 0u && output[0] == 0xCCu);
+    assert(a.state == CNET_SCTP_ASSOC_SHUTDOWN_SENT);
+    assert(a.t5_shutdown_deadline_ms == 1000u);
+    assert(a.last_time_ms == prior_time);
+  }
+
   assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
