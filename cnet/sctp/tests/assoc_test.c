@@ -1200,10 +1200,29 @@ static void error_and_abort_never_create_response_loops(void) {
   uint8_t packet[64] = {0}, output[64];
   size_t packet_n = 0u, output_n = 0u;
   uint64_t prior_time;
+  static const uint8_t data_value[12] = {0};
   setup(&a, &b, &ca, &cb);
+  prior_time = a.last_time_ms;
+
+  /* A structurally valid DATA chunk cannot be dispatched before COOKIE
+   * admission. State rejection must not commit the provisional watermark. */
+  chunk.type = 0u;
+  chunk.value = data_value;
+  chunk.value_size = sizeof(data_value);
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+      packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+      output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+  assert(output_n == 0u && output[0] == 0xCCu);
+  assert(a.state == CNET_SCTP_ASSOC_CLOSED);
+  assert(a.last_time_ms == prior_time);
+
   a.state = CNET_SCTP_ASSOC_ESTABLISHED;
   a.peer_tag = b.local_tag;
-  prior_time = a.last_time_ms;
+  chunk.type = 9u;
+  chunk.value = error_value;
+  chunk.value_size = sizeof(error_value);
 
   /* ERROR is recognized but not implemented by this profile. Reject it
    * without replying with another ERROR or mutating the association. */
