@@ -1239,6 +1239,30 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
         s->state != CNET_SCTP_ASSOC_SHUTDOWN_ACK_SENT)))
     return CNET_SCTP_ASSOC_PROTOCOL;
 
+  /* RFC 9260 Section 9.1: never reply to a packet containing ABORT.
+   * A validated plain ABORT must terminate the local TCB even at the exact
+   * T5 deadline. Check it before the Owner's packet-triggered T5 ABORT path,
+   * or two peers racing to close could echo ABORT to one another. Unsupported
+   * T-bit and malformed/bundled ABORTs are already rejected by preflight. */
+  if (header.chunk_count == 1u && chunk.type == SCTP_TYPE_ABORT) {
+    if (header.verification_tag != s->local_tag ||
+        (chunk.flags & 1u) != 0u || chunk.value_size != 0u ||
+        s->state == CNET_SCTP_ASSOC_CLOSED)
+      return CNET_SCTP_ASSOC_PROTOCOL;
+    if (s->data_ready) {
+      (void)cnet_sctp_data_stop(&s->data);
+      memset(&s->data, 0, sizeof(s->data));
+      s->data_ready = 0u;
+    }
+    s->state = CNET_SCTP_ASSOC_FAILED;
+    s->deadline_ms = 0u;
+    s->t5_shutdown_deadline_ms = 0u;
+    s->saved_size = 0u;
+    memset(s->saved_packet, 0, sizeof(s->saved_packet));
+    s->last_time_ms = now;
+    return CNET_SCTP_ASSOC_OK;
+  }
+
   /* A packet-triggered T5 action is also a state transition. Run it only
    * after every Chunk in the bounded packet has passed structural preflight;
    * wrong-tag or malformed bundled packets cannot trigger an ABORT. The
@@ -1313,26 +1337,10 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       return dispatch_result(s, handle_cookie_echo(s, now, &header, &chunk,
           output, cap, written), prior_time);
     case SCTP_TYPE_ABORT:
-      /* This private M2 path handles only a plain ABORT using the
-       * expected tag. It never responds to ABORT with another ABORT.
-       * Rejected ABORTs must not commit the provisional time watermark. */
-      if (header.verification_tag != s->local_tag ||
-          (chunk.flags & 1u) != 0u || chunk.value_size != 0u ||
-          s->state == CNET_SCTP_ASSOC_CLOSED) {
-        s->last_time_ms = prior_time;
-        return CNET_SCTP_ASSOC_PROTOCOL;
-      }
-      if (s->data_ready) {
-        (void)cnet_sctp_data_stop(&s->data);
-        memset(&s->data, 0, sizeof(s->data));
-        s->data_ready = 0u;
-      }
-      s->state = CNET_SCTP_ASSOC_FAILED;
-      s->deadline_ms = 0u;
-      s->t5_shutdown_deadline_ms = 0u;
-      s->saved_size = 0u;
-      memset(s->saved_packet, 0, sizeof(s->saved_packet));
-      return CNET_SCTP_ASSOC_OK;
+      /* Admitted plain ABORT was handled before packet-triggered T5.
+       * Retain fail-closed behavior if a new bundle class reaches dispatch. */
+      s->last_time_ms = prior_time;
+      return CNET_SCTP_ASSOC_PROTOCOL;
     case SCTP_TYPE_COOKIE_ACK:
       return dispatch_result(s, handle_cookie_ack(s, now, &header, &chunk),
           prior_time);

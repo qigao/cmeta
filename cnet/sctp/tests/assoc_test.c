@@ -1989,6 +1989,70 @@ static void unknown_report_dense_capacity_boundary(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* RFC 9260 9.1: an incoming ABORT must NEVER provoke an ABORT response,
+ * even when the local SHUTDOWN-SENT T5 deadline is already due. */
+static void incoming_abort_wins_over_absolute_t5(void) {
+  static const uint64_t times[] = {999u, 1000u, 1001u};
+  size_t case_i, i;
+  for (case_i = 0u; case_i < sizeof(times) / sizeof(times[0]);
+       ++case_i) {
+    cnet_sctp_assoc a, b, before;
+    test_context ca, cb;
+    cnet_sctp_wire_chunk chunk = {6u, 0x80u, NULL, 0u};
+    uint8_t packet[64] = {0}, output[64];
+    size_t packet_n = 0u, output_n = 123u;
+    setup(&a, &b, &ca, &cb);
+    a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+    a.peer_tag = b.local_tag;
+    a.t5_shutdown_deadline_ms = 1000u;
+    a.deadline_ms = 1000u;
+    a.last_time_ms = 10u;
+
+    if (case_i == 1u) {
+      /* An invalid T bit and a wrong-tag ABORT also may not trigger T5
+       * during rejected input; both preserve every byte of TCB/output. */
+      chunk.flags = 1u;
+      assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk,
+          1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+      memcpy(&before, &a, sizeof(before));
+      memset(output, 0xCC, sizeof(output));
+      assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+          output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+      assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+
+      chunk.flags = 0u;
+      assert(cnet_sctp_wire_encode(5001u, 5000u, b.local_tag, &chunk,
+          1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+      output_n = 123u;
+      assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+          output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+      assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+    }
+
+    chunk.flags = 0x80u; /* reserved bits are ignored, T=0 */
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk,
+        1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    output_n = 123u;
+    memset(output, 0xCC, sizeof(output));
+    assert(cnet_sctp_assoc_input(&a, times[case_i], packet, packet_n,
+        output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
+    assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED);
+    assert(a.t5_shutdown_deadline_ms == 0u && a.deadline_ms == 0u &&
+        a.last_time_ms == times[case_i]);
+    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+    output_n = 123u;
+    assert(cnet_sctp_assoc_advance(&a, times[case_i],
+        output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_CLOSED_ERROR);
+    assert(output_n == 0u);
+    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  }
+}
+
 static void error_and_abort_never_create_response_loops(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -2277,6 +2341,7 @@ int main(void) {
   oversized_unknown_skip_packet_is_not_admitted();
   oversized_input_cannot_preempt_absolute_t5();
   error_and_abort_never_create_response_loops();
+  incoming_abort_wins_over_absolute_t5();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();
