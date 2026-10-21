@@ -1196,8 +1196,11 @@ static void unsupported_control_preserves_time_watermark(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
   static const uint8_t value[] = {0xA5u, 0x5Au};
-  /* HEARTBEAT, registered AUTH, temporary registered DTLS, and PAD. */
-  const uint8_t types[] = {4u, 15u, 65u, 132u};
+  /* Standard reserved/unsupported controls and every currently assigned
+   * IANA extension type recognized by this bounded profile. */
+  const uint8_t types[] = {
+    4u, 5u, 12u, 13u, 15u, 64u, 65u, 128u, 130u, 132u, 192u, 193u, 194u
+  };
   size_t i;
   setup(&a, &b, &ca, &cb);
   for (i = 0u; i < sizeof(types); ++i) {
