@@ -1258,7 +1258,7 @@ static void unknown_multi_chunk_actions_are_transactional(void) {
     assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 3u,
         packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
     memset(output, 0xCC, sizeof(output));
-    if (case_i == 5u) {
+    if (case_i == 6u) {
       /* An ERROR with two causes cannot fit: no output byte, TCB field or
        * monotonic watermark may be committed; retry at the same time works. */
       assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
