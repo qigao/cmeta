@@ -591,7 +591,10 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
   peer_window = rd32(ch->value + 4u);
   blocks = rd16(ch->value + 8u);
   duplicates = rd16(ch->value + 10u);
-  if (blocks > 16u || duplicates > CNET_SCTP_DATA_RX_SLOTS ||
+  /* Duplicate TSNs are an on-wire report list, not retained RX slots. The
+   * Chunk length already bounds this list; do not reject a valid SACK merely
+   * because it reports more duplicates than the receiver can buffer at once. */
+  if (blocks > 16u ||
       ch->value_size != 12u + 4u * ((size_t)blocks + duplicates))
     return CNET_SCTP_DATA_PROTOCOL;
   progress = cumulative - d->last_ack;
