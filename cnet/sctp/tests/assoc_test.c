@@ -945,6 +945,25 @@ static void malformed_shutdown_bundle_does_not_preempt_t5(void) {
   assert(a.t5_shutdown_deadline_ms == 1000u);
   assert(a.last_time_ms == prior_time);
 
+  /* A well-framed SHUTDOWN+SACK bundle rejected by the Association state
+   * gate must not commit the provisional packet time either. */
+  {
+    uint8_t valid_sack[12] = {0};
+    a.state = CNET_SCTP_ASSOC_CLOSED;
+    a.t5_shutdown_deadline_ms = 0u;
+    a.last_time_ms = 10u;
+    prior_time = a.last_time_ms;
+    chunks[1].value = valid_sack;
+    chunks[1].value_size = sizeof(valid_sack);
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 2u,
+        packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    assert(cnet_sctp_assoc_input(&a, 11u, packet, packet_n,
+        output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+    assert(output_n == 0u);
+    assert(a.state == CNET_SCTP_ASSOC_CLOSED);
+    assert(a.last_time_ms == prior_time);
+  }
+
   assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
