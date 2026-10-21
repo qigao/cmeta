@@ -2225,6 +2225,117 @@ static void abort_optional_error_causes_are_transactional(void) {
   }
 }
 
+/* RFC 9260 §§3.3.7/9.1: SACK or ERROR before ABORT is a terminal
+ * control bundle. Admit both T-bit modes and never emit a response at T5. */
+static void control_before_abort_is_silent_and_transactional(void) {
+  static const uint8_t sack_body[12] = {0};
+  static const uint8_t error_body[4] = {0u, 1u, 0u, 4u};
+  static const uint8_t abort_reason[7] = {0u, 12u, 0u, 7u, 'b', 'y', 'e'};
+  size_t kind, reflected, due, i;
+  for (kind = 0u; kind < 2u; ++kind) {
+    for (reflected = 0u; reflected < 2u; ++reflected) {
+      for (due = 0u; due < 2u; ++due) {
+        cnet_sctp_assoc a, b, before;
+        test_context ca, cb;
+        cnet_sctp_wire_chunk chunks[2];
+        uint8_t packet[128], output[128];
+        size_t packet_n = 0u, output_n = 123u;
+        const uint64_t now = due ? 1000u : 11u;
+        setup(&a, &b, &ca, &cb);
+        a.state = due ? CNET_SCTP_ASSOC_SHUTDOWN_SENT :
+            CNET_SCTP_ASSOC_ESTABLISHED;
+        a.peer_tag = b.local_tag;
+        a.last_time_ms = 10u;
+        a.t5_shutdown_deadline_ms = due ? 1000u : 0u;
+        a.deadline_ms = due ? 1000u : 0u;
+        chunks[0].type = kind == 0u ? 3u : 9u;
+        chunks[0].flags = 0xA5u; /* reserved SACK/ERROR flags ignored */
+        chunks[0].value = kind == 0u ? sack_body : error_body;
+        chunks[0].value_size = kind == 0u ?
+            sizeof(sack_body) : sizeof(error_body);
+        chunks[1].type = 6u;
+        chunks[1].flags = (uint8_t)reflected;
+        chunks[1].value = abort_reason;
+        chunks[1].value_size = sizeof(abort_reason);
+
+        /* Correct CRC but mismatched tag/T pair: the entire TCB, including
+         * the due T5 deadline, must remain byte-for-byte unchanged. */
+        assert(cnet_sctp_wire_encode(5001u, 5000u,
+            reflected ? a.local_tag : a.peer_tag, chunks, 2u,
+            packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+        memcpy(&before, &a, sizeof(before));
+        memset(output, 0xCC, sizeof(output));
+        assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+            output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+        assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+        for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+
+        assert(cnet_sctp_wire_encode(5001u, 5000u,
+            reflected ? a.peer_tag : a.local_tag, chunks, 2u,
+            packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+        output_n = 123u;
+        /* An ABORT-containing packet MUST NOT elicit any response. It must
+         * still commit correctly with zero bytes of output capacity. */
+        assert(cnet_sctp_assoc_input(&a, now, packet, packet_n,
+            output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
+        assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+            a.last_time_ms == now && a.deadline_ms == 0u &&
+            a.t5_shutdown_deadline_ms == 0u);
+        for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+        assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+        assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+        assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+        assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+      }
+    }
+  }
+}
+
+/* Even at T5, malformed preceding SACK/ERROR or malformed ABORT Cause must
+ * be rejected before any ABORT reply or Owner time/state publication. */
+static void malformed_control_abort_bundle_preserves_owner(void) {
+  cnet_sctp_assoc a, b, before;
+  test_context ca, cb;
+  static const uint8_t good_sack[12] = {0};
+  static const uint8_t short_sack[8] = {0};
+  static const uint8_t bad_error[4] = {0u, 1u, 0u, 8u};
+  static const uint8_t bad_abort_cause[4] = {0u, 12u, 0u, 3u};
+  cnet_sctp_wire_chunk chunks[2];
+  uint8_t packet[128], output[128];
+  size_t packet_n = 0u, output_n, case_i, i;
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+  a.peer_tag = b.local_tag;
+  a.last_time_ms = 10u;
+  a.t5_shutdown_deadline_ms = 1000u;
+  a.deadline_ms = 1000u;
+  for (case_i = 0u; case_i < 3u; ++case_i) {
+    chunks[0].type = case_i == 1u ? 9u : 3u;
+    chunks[0].flags = 0u;
+    chunks[0].value = case_i == 0u ? short_sack :
+        case_i == 1u ? bad_error : good_sack;
+    chunks[0].value_size = case_i == 0u ? sizeof(short_sack) :
+        case_i == 1u ? sizeof(bad_error) : sizeof(good_sack);
+    chunks[1].type = 6u;
+    chunks[1].flags = 0u;
+    chunks[1].value = case_i == 2u ? bad_abort_cause : NULL;
+    chunks[1].value_size = case_i == 2u ? sizeof(bad_abort_cause) : 0u;
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+        chunks, 2u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+    memcpy(&before, &a, sizeof(before));
+    memset(output, 0xCC, sizeof(output));
+    output_n = 123u;
+    assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n,
+        output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+    assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+    for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+  }
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void error_and_abort_never_create_response_loops(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -2516,6 +2627,8 @@ int main(void) {
   incoming_abort_wins_over_absolute_t5();
   reflected_tag_abort_is_accepted_without_reply();
   abort_optional_error_causes_are_transactional();
+  control_before_abort_is_silent_and_transactional();
+  malformed_control_abort_bundle_preserves_owner();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();
