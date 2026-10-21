@@ -1216,10 +1216,21 @@ static void error_and_abort_never_create_response_loops(void) {
   assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
   assert(a.last_time_ms == prior_time);
 
-  /* A valid ABORT terminates locally and MUST NOT provoke an ABORT response. */
+  /* An ABORT with a non-matching Verification Tag and T=0 must not
+   * terminate the association or commit the monotonic time watermark. */
   chunk.type = 6u;
   chunk.value = NULL;
   chunk.value_size = 0u;
+  assert(cnet_sctp_wire_encode(5001u, 5000u, UINT32_C(0xDEADBEEF), &chunk, 1u,
+      packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&a, prior_time + 1u, packet, packet_n,
+      output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_PROTOCOL);
+  assert(output_n == 0u && output[0] == 0xCCu);
+  assert(a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(a.last_time_ms == prior_time);
+
+  /* A valid ABORT terminates locally and MUST NOT provoke an ABORT response. */
   assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
       packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
   memset(output, 0xCC, sizeof(output));
