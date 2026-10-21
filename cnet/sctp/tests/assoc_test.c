@@ -1329,6 +1329,78 @@ static void unknown_chunk_actions_are_bounded_and_exact(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* The public Wire module can parse packets far above the private
+ * Association's 1200-byte response ceiling. A single unknown REPORT Chunk
+ * must not bypass that ceiling when its caller offers an oversized buffer.
+ * Cause length = 8 + payload, ERROR size = 16 + padded cause length. */
+static void unknown_single_report_packet_ceiling_is_transactional(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  uint8_t value[1177], packet[1200], output[2048];
+  cnet_sctp_wire_chunk unknown = {0xE3u, 0x5Au, value, 1176u};
+  cnet_sctp_wire_header response_header = {0};
+  cnet_sctp_wire_decoder response_decoder = {0};
+  cnet_sctp_wire_chunk response_chunk = {0};
+  size_t packet_n = 0u, output_n = 123u, i;
+  uint64_t previous_time;
+
+  for (i = 0u; i < sizeof(value); ++i)
+    value[i] = (uint8_t)(i ^ 0x5Au);
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_ESTABLISHED;
+  a.peer_tag = b.local_tag;
+  previous_time = a.last_time_ms;
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown, 1u,
+      packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  assert(packet_n == 1192u);
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&a, previous_time + 1u, packet, packet_n,
+      output, 1199u, &output_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(output_n == 0u && output[0] == 0xCCu &&
+      output[1198] == 0xCCu && output[1199] == 0xCCu);
+  assert(a.last_time_ms == previous_time &&
+      a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_input(&a, previous_time + 1u, packet, packet_n,
+      output, 1200u, &output_n) == CNET_SCTP_ASSOC_OK);
+  assert(output_n == 1200u && output[1200] == 0xCCu);
+  assert(a.last_time_ms == previous_time + 1u &&
+      a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_wire_decode(output, output_n, &response_header,
+      &response_decoder) == CNET_SCTP_WIRE_OK);
+  assert(response_header.chunk_count == 1u &&
+      response_header.verification_tag == a.peer_tag);
+  assert(cnet_sctp_wire_next_chunk(&response_decoder, &response_chunk) ==
+      CNET_SCTP_WIRE_OK);
+  assert(response_chunk.type == 9u && response_chunk.flags == 0u &&
+      response_chunk.value_size == 1184u);
+  assert(response_chunk.value[0] == 0u &&
+      response_chunk.value[1] == 6u &&
+      response_chunk.value[2] == 0x04u &&
+      response_chunk.value[3] == 0xA0u);
+  assert(memcmp(response_chunk.value + 4u, packet + 12u,
+      1180u) == 0);
+
+  /* Just one payload byte more would require a 1204-byte ERROR. It must
+   * fail even with a 2048-byte destination, without output or clock commit. */
+  unknown.value_size = 1177u;
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown, 1u,
+      packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  assert(packet_n == 1196u);
+  previous_time = a.last_time_ms;
+  memset(output, 0xCC, sizeof(output));
+  output_n = 123u;
+  assert(cnet_sctp_assoc_input(&a, previous_time + 1u, packet, packet_n,
+      output, sizeof(output), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(output_n == 0u && output[0] == 0xCCu &&
+      output[1199] == 0xCCu && output[sizeof(output) - 1u] == 0xCCu);
+  assert(a.last_time_ms == previous_time &&
+      a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void unknown_multi_chunk_actions_are_transactional(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -1915,6 +1987,7 @@ int main(void) {
   mixed_unknown_known_bundles_fail_closed();
   unknown_chunks_do_not_preempt_t5();
   unknown_chunk_actions_are_bounded_and_exact();
+  unknown_single_report_packet_ceiling_is_transactional();
   unknown_multi_chunk_actions_are_transactional();
   unknown_report_variable_lengths_preserve_tlv_and_padding();
   unknown_report_dense_capacity_boundary();

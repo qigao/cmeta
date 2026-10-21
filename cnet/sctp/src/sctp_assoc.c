@@ -90,7 +90,12 @@ static cnet_sctp_assoc_status handle_unknown_single_chunk(
     return CNET_SCTP_ASSOC_OK;
   }
   {
-    uint8_t cause[CNET_SCTP_WIRE_MAX_PACKET_BYTES];
+    /* Keep single-Chunk reporting within the same private 1200-byte
+     * staging/egress bound as multi-Chunk reporting. Never allocate the
+     * public Wire decoder's 65 KiB maximum on the Owner's stack or let a
+     * large caller output buffer bypass this Association packet ceiling. */
+    uint8_t cause[CNET_SCTP_ASSOC_MAX_PACKET];
+    uint8_t response[CNET_SCTP_ASSOC_MAX_PACKET];
     size_t raw_size = chunk->value_size + 4u;
     size_t cause_size = raw_size + 4u;
     size_t response_size = 0u;
@@ -102,8 +107,10 @@ static cnet_sctp_assoc_status handle_unknown_single_chunk(
     wr16(cause + 2u, (uint16_t)cause_size);
     memcpy(cause + 4u, raw, raw_size); /* Type, Flags, Length, Value */
     status = encode_one(s, s->peer_tag, SCTP_TYPE_ERROR, cause, cause_size,
-        out, cap, &response_size);
+        response, sizeof(response), &response_size);
     if (status != CNET_SCTP_ASSOC_OK) return status;
+    if (response_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+    memcpy(out, response, response_size);
     *written = response_size;
     s->last_time_ms = now;
     return CNET_SCTP_ASSOC_OK;
