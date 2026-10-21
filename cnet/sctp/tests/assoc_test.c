@@ -1724,6 +1724,72 @@ static void max_unknown_skip_chunk_count_is_transactional(void) {
  * public Wire parser also accepts a CRC-correct 1204-byte packet, but
  * Association input MUST reject it before unknown actions or time commit.
  * The inbound bound must not depend on whether a REPORT is requested. */
+/* A valid-CRC packet larger than the private 1200-byte ceiling is
+ * not admitted merely because the absolute T5 shutdown guard has expired.
+ * The Owner's independent advance() still owns deadline service; on the
+ * input path only a structurally admitted packet may trigger the due ABORT.
+ * Output backpressure at T5 must also leave the whole TCB retryable. */
+static void oversized_input_cannot_preempt_absolute_t5(void) {
+  cnet_sctp_assoc a, b, before;
+  test_context ca, cb;
+  uint8_t value[1188], packet[1204], output[64];
+  cnet_sctp_wire_chunk unknown = {0xA2u, 0x5Au, value, sizeof(value)};
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk response_chunk = {0};
+  size_t packet_n = 0u, output_n = 123u, i;
+
+  for (i = 0u; i < sizeof(value); ++i) value[i] = (uint8_t)i;
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+  a.peer_tag = b.local_tag;
+  a.last_time_ms = 10u;
+  a.deadline_ms = 1000u;
+  a.t5_shutdown_deadline_ms = 1000u;
+
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown,
+      1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  assert(packet_n == CNET_SCTP_ASSOC_MAX_PACKET + 4u);
+  assert(cnet_sctp_wire_decode(packet, packet_n, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK);
+  memcpy(&before, &a, sizeof(before));
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
+      sizeof(output), &output_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+  for (i = 0u; i < sizeof(output); ++i)
+    assert(output[i] == 0xCCu);
+
+  /* Shrink only the value; same type/flags/tag and same absolute clock. */
+  unknown.value_size = sizeof(value) - 4u;
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &unknown,
+      1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  assert(packet_n == CNET_SCTP_ASSOC_MAX_PACKET);
+  output_n = 123u;
+  assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
+      15u, &output_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+  for (i = 0u; i < sizeof(output); ++i)
+    assert(output[i] == 0xCCu);
+
+  assert(cnet_sctp_assoc_input(&a, 1000u, packet, packet_n, output,
+      sizeof(output), &output_n) == CNET_SCTP_ASSOC_OK);
+  assert(output_n == 16u && a.state == CNET_SCTP_ASSOC_FAILED &&
+      a.t5_shutdown_deadline_ms == 0u &&
+      a.deadline_ms == 0u && a.last_time_ms == 1000u);
+  assert(cnet_sctp_wire_decode(output, output_n, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == 1u && header.verification_tag == a.peer_tag);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &response_chunk) ==
+      CNET_SCTP_WIRE_OK);
+  assert(response_chunk.type == 6u && response_chunk.flags == 0u &&
+      response_chunk.value_size == 0u);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void oversized_unknown_skip_packet_is_not_admitted(void) {
   cnet_sctp_assoc a, b, before;
   test_context ca, cb;
@@ -2201,6 +2267,7 @@ int main(void) {
   max_unknown_skip_chunk_count_is_transactional();
   max_unknown_report_chunk_count_is_transactional();
   oversized_unknown_skip_packet_is_not_admitted();
+  oversized_input_cannot_preempt_absolute_t5();
   error_and_abort_never_create_response_loops();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
