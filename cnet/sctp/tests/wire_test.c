@@ -292,8 +292,8 @@ static void test_abort_standalone_control_chunks_cannot_bundle(void) {
       cnet_sctp_wire_chunk pair[2];
       uint8_t output[64], packet[64];
       size_t written = 123u, packet_n = 12u + control_length + 4u;
-      cnet_sctp_wire_header header, before_header;
-      cnet_sctp_wire_decoder decoder, before_decoder;
+      cnet_sctp_wire_header header;
+      cnet_sctp_wire_decoder decoder;
       size_t control_offset = order == 0u ? 12u : 16u;
       size_t abort_offset = order == 0u ? 12u + control_length : 12u;
 
@@ -333,12 +333,14 @@ static void test_abort_standalone_control_chunks_cannot_bundle(void) {
       seal(packet, packet_n);
       memset(&header, 0xCC, sizeof(header));
       memset(&decoder, 0xCC, sizeof(decoder));
-      before_header = header;
-      before_decoder = decoder;
       assert(cnet_sctp_wire_decode(packet, packet_n, &header, &decoder) ==
           CNET_SCTP_WIRE_MALFORMED);
-      assert(memcmp(&header, &before_header, sizeof(header)) == 0 &&
-          memcmp(&decoder, &before_decoder, sizeof(decoder)) == 0);
+      {
+        const uint8_t *p = (const uint8_t *)&header;
+        for (i = 0u; i < sizeof(header); ++i) assert(p[i] == 0u);
+        p = (const uint8_t *)&decoder;
+        for (i = 0u; i < sizeof(decoder); ++i) assert(p[i] == 0u);
+      }
       for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
     }
   }
@@ -413,7 +415,56 @@ static void test_truncation_and_mutations(void) {
   }
 }
 
+static void test_output_cleared_on_errors(void) {
+  cnet_sctp_wire_header header;
+  cnet_sctp_wire_decoder decoder;
+  cnet_sctp_wire_chunk chunk;
+  uint8_t packet[32];
+  size_t written;
+  memset(&header, 0xa5, sizeof(header));
+  memset(&decoder, 0xa5, sizeof(decoder));
+  assert(cnet_sctp_wire_decode(NULL, 0u, &header, &decoder) ==
+         CNET_SCTP_WIRE_EINVAL);
+  {
+    const uint8_t *p = (const uint8_t *)&header;
+    size_t i;
+    for (i = 0u; i < sizeof(header); ++i) assert(p[i] == 0u);
+    p = (const uint8_t *)&decoder;
+    for (i = 0u; i < sizeof(decoder); ++i) assert(p[i] == 0u);
+  }
+
+  memset(&chunk, 0xa5, sizeof(chunk));
+  memset(&decoder, 0, sizeof(decoder));
+  decoder.chunks_remaining = 1u;
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) ==
+         CNET_SCTP_WIRE_MALFORMED);
+  {
+    const uint8_t *p = (const uint8_t *)&chunk;
+    size_t i;
+    for (i = 0u; i < sizeof(chunk); ++i) assert(p[i] == 0u);
+  }
+  memset(&chunk, 0xa5, sizeof(chunk));
+  memset(&decoder, 0, sizeof(decoder));
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_END);
+  {
+    const uint8_t *p = (const uint8_t *)&chunk;
+    size_t i;
+    for (i = 0u; i < sizeof(chunk); ++i) assert(p[i] == 0u);
+  }
+
+  memset(packet, 0x5a, sizeof(packet));
+  written = 99u;
+  assert(cnet_sctp_wire_encode(0u, 5001u, 0u, NULL, 1u,
+      packet, sizeof(packet), &written) == CNET_SCTP_WIRE_EINVAL);
+  assert(written == 0u && packet[0] == 0x5au);
+  written = 99u;
+  assert(cnet_sctp_wire_encode(5000u, 5001u, 0u, NULL, 1u,
+      packet, sizeof(packet), &written) == CNET_SCTP_WIRE_EINVAL);
+  assert(written == 0u && packet[0] == 0x5au);
+}
+
 int main(void) {
+  test_output_cleared_on_errors();
   test_max_chunk_count_and_no_partial_decode();
   test_unknown_chunk_action_bits();
   test_unknown_chunk_types_in_packet_order();
