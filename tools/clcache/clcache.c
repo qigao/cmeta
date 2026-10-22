@@ -2350,8 +2350,11 @@ static int CacheMain(int argc, LPWSTR* argv)
 	int EffectiveArgc = argc;
 	LPWSTR* EffectiveArgv = argv;
 
-	if(ExpandResponseFiles(argc, argv, &Arena, &EffectiveArgc, &EffectiveArgv) &&
-	   BuildCommandInfo(EffectiveArgc, EffectiveArgv, &Command, &Arena))
+	BOOL ResponseFilesExpanded =
+		ExpandResponseFiles(argc, argv, &Arena, &EffectiveArgc, &EffectiveArgv);
+	BOOL CommandInfoBuilt = ResponseFilesExpanded &&
+		BuildCommandInfo(EffectiveArgc, EffectiveArgv, &Command, &Arena);
+	if(CommandInfoBuilt)
 	{
 #if 0
 		WriteStdout(FileNameWithoutPath(Command.SrcFile));
@@ -2472,6 +2475,10 @@ static int CacheMain(int argc, LPWSTR* argv)
 	}
 	else // Uncacheable so pass command line directly to cl.exe
 	{
+		if(CacheTraceEnabled())
+			WriteStderr(ResponseFilesExpanded
+				? CSTR("clcache: BYPASS=command_not_cacheable\\n")
+				: CSTR("clcache: BYPASS=response_file_expansion_failed\\n"));
 		LPWSTR CmdLine = GetCommandLineW();
 
 		// Strip clcache.exe from command line. Either quoted or unquoted
