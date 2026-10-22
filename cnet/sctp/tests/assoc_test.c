@@ -2657,7 +2657,7 @@ static void peer_abort_max_reason_exact_capacity(void) {
   cause[0] = 0u;
   cause[1] = 12u;
   cause[2] = (uint8_t)(sizeof(cause) >> 8);
-  cause[3] = (uint8_t)sizeof(cause);
+  cause[3] = (uint8_t)(sizeof(cause) & 0xffu);
   for (i = 0u; i < CNET_SCTP_ASSOC_MAX_ABORT_REASON; ++i)
     cause[i + 4u] = (uint8_t)(i ^ 0xA5u);
   assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
