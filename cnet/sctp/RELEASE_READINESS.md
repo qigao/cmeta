@@ -60,3 +60,32 @@ Separate known cross-repo qualification: [#1177](https://github.com/qigao/salts/
 **Documentation HEAD requalification (2026-10-19, `e173e70130f54ad4cd41efe2bc86211dea8adbff`):** [CNet SCTP C11 #39194373002](https://github.com/qigao/salts/actions/runs/39194373002) **SUCCESS 5/5** (Linux/macOS/Windows C11 Wire, source ASan/UBSan, pinned-GmSSL Cookie-MAC); [immutable build provenance #39194372998](https://github.com/qigao/salts/actions/runs/39194372998) **SUCCESS**; [Salts CI #39194372988](https://github.com/qigao/salts/actions/runs/39194372988) **SUCCESS** for selected checks including Android ARM64 Release and iOS ARM64 Release. Formal, package, benchmarks, installed ServiceHost ABI, six-RID ABI identity and SDK publication were **SKIPPED**; ACE candidate was **SKIPPED**. This documentation-only checkpoint does not close M0–M6 blockers, qualify an installed SCTP SDK, or authorize merge/release/cutover. Any subsequent HEAD still requires its own exact-commit validation.
 
 **Keep PR #1182 Open / Draft / DO NOT MERGE. No tag, NuGet push, GitHub Release or production source mutation from this document.**
+
+## M5 real-thread Owner lease / cancel checkpoint (2026-10-22)
+
+A separate **opt-in** C11 POSIX pthread qualification target now exists:
+`CNET_SCTP_TEST_OWNER_THREADS=ON` builds `cnet_sctp_owner_thread_test` and
+uses the same private (noninstalled) Association/Data sources. The default
+Windows/macOS/installed Wire-only build remains unchanged; the Linux source
+ASan+UBSan job enables the new test, while a dedicated Ubuntu Clang 18 job
+builds the actual target and first-party dependencies with `-fsanitize=thread`,
+`-fPIE`, and a TSan-linked PIE. The CI includes an explicit compilation-command
+audit of all six relevant first-party C sources; the test is repeated ten times
+with nonzero TSan-error exit status.
+
+The test uses **two real pthreads**, caller-provided mutex/condition-variable
+serialization and a single transferable Owner. For 256 cycles, ownership
+moves across the threads while they exercise init, start, authenticated
+synthetic peer-ABORT input, exactly-once ULP reason take versus stop-first
+discard, drain and destroy. Non-Owner access is rejected without state
+mutation. A separate 64-round test races an external cancellation **request**
+against an in-flight Owner entropy callback, verifies callback reentrancy
+returns BUSY, then stops/drains/destroys only after the callback returns.
+
+**This is not permission to call the Association concurrently without an
+external Owner lease.** It is also **not** a real Provider DSO unload/dlclose,
+DTLS Generation barrier, or effective-source TSan qualification of the
+third-party GmSSL implementation. Those, together with actual CNet Owner
+integration and concurrent cancel/input/timer/close stress, remain open M5
+gates. A passing scoped TSan run does not close the full M5 gate or authorize
+PR #1182 merge, release, publication, or production cutover.

@@ -65,10 +65,31 @@ jobs:
           command -v clang-18
           cmake -S cnet/sctp -B build-sctp-tsan -DBUILD_TESTING=ON \
             -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DCNET_SCTP_TEST_OWNER_THREADS=ON \
             -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -fPIE" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread -pie"
           cmake --build build-sctp-tsan --target cnet_sctp_owner_thread_test --parallel 2
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          entries = json.loads(Path('build-sctp-tsan/compile_commands.json').read_text())
+          required = {'sctp_wire.c', 'sctp_assoc.c', 'sctp_data.c',
+                      'sctp_init_params.c', 'sctp_collision.c',
+                      'owner_thread_test.c'}
+          found = set()
+          for entry in entries:
+              name = Path(entry['file']).name
+              if name not in required:
+                  continue
+              command = entry.get('command', ' '.join(entry.get('arguments', [])))
+              assert '-fsanitize=thread' in command, (name, command)
+              assert '-fPIE' in command, (name, command)
+              assert entry['file'].endswith('.c'), entry['file']
+              found.add(name)
+          assert found == required, (found, required)
+          print('TSan source instrumentation:', ', '.join(sorted(found)))
+          PY
           ctest --test-dir build-sctp-tsan --output-on-failure --repeat until-fail:10 -R cnet_sctp_owner_thread_test
 
   gmssl-mac-c11:
