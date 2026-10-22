@@ -1522,11 +1522,74 @@ static void peer_abort_prefix_invalid_sack_does_not_forge_ack(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* ABORT followed by an otherwise valid cumulative SACK is terminal at
+ * the first ABORT. The trailing SACK must not advance the Owner-pulled
+ * last-acked TSN, even when the local T5 deadline is exactly due. */
+static void peer_abort_trailing_sack_does_not_change_ulp_ack(void) {
+  size_t reflected, i;
+  for (reflected = 0u; reflected < 2u; ++reflected) {
+    cnet_sctp_assoc a, b;
+    test_context ca = {0}, cb = {0};
+    const uint8_t payload = 't';
+    static const uint8_t reason12[8] = {0u, 12u, 0u, 8u, 'l', 'a', 't', 'e'};
+    uint8_t data[1200], sack[1200], combined[1200], reply[32], reason[8];
+    cnet_sctp_wire_header h = {0};
+    cnet_sctp_wire_decoder decoder = {0};
+    cnet_sctp_wire_chunk chunks[2] = {{0}};
+    cnet_sctp_assoc_peer_abort_info info = {0};
+    size_t data_n = 0u, sack_n = 0u, combined_n = 0u;
+    size_t reply_n = 123u, reason_n = 0u;
+    uint32_t original_ack, last_sent;
+
+    ready_pair(&a, &b, &ca, &cb);
+    assert(cnet_sctp_assoc_send_message(&a, 6u, 0u, 51u, 0,
+        &payload, 1u, data, sizeof(data), &data_n) ==
+        CNET_SCTP_ASSOC_OK);
+    original_ack = a.data.last_ack;
+    last_sent = a.data.next_tsn - 1u;
+    assert(cnet_sctp_assoc_input(&b, 7u, data, data_n,
+        sack, sizeof(sack), &sack_n) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_wire_decode(sack, sack_n, &h, &decoder) ==
+        CNET_SCTP_WIRE_OK);
+    chunks[0].type = 6u;
+    chunks[0].flags = (uint8_t)reflected;
+    chunks[0].value = reason12;
+    chunks[0].value_size = sizeof(reason12);
+    assert(cnet_sctp_wire_next_chunk(&decoder, &chunks[1]) ==
+        CNET_SCTP_WIRE_OK && chunks[1].type == 3u);
+    assert(cnet_sctp_wire_encode(5001u, 5000u,
+        reflected ? a.peer_tag : a.local_tag, chunks, 2u,
+        combined, sizeof(combined), &combined_n) == CNET_SCTP_WIRE_OK);
+
+    a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+    a.t5_shutdown_deadline_ms = 1000u;
+    a.deadline_ms = 1000u;
+    memset(reply, 0xCC, sizeof(reply));
+    assert(cnet_sctp_assoc_input(&a, 1000u, combined, combined_n,
+        reply, 0u, &reply_n) == CNET_SCTP_ASSOC_OK);
+    assert(reply_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+        a.t5_shutdown_deadline_ms == 0u && a.peer_abort_pending);
+    for (i = 0u; i < sizeof(reply); ++i) assert(reply[i] == 0xCCu);
+    assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+        sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_OK);
+    assert(info.has_tsn && info.has_user_reason &&
+        info.last_acked_tsn == original_ack &&
+        info.last_acked_tsn != last_sent &&
+        info.last_sent_tsn == last_sent);
+    assert(reason_n == 4u && memcmp(reason, "late", 4u) == 0);
+    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  }
+}
+
 int main(void) {
   single_data_sack_capacity_preserves_input_watermark();
   peer_abort_event_captures_data_tsn_before_teardown();
   peer_abort_prefix_sack_updates_ulp_ack_snapshot();
   peer_abort_prefix_invalid_sack_does_not_forge_ack();
+  peer_abort_trailing_sack_does_not_change_ulp_ack();
   association_accepts_sack_duplicate_list_beyond_rx_slots();
   post_cookie_bundled_data();
   shutdown_no_inflight_and_t2();

@@ -128,3 +128,11 @@ Private C11 SCTP Association now supports an **exactly-once, Owner-pulled** peer
 - Regression tests cover a preceding non-user cause, final unpadded Cause 12, zero-byte Cause-12 absence, exact 1180-byte upper boundary, too-small output retry, terminal no-reply and lifecycle wipe. A real post-COOKIE DATA path also verifies last-ACKed/last-sent TSN capture before the DATA TCB is torn down.
 
 Remaining **OPEN**: callback/ULP integration beyond this private Owner-pull seam, complete preceding-control semantics, actual independent SCTP peer/DTLS/Browser wire oracle, fuzz/TSan, PR-SCTP/reset/interleaving, and installed SDK/six-RID. Passing private C11 tests does not authorize merge, release, publish or production cutover.
+
+## ABORT-prefix SACK ULP TSN projection (2026-10-22)
+
+A valid SACK **before** terminal ABORT is now previewed on an owned temporary `cnet_sctp_data` candidate with the existing DATA/SACK state engine before the DATA TCB is discarded. Only the candidate's cumulative last-ACKed TSN is copied into the private Owner-pulled communication-lost event; no DATA ticket, cwnd/rwnd, RTT, timer, Owner clock or outbound packet is committed from the preview. Semantically invalid SACKs do not forge a future acknowledgment or stop the separately authenticated ABORT. The replay-safe fixed packet envelope, Verification Tag, full framing, pre-ABORT shape and T5 ordering gates remain in force.
+
+The follow-up direct Association regression covers a real post-COOKIE SACK acknowledging one of two TSNs across the 32-bit wrap, a forged future cumulative ACK that must not change the event's last-acked point, and a valid **trailing SACK after ABORT** that MUST be ignored even at the exact T5 deadline (both T=0/T=1), with no response and no live TCB state publication.
+
+This is a private single-Owner research implementation, **not** full SACK/control-bundle conformance or production ULP integration. Other controls' side effects, independent peer confirmation, fuzzing, concurrency/TSan, installed SDK and M3/M4 remain OPEN. PR #1182 remains Draft/Open; no merge/release/publish/cutover.
