@@ -2543,6 +2543,102 @@ static void heartbeat_before_abort_requires_valid_info_tlv(void) {
   }
 }
 
+/* The private communication-lost event owns its reason bytes. A caller
+ * capacity miss must neither consume the event nor partially write info,
+ * and a successful Owner-pull consumes exactly once and zeroes raw storage. */
+static void peer_abort_reason_owner_pull_is_bounded(void) {
+  static const uint8_t causes[] = {
+    0u, 13u, 0u, 4u, /* preceding Protocol Violation cause */
+    0u, 12u, 0u, 7u, 'b', 'y', 'e' /* final unpadded Cause 12 */
+  };
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  cnet_sctp_wire_chunk chunk = {6u, 1u, causes, sizeof(causes)};
+  cnet_sctp_assoc_peer_abort_info info, before_info;
+  uint8_t wire[128], output[128], reason[8];
+  size_t wire_n = 0u, output_n = 123u, n = 123u, i;
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+  a.peer_tag = b.local_tag;
+  a.last_time_ms = 10u;
+  a.t5_shutdown_deadline_ms = 1000u;
+  a.deadline_ms = 1000u;
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.peer_tag, &chunk, 1u,
+      wire, sizeof(wire), &wire_n) == CNET_SCTP_WIRE_OK);
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&a, 1000u, wire, wire_n, output, 0u,
+      &output_n) == CNET_SCTP_ASSOC_OK);
+  assert(a.state == CNET_SCTP_ASSOC_FAILED && output_n == 0u &&
+      a.peer_abort_pending && a.peer_abort_reason_size == 3u);
+
+  memset(&info, 0xCC, sizeof(info));
+  before_info = info;
+  memset(reason, 0xCC, sizeof(reason));
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason, 2u, &n) ==
+      CNET_SCTP_ASSOC_CAPACITY);
+  assert(n == 0u && memcmp(&info, &before_info, sizeof(info)) == 0);
+  for (i = 0u; i < sizeof(reason); ++i) assert(reason[i] == 0xCCu);
+  assert(a.peer_abort_pending && a.peer_abort_reason_size == 3u);
+
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason, sizeof(reason),
+      &n) == CNET_SCTP_ASSOC_OK);
+  assert(n == 3u && memcmp(reason, "bye", 3u) == 0);
+  assert(info.has_user_reason == 1u && info.has_tsn == 0u);
+  assert(!a.peer_abort_pending && a.peer_abort_reason_size == 0u);
+  for (i = 0u; i < sizeof(a.peer_abort_reason); ++i)
+    assert(a.peer_abort_reason[i] == 0u);
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason, sizeof(reason),
+      &n) == CNET_SCTP_ASSOC_EMPTY);
+  assert(n == 0u);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
+/* No Cause 12 still produces an owned peer-ABORT event with zero reason
+ * length; explicitly stopping without take must discard its pending bytes. */
+static void peer_abort_event_without_reason_and_stop_discard(void) {
+  static const uint8_t other_cause[] = {0u, 13u, 0u, 4u};
+  static const uint8_t user_reason[] = {0u, 12u, 0u, 7u, 's', 't', 'p'};
+  size_t mode;
+  for (mode = 0u; mode < 2u; ++mode) {
+    cnet_sctp_assoc a, b;
+    test_context ca, cb;
+    cnet_sctp_wire_chunk chunk = {6u, 0u,
+        mode ? user_reason : other_cause,
+        mode ? sizeof(user_reason) : sizeof(other_cause)};
+    cnet_sctp_assoc_peer_abort_info info = {0};
+    uint8_t wire[128], output[16];
+    size_t wire_n = 0u, output_n = 123u, reason_n = 123u, i;
+    setup(&a, &b, &ca, &cb);
+    a.state = CNET_SCTP_ASSOC_ESTABLISHED;
+    a.peer_tag = b.local_tag;
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, &chunk, 1u,
+        wire, sizeof(wire), &wire_n) == CNET_SCTP_WIRE_OK);
+    assert(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u, wire, wire_n,
+        output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
+    assert(output_n == 0u && a.peer_abort_pending);
+    if (mode == 0u) {
+      assert(cnet_sctp_assoc_take_peer_abort(&a, &info, NULL, 0u,
+          &reason_n) == CNET_SCTP_ASSOC_OK);
+      assert(reason_n == 0u && !info.has_user_reason && !info.has_tsn);
+    } else {
+      assert(a.peer_abort_reason_size == 3u);
+      assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+      assert(!a.peer_abort_pending && a.peer_abort_reason_size == 0u);
+      for (i = 0u; i < sizeof(a.peer_abort_reason); ++i)
+        assert(a.peer_abort_reason[i] == 0u);
+      assert(cnet_sctp_assoc_take_peer_abort(&a, &info, NULL, 0u,
+          &reason_n) == CNET_SCTP_ASSOC_EMPTY);
+    }
+    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  }
+}
+
 static void error_and_abort_never_create_response_loops(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -2840,6 +2936,8 @@ int main(void) {
   unknown_chunk_actions_before_abort_are_respected();
   malformed_wire_tail_after_abort_preserves_owner();
   heartbeat_before_abort_requires_valid_info_tlv();
+  peer_abort_reason_owner_pull_is_bounded();
+  peer_abort_event_without_reason_and_stop_discard();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();

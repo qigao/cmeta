@@ -466,6 +466,42 @@ static int valid_heartbeat_abort_prefix(const cnet_sctp_wire_chunk *chunk) {
   return padded == chunk->value_size;
 }
 
+/* RFC 9260 §§3.3.10.12/9.1/11.2.5: project one owned terminal event.
+ * The private 1200-byte packet ceiling bounds the entire Cause 12 reason
+ * (including a zero-length one). The preflight has checked all TLV lengths. */
+static void record_peer_abort(cnet_sctp_assoc *s,
+    const cnet_sctp_wire_chunk *abort_chunk) {
+  cnet_sctp_assoc_peer_abort_info info = {0};
+  size_t pos = 0u;
+  memset(s->peer_abort_reason, 0, sizeof(s->peer_abort_reason));
+  s->peer_abort_reason_size = 0u;
+  if (s->data_ready) {
+    info.has_tsn = 1u;
+    info.last_acked_tsn = s->data.last_ack;
+    info.last_sent_tsn = s->data.next_tsn - 1u;
+  }
+  while (pos < abort_chunk->value_size) {
+    const uint8_t *cause = abort_chunk->value + pos;
+    const size_t remaining = abort_chunk->value_size - pos;
+    const size_t length = rd16(cause + 2u);
+    const size_t padded = (length + 3u) & ~(size_t)3u;
+    if (rd16(cause) == 12u && !info.has_user_reason) {
+      const size_t reason_size = length - 4u;
+      /* Impossible for a fully admitted <=1200-byte wire packet to exceed
+       * this bound. Never truncate an authenticated ULP reason. */
+      if (reason_size <= sizeof(s->peer_abort_reason)) {
+        if (reason_size != 0u)
+          memcpy(s->peer_abort_reason, cause + 4u, reason_size);
+        s->peer_abort_reason_size = reason_size;
+        info.has_user_reason = 1u;
+      }
+    }
+    pos += padded > remaining ? remaining : padded;
+  }
+  s->peer_abort_info = info;
+  s->peer_abort_pending = 1u;
+}
+
 /* ABORT is terminal. Validate every control before the first ABORT, then
  * ignore later Chunk semantics as required by RFC 9260 Section 3.3.7.
  * Wire decoding has already checked framing and the DATA+ABORT prohibition. */
@@ -1265,6 +1301,9 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       return CNET_SCTP_ASSOC_PROTOCOL;
     if (s->state == CNET_SCTP_ASSOC_CLOSED)
       return CNET_SCTP_ASSOC_PROTOCOL;
+    /* Capture metadata before its DATA TCB is destroyed. The event is
+     * private Owner storage; parsing never lends a packet-backed view. */
+    record_peer_abort(s, &terminal_chunk);
     if (s->data_ready) {
       (void)cnet_sctp_data_stop(&s->data);
       memset(&s->data, 0, sizeof(s->data));
@@ -1709,6 +1748,30 @@ cnet_sctp_assoc_status cnet_sctp_assoc_window_update(cnet_sctp_assoc *s,
   return status;
 }
 
+cnet_sctp_assoc_status cnet_sctp_assoc_take_peer_abort(
+    cnet_sctp_assoc *s, cnet_sctp_assoc_peer_abort_info *info,
+    void *reason, size_t capacity, size_t *written) {
+  cnet_sctp_assoc_status status;
+  if (written) *written = 0u;
+  status = guard(s);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (!info || !written) return CNET_SCTP_ASSOC_INVALID;
+  if (!s->peer_abort_pending) return CNET_SCTP_ASSOC_EMPTY;
+  if (s->peer_abort_reason_size > capacity)
+    return CNET_SCTP_ASSOC_CAPACITY;
+  if (s->peer_abort_reason_size != 0u && !reason)
+    return CNET_SCTP_ASSOC_INVALID;
+  if (s->peer_abort_reason_size != 0u)
+    memcpy(reason, s->peer_abort_reason, s->peer_abort_reason_size);
+  *info = s->peer_abort_info;
+  *written = s->peer_abort_reason_size;
+  s->peer_abort_pending = 0u;
+  s->peer_abort_reason_size = 0u;
+  memset(s->peer_abort_reason, 0, sizeof(s->peer_abort_reason));
+  memset(&s->peer_abort_info, 0, sizeof(s->peer_abort_info));
+  return CNET_SCTP_ASSOC_OK;
+}
+
 cnet_sctp_assoc_status cnet_sctp_assoc_stop(cnet_sctp_assoc *s) {
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
@@ -1722,6 +1785,11 @@ cnet_sctp_assoc_status cnet_sctp_assoc_stop(cnet_sctp_assoc *s) {
   s->t5_shutdown_deadline_ms = 0u;
   s->saved_size = 0u;
   memset(s->saved_packet, 0, sizeof(s->saved_packet));
+  /* Explicit stop discards any unread communication-lost event. */
+  s->peer_abort_pending = 0u;
+  s->peer_abort_reason_size = 0u;
+  memset(s->peer_abort_reason, 0, sizeof(s->peer_abort_reason));
+  memset(&s->peer_abort_info, 0, sizeof(s->peer_abort_info));
   return CNET_SCTP_ASSOC_OK;
 }
 

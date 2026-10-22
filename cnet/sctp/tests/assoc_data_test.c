@@ -1372,8 +1372,48 @@ static void association_accepts_sack_duplicate_list_beyond_rx_slots(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* A real established Association publishes the peer ABORT event with the
+ * pre-teardown cumulative ACK / last-sent TSNs, even across TSN wrap. */
+static void peer_abort_event_captures_data_tsn_before_teardown(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  const uint8_t payload = 'e';
+  static const uint8_t cause12[] = {0u, 12u, 0u, 8u, 'p', 'e', 'e', 'r'};
+  cnet_sctp_assoc_peer_abort_info info = {0};
+  cnet_sctp_wire_chunk abort_chunk = {6u, 0u, cause12, sizeof(cause12)};
+  uint8_t data_packet[1200], abort_packet[1200], reply[1200], reason[8];
+  size_t data_n = 0u, abort_n = 0u, reply_n = 123u, reason_n = 0u;
+  uint32_t initial_last_ack, actual_last_sent;
+
+  ready_pair(&a, &b, &ca, &cb);
+  initial_last_ack = a.data.last_ack;
+  assert(cnet_sctp_assoc_send_message(&a, 6u, 0u, 51u, 0,
+      &payload, 1u, data_packet, sizeof(data_packet), &data_n) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(a.data_ready && data_n > 0u && a.data.tx[0].used);
+  actual_last_sent = a.data.next_tsn - 1u;
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+      &abort_chunk, 1u, abort_packet, sizeof(abort_packet), &abort_n) ==
+      CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_assoc_input(&a, 7u, abort_packet, abort_n,
+      reply, 0u, &reply_n) == CNET_SCTP_ASSOC_OK);
+  assert(reply_n == 0u && !a.data_ready &&
+      a.state == CNET_SCTP_ASSOC_FAILED);
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+      sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_OK);
+  assert(info.has_tsn && info.has_user_reason &&
+      info.last_acked_tsn == initial_last_ack &&
+      info.last_sent_tsn == actual_last_sent);
+  assert(reason_n == 4u && memcmp(reason, "peer", 4u) == 0);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
   single_data_sack_capacity_preserves_input_watermark();
+  peer_abort_event_captures_data_tsn_before_teardown();
   association_accepts_sack_duplicate_list_beyond_rx_slots();
   post_cookie_bundled_data();
   shutdown_no_inflight_and_t2();

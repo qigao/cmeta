@@ -11,6 +11,8 @@
  * invoke init concurrently; an initialized association rejects repeated init.
  */
 #define CNET_SCTP_ASSOC_MAX_PACKET 1200u
+/* Whole-packet ingress is <=1200: 12 common + 4 ABORT + 4 Cause header. */
+#define CNET_SCTP_ASSOC_MAX_ABORT_REASON (CNET_SCTP_ASSOC_MAX_PACKET - 20u)
 #define CNET_SCTP_ASSOC_COOKIE_BYTES 88u
 #define CNET_SCTP_ASSOC_MAC_BYTES 32u
 #define CNET_SCTP_ASSOC_ENTROPY_BYTES 8u
@@ -83,6 +85,16 @@ typedef struct cnet_sctp_assoc_config {
   void *provider_context;
 } cnet_sctp_assoc_config;
 
+/* Private, owned communication-lost record for an authenticated peer ABORT.
+ * The User-Initiated Abort (Cause 12) reason is copied from the validated
+ * packet and may be taken exactly once before explicit stop/destroy. */
+typedef struct cnet_sctp_assoc_peer_abort_info {
+  uint32_t last_acked_tsn;
+  uint32_t last_sent_tsn;
+  uint8_t has_tsn;
+  uint8_t has_user_reason;
+} cnet_sctp_assoc_peer_abort_info;
+
 typedef struct cnet_sctp_assoc {
   cnet_sctp_assoc_config config;
   cnet_sctp_assoc_state state;
@@ -103,6 +115,10 @@ typedef struct cnet_sctp_assoc {
   uint8_t in_progress;
   uint8_t data_ready;
   cnet_sctp_data data; /* private, fixed-size, owner-local; NOT installed */
+  cnet_sctp_assoc_peer_abort_info peer_abort_info;
+  uint8_t peer_abort_pending;
+  size_t peer_abort_reason_size;
+  uint8_t peer_abort_reason[CNET_SCTP_ASSOC_MAX_ABORT_REASON];
   uint32_t magic;
 } cnet_sctp_assoc;
 
@@ -162,6 +178,18 @@ cnet_sctp_assoc_status cnet_sctp_assoc_window_update(cnet_sctp_assoc *s,
  * No owned RX packet silently disappears during graceful close. */
 cnet_sctp_assoc_status cnet_sctp_assoc_shutdown(cnet_sctp_assoc *association,
     uint64_t now_ms, void *output, size_t capacity, size_t *written);
+
+/* Owner-pulled, exactly-once peer-ABORT notification. No callback, heap,
+ * or retained borrowed input pointers. Reports a terminal event even when
+ * no User-Initiated Abort Cause is present (has_user_reason=0).
+ * CAPACITY or invalid arguments leave the event and info/output untouched;
+ * output_size becomes zero. A successful take copies the full reason bytes,
+ * then zeroes the internal buffer and consumes the event.
+ * stop() explicitly discards a pending event; destroy() zeroes all storage.
+ * This private prototype API is NOT installed/exposed by Salts::CNet. */
+cnet_sctp_assoc_status cnet_sctp_assoc_take_peer_abort(
+    cnet_sctp_assoc *association, cnet_sctp_assoc_peer_abort_info *info,
+    void *reason, size_t reason_capacity, size_t *reason_size);
 
 cnet_sctp_assoc_status cnet_sctp_assoc_stop(cnet_sctp_assoc *association);
 cnet_sctp_assoc_status cnet_sctp_assoc_destroy(cnet_sctp_assoc *association);
