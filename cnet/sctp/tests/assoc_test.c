@@ -2784,6 +2784,98 @@ static void peer_abort_event_rejects_non_owner_and_reentry(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* M5 deterministic race-order test, not a concurrent TSan proof:
+ * input ABORT, T5 output-backpressure and successful T5 publication must
+ * never generate an ABORT-in-response-to-ABORT feedback loop, nor create
+ * a phantom peer-ABORT ULP event after our own local T5 expiry. */
+static void peer_abort_and_absolute_t5_orders_are_terminal_once(void) {
+  static const uint8_t reason12[] = {
+    0u, 12u, 0u, 8u, 'r', 'a', 'c', 'e'
+  };
+  size_t order, i;
+  for (order = 0u; order < 3u; ++order) {
+    cnet_sctp_assoc a, b, before;
+    cnet_sctp_assoc_peer_abort_info info = {0};
+    test_context ca, cb;
+    cnet_sctp_wire_chunk abort_chunk = {
+      6u, 0u, reason12, sizeof(reason12)
+    };
+    cnet_sctp_wire_header h = {0};
+    cnet_sctp_wire_decoder decoder = {0};
+    cnet_sctp_wire_chunk received = {0};
+    uint8_t abort_packet[64], output[64], reason[8] = {0};
+    size_t abort_n = 0u, output_n = 123u, reason_n = 123u;
+
+    setup(&a, &b, &ca, &cb);
+    a.state = CNET_SCTP_ASSOC_SHUTDOWN_SENT;
+    a.peer_tag = b.local_tag;
+    a.last_time_ms = 10u;
+    a.deadline_ms = 1000u;
+    a.t5_shutdown_deadline_ms = 1000u;
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+        &abort_chunk, 1u, abort_packet, sizeof(abort_packet),
+        &abort_n) == CNET_SCTP_WIRE_OK);
+
+    memset(output, 0xCC, sizeof(output));
+    if (order == 1u) {
+      /* An unpublishable local T5 ABORT must not consume state or suppress
+       * a valid peer ABORT that arrives at the same absolute timestamp. */
+      memcpy(&before, &a, sizeof(before));
+      assert(cnet_sctp_assoc_advance(&a, 1000u, output, 15u,
+          &output_n) == CNET_SCTP_ASSOC_CAPACITY);
+      assert(output_n == 0u && memcmp(&a, &before, sizeof(before)) == 0);
+      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+    } else if (order == 2u) {
+      /* Local T5 publishes once. A subsequently arriving peer ABORT cannot
+       * change terminal origin or install a spurious ULP reason. */
+      assert(cnet_sctp_assoc_advance(&a, 1000u, output, sizeof(output),
+          &output_n) == CNET_SCTP_ASSOC_OK);
+      assert(output_n == 16u && a.state == CNET_SCTP_ASSOC_FAILED);
+      assert(cnet_sctp_wire_decode(output, output_n, &h, &decoder) ==
+          CNET_SCTP_WIRE_OK);
+      assert(h.chunk_count == 1u && h.verification_tag == a.peer_tag);
+      assert(cnet_sctp_wire_next_chunk(&decoder, &received) ==
+          CNET_SCTP_WIRE_OK && received.type == 6u);
+      assert(!a.peer_abort_pending);
+      memset(output, 0xCC, sizeof(output));
+      output_n = 123u;
+      assert(cnet_sctp_assoc_input(&a, 1000u, abort_packet, abort_n,
+          output, 0u, &output_n) == CNET_SCTP_ASSOC_CLOSED_ERROR);
+      assert(output_n == 0u && !a.peer_abort_pending);
+      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+    }
+
+    if (order != 2u) {
+      /* Incoming ABORT wins: no outgoing ABORT and one owned reason event. */
+      output_n = 123u;
+      assert(cnet_sctp_assoc_input(&a, 1000u, abort_packet, abort_n,
+          output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
+      assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+          a.peer_abort_pending && a.t5_shutdown_deadline_ms == 0u);
+      for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+      output_n = 123u;
+      assert(cnet_sctp_assoc_advance(&a, 1000u, output,
+          sizeof(output), &output_n) == CNET_SCTP_ASSOC_CLOSED_ERROR);
+      assert(output_n == 0u && a.peer_abort_pending);
+      assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+          sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_OK);
+      assert(reason_n == 4u && info.has_user_reason &&
+          memcmp(reason, "race", 4u) == 0);
+      assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+          sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_EMPTY);
+      assert(reason_n == 0u);
+    } else {
+      assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+          sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_EMPTY);
+      assert(reason_n == 0u);
+    }
+    assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+    assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+  }
+}
+
 static void error_and_abort_never_create_response_loops(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -3085,6 +3177,7 @@ int main(void) {
   peer_abort_event_without_reason_and_stop_discard();
   peer_abort_max_reason_exact_capacity();
   peer_abort_event_rejects_non_owner_and_reentry();
+  peer_abort_and_absolute_t5_orders_are_terminal_once();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();
