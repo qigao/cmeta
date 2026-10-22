@@ -26,6 +26,8 @@ typedef struct provider_generation {
   unsigned callback_entered;
   unsigned release_callback;
   unsigned cancel_requested;
+  unsigned callback_returned;
+  unsigned allow_owner_stop;
   unsigned owner_destroyed;
   unsigned unloaded;
   cnet_sctp_assoc assoc;
@@ -126,6 +128,12 @@ static void *owner_main(void *context) {
   assert(g->assoc.magic != 0u);
   assert(pthread_mutex_lock(&g->mutex) == 0);
   assert(g->cancel_requested && g->active_calls == 0u);
+  /* Hand the canceller an independent observation point: the DSO callback
+   * has returned but the live Owner has NOT stopped/destroyed its TCB. */
+  g->callback_returned = 1u;
+  assert(pthread_cond_broadcast(&g->changed) == 0);
+  while (!g->allow_owner_stop)
+    assert(pthread_cond_wait(&g->changed, &g->mutex) == 0);
   assert(pthread_mutex_unlock(&g->mutex) == 0);
   assert(cnet_sctp_assoc_stop(&g->assoc) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_drained(&g->assoc));
@@ -158,6 +166,16 @@ static void *canceller_main(void *context) {
   }
   assert(pthread_mutex_lock(&g->mutex) == 0);
   g->release_callback = 1u;
+  assert(pthread_cond_broadcast(&g->changed) == 0);
+  while (!g->callback_returned || g->active_calls)
+    assert(pthread_cond_wait(&g->changed, &g->mutex) == 0);
+  assert(!g->owner_destroyed && g->handle && g->api);
+  assert(pthread_mutex_unlock(&g->mutex) == 0);
+  /* The callback is fully drained, but the TCB still holds Provider function
+   * pointers. Generation unload MUST remain BUSY until Owner destruction. */
+  assert(try_unload(g) == PROVIDER_BUSY);
+  assert(pthread_mutex_lock(&g->mutex) == 0);
+  g->allow_owner_stop = 1u;
   assert(pthread_cond_broadcast(&g->changed) == 0);
   while (!g->owner_destroyed || g->active_calls)
     assert(pthread_cond_wait(&g->changed, &g->mutex) == 0);
@@ -200,6 +218,14 @@ static void exercise_generation(const char *dso_path, uint32_t generation) {
   assert(api->abi_version == CNET_SCTP_TEST_DSO_ABI);
   assert(api->entropy && api->mac && api->verify);
   g.api = api;
+  /* A stale caller token cannot acquire the newer loaded generation even
+   * while its DSO handle and function pointers are still valid. */
+  {
+    const cnet_sctp_test_dso_api *stale_api = NULL;
+    assert(begin_provider_call(&g, generation - 1u,
+        &stale_api) == PROVIDER_STALE);
+    assert(stale_api == NULL);
+  }
   /* Verify the real DSO MAC callbacks (test-only insecure algorithm), not
    * just symbol presence. No callback is retained across the close barrier. */
   assert(borrowed_mac(&g, message, sizeof(message), mac) == 0);

@@ -89,3 +89,40 @@ third-party GmSSL implementation. Those, together with actual CNet Owner
 integration and concurrent cancel/input/timer/close stress, remain open M5
 gates. A passing scoped TSan run does not close the full M5 gate or authorize
 PR #1182 merge, release, publication, or production cutover.
+
+## Real dynamic Provider DSO callback/drain/dlclose (2026-10-22)
+
+A separate **private test-only** C11 Provider MODULE is now loaded through
+`dlopen(RTLD_NOW|RTLD_LOCAL)`, its function table resolved by `dlsym`, and
+its executable entropy callback invoked by the actual Owner's Association
+`init()` call. Its MAC and verify callbacks are also invoked through the
+real DSO entry table (intentionally non-cryptographic test implementations).
+The module and test program are only built under the opt-in
+`CNET_SCTP_TEST_OWNER_THREADS` gate and are **never installed/exported**
+by the research Wire SDK or production Salts SDK.
+
+A second thread posts cancellation intent while the DSO entropy callback is
+blocked inside the mapped module. The externally synchronized Generation
+lease rejects new callbacks after cancellation; `try_unload()` must refuse
+`BUSY` in two separately scheduled states: **(A) in-flight callback** and
+**(B) callback has returned but Owner TCB has not been stopped/destroyed**.
+Only after the Owner performs `stop -> drained -> destroy`, signals its
+Generation barrier, and the in-flight count is zero may the unload thread
+clear all borrowed DSO function pointers and call `dlclose(handle)`.
+Stale Generation tokens are denied both while the newer DSO is loaded and
+after closing; double-`dlclose` is forbidden. The test actually performs
+24 successive DSO open/cancel/drain/close generations in one process.
+
+The Linux C11 sanitizer job builds and runs this real DSO test; the Clang 18
+TSan job verifies **all eight first-party C sources**, including both the
+DSO module and executable, are TSan-instrumented and repeats this test and
+the pthread Owner handoff test **10 times each**. The isolated DSO fixture
+uses no worker outside caller-created pthreads, no Rust or C++ runtime, and
+no implicit production fallback.
+
+**Qualification scope:** this is real *test-module* `dlopen/dlclose` under a
+synthetic Provider callback and external Generation barrier. It does **not**
+prove a production GmSSL/DTLS or CNet Provider DSO is unload-safe, nor
+certify real CNet cancel/input/timer/close concurrent scheduling, TSan
+instrumentation of external GmSSL, full RFC interoperability, six-RID
+installed ABI, or authorization to merge/release/publish/cut over.

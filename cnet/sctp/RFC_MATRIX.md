@@ -136,3 +136,20 @@ A valid SACK **before** terminal ABORT is now previewed on an owned temporary `c
 The follow-up direct Association regression covers a real post-COOKIE SACK acknowledging one of two TSNs across the 32-bit wrap, a forged future cumulative ACK that must not change the event's last-acked point, and a valid **trailing SACK after ABORT** that MUST be ignored even at the exact T5 deadline (both T=0/T=1), with no response and no live TCB state publication.
 
 This is a private single-Owner research implementation, **not** full SACK/control-bundle conformance or production ULP integration. Other controls' side effects, independent peer confirmation, fuzzing, concurrency/TSan, installed SDK and M3/M4 remain OPEN. PR #1182 remains Draft/Open; no merge/release/publish/cutover.
+
+### M5 real DSO lifetime boundary (2026-10-22)
+
+The private POSIX C11 M5 test now dynamically loads a Provider MODULE and
+runs a blocking callback from actual DSO code while another thread requests
+cancel. Its explicit Generation lease must reject unload **during the
+callback** and again **after the callback returns but before the Owner's
+stop/drain/destroy**, then clear borrowed function pointers and perform a
+real `dlclose`. Twenty-four generations are repeatedly opened/closed.
+Stale Generation tokens fail even while a newer module is loaded. Clang 18
+TSan source-instrumentation audit covers the module, host test and SCTP
+dependencies; ten repeats and Linux ASan+UBSan back the scoped evidence.
+
+Still **OPEN**: production CNet/DTLS and cryptographic Provider DSO
+unload/replacement races, unsynchronized access (disallowed by Owner
+contract), external GmSSL TSan, independent interop, full SDK/six-RID and
+M3/M4 gates. PR #1182 remains Draft/Open; DO NOT MERGE/RELEASE/CUT OVER.
