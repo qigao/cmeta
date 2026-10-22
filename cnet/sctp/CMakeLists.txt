@@ -250,6 +250,30 @@ if(BUILD_TESTING)
 
 endif()
 
+# M5: actual POSIX-thread handoff test with external single-Owner lease.
+# Opt-in only. This test does not authorize unsynchronized concurrent API
+# calls and never enters the installed Wire-only SDK.
+option(CNET_SCTP_TEST_OWNER_THREADS "Build private POSIX Owner-handoff test" OFF)
+if(CNET_SCTP_TEST_OWNER_THREADS)
+  if(WIN32)
+    message(FATAL_ERROR "Private Owner thread gate needs POSIX Threads")
+  endif()
+  if(NOT BUILD_TESTING)
+    message(FATAL_ERROR "Owner thread gate requires BUILD_TESTING=ON")
+  endif()
+  find_package(Threads REQUIRED)
+  add_executable(cnet_sctp_owner_thread_test tests/owner_thread_test.c)
+  target_include_directories(cnet_sctp_owner_thread_test PRIVATE src)
+  target_link_libraries(cnet_sctp_owner_thread_test PRIVATE
+    cnet_sctp_assoc_proto Threads::Threads)
+  set_target_properties(cnet_sctp_owner_thread_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_compile_options(cnet_sctp_owner_thread_test PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME cnet_sctp_owner_thread_test
+    COMMAND cnet_sctp_owner_thread_test)
+endif()
+
 # Optional cryptographic research gate. Its private C11 sources and GmSSL
 # dependency MUST NOT enter the installed CNetSctpPrototype::Wire package.
 # Standalone Wire/Association CI does not require GmSSL or a C++ runtime.
