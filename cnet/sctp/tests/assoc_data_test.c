@@ -506,6 +506,32 @@ static void post_handshake_webrtc_empty_ppids(void) {
          CNET_SCTP_WEBRTC_UNSUPPORTED);
   assert(cnet_sctp_webrtc_decode(54u, fake_data, 4u, &decoded) ==
          CNET_SCTP_WEBRTC_UNSUPPORTED);
+  /* A valid output object is cleared even when the remaining arguments fail. */
+  encoded.ppid = 999u;
+  encoded.wire_bytes = fake_data;
+  encoded.wire_size = sizeof(fake_data);
+  encoded.logical_size = sizeof(fake_data);
+  encoded.binary = 1u;
+  assert(cnet_sctp_webrtc_prepare(2, fake_data, sizeof(fake_data), &encoded) ==
+         CNET_SCTP_WEBRTC_INVALID);
+  assert(encoded.ppid == 0u && encoded.wire_bytes == NULL &&
+         encoded.wire_size == 0u && encoded.logical_size == 0u &&
+         encoded.binary == 0u);
+  decoded.ppid = 999u;
+  decoded.wire_bytes = fake_data;
+  decoded.wire_size = sizeof(fake_data);
+  decoded.logical_size = sizeof(fake_data);
+  decoded.binary = 1u;
+  assert(cnet_sctp_webrtc_prepare(0, NULL, 1u, &encoded) ==
+         CNET_SCTP_WEBRTC_INVALID);
+  assert(encoded.ppid == 0u && encoded.wire_bytes == NULL &&
+         encoded.wire_size == 0u && encoded.logical_size == 0u &&
+         encoded.binary == 0u);
+  assert(cnet_sctp_webrtc_decode(51u, NULL, sizeof(fake_data), &decoded) ==
+         CNET_SCTP_WEBRTC_INVALID);
+  assert(decoded.ppid == 0u && decoded.wire_bytes == NULL &&
+         decoded.wire_size == 0u && decoded.logical_size == 0u &&
+         decoded.binary == 0u);
   assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
