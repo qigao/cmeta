@@ -2692,6 +2692,98 @@ static void peer_abort_max_reason_exact_capacity(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* M5 negative-admission contract: a peer-ABORT event is owned by the
+ * Association Owner. Non-Owner, reentrant and invalid take attempts may
+ * neither consume the event nor alter its reason and metadata. This is a
+ * deterministic Owner-admission test, NOT an effective-source TSan run. */
+static void peer_abort_event_rejects_non_owner_and_reentry(void) {
+  static const uint8_t user_reason[] = {
+    0u, 12u, 0u, 8u, 'o', 'w', 'n', 'r'
+  };
+  cnet_sctp_assoc a, b, before;
+  cnet_sctp_assoc_peer_abort_info info, before_info;
+  test_context ca, cb;
+  cnet_sctp_wire_chunk abort_chunk = {6u, 0u,
+      user_reason, sizeof(user_reason)};
+  uint8_t packet[64], output[64], reason[8];
+  size_t packet_n = 0u, output_n = 123u, reason_n = 123u, i;
+
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_ESTABLISHED;
+  a.peer_tag = b.local_tag;
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+      &abort_chunk, 1u, packet, sizeof(packet), &packet_n) ==
+      CNET_SCTP_WIRE_OK);
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&a, 1u, packet, packet_n,
+      output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
+  assert(output_n == 0u && a.peer_abort_pending &&
+      a.peer_abort_reason_size == 4u);
+  assert(!cnet_sctp_assoc_drained(&a));
+
+  memset(&info, 0xCC, sizeof(info));
+  before_info = info;
+  memset(reason, 0xCC, sizeof(reason));
+
+  /* A caller outside the Owner must not drain or stop the event. */
+  ca.on_owner = 0;
+  memcpy(&before, &a, sizeof(before));
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+      sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_OWNER);
+  assert(reason_n == 0u && memcmp(&info, &before_info, sizeof(info)) == 0);
+  assert(memcmp(&a, &before, sizeof(a)) == 0);
+  for (i = 0u; i < sizeof(reason); ++i) assert(reason[i] == 0xCCu);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OWNER);
+  assert(memcmp(&a, &before, sizeof(a)) == 0);
+  ca.on_owner = 1;
+
+  /* Provider callback reentry is rejected before event consumption. */
+  a.in_progress = 1u;
+  memcpy(&before, &a, sizeof(before));
+  reason_n = 123u;
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+      sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_BUSY);
+  assert(reason_n == 0u && memcmp(&info, &before_info, sizeof(info)) == 0);
+  assert(memcmp(&a, &before, sizeof(a)) == 0);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_BUSY);
+  assert(memcmp(&a, &before, sizeof(a)) == 0);
+  a.in_progress = 0u;
+
+  /* Invalid API arguments leave the event intact and retryable. */
+  memcpy(&before, &a, sizeof(before));
+  reason_n = 123u;
+  assert(cnet_sctp_assoc_take_peer_abort(&a, NULL, reason,
+      sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_INVALID);
+  assert(reason_n == 0u && memcmp(&a, &before, sizeof(a)) == 0);
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+      sizeof(reason), NULL) == CNET_SCTP_ASSOC_INVALID);
+  assert(memcmp(&a, &before, sizeof(a)) == 0);
+
+  reason_n = 123u;
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, NULL,
+      sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_INVALID);
+  assert(reason_n == 0u && memcmp(&a, &before, sizeof(a)) == 0);
+  assert(memcmp(&info, &before_info, sizeof(info)) == 0);
+
+  /* The rightful Owner can take once, and stop/destroy are fully drained. */
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+      sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_OK);
+  assert(reason_n == 4u && info.has_user_reason &&
+      memcmp(reason, "ownr", 4u) == 0);
+  assert(!a.peer_abort_pending && a.peer_abort_reason_size == 0u);
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+      sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_EMPTY);
+  assert(reason_n == 0u);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_drained(&a));
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(a.magic == 0u && a.peer_abort_pending == 0u);
+  for (i = 0u; i < sizeof(a.peer_abort_reason); ++i)
+    assert(a.peer_abort_reason[i] == 0u);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void error_and_abort_never_create_response_loops(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -2992,6 +3084,7 @@ int main(void) {
   peer_abort_reason_owner_pull_is_bounded();
   peer_abort_event_without_reason_and_stop_discard();
   peer_abort_max_reason_exact_capacity();
+  peer_abort_event_rejects_non_owner_and_reentry();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();
