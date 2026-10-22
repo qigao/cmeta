@@ -2639,6 +2639,59 @@ static void peer_abort_event_without_reason_and_stop_discard(void) {
   }
 }
 
+/* Entire 1200-byte accepted ABORT packet may be consumed by Cause 12.
+ * The private reason storage must preserve all 1180 bytes without truncation
+ * and support exact-capacity Owner-pull after terminating the Association. */
+static void peer_abort_max_reason_exact_capacity(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca, cb;
+  uint8_t cause[4u + CNET_SCTP_ASSOC_MAX_ABORT_REASON];
+  uint8_t packet[CNET_SCTP_ASSOC_MAX_PACKET], output[32];
+  uint8_t reason[CNET_SCTP_ASSOC_MAX_ABORT_REASON];
+  cnet_sctp_wire_chunk chunk = {6u, 0u, cause, sizeof(cause)};
+  cnet_sctp_assoc_peer_abort_info info, before_info;
+  size_t packet_n = 0u, output_n = 123u, reason_n = 123u, i;
+  setup(&a, &b, &ca, &cb);
+  a.state = CNET_SCTP_ASSOC_ESTABLISHED;
+  a.peer_tag = b.local_tag;
+  cause[0] = 0u;
+  cause[1] = 12u;
+  cause[2] = (uint8_t)(sizeof(cause) >> 8);
+  cause[3] = (uint8_t)sizeof(cause);
+  for (i = 0u; i < CNET_SCTP_ASSOC_MAX_ABORT_REASON; ++i)
+    cause[i + 4u] = (uint8_t)(i ^ 0xA5u);
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+      &chunk, 1u, packet, sizeof(packet), &packet_n) == CNET_SCTP_WIRE_OK);
+  assert(packet_n == CNET_SCTP_ASSOC_MAX_PACKET);
+  memset(output, 0xCC, sizeof(output));
+  assert(cnet_sctp_assoc_input(&a, a.last_time_ms + 1u,
+      packet, packet_n, output, 0u, &output_n) == CNET_SCTP_ASSOC_OK);
+  assert(output_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+      a.peer_abort_pending &&
+      a.peer_abort_reason_size == CNET_SCTP_ASSOC_MAX_ABORT_REASON);
+  for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xCCu);
+
+  memset(&info, 0xCC, sizeof(info));
+  before_info = info;
+  memset(reason, 0xCC, sizeof(reason));
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+      sizeof(reason) - 1u, &reason_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(reason_n == 0u && a.peer_abort_pending &&
+      memcmp(&info, &before_info, sizeof(info)) == 0);
+  for (i = 0u; i < sizeof(reason); ++i) assert(reason[i] == 0xCCu);
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+      sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_OK);
+  assert(reason_n == sizeof(reason) && info.has_user_reason);
+  assert(memcmp(reason, cause + 4u, sizeof(reason)) == 0);
+  assert(!a.peer_abort_pending && a.peer_abort_reason_size == 0u);
+  for (i = 0u; i < sizeof(a.peer_abort_reason); ++i)
+    assert(a.peer_abort_reason[i] == 0u);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void error_and_abort_never_create_response_loops(void) {
   cnet_sctp_assoc a, b;
   test_context ca, cb;
@@ -2938,6 +2991,7 @@ int main(void) {
   heartbeat_before_abort_requires_valid_info_tlv();
   peer_abort_reason_owner_pull_is_bounded();
   peer_abort_event_without_reason_and_stop_discard();
+  peer_abort_max_reason_exact_capacity();
   unsupported_control_preserves_time_watermark();
   entropy_init_fail_closed();
   normal_handshake();

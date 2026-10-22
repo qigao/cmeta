@@ -116,3 +116,15 @@ The private C11 Association now handles a bounded terminal ABORT packet accordin
 Regression coverage includes SACK+ERROR+ABORT, malformed preceding controls and malformed ABORT Causes at T5, both T-bit modes, unknown action bits before ABORT, semantically malformed HEARTBEAT and unknown STOP+REPORT after ABORT, malformed trailing Chunk Length, and Wire rejection of INIT/INIT ACK/SHUTDOWN COMPLETE bundled with ABORT in both orders.
 
 The implementation is still a **bounded private subset**. Semantic processing/ULP reporting of preceding controls, full OOTB response generation, independent peer interoperability, fuzz/TSan, M3 PR-SCTP/reset/interleaving, and installed-SDK/six-RID qualification remain OPEN. PR #1182 remains Draft/Open; do not merge, publish, release, or cut over.
+
+## Peer-ABORT Owner-pulled ULP event (2026-10-22)
+
+Private C11 SCTP Association now supports an **exactly-once, Owner-pulled** peer-ABORT terminal record (RFC 9260 §§3.3.10.12, 9.1, 11.2.5). This is NOT an installed SDK or production API.
+
+- After complete CRC, Verification Tag (T=0 Local Tag / T=1 nonzero Peer Tag), Chunk/Cause and supported-prefix admission, a peer ABORT still terminates **silently before packet-triggered T5**. It records a terminal event before destroying its DATA TCB.
+- The record retains a typed flag indicating peer ABORT even when there is **no Cause 12**, and optionally captures the first User-Initiated Abort Cause 12's **exact bytes**, plus pre-teardown `last_acked_tsn` / `last_sent_tsn` where a DATA TCB exists. It does not persist packet pointers, provider state, locks or threads.
+- The private ingress ceiling of 1200 bytes bounds raw reason bytes to **1180** (12-byte common header + 4-byte ABORT + 4-byte Cause header). No truncation or unbounded heap. Rejected/malformed packets never publish an event.
+- `cnet_sctp_assoc_take_peer_abort()` requires the Owner. Insufficient caller buffer returns CAPACITY without consuming the event or modifying the caller's info/output; a successful take copies the exact reason bytes and clears internal storage. A second take returns EMPTY. Explicit `stop()` discards an unread event and clears its bytes; `destroy()` clears the whole Association.
+- Regression tests cover a preceding non-user cause, final unpadded Cause 12, zero-byte Cause-12 absence, exact 1180-byte upper boundary, too-small output retry, terminal no-reply and lifecycle wipe. A real post-COOKIE DATA path also verifies last-ACKed/last-sent TSN capture before the DATA TCB is torn down.
+
+Remaining **OPEN**: callback/ULP integration beyond this private Owner-pull seam, complete preceding-control semantics, actual independent SCTP peer/DTLS/Browser wire oracle, fuzz/TSan, PR-SCTP/reset/interleaving, and installed SDK/six-RID. Passing private C11 tests does not authorize merge, release, publish or production cutover.

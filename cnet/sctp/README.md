@@ -66,3 +66,7 @@ The prototype handles a bounded handshake, DATA/SACK/T3/Fast Recovery/flow-contr
 **Release status: NO-GO.** See [RELEASE_READINESS.md](RELEASE_READINESS.md) for exact 2.3.0/rc.15 ancestry, M0–M6 gaps, installed-SDK qualifications and the separation between Salts.Native stable release and this non-production prototype.
 
 **Draft / DO NOT MERGE:** [PR #1182](https://github.com/qigao/salts/pull/1182). Preserve current production CNet, TurboMedia/usrsctp and published SDK unchanged.
+
+### Experimental peer ABORT reason retrieval (private)
+
+The C11 Association prototype retains one bounded, owned peer-ABORT terminal event for the existing Owner to pull with `cnet_sctp_assoc_take_peer_abort()`. The event includes optional RFC 9260 User-Initiated Abort Cause 12 reason bytes (up to the private 1180-byte limit), and pre-teardown TSN summary if DATA was established. The event is consumed exactly once; capacity failure is retryable without mutation; `stop()` explicitly discards it. No callbacks, borrowed wire pointers, worker or production SDK export are introduced. This is not full ULP integration or interop qualification.
