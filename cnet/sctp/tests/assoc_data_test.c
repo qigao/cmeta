@@ -1411,9 +1411,122 @@ static void peer_abort_event_captures_data_tsn_before_teardown(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* A real, cumulative SACK before a terminal ABORT changes the TSN that
+ * the upper layer sees as last acknowledged. The live DATA TCB is never
+ * partially mutated: the terminal path still destroys it without sending
+ * any reply (including at a pending T5 timeout). */
+static void peer_abort_prefix_sack_updates_ulp_ack_snapshot(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  const uint8_t payloads[2] = {'a', 'b'};
+  static const uint8_t abort_reason[8] = {0u, 12u, 0u, 8u, 'p', 'e', 'e', 'r'};
+  uint8_t data[2][1200], sack[1200], combined[1200], response[1200], reason[8];
+  cnet_sctp_wire_header sack_header = {0};
+  cnet_sctp_wire_decoder sack_decoder = {0};
+  cnet_sctp_wire_chunk chunks[2] = {{0}};
+  cnet_sctp_assoc_peer_abort_info info = {0};
+  size_t data_n[2] = {0u}, sack_n = 0u, combined_n = 0u;
+  size_t reply_n = 123u, reason_n = 0u;
+  uint32_t original_ack, first_sent, last_sent;
+  unsigned int i;
+
+  ready_pair(&a, &b, &ca, &cb);
+  original_ack = a.data.last_ack;
+  for (i = 0u; i < 2u; ++i) {
+    assert(cnet_sctp_assoc_send_message(&a, 6u + i, 0u, 51u, 0,
+        payloads + i, 1u, data[i], sizeof(data[i]), &data_n[i]) ==
+        CNET_SCTP_ASSOC_OK);
+  }
+  first_sent = a.initial_tsn;
+  last_sent = a.data.next_tsn - 1u;
+  assert(a.data.last_ack == original_ack && original_ack != first_sent);
+  assert(cnet_sctp_assoc_input(&b, 8u, data[0], data_n[0],
+      sack, sizeof(sack), &sack_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_wire_decode(sack, sack_n, &sack_header,
+      &sack_decoder) == CNET_SCTP_WIRE_OK);
+  assert(sack_header.chunk_count == 1u);
+  assert(cnet_sctp_wire_next_chunk(&sack_decoder, &chunks[0]) ==
+      CNET_SCTP_WIRE_OK && chunks[0].type == 3u);
+  chunks[1].type = 6u;
+  chunks[1].flags = 0u;
+  chunks[1].value = abort_reason;
+  chunks[1].value_size = sizeof(abort_reason);
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag, chunks, 2u,
+      combined, sizeof(combined), &combined_n) == CNET_SCTP_WIRE_OK);
+
+  /* A valid terminal packet with an authentic ACK is silent with cap=0. */
+  assert(cnet_sctp_assoc_input(&a, 9u, combined, combined_n,
+      response, 0u, &reply_n) == CNET_SCTP_ASSOC_OK);
+  assert(reply_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED &&
+      !a.data_ready && a.peer_abort_pending);
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, reason,
+      sizeof(reason), &reason_n) == CNET_SCTP_ASSOC_OK);
+  assert(info.has_tsn && info.has_user_reason &&
+      info.last_acked_tsn == first_sent &&
+      info.last_acked_tsn != original_ack &&
+      info.last_sent_tsn == last_sent);
+  assert(reason_n == 4u && memcmp(reason, "peer", 4u) == 0);
+
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
+/* A shape-valid but semantically impossible SACK before ABORT must not
+ * falsely increase the ULP last-acked TSN. The authenticated ABORT itself
+ * remains terminal, and no response packet is sent. */
+static void peer_abort_prefix_invalid_sack_does_not_forge_ack(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  static const uint8_t payload = 'x';
+  uint8_t data[1200], combined[1200], response[32];
+  uint8_t sack_body[12] = {0};
+  cnet_sctp_wire_chunk chunks[2] = {{0}};
+  cnet_sctp_assoc_peer_abort_info info = {0};
+  size_t data_n = 0u, combined_n = 0u, reply_n = 123u, reason_n = 123u;
+  uint32_t old_ack, future;
+
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_send_message(&a, 6u, 0u, 51u, 0,
+      &payload, 1u, data, sizeof(data), &data_n) == CNET_SCTP_ASSOC_OK);
+  old_ack = a.data.last_ack;
+  future = a.data.next_tsn; /* Claims an unsent TSN. */
+  sack_body[0] = (uint8_t)(future >> 24);
+  sack_body[1] = (uint8_t)(future >> 16);
+  sack_body[2] = (uint8_t)(future >> 8);
+  sack_body[3] = (uint8_t)future;
+  sack_body[4] = 0u; sack_body[5] = 0u;
+  sack_body[6] = 0x20u; sack_body[7] = 0u; /* rwnd = 8192 */
+  chunks[0].type = 3u;
+  chunks[0].flags = 0u;
+  chunks[0].value = sack_body;
+  chunks[0].value_size = sizeof(sack_body);
+  chunks[1].type = 6u;
+  chunks[1].flags = 0u;
+  chunks[1].value = NULL;
+  chunks[1].value_size = 0u;
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.local_tag,
+      chunks, 2u, combined, sizeof(combined), &combined_n) ==
+      CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_assoc_input(&a, 7u, combined, combined_n,
+      response, 0u, &reply_n) == CNET_SCTP_ASSOC_OK);
+  assert(reply_n == 0u && a.state == CNET_SCTP_ASSOC_FAILED);
+  assert(cnet_sctp_assoc_take_peer_abort(&a, &info, NULL, 0u,
+      &reason_n) == CNET_SCTP_ASSOC_OK);
+  assert(reason_n == 0u && info.has_tsn &&
+      info.last_acked_tsn == old_ack && !info.has_user_reason);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
   single_data_sack_capacity_preserves_input_watermark();
   peer_abort_event_captures_data_tsn_before_teardown();
+  peer_abort_prefix_sack_updates_ulp_ack_snapshot();
+  peer_abort_prefix_invalid_sack_does_not_forge_ack();
   association_accepts_sack_duplicate_list_beyond_rx_slots();
   post_cookie_bundled_data();
   shutdown_no_inflight_and_t2();

@@ -502,6 +502,41 @@ static void record_peer_abort(cnet_sctp_assoc *s,
   s->peer_abort_pending = 1u;
 }
 
+/* Control chunks preceding ABORT are ordered before that terminal
+ * transition (RFC 9260 §3.3.7). Preview valid pre-ABORT SACKs using the
+ * existing DATA engine on an owned candidate: only the cumulative-ACK TSN
+ * is projected into the ULP event. The live DATA TCB will be destroyed by
+ * ABORT, so ACK settlement, congestion/timer bookkeeping and any outgoing
+ * packet MUST NOT be committed or emitted by this preview. Semantically
+ * inadmissible SACKs are ignored here, not allowed to block a valid ABORT. */
+static uint32_t preview_abort_prefix_last_ack(const cnet_sctp_assoc *s,
+    uint64_t now, const cnet_sctp_wire_decoder *decoded, size_t abort_index) {
+  cnet_sctp_data candidate;
+  cnet_sctp_wire_decoder cursor;
+  uint8_t sack_packet[CNET_SCTP_ASSOC_MAX_PACKET];
+  uint8_t ignored_response[1] = {0xCCu};
+  size_t i;
+  if (!s->data_ready || !decoded || abort_index == 0u)
+    return s->data.last_ack;
+  memcpy(&candidate, &s->data, sizeof(candidate));
+  cursor = *decoded;
+  for (i = 0u; i < abort_index; ++i) {
+    cnet_sctp_wire_chunk prefix;
+    size_t packet_size = 0u, response_size = 0u;
+    if (cnet_sctp_wire_next_chunk(&cursor, &prefix) != CNET_SCTP_WIRE_OK)
+      break; /* Entire packet framing was validated by Wire already. */
+    if (prefix.type != 3u) continue;
+    if (cnet_sctp_wire_encode(s->config.remote_port, s->config.local_port,
+        s->local_tag, &prefix, 1u, sack_packet, sizeof(sack_packet),
+        &packet_size) != CNET_SCTP_WIRE_OK)
+      continue;
+    (void)cnet_sctp_data_input(&candidate, now, sack_packet, packet_size,
+        ignored_response, sizeof(ignored_response), &response_size);
+    /* input_sack is atomic on non-OK; no real TCB is touched. */
+  }
+  return candidate.last_ack;
+}
+
 /* ABORT is terminal. Validate every control before the first ABORT, then
  * ignore later Chunk semantics as required by RFC 9260 Section 3.3.7.
  * Wire decoding has already checked framing and the DATA+ABORT prohibition. */
@@ -1301,9 +1336,14 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
       return CNET_SCTP_ASSOC_PROTOCOL;
     if (s->state == CNET_SCTP_ASSOC_CLOSED)
       return CNET_SCTP_ASSOC_PROTOCOL;
-    /* Capture metadata before its DATA TCB is destroyed. The event is
-     * private Owner storage; parsing never lends a packet-backed view. */
+    /* Capture metadata before its DATA TCB is destroyed. Accepted
+     * prefix-SACK progress is projected from an owned candidate, not by
+     * mutating the live TCB or sending an ACK to the aborting peer. */
     record_peer_abort(s, &terminal_chunk);
+    if (s->data_ready && terminal_index != 0u)
+      s->peer_abort_info.last_acked_tsn =
+          preview_abort_prefix_last_ack(s, now, &preflight_decoder,
+              terminal_index);
     if (s->data_ready) {
       (void)cnet_sctp_data_stop(&s->data);
       memset(&s->data, 0, sizeof(s->data));
