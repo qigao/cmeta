@@ -150,8 +150,8 @@ static void test_multiple_chunks_and_padding(void) {
  * fixed port/tag/type/flags/length bytes (CRC32C = 0xd0465356). */
 static void test_max_chunk_count_and_no_partial_decode(void) {
   cnet_sctp_wire_chunk chunks[CNET_SCTP_WIRE_MAX_CHUNKS + 1u];
-  cnet_sctp_wire_header header, before_header;
-  cnet_sctp_wire_decoder decoder, before_decoder;
+  cnet_sctp_wire_header header;
+  cnet_sctp_wire_decoder decoder;
   cnet_sctp_wire_chunk view = {0};
   uint8_t packet[12u + 4u * (CNET_SCTP_WIRE_MAX_CHUNKS + 1u)];
   const size_t full_count = CNET_SCTP_WIRE_MAX_CHUNKS;
@@ -191,7 +191,7 @@ static void test_max_chunk_count_and_no_partial_decode(void) {
   assert(cnet_sctp_wire_next_chunk(&decoder, &view) == CNET_SCTP_WIRE_END);
 
   /* A separate, CRC-valid 129th Chunk reaches the decode count gate.
-   * Caller-owned parsed outputs are only published after full validation. */
+   * Failed decoding clears parsed outputs and never publishes partial state. */
   packet[full_size] = 0xA2u;
   packet[full_size + 1u] = 0x5Au;
   packet[full_size + 2u] = 0u;
@@ -199,12 +199,13 @@ static void test_max_chunk_count_and_no_partial_decode(void) {
   seal(packet, full_size + 4u);
   memset(&header, 0xCC, sizeof(header));
   memset(&decoder, 0xCC, sizeof(decoder));
-  before_header = header;
-  before_decoder = decoder;
   assert(cnet_sctp_wire_decode(packet, full_size + 4u,
       &header, &decoder) == CNET_SCTP_WIRE_CAPACITY);
-  assert(memcmp(&header, &before_header, sizeof(header)) == 0 &&
-      memcmp(&decoder, &before_decoder, sizeof(decoder)) == 0);
+  assert(header.source_port == 0u && header.destination_port == 0u &&
+      header.verification_tag == 0u && header.checksum == 0u &&
+      header.chunk_count == 0u);
+    assert(decoder.packet == NULL && decoder.packet_size == 0u &&
+      decoder.next_offset == 0u && decoder.chunks_remaining == 0u);
 }
 
 /* RFC 9260 §3.3.7 / §6.10 permits ABORT with control chunks but forbids
@@ -214,8 +215,8 @@ static void test_abort_data_bundle_rejected(void) {
   uint8_t data_value[13] = {0};
   uint8_t sack_value[12] = {0};
   uint8_t output[64], packet[64];
-  cnet_sctp_wire_header header, before_header;
-  cnet_sctp_wire_decoder decoder, before_decoder;
+  cnet_sctp_wire_header header;
+  cnet_sctp_wire_decoder decoder;
   cnet_sctp_wire_chunk allowed[2] = {
     {3u, 0u, sack_value, sizeof(sack_value)},
     {6u, 0u, NULL, 0u}
@@ -259,12 +260,13 @@ static void test_abort_data_bundle_rejected(void) {
     seal(packet, 36u);
     memset(&header, 0xCC, sizeof(header));
     memset(&decoder, 0xCC, sizeof(decoder));
-    before_header = header;
-    before_decoder = decoder;
     assert(cnet_sctp_wire_decode(packet, 36u, &header, &decoder) ==
         CNET_SCTP_WIRE_MALFORMED);
-    assert(memcmp(&header, &before_header, sizeof(header)) == 0 &&
-        memcmp(&decoder, &before_decoder, sizeof(decoder)) == 0);
+    assert(header.source_port == 0u && header.destination_port == 0u &&
+      header.verification_tag == 0u && header.checksum == 0u &&
+      header.chunk_count == 0u);
+    assert(decoder.packet == NULL && decoder.packet_size == 0u &&
+      decoder.next_offset == 0u && decoder.chunks_remaining == 0u);
   }
 
   /* Control-before-ABORT remains legal; do not over-restrict ABORT to a
