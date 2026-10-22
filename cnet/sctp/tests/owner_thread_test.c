@@ -208,6 +208,116 @@ static void *worker(void *arg_) {
   return NULL;
 }
 
+/* Cancellation requested from another real thread while the Owner is
+ * blocked inside its entropy Provider callback. The canceller only posts an
+ * externally synchronized intent; it must NEVER call Association APIs or
+ * unload a Provider while that callback is still in flight.
+ *
+ * The Owner observes cancellation after its callback returns, then performs
+ * stop/drain/destroy. This tests the required ordering and is not yet a real
+ * Provider DSO load/unload race. */
+typedef struct inflight_cancel_fixture {
+  pthread_mutex_t mutex;
+  pthread_cond_t changed;
+  pthread_t owner_thread;
+  cnet_sctp_assoc association;
+  cnet_sctp_assoc_config config;
+  unsigned entered;
+  unsigned cancel_requested;
+  unsigned release_callback;
+  unsigned callback_count;
+  cnet_sctp_assoc_status reentry_status;
+} inflight_cancel_fixture;
+
+static int cancel_owner_check(void *context) {
+  const inflight_cancel_fixture *f =
+      (const inflight_cancel_fixture *)context;
+  return pthread_equal(pthread_self(), f->owner_thread);
+}
+
+static int entropy_with_inflight_cancel(void *context, uint8_t *out,
+    size_t size) {
+  inflight_cancel_fixture *f = (inflight_cancel_fixture *)context;
+  /* A callback cannot recursively close its own Association. */
+  f->reentry_status = cnet_sctp_assoc_stop(&f->association);
+  assert(f->reentry_status == CNET_SCTP_ASSOC_BUSY);
+  assert(pthread_mutex_lock(&f->mutex) == 0);
+  ++f->callback_count;
+  f->entered = 1u;
+  assert(pthread_cond_broadcast(&f->changed) == 0);
+  while (!f->release_callback)
+    assert(pthread_cond_wait(&f->changed, &f->mutex) == 0);
+  assert(f->cancel_requested);
+  assert(pthread_mutex_unlock(&f->mutex) == 0);
+  return test_entropy(NULL, out, size);
+}
+
+static void *owner_with_inflight_cancel(void *context) {
+  inflight_cancel_fixture *f = (inflight_cancel_fixture *)context;
+  f->owner_thread = pthread_self();
+  memset(&f->config, 0, sizeof(f->config));
+  f->config.local_port = 5000u;
+  f->config.remote_port = 5001u;
+  f->config.receive_window = 8192u;
+  f->config.outbound_streams = 2u;
+  f->config.inbound_streams = 2u;
+  f->config.t1_ms = 100u;
+  f->config.t1_max_ms = 400u;
+  f->config.cookie_lifetime_ms = 1000u;
+  f->config.peer_binding = UINT64_C(0x1029384756abcdef);
+  f->config.max_retransmits = 3u;
+  f->config.is_owner = cancel_owner_check;
+  f->config.entropy = entropy_with_inflight_cancel;
+  f->config.mac = test_mac;
+  f->config.verify_mac = test_verify;
+  f->config.provider_context = f;
+
+  assert(cnet_sctp_assoc_init(&f->association, &f->config, 0u) ==
+      CNET_SCTP_ASSOC_OK);
+  /* Observe the cancellation request through its synchronization barrier. */
+  assert(pthread_mutex_lock(&f->mutex) == 0);
+  assert(f->cancel_requested && f->callback_count == 1u);
+  assert(pthread_mutex_unlock(&f->mutex) == 0);
+  assert(cnet_sctp_assoc_stop(&f->association) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_drained(&f->association));
+  assert(cnet_sctp_assoc_destroy(&f->association) == CNET_SCTP_ASSOC_OK);
+  assert(f->association.magic == 0u);
+  return NULL;
+}
+
+static void *post_cancel_during_callback(void *context) {
+  inflight_cancel_fixture *f = (inflight_cancel_fixture *)context;
+  assert(pthread_mutex_lock(&f->mutex) == 0);
+  while (!f->entered)
+    assert(pthread_cond_wait(&f->changed, &f->mutex) == 0);
+  /* No touching the unleased Association from the other thread. */
+  f->cancel_requested = 1u;
+  f->release_callback = 1u;
+  assert(pthread_cond_broadcast(&f->changed) == 0);
+  assert(pthread_mutex_unlock(&f->mutex) == 0);
+  return NULL;
+}
+
+static void test_cancel_while_provider_callback_in_flight(void) {
+  unsigned round;
+  for (round = 0u; round < 64u; ++round) {
+    inflight_cancel_fixture f = {0};
+    pthread_t owner, canceller;
+    assert(pthread_mutex_init(&f.mutex, NULL) == 0);
+    assert(pthread_cond_init(&f.changed, NULL) == 0);
+    assert(pthread_create(&canceller, NULL,
+        post_cancel_during_callback, &f) == 0);
+    assert(pthread_create(&owner, NULL,
+        owner_with_inflight_cancel, &f) == 0);
+    assert(pthread_join(owner, NULL) == 0);
+    assert(pthread_join(canceller, NULL) == 0);
+    assert(f.callback_count == 1u && f.reentry_status ==
+        CNET_SCTP_ASSOC_BUSY && f.association.magic == 0u);
+    assert(pthread_cond_destroy(&f.changed) == 0);
+    assert(pthread_mutex_destroy(&f.mutex) == 0);
+  }
+}
+
 int main(void) {
   owner_fixture f = {0};
   worker_arg a = {&f, 0u}, b = {&f, 1u};
@@ -222,6 +332,7 @@ int main(void) {
   assert(f.assoc.magic == 0u);
   assert(pthread_cond_destroy(&f.turn_changed) == 0);
   assert(pthread_mutex_destroy(&f.mutex) == 0);
+  test_cancel_while_provider_callback_in_flight();
   puts("CNet SCTP Owner-thread handoff/stop/event/drain/destroy: PASS");
   return 0;
 }
