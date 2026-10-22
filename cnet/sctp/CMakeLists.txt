@@ -272,6 +272,31 @@ if(CNET_SCTP_TEST_OWNER_THREADS)
     -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME cnet_sctp_owner_thread_test
     COMMAND cnet_sctp_owner_thread_test)
+  # Actual dlopen/dlclose validation is POSIX only and never installed.
+  # Keep the provider and host as independently compiled C11 code: a future
+  # DSO unload must wait until the last borrowed callback has settled.
+  add_library(cnet_sctp_test_provider_dso MODULE
+    tests/provider_dso_fixture.c)
+  target_include_directories(cnet_sctp_test_provider_dso PRIVATE tests)
+  target_link_libraries(cnet_sctp_test_provider_dso PRIVATE Threads::Threads)
+  set_target_properties(cnet_sctp_test_provider_dso PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_compile_options(cnet_sctp_test_provider_dso PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+
+  add_executable(cnet_sctp_provider_dso_test tests/provider_dso_test.c)
+  target_include_directories(cnet_sctp_provider_dso_test PRIVATE src tests)
+  target_link_libraries(cnet_sctp_provider_dso_test PRIVATE
+    cnet_sctp_assoc_proto Threads::Threads ${CMAKE_DL_LIBS})
+  set_target_properties(cnet_sctp_provider_dso_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_compile_options(cnet_sctp_provider_dso_test PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(cnet_sctp_provider_dso_test
+    cnet_sctp_test_provider_dso)
+  add_test(NAME cnet_sctp_provider_dso_test
+    COMMAND cnet_sctp_provider_dso_test
+      $<TARGET_FILE:cnet_sctp_test_provider_dso>)
 endif()
 
 # Optional cryptographic research gate. Its private C11 sources and GmSSL
