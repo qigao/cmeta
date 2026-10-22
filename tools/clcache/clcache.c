@@ -1379,6 +1379,8 @@ static BOOL BuildCommandInfo(int argc, LPWSTR* argv, struct cl_command_info* Com
 	return TRUE;
 }
 
+static BOOL CacheTraceEnabled(void);
+
 static BOOL ExpandResponseFiles(int argc, LPWSTR* argv, struct memory_arena* Arena,
                                 int* ExpandedArgc, LPWSTR** ExpandedArgv)
 {
@@ -1416,7 +1418,10 @@ static BOOL ExpandResponseFiles(int argc, LPWSTR* argv, struct memory_arena* Are
 
 		LPWSTR ResponseText = NULL;
 		if(!ReadResponseFile(argv[i] + 1, Arena, &ResponseText))
+		{
+			if(CacheTraceEnabled()) WriteStderr(CSTR("clcache: RESPONSE_FILE_FAILURE=read_failed\\n"));
 			return FALSE;
+		}
 
 		while(IsWhitespace(*ResponseText))
 			++ResponseText;
@@ -1429,6 +1434,7 @@ static BOOL ExpandResponseFiles(int argc, LPWSTR* argv, struct memory_arena* Are
 		{
 			if(ResponseArgv)
 				LocalFree(ResponseArgv);
+			if(CacheTraceEnabled()) WriteStderr(CSTR("clcache: RESPONSE_FILE_FAILURE=argument_parse_failed\\n"));
 			return FALSE;
 		}
 
@@ -1441,6 +1447,7 @@ static BOOL ExpandResponseFiles(int argc, LPWSTR* argv, struct memory_arena* Are
 				if(Arg.Data[k] == L'\r' || Arg.Data[k] == L'\n')
 				{
 					LocalFree(ResponseArgv);
+					if(CacheTraceEnabled()) WriteStderr(CSTR("clcache: RESPONSE_FILE_FAILURE=embedded_newline\\n"));
 					return FALSE;
 				}
 			}
@@ -1449,6 +1456,7 @@ static BOOL ExpandResponseFiles(int argc, LPWSTR* argv, struct memory_arena* Are
 			{
 				// Microsoft CL command files cannot nest another @file.
 				LocalFree(ResponseArgv);
+				if(CacheTraceEnabled()) WriteStderr(CSTR("clcache: RESPONSE_FILE_FAILURE=nested_response_file\\n"));
 				return FALSE;
 			}
 
