@@ -1381,6 +1381,38 @@ static BOOL BuildCommandInfo(int argc, LPWSTR* argv, struct cl_command_info* Com
 
 static BOOL CacheTraceEnabled(void);
 
+static BOOL NormalizeResponseFileNewlines(LPWSTR Text)
+{
+	BOOL InQuotes = FALSE;
+	size_t Backslashes = 0;
+	for(LPWSTR p = Text; *p; ++p)
+	{
+		if(*p == L'\\')
+		{
+			++Backslashes;
+			continue;
+		}
+
+		if(*p == L'"')
+		{
+			if((Backslashes & 1u) == 0u)
+				InQuotes = !InQuotes;
+			Backslashes = 0;
+			continue;
+		}
+
+		Backslashes = 0;
+		if(*p == L'\r' || *p == L'\n')
+		{
+			/* Newlines separate arguments, but a quoted argument may not span lines. */
+			if(InQuotes)
+				return FALSE;
+			*p = L' ';
+		}
+	}
+	return TRUE;
+}
+
 static BOOL ExpandResponseFiles(int argc, LPWSTR* argv, struct memory_arena* Arena,
                                 int* ExpandedArgc, LPWSTR** ExpandedArgv)
 {
@@ -1427,6 +1459,11 @@ static BOOL ExpandResponseFiles(int argc, LPWSTR* argv, struct memory_arena* Are
 			++ResponseText;
 		if(*ResponseText == L'\0')
 			continue;
+		if(!NormalizeResponseFileNewlines(ResponseText))
+		{
+			if(CacheTraceEnabled()) WriteStderr(CSTR("clcache: RESPONSE_FILE_FAILURE=quoted_argument_spans_lines\\n"));
+			return FALSE;
+		}
 
 		int ResponseArgc = 0;
 		LPWSTR* ResponseArgv = CommandLineToArgvW(ResponseText, &ResponseArgc);
