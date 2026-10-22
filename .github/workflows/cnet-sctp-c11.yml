@@ -69,8 +69,9 @@ jobs:
             -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -fPIE" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread -pie"
           cmake --build build-sctp-tsan --target cnet_sctp_owner_thread_test --parallel 2
-          ctest --test-dir build-sctp-tsan --output-on-failure \
-            -R '^cnet_sctp_owner_thread_test
+          ctest --test-dir build-sctp-tsan --output-on-failure --repeat until-fail:10 -R cnet_sctp_owner_thread_test
+
+  gmssl-mac-c11:
     name: C11 cookie MAC with pinned GmSSL, no SDK export
     runs-on: ubuntu-24.04
     timeout-minutes: 50
