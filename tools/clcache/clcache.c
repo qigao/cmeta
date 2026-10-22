@@ -2477,8 +2477,8 @@ static int CacheMain(int argc, LPWSTR* argv)
 	{
 		if(CacheTraceEnabled())
 			WriteStderr(ResponseFilesExpanded
-				? CSTR("clcache: BYPASS=command_not_cacheable\\n")
-				: CSTR("clcache: BYPASS=response_file_expansion_failed\\n"));
+				? CSTR("clcache: BYPASS=command_not_cacheable\n")
+				: CSTR("clcache: BYPASS=response_file_expansion_failed\n"));
 		LPWSTR CmdLine = GetCommandLineW();
 
 		// Strip clcache.exe from command line. Either quoted or unquoted
