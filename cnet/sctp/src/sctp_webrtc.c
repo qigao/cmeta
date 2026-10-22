@@ -8,10 +8,11 @@ cnet_sctp_webrtc_status cnet_sctp_webrtc_prepare(
     int binary, const void *bytes, size_t logical_size,
     cnet_sctp_webrtc_payload *out) {
   cnet_sctp_webrtc_payload value = {0};
-  if (!out || (binary != 0 && binary != 1) ||
+  if (!out) return CNET_SCTP_WEBRTC_INVALID;
+  memset(out, 0, sizeof(*out));
+  if ((binary != 0 && binary != 1) ||
       (logical_size != 0u && !bytes))
     return CNET_SCTP_WEBRTC_INVALID;
-  memset(out, 0, sizeof(*out));
   if (logical_size == 0u) {
     value.ppid = binary ? CNET_SCTP_WEBRTC_EMPTY_BINARY_PPID :
                           CNET_SCTP_WEBRTC_EMPTY_TEXT_PPID;
@@ -34,8 +35,9 @@ cnet_sctp_webrtc_status cnet_sctp_webrtc_decode(
     cnet_sctp_webrtc_payload *out) {
   cnet_sctp_webrtc_payload value = {0};
   const uint8_t *wire = (const uint8_t *)bytes;
-  if (!out || !wire) return CNET_SCTP_WEBRTC_INVALID;
+  if (!out) return CNET_SCTP_WEBRTC_INVALID;
   memset(out, 0, sizeof(*out));
+  if (!wire) return CNET_SCTP_WEBRTC_INVALID;
   if (ppid == CNET_SCTP_WEBRTC_TEXT_PPID ||
       ppid == CNET_SCTP_WEBRTC_BINARY_PPID) {
     if (wire_size == 0u) return CNET_SCTP_WEBRTC_INVALID;
