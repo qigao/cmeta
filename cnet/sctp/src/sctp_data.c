@@ -277,12 +277,12 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
 cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now,
     uint16_t stream, uint32_t ppid, int unordered, const void *payload,
     size_t n, void *output, size_t cap, size_t *written) {
+  if (written) *written = 0u;
   cnet_sctp_data_status status = guard(d);
   uint16_t seq;
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!payload || !output || !written || n == 0u ||
       stream >= d->config.outbound_streams) return CNET_SCTP_DATA_INVALID;
-  *written = 0u;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
   if (d->pending.active) return CNET_SCTP_DATA_CAPACITY;
   if (n > CNET_SCTP_DATA_PAYLOAD_MAX) return CNET_SCTP_DATA_CAPACITY;
@@ -302,6 +302,7 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now,
 cnet_sctp_data_status cnet_sctp_data_send_bundle(cnet_sctp_data *d,
     uint64_t now, const cnet_sctp_data_bundle_item *items, size_t count,
     void *output, size_t cap, size_t *written) {
+  if (written) *written = 0u;
   cnet_sctp_data_status status = guard(d);
   cnet_sctp_data staged;
   uint8_t singles[CNET_SCTP_DATA_BUNDLE_MAX][CNET_SCTP_DATA_MTU];
@@ -310,7 +311,6 @@ cnet_sctp_data_status cnet_sctp_data_send_bundle(cnet_sctp_data *d,
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!items || !output || !written || count == 0u)
     return CNET_SCTP_DATA_INVALID;
-  *written = 0u;
   if (count > CNET_SCTP_DATA_BUNDLE_MAX) return CNET_SCTP_DATA_CAPACITY;
   /* Retained tickets are the source of truth; there is intentionally no
    * shadow tx_count counter that could drift after SACK reneging/cleanup.
@@ -791,13 +791,13 @@ int cnet_sctp_data_outbound_drained(const cnet_sctp_data *d) {
 cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now,
     const void *packet, size_t packet_size, void *out, size_t cap,
     size_t *written) {
+  if (written) *written = 0u;
   cnet_sctp_data_status status = guard(d);
   cnet_sctp_wire_header header;
   cnet_sctp_wire_decoder parser;
   cnet_sctp_wire_chunk chunk;
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!packet || !out || !written) return CNET_SCTP_DATA_INVALID;
-  *written = 0u;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
   if (cnet_sctp_wire_decode(packet, packet_size, &header, &parser) !=
       CNET_SCTP_WIRE_OK ||
@@ -863,11 +863,11 @@ static cnet_sctp_data_rx *find_rx_tsn(cnet_sctp_data *d, uint32_t tsn) {
 cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
     cnet_sctp_data_message *meta, void *out, size_t cap,
     size_t *written) {
+  if (written) *written = 0u;
   cnet_sctp_data_status status = guard(d);
   unsigned int i;
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!meta || !out || !written) return CNET_SCTP_DATA_INVALID;
-  *written = 0u;
   for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
     cnet_sctp_data_rx *start = &d->rx[i];
     uint32_t tsn;
@@ -938,11 +938,11 @@ cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
  * timer/callback. Capacity refusal must preserve all receive state. */
 cnet_sctp_data_status cnet_sctp_data_window_update(cnet_sctp_data *d,
     uint64_t now, void *out, size_t cap, size_t *written) {
+  if (written) *written = 0u;
   cnet_sctp_data_status status = guard(d);
   size_t available;
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!out || !written) return CNET_SCTP_DATA_INVALID;
-  *written = 0u;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
   if (!d->window_update_pending) return CNET_SCTP_DATA_EMPTY;
   available = rx_available(d);
@@ -959,11 +959,11 @@ cnet_sctp_data_status cnet_sctp_data_window_update(cnet_sctp_data *d,
 
 cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
     void *out, size_t cap, size_t *written) {
+  if (written) *written = 0u;
   cnet_sctp_data_status status = guard(d);
   cnet_sctp_data_tx *oldest;
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!out || !written) return CNET_SCTP_DATA_INVALID;
-  *written = 0u;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
   /* RFC 9260 6.1(A): Owner-driven zero-window probing after one RTO,
    * exponentially bounded. No T3 cwnd reduction or retransmit-budget
