@@ -27,8 +27,7 @@ ANY_PROVIDER = re.compile(
     r"^\s*(?:-\s*)?uses:\s+qigao/vcpkg-cache/.github/actions/"
 )
 EXACT_SHA = re.compile(r"^[0-9a-f]{40}$")
-MIGRATED_FILES = (
-    "native-build.yml",
+PINNED_PROVIDER_FILES = (
     "cnet-tongsuo-rfc8998.yml",
     "cnet-module-once-tsan.yml",
     "cnet-module-once-mixed-sdk-tsan.yml",
@@ -50,7 +49,7 @@ def check(lines: dict[str, str]) -> dict:
             if EXACT_SHA.fullmatch(sha) is None:
                 raise ValueError(
                     f"{filename}:{lineno}: mutable/unreviewed provider ref {sha!r}")
-            if filename in MIGRATED_FILES:
+            if filename in PINNED_PROVIDER_FILES:
                 expected = (
                     EXISTING_CANDIDATE_VCPKG_PIN
                     if filename == "ace-candidate-native-sdk.yml"
@@ -66,7 +65,7 @@ def check(lines: dict[str, str]) -> dict:
                 if sha == PIN else None,
             ))
 
-    for filename in MIGRATED_FILES:
+    for filename in PINNED_PROVIDER_FILES:
         actual = [x for x in rows if x["workflow"] == filename]
         if len(actual) != 2 or {
             x["action"].rsplit("/", 1)[-1] for x in actual
@@ -74,19 +73,22 @@ def check(lines: dict[str, str]) -> dict:
             raise ValueError(
                 f"{filename}: expected one exact vcpkg and one exact re2c Action")
     migrated_count = sum(
-        x["workflow"] in MIGRATED_FILES and x["commit"] == PIN for x in rows)
+        x["workflow"] in PINNED_PROVIDER_FILES and x["commit"] == PIN for x in rows)
     # Each retained workflow has two provider actions; ACE keeps its vcpkg pin.
-    expected_migrated_count = 2 * len(MIGRATED_FILES) - 1
+    expected_migrated_count = 2 * len(PINNED_PROVIDER_FILES) - 1
     if migrated_count != expected_migrated_count:
         raise ValueError(
             f"expected {expected_migrated_count} reviewed refs, got {migrated_count}")
-    if not any(x["workflow"] == "native-build.yml" for x in rows):
-        raise ValueError("main native producer workflow has no pinned provider")
+    native = lines.get("native-build.yml", "")
+    if not re.search(r"^\s*uses:\s+\./\.github/actions/setup-vcpkg-curl-cache\s*$", native, re.MULTILINE):
+        raise ValueError("main native producer workflow must use the local curl-only cache action")
+    if re.search(r"mono-complete|brew install mono|setup-vcpkg-cache@|setup-re2c-tools@|dotnet\s+(?:restore|nuget)", native, re.IGNORECASE):
+        raise ValueError("main native producer workflow must not install Mono or invoke NuGet restore")
     return {
         "status": "PASS",
         "migrated_provider_revision": PIN,
         "pinned_action_definitions": PROVIDER_SOURCE_BLOBS,
-        "migrated_workflows": len(MIGRATED_FILES),
+        "migrated_workflows": len(PINNED_PROVIDER_FILES),
         "migrated_actions": migrated_count,
         "preserved_candidate_vcpkg_commit": EXISTING_CANDIDATE_VCPKG_PIN,
         "provider_references_total": len(rows),
@@ -96,9 +98,11 @@ def check(lines: dict[str, str]) -> dict:
 
 
 def self_test() -> dict:
-    fixture: dict[str, str] = {}
-    for filename in MIGRATED_FILES:
-        fixture[filename] = "\n".join(
+    fixture: dict[str, str] = {
+        "native-build.yml": "      - uses: ./.github/actions/setup-vcpkg-curl-cache",
+    }
+    for filename in PINNED_PROVIDER_FILES:
+        fixture[filename] = "\\n".join(
             f"      - uses: qigao/vcpkg-cache/.github/actions/{kind}@"
             + (EXISTING_CANDIDATE_VCPKG_PIN
                if filename == "ace-candidate-native-sdk.yml"
@@ -109,8 +113,8 @@ def self_test() -> dict:
         raise ValueError("valid exact-pin fixture was rejected")
     for invalid in ("master", "main", "v1", "123456789", "0" * 39 + "X"):
         invalid_fixture = dict(fixture)
-        invalid_fixture["native-build.yml"] = invalid_fixture[
-            "native-build.yml"].replace("@" + PIN, "@" + invalid, 1)
+        invalid_fixture["cnet-tongsuo-rfc8998.yml"] = invalid_fixture[
+            "cnet-tongsuo-rfc8998.yml"].replace("@" + PIN, "@" + invalid, 1)
         try:
             check(invalid_fixture)
         except ValueError:
@@ -143,6 +147,16 @@ def main() -> int:
                     for file in root.glob(suffix)
                 })
             result = check(docs)
+            action = args.repo / ".github/actions/setup-vcpkg-curl-cache/action.yml"
+            transport = args.repo / "cmake/ci/github-packages.py"
+            setup = args.repo / "cmake/ci/setup-vcpkg-curl-cache.py"
+            restore = args.repo / "cmake/ci/restore-vcpkg-cache.py"
+            for required in (action, transport, setup, restore):
+                if not required.is_file():
+                    raise ValueError(f"curl-only cache implementation missing: {required}")
+            action_text = action.read_text(encoding="utf-8")
+            if re.search(r"mono-complete|brew install mono|dotnet\s+(?:restore|nuget)|setup-vcpkg-cache@", action_text, re.IGNORECASE):
+                raise ValueError("curl-only cache action must not install Mono or invoke NuGet restore")
     except (OSError, ValueError) as exc:
         print(f"VCPKG_ACTION_PIN_POLICY_FAILED: {exc}", file=sys.stderr)
         return 1
