@@ -190,7 +190,7 @@ Local developer presets still use the standard NuGet binary provider; Linux/macO
 may therefore require Mono for local binary restore. CI does not install Mono or
 run NuGet: it asks the pinned vcpkg tool for exact package/ABI references in a
 configure-only dry run, downloads those GitHub Packages archives with curl, and
-materializes validated payloads into the local read-only `files` cache.
+materializes validated payloads into the local `files` cache.
 Local presets do not read `VCPKG_CACHE_REPOSITORY_ROOT` from the parent environment
 or load `.env` files.
 Local Windows presets fix the target triplet to `x64-windows`; no
