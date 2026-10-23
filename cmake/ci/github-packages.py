@@ -42,7 +42,7 @@ class Curl:
         with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
             partial = Path(temporary) / "download"
             # Keep credentials off argv and disk. curl does not forward Authorization
-            # to a different redirect host; do not use --location-trusted.
+            # to a different redirect host; credentials are never forwarded across redirects.
             config = f'header = "Authorization: {authorization}"\n'
             subprocess.run([
                 "curl", "--disable", "--config", "-", "--fail", "--silent", "--show-error",
