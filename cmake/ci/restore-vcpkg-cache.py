@@ -12,6 +12,8 @@ import xml.etree.ElementTree as ET
 
 PRESETS = {
     "win-release-ci",
+    "linux-dev-ci",
+    "linux-tsan-ci",
     "linux-release-ci",
     "linux-arm64-release-ci",
     "linux-clang-release-ci",
