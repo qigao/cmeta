@@ -30,3 +30,37 @@ endforeach()
 enable_testing()
 add_test(NAME cnet_installed_c11 COMMAND cnet_installed_c11)
 add_test(NAME cnet_installed_cpp17 COMMAND cnet_installed_cpp17)
+
+# #1196: installed-SDK consumer for the public C11 CNet TLS API.
+# The test uses only installed Salts targets and public headers; it must not
+# depend on private GmSSL headers, build-tree libraries, or provider fallback.
+add_executable(cnet_installed_p384_tls p384_tls.c)
+target_compile_features(cnet_installed_p384_tls PRIVATE c_std_11)
+set_target_properties(cnet_installed_p384_tls PROPERTIES
+  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+target_link_libraries(cnet_installed_p384_tls PRIVATE Salts::CNet Salts::NativeIO)
+set(_p384_fixtures
+  p384-test-root-cert.pem
+  p384-test-server-cert.pem
+  p384-test-server-key.pem
+  p384-test-wrong-root-cert.pem)
+foreach(_fixture IN LISTS _p384_fixtures)
+  configure_file(
+    "${CMAKE_CURRENT_LIST_DIR}/../../fixtures/${_fixture}"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/${_fixture}" COPYONLY)
+endforeach()
+add_test(NAME cnet_installed_p384_tls
+  COMMAND cnet_installed_p384_tls
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-root-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-server-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-server-key.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-wrong-root-cert.pem")
+set_tests_properties(cnet_installed_p384_tls PROPERTIES TIMEOUT 90)
+
+# ELF DT_RUNPATH does not resolve indirect shared-library dependencies.
+# Scope the test subprocess to the SDK's own lib directory, replacing rather
+# than appending any caller-supplied LD_LIBRARY_PATH.
+if(UNIX AND NOT APPLE)
+  set_tests_properties(cnet_installed_p384_tls PROPERTIES
+    ENVIRONMENT "LD_LIBRARY_PATH=${SALTS_TEST_PREFIX}/lib")
+endif()
