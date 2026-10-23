@@ -241,6 +241,11 @@ spec("cmeta_crypto") {
     static const uint8_t hkdf_salt[] = "salt";
     static const uint8_t hkdf_ikm[] = "input key material";
     static const uint8_t hkdf_info[] = "context";
+    static const uint8_t binary_key[] = {'k', 0u, 'e', 'y'};
+    static const uint8_t binary_data[] = {'d', 0u, 'a', 't', 'a'};
+    static const uint8_t binary_ikm[] = {'i', 0u, 'k', 'm'};
+    static const uint8_t binary_salt[] = {'s', 0u, 'a', 'l', 't'};
+    static const uint8_t binary_info[] = {'c', 0u, 't', 'x'};
     uint8_t key[20];
     uint8_t mac[SALTS_SM3_DIGEST_BYTES];
     uint8_t okm[SALTS_SM3_DIGEST_BYTES];
@@ -248,6 +253,11 @@ spec("cmeta_crypto") {
     memset(key, 0x0b, sizeof(key));
     check_equal(cmeta_hmac_sm3(key, sizeof(key), "Hi There", 8u, mac), SALTS_OK);
     check_equal(memcmp(mac, HMAC_SM3_HI_THERE, sizeof(mac)), 0);
+    check_equal(cmeta_hmac_sm3(NULL, 0u, NULL, 0u, mac), SALTS_OK);
+    check_equal(memcmp(mac, HMAC_SM3_EMPTY, sizeof(mac)), 0);
+    check_equal(cmeta_hmac_sm3(binary_key, sizeof(binary_key),
+                               binary_data, sizeof(binary_data), mac), SALTS_OK);
+    check_equal(memcmp(mac, HMAC_SM3_EMBEDDED_NUL, sizeof(mac)), 0);
 
     check_equal(cmeta_hkdf_sm3(
                     hkdf_ikm, sizeof(hkdf_ikm) - 1u,
@@ -256,6 +266,22 @@ spec("cmeta_crypto") {
                     okm, sizeof(okm)),
                 SALTS_OK);
     check_equal(memcmp(okm, HKDF_SM3_OKM_32, sizeof(okm)), 0);
+    check_equal(cmeta_hkdf_sm3(binary_ikm, sizeof(binary_ikm),
+                               binary_salt, sizeof(binary_salt),
+                               binary_info, sizeof(binary_info),
+                               okm, sizeof(okm)), SALTS_OK);
+    check_equal(memcmp(okm, HKDF_SM3_EMBEDDED_NUL_32, sizeof(okm)), 0);
+  }
+
+  it("accepts the exact maximum HKDF-SM3 output length") {
+    uint8_t okm[SALTS_HKDF_SM3_MAX_OUTPUT_BYTES];
+    uint8_t digest[SALTS_SM3_DIGEST_BYTES];
+
+    check_equal(cmeta_hkdf_sm3(NULL, 0u, NULL, 0u, NULL, 0u,
+                               okm, sizeof(okm)), SALTS_OK);
+    check_equal(cmeta_sm3(okm, sizeof(okm), digest), SALTS_OK);
+    check_equal(memcmp(digest, HKDF_SM3_EMPTY_MAX_OUTPUT_DIGEST,
+                       sizeof(digest)), 0);
   }
 
   it("keeps SM3 family outputs unchanged on rejected arguments") {
