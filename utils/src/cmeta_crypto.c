@@ -10,6 +10,8 @@
 #include <gmssl/sha1.h>
 #include <gmssl/sha2.h>
 #include <gmssl/sm3.h>
+#include <gmssl/sm2.h>
+#include <asn1_types.h>
 #include <gmssl/sm4.h>
 
 #include <stdlib.h>
@@ -664,6 +666,202 @@ int cmeta_sm4_gcm_open(
   gmssl_secure_clear(staged_plaintext, ciphertext_size == 0u ? 1u : ciphertext_size);
   free(staged_plaintext);
   return SALTS_OK;
+}
+
+
+int cmeta_sm2_sign(
+    const void *private_key_pkcs8_der, size_t private_key_der_size,
+    const void *user_id, size_t user_id_size,
+    const void *message, size_t message_size,
+    uint8_t *signature_der, size_t signature_capacity,
+    size_t *out_signature_size) {
+  SM2_KEY key;
+  SM2_SIGN_CTX sign_ctx;
+  SM2_SIGNATURE parsed_signature;
+  uint8_t staged_signature[SALTS_SM2_SIGNATURE_DER_MAX_BYTES] = {0};
+  const uint8_t *key_cursor;
+  const uint8_t *attributes = NULL;
+  size_t key_remaining;
+  size_t attributes_size = 0u;
+  size_t signature_size = 0u;
+  size_t signature_range_size =
+      signature_capacity < SALTS_SM2_SIGNATURE_DER_MAX_BYTES
+          ? signature_capacity
+          : SALTS_SM2_SIGNATURE_DER_MAX_BYTES;
+  int result = SALTS_EIO;
+
+  memset(&key, 0, sizeof(key));
+  memset(&sign_ctx, 0, sizeof(sign_ctx));
+  memset(&parsed_signature, 0, sizeof(parsed_signature));
+
+  if (private_key_pkcs8_der == NULL || private_key_der_size == 0u ||
+      user_id == NULL || user_id_size == 0u ||
+      (message == NULL && message_size != 0u) ||
+      out_signature_size == NULL ||
+      (signature_der == NULL && signature_capacity != 0u))
+    return SALTS_EINVAL;
+  if (private_key_der_size > SALTS_SM2_MAX_KEY_DER_BYTES ||
+      user_id_size > SALTS_SM2_MAX_USER_ID_BYTES)
+    return SALTS_ERANGE;
+  if (!cmeta_crypto_range_valid_v1(private_key_pkcs8_der, private_key_der_size) ||
+      !cmeta_crypto_range_valid_v1(user_id, user_id_size) ||
+      !cmeta_crypto_range_valid_v1(message, message_size) ||
+      !cmeta_crypto_range_valid_v1(out_signature_size, sizeof(*out_signature_size)) ||
+      !cmeta_crypto_range_valid_v1(signature_der, signature_range_size))
+    return SALTS_EINVAL;
+
+  if (cmeta_crypto_ranges_conflict_v1(out_signature_size, sizeof(*out_signature_size),
+                                      private_key_pkcs8_der, private_key_der_size) ||
+      cmeta_crypto_ranges_conflict_v1(out_signature_size, sizeof(*out_signature_size),
+                                      user_id, user_id_size) ||
+      cmeta_crypto_ranges_conflict_v1(out_signature_size, sizeof(*out_signature_size),
+                                      message, message_size) ||
+      cmeta_crypto_ranges_conflict_v1(out_signature_size, sizeof(*out_signature_size),
+                                      signature_der, signature_range_size) ||
+      cmeta_crypto_ranges_conflict_v1(signature_der, signature_range_size,
+                                      private_key_pkcs8_der, private_key_der_size) ||
+      cmeta_crypto_ranges_conflict_v1(signature_der, signature_range_size,
+                                      user_id, user_id_size) ||
+      cmeta_crypto_ranges_conflict_v1(signature_der, signature_range_size,
+                                      message, message_size))
+    return SALTS_EINVAL;
+
+  if (signature_capacity < SALTS_SM2_SIGNATURE_DER_MAX_BYTES) {
+    *out_signature_size = SALTS_SM2_SIGNATURE_DER_MAX_BYTES;
+    return SALTS_ERANGE;
+  }
+  if (signature_der == NULL) return SALTS_EINVAL;
+  if (asn1_der_validate((const uint8_t *)private_key_pkcs8_der,
+                        private_key_der_size) != 0)
+    return SALTS_EINVAL;
+
+  key_cursor = (const uint8_t *)private_key_pkcs8_der;
+  key_remaining = private_key_der_size;
+  if (sm2_private_key_info_from_der(&key, &attributes, &attributes_size,
+                                    &key_cursor, &key_remaining) != 1 ||
+      key_remaining != 0u) {
+    result = SALTS_EINVAL;
+    goto cleanup;
+  }
+
+  if (sm2_sign_init(&sign_ctx, &key, (const char *)user_id, user_id_size) != 1) {
+    result = SALTS_EIO;
+    goto cleanup;
+  }
+  if (sm2_sign_update(&sign_ctx, (const uint8_t *)message, message_size) != 1) {
+    result = SALTS_EIO;
+    goto cleanup;
+  }
+  if (sm2_sign_finish(&sign_ctx, staged_signature, &signature_size) != 1 ||
+      signature_size == 0u ||
+      signature_size > SALTS_SM2_SIGNATURE_DER_MAX_BYTES ||
+      asn1_der_validate(staged_signature, signature_size) != 0) {
+    result = SALTS_EIO;
+    goto cleanup;
+  }
+
+  /* Validate the generated signature structure before publishing any output. */
+  {
+    const uint8_t *signature_cursor = staged_signature;
+    size_t signature_remaining = signature_size;
+    if (sm2_signature_from_der(&parsed_signature, &signature_cursor,
+                               &signature_remaining) != 1 ||
+        signature_remaining != 0u) {
+      result = SALTS_EIO;
+      goto cleanup;
+    }
+  }
+
+  memcpy(signature_der, staged_signature, signature_size);
+  *out_signature_size = signature_size;
+  result = SALTS_OK;
+
+cleanup:
+  gmssl_secure_clear(&sign_ctx, sizeof(sign_ctx));
+  gmssl_secure_clear(&key, sizeof(key));
+  gmssl_secure_clear(&parsed_signature, sizeof(parsed_signature));
+  gmssl_secure_clear(staged_signature, sizeof(staged_signature));
+  return result;
+}
+
+int cmeta_sm2_verify(
+    const void *public_key_spki_der, size_t public_key_der_size,
+    const void *user_id, size_t user_id_size,
+    const void *message, size_t message_size,
+    const void *signature_der, size_t signature_der_size) {
+  SM2_KEY key;
+  SM2_VERIFY_CTX verify_ctx;
+  SM2_SIGNATURE parsed_signature;
+  const uint8_t *key_cursor;
+  const uint8_t *signature_cursor;
+  size_t key_remaining;
+  size_t signature_remaining;
+  int result = SALTS_EIO;
+
+  memset(&key, 0, sizeof(key));
+  memset(&verify_ctx, 0, sizeof(verify_ctx));
+  memset(&parsed_signature, 0, sizeof(parsed_signature));
+
+  if (public_key_spki_der == NULL || public_key_der_size == 0u ||
+      user_id == NULL || user_id_size == 0u ||
+      (message == NULL && message_size != 0u) ||
+      signature_der == NULL)
+    return SALTS_EINVAL;
+  if (public_key_der_size > SALTS_SM2_MAX_KEY_DER_BYTES ||
+      user_id_size > SALTS_SM2_MAX_USER_ID_BYTES)
+    return SALTS_ERANGE;
+  if (!cmeta_crypto_range_valid_v1(public_key_spki_der, public_key_der_size) ||
+      !cmeta_crypto_range_valid_v1(user_id, user_id_size) ||
+      !cmeta_crypto_range_valid_v1(message, message_size) ||
+      !cmeta_crypto_range_valid_v1(signature_der, signature_der_size))
+    return SALTS_EINVAL;
+  if (signature_der_size == 0u ||
+      signature_der_size > SALTS_SM2_SIGNATURE_DER_MAX_BYTES)
+    return SALTS_EAUTH;
+
+  if (asn1_der_validate((const uint8_t *)public_key_spki_der,
+                        public_key_der_size) != 0)
+    return SALTS_EINVAL;
+  if (asn1_der_validate((const uint8_t *)signature_der,
+                        signature_der_size) != 0)
+    return SALTS_EAUTH;
+
+  key_cursor = (const uint8_t *)public_key_spki_der;
+  key_remaining = public_key_der_size;
+  if (sm2_public_key_info_from_der(&key, &key_cursor, &key_remaining) != 1 ||
+      key_remaining != 0u) {
+    result = SALTS_EINVAL;
+    goto cleanup;
+  }
+
+  signature_cursor = (const uint8_t *)signature_der;
+  signature_remaining = signature_der_size;
+  if (sm2_signature_from_der(&parsed_signature, &signature_cursor,
+                             &signature_remaining) != 1 ||
+      signature_remaining != 0u) {
+    result = SALTS_EAUTH;
+    goto cleanup;
+  }
+
+  if (sm2_verify_init(&verify_ctx, &key, (const char *)user_id, user_id_size) != 1) {
+    result = SALTS_EIO;
+    goto cleanup;
+  }
+  if (sm2_verify_update(&verify_ctx, (const uint8_t *)message, message_size) != 1) {
+    result = SALTS_EIO;
+    goto cleanup;
+  }
+
+  result = sm2_verify_finish(&verify_ctx, (const uint8_t *)signature_der,
+                             signature_der_size) == 1
+               ? SALTS_OK
+               : SALTS_EAUTH;
+
+cleanup:
+  gmssl_secure_clear(&verify_ctx, sizeof(verify_ctx));
+  gmssl_secure_clear(&key, sizeof(key));
+  gmssl_secure_clear(&parsed_signature, sizeof(parsed_signature));
+  return result;
 }
 
 int cmeta_crypto_equal(const void *lhs, const void *rhs, size_t size,
