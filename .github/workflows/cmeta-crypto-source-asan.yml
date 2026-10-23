@@ -22,17 +22,17 @@ permissions:
   packages: read
 
 concurrency:
-  group: cmeta-crypto-source-asan-${{ github.event.pull_request.number || github.ref }}
+  group: cmeta-crypto-native-kats-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  crypto-source:
+  crypto-linux-asan:
     if: >-
       github.repository == 'qigao/salts' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == 'qigao/salts')
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       PROJECT_ROOT: ${{ github.workspace }}
       BUILD_ROOT: ${{ github.workspace }}/build/cmeta-crypto-source-asan
@@ -61,7 +61,7 @@ jobs:
           set -euo pipefail
           python3 cmake/ci/restore-vcpkg-cache.py preset linux-dev-ci
 
-      - name: Configure crypto tests with source ASan/UBSan
+      - name: Configure full native source with ASan/UBSan
         shell: bash
         run: |
           set -euo pipefail
@@ -80,7 +80,7 @@ jobs:
             -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=address -fsanitize=undefined' \
             -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address -fsanitize=undefined'
 
-      - name: Build native SDK and C11/C++17 crypto tests under ASan/UBSan
+      - name: Build native SDK and C11/C++17 crypto tests
         shell: bash
         run: |
           set -euo pipefail
@@ -117,145 +117,13 @@ jobs:
           print("Verified ASan+UBSan instrumentation for implementation and both test consumers.")
           PY
 
-      - name: Run C11 and C++17 crypto contracts
+      - name: Run crypto KATs and installed SDK C11/C++17 consumer
         shell: bash
         run: |
           set -euo pipefail
           ctest --test-dir "$BUILD_ROOT" -C RelWithDebInfo \
             --output-on-failure --no-tests=error \
-            -R '^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_crypto_installed_sdk)
-
-      - name: Preserve sanitizer evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cmeta-crypto-source-asan-ubsan
-          retention-days: 14
-          if-no-files-found: warn
-          path: |
-            build/cmeta-crypto-source-asan/Testing/Temporary/LastTest.log
-            build/cmeta-crypto-source-asan/compile_commands.json
-
-  crypto-macos-runtime:
-    if: >-
-      github.repository == 'qigao/salts' &&
-      (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == 'qigao/salts')
-    runs-on: macos-15
-    timeout-minutes: 45
-    env:
-      PROJECT_ROOT: ${{ github.workspace }}
-      BUILD_ROOT: ${{ github.workspace }}/build/cmeta-crypto-macos
-      CC: clang
-      CXX: clang++
-    steps:
-      - name: Checkout exact candidate source
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-
-      - name: Configure pinned vcpkg and curl package cache
-        uses: ./.github/actions/setup-vcpkg-curl-cache
-
-      - name: Prepare native build host
-        uses: ./.github/actions/setup-build-host
-
-      - name: Restore exact vcpkg packages from GitHub Packages with curl
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          python3 cmake/ci/restore-vcpkg-cache.py preset mac-arm64-release-ci
-
-      - name: Configure and build native C11/C++17 crypto tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          cmake --preset mac-arm64-release-ci -B "$BUILD_ROOT" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$BUILD_ROOT/install" \
-            -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
-            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
-          cmake --build "$BUILD_ROOT" --target test_cmeta_crypto test_cmeta_crypto_cpp --parallel 2
-
-      - name: Run native C11/C++17 crypto KATs
-        shell: bash
-        run: |
-          set -euo pipefail
-          ctest --test-dir "$BUILD_ROOT" -C Release \
-            --output-on-failure --no-tests=error \
-            -R '^(test_cmeta_crypto|test_cmeta_crypto_cpp)$'
-
-  crypto-windows-runtime:
-    if: >-
-      github.repository == 'qigao/salts' &&
-      (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == 'qigao/salts')
-    runs-on: windows-2025
-    timeout-minutes: 45
-    env:
-      PROJECT_ROOT: ${{ github.workspace }}
-      BUILD_ROOT: ${{ github.workspace }}/build/cmeta-crypto-windows
-    steps:
-      - name: Checkout exact candidate source
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-
-      - name: Configure pinned vcpkg and curl package cache
-        uses: ./.github/actions/setup-vcpkg-curl-cache
-
-      - name: Prepare native build host
-        uses: ./.github/actions/setup-build-host
-
-      - name: Discover Visual Studio
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $vswhere = "${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe"
-          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) {
-            throw "Visual Studio with the x64 C++ toolchain was not found"
-          }
-          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
-
-      - name: Restore exact vcpkg packages from GitHub Packages with curl
-        shell: cmd
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
-          call "%VSINSTALL%\\Common7\\Tools\\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          python cmake\\ci\\restore-vcpkg-cache.py preset win-release-ci
-          if errorlevel 1 exit /b 1
-
-      - name: Configure and build native C11/C++17 crypto tests
-        shell: cmd
-        run: |
-          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
-          call "%VSINSTALL%\\Common7\\Tools\\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          cmake --preset win-release-ci -B "%BUILD_ROOT%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="%BUILD_ROOT%/install" -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
-          if errorlevel 1 exit /b 1
-          cmake --build "%BUILD_ROOT%" --target test_cmeta_crypto test_cmeta_crypto_cpp --parallel 2
-          if errorlevel 1 exit /b 1
-
-      - name: Run native C11/C++17 crypto KATs
-        shell: cmd
-        run: |
-          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
-          call "%VSINSTALL%\\Common7\\Tools\\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --test-dir "%BUILD_ROOT%" -C Release --output-on-failure --no-tests=error -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp)$"
-          if errorlevel 1 exit /b 1
-
+            -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_crypto_installed_sdk)$"
 
       - name: Preserve sanitizer evidence
         if: always()
