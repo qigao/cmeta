@@ -86,6 +86,7 @@ typedef struct cnet_sctp_data_pending {
   uint32_t ppid;
   uint8_t unordered;
   uint8_t active;
+  uint8_t ssn_deferred; /* affected by an in-flight RFC6525 outgoing reset */
 } cnet_sctp_data_pending;
 
 typedef struct cnet_sctp_data_message {
@@ -101,6 +102,7 @@ typedef struct cnet_sctp_data {
   cnet_sctp_data_rx rx[CNET_SCTP_DATA_RX_SLOTS];
   cnet_sctp_data_pending pending;
   uint16_t tx_ssn[CNET_SCTP_DATA_STREAMS], rx_ssn[CNET_SCTP_DATA_STREAMS];
+  uint32_t reset_out_mask;
   uint32_t next_tsn, last_ack, cumulative_rx, rx_gaps;
   uint32_t peer_rwnd, cwnd, ssthresh;
   uint32_t last_advertised_rwnd;
@@ -194,6 +196,19 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d,
 
 cnet_sctp_data_status cnet_sctp_data_deadline(cnet_sctp_data *d,
     uint64_t *deadline_ms, int *has_deadline);
+
+/* RFC6525 hooks owned by the Association reconfiguration transaction.
+ * reset masks use the private 16-stream ceiling. No callback or heap state.
+ */
+cnet_sctp_data_status cnet_sctp_data_begin_outgoing_reset(
+    cnet_sctp_data *d, uint32_t stream_mask);
+cnet_sctp_data_status cnet_sctp_data_complete_outgoing_reset(
+    cnet_sctp_data *d, uint32_t stream_mask, int success);
+int cnet_sctp_data_incoming_reset_ready(
+    const cnet_sctp_data *d, uint32_t sender_last_tsn, uint32_t stream_mask);
+cnet_sctp_data_status cnet_sctp_data_apply_incoming_reset(
+    cnet_sctp_data *d, uint32_t stream_mask);
+uint32_t cnet_sctp_data_last_assigned_tsn(const cnet_sctp_data *d);
 
 cnet_sctp_data_status cnet_sctp_data_stop(cnet_sctp_data *d);
 
