@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 
 def run(*args: str, cwd: Path | None = None) -> str:
@@ -78,7 +79,6 @@ def main() -> int:
                 fetched = True
                 break
         if attempt < 3:
-            import time
             time.sleep(attempt * 2)
     if not fetched:
         raise RuntimeError("failed to fetch the exact vcpkg scripts revision after 3 attempts")
@@ -108,7 +108,6 @@ def main() -> int:
                     fetched_baseline = True
                     break
                 if attempt < 3:
-                    import time
                     time.sleep(attempt * 2)
             if not fetched_baseline:
                 raise RuntimeError(f"failed to fetch required vcpkg baseline {baseline}")
@@ -116,9 +115,7 @@ def main() -> int:
             baseline + ":versions/baseline.json")
 
     if (run("git", "-C", str(root), "rev-parse", "HEAD") != scripts
-            or run("git", "-C", str(root), "rev-parse", "--is-shallow-repository") != "false"
-            or run("git", "-C", str(root), "config", "--get", "remote.origin.promisor")
-            if False else False):
+            or run("git", "-C", str(root), "rev-parse", "--is-shallow-repository") != "false"):
         raise ValueError("canonical vcpkg scripts/history mismatch")
     promisor = subprocess.run(
         ["git", "-C", str(root), "config", "--get", "remote.origin.promisor"],
