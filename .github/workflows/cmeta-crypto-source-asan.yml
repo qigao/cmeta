@@ -192,7 +192,7 @@ jobs:
           set -euo pipefail
           ctest --test-dir "$BUILD_ROOT" -C Release \
             --output-on-failure --no-tests=error \
-            -R '^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_crypto_installed_sdk)
+            -R '^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_crypto_installed_sdk)$'
 
   crypto-windows-runtime:
     if: >-
