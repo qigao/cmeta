@@ -83,7 +83,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 cmake/ci/restore-vcpkg-cache.py linux-release-ci
+          python3 cmake/ci/restore-vcpkg-cache.py preset linux-release-ci
 
       - name: Configure and build 2.3 SDK
         shell: bash
