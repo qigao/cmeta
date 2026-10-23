@@ -57,6 +57,10 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: pwsh
         run: ./cmake/ci/tests/test-servicehost-ci-scope.ps1
+      - name: Verify ASN.1 CI scope routing
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: ./cmake/ci/tests/test-asn1-ci-scope.ps1
       - name: Classify changes
         id: select
         shell: pwsh
