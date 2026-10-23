@@ -1,0 +1,137 @@
+name: CMeta Crypto source ASan/UBSan
+
+'on':
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
+    paths:
+      - '.github/actions/setup-vcpkg-curl-cache/**'
+      - '.github/actions/setup-build-host/**'
+      - '.github/workflows/cmeta-crypto-source-asan.yml'
+      - 'cmake/ci/github-packages.py'
+      - 'cmake/ci/restore-vcpkg-cache.py'
+      - 'cmake/ci/setup-vcpkg-curl-cache.py'
+      - 'utils/include/cmeta_crypto.h'
+      - 'utils/src/cmeta_crypto.c'
+      - 'utils/tests/test_cmeta_crypto.c'
+      - 'utils/tests/test_cmeta_crypto_cpp.cpp'
+      - 'utils/tests/crypto_install_consumer/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cmeta-crypto-source-asan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  crypto-source:
+    if: >-
+      github.repository == 'qigao/salts' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == 'qigao/salts')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PROJECT_ROOT: ${{ github.workspace }}
+      BUILD_ROOT: ${{ github.workspace }}/build/cmeta-crypto-source-asan
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      CC: gcc
+      CXX: g++
+    steps:
+      - name: Checkout exact candidate source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Configure pinned vcpkg and curl package cache
+        uses: ./.github/actions/setup-vcpkg-curl-cache
+
+      - name: Prepare native build host
+        uses: ./.github/actions/setup-build-host
+
+      - name: Restore exact vcpkg packages from GitHub Packages with curl
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/restore-vcpkg-cache.py preset linux-dev-ci
+
+      - name: Configure crypto tests with source ASan/UBSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags='-fsanitize=address -fsanitize=undefined -g -fno-omit-frame-pointer'
+          cmake --preset linux-dev-ci -B "$BUILD_ROOT" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX="$BUILD_ROOT/install" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_ADDRESS=ON \
+            -DENABLE_SANITIZER_UNDEFINED=ON \
+            -DENABLE_SANITIZER_THREAD=OFF \
+            -DCMAKE_C_FLAGS="$flags" \
+            -DCMAKE_CXX_FLAGS="$flags" \
+            -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=address -fsanitize=undefined' \
+            -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address -fsanitize=undefined'
+
+      - name: Build C11 and C++17 crypto tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build "$BUILD_ROOT" --target test_cmeta_crypto test_cmeta_crypto_cpp --parallel 2
+
+      - name: Prove production crypto source and tests are instrumented
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["PROJECT_ROOT"]).resolve()
+          build = Path(os.environ["BUILD_ROOT"])
+          rows = json.loads((build / "compile_commands.json").read_text(encoding="utf-8"))
+          required = {
+              "production crypto implementation": "utils/src/cmeta_crypto.c",
+              "C11 crypto tests": "utils/tests/test_cmeta_crypto.c",
+              "C++17 crypto tests": "utils/tests/test_cmeta_crypto_cpp.cpp",
+          }
+          for label, suffix in required.items():
+              matches = [
+                  row for row in rows
+                  if Path(row["file"]).resolve() == root / suffix
+              ]
+              if len(matches) != 1:
+                  raise SystemExit(f"{label}: expected exactly one compile unit for {suffix}, found {len(matches)}")
+              command = matches[0].get("command", " ".join(matches[0].get("arguments", [])))
+              for flag in ("-fsanitize=address", "-fsanitize=undefined"):
+                  if flag not in command:
+                      raise SystemExit(f"{label}: missing {flag}: {suffix}")
+          print("Verified ASan+UBSan instrumentation for implementation and both test consumers.")
+          PY
+
+      - name: Run C11 and C++17 crypto contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir "$BUILD_ROOT" -C RelWithDebInfo \
+            --output-on-failure --no-tests=error \
+            -R '^(test_cmeta_crypto|test_cmeta_crypto_cpp)$'
+
+      - name: Preserve sanitizer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmeta-crypto-source-asan-ubsan
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/cmeta-crypto-source-asan/Testing/Temporary/LastTest.log
+            build/cmeta-crypto-source-asan/compile_commands.json
