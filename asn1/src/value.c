@@ -510,6 +510,7 @@ static salts_asn1_status encode_value_into(
     if (!value->constructed) {
         if (content_size != 0u)
             memcpy(output + offset, value->content, content_size);
+        offset += content_size;
     } else {
         for (i = 0u; i < value->child_count; ++i) {
             size_t child_written = 0u;
