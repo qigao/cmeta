@@ -121,6 +121,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The installed-SDK contract creates a second CMake project. Its
+          # consumer executables must also link ASan/UBSan before loading the
+          # instrumented shared Salts::Core library.
+          export CFLAGS='-fsanitize=address -fsanitize=undefined -g -fno-omit-frame-pointer'
+          export CXXFLAGS='-fsanitize=address -fsanitize=undefined -g -fno-omit-frame-pointer'
+          export LDFLAGS='-fsanitize=address -fsanitize=undefined'
           ctest --test-dir "$BUILD_ROOT" -C RelWithDebInfo \
             --output-on-failure --no-tests=error \
             -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_crypto_installed_sdk)$"
