@@ -156,6 +156,53 @@ SALTS_C_API int cmeta_hkdf_sm3(
     const void *info, size_t info_size,
     void *output, size_t output_size);
 
+#define SALTS_SM2_MAX_KEY_DER_BYTES (64u * 1024u)
+#define SALTS_SM2_MAX_USER_ID_BYTES 8191u
+#define SALTS_SM2_SIGNATURE_DER_MAX_BYTES 72u
+
+/**
+ * Sign a message with an SM2 PKCS#8 DER private key and explicit user identity.
+ *
+ * Key DER, identity and message are borrowed. The identity is mandatory,
+ * non-empty, byte-exact and at most 8191 bytes. NULL message is accepted only
+ * for a zero-length message. Key DER must be one canonical DER element with no
+ * trailing bytes and must contain an SM2 private key.
+ *
+ * The output requires capacity for the maximum 72-byte canonical DER signature.
+ * If capacity is smaller, the function sets *out_signature_size to 72 and
+ * returns SALTS_ERANGE without signing or changing signature bytes. On success
+ * it sets the actual signature size. Every other failure leaves both output
+ * bytes and size unchanged. Signature output and size must not overlap any
+ * input or each other.
+ *
+ * Signing uses only the pinned provider's cryptographic random source; there
+ * is no implicit identity, deterministic fallback or provider selection.
+ *
+ * @return SALTS_OK, SALTS_EINVAL, SALTS_ERANGE, or SALTS_EIO.
+ */
+SALTS_C_API int cmeta_sm2_sign(
+    const void *private_key_pkcs8_der, size_t private_key_der_size,
+    const void *user_id, size_t user_id_size,
+    const void *message, size_t message_size,
+    uint8_t *signature_der, size_t signature_capacity,
+    size_t *out_signature_size);
+
+/**
+ * Verify a canonical DER SM2 signature over a message and explicit identity.
+ *
+ * The public key must be DER X.509 SubjectPublicKeyInfo containing an SM2 key.
+ * The identity is mandatory, byte-exact and at most 8191 bytes. Invalid or
+ * malformed signatures return SALTS_EAUTH; malformed arguments or public-key
+ * DER return SALTS_EINVAL. Trailing bytes and non-canonical DER are rejected.
+ *
+ * @return SALTS_OK, SALTS_EINVAL, SALTS_EAUTH, SALTS_ERANGE, or SALTS_EIO.
+ */
+SALTS_C_API int cmeta_sm2_verify(
+    const void *public_key_spki_der, size_t public_key_der_size,
+    const void *user_id, size_t user_id_size,
+    const void *message, size_t message_size,
+    const void *signature_der, size_t signature_der_size);
+
 #define SALTS_SM4_KEY_BYTES 16u
 #define SALTS_SM4_GCM_NONCE_BYTES 12u
 #define SALTS_SM4_GCM_TAG_BYTES 16u
