@@ -284,6 +284,23 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now,
   if (!payload || !output || !written || n == 0u ||
       stream >= d->config.outbound_streams) return CNET_SCTP_DATA_INVALID;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  if ((d->reset_out_mask & (UINT32_C(1) << stream)) != 0u) {
+    /* RFC6525 A1: copy one bounded upper-layer message while SSN assignment
+     * is frozen. OK with written=0 means admitted to the owned pending slot. */
+    if (d->pending.active) return CNET_SCTP_DATA_CAPACITY;
+    if (n > CNET_SCTP_DATA_MESSAGE_MAX) return CNET_SCTP_DATA_CAPACITY;
+    memcpy(d->pending.bytes, payload, n);
+    d->pending.size = n;
+    d->pending.offset = 0u;
+    d->pending.stream_id = stream;
+    d->pending.ssn = 0u;
+    d->pending.ppid = ppid;
+    d->pending.unordered = unordered != 0;
+    d->pending.active = 1u;
+    d->pending.ssn_deferred = 1u;
+    d->last_time_ms = now;
+    return CNET_SCTP_DATA_OK;
+  }
   if (d->pending.active) return CNET_SCTP_DATA_CAPACITY;
   if (n > CNET_SCTP_DATA_PAYLOAD_MAX) return CNET_SCTP_DATA_CAPACITY;
   seq = unordered ? 0u : d->tx_ssn[stream];
@@ -312,6 +329,12 @@ cnet_sctp_data_status cnet_sctp_data_send_bundle(cnet_sctp_data *d,
   if (!items || !output || !written || count == 0u)
     return CNET_SCTP_DATA_INVALID;
   if (count > CNET_SCTP_DATA_BUNDLE_MAX) return CNET_SCTP_DATA_CAPACITY;
+  for (i = 0u; i < count; ++i) {
+    if (items[i].stream_id >= d->config.outbound_streams)
+      return CNET_SCTP_DATA_INVALID;
+    if ((d->reset_out_mask & (UINT32_C(1) << items[i].stream_id)) != 0u)
+      return CNET_SCTP_DATA_CAPACITY; /* multi-record queuing is intentionally bounded out */
+  }
   /* Retained tickets are the source of truth; there is intentionally no
    * shadow tx_count counter that could drift after SACK reneging/cleanup.
    * The staged ordinary send path below separately enforces byte rwnd and
@@ -375,7 +398,10 @@ cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,
   d->pending.size = n;
   d->pending.offset = 0u;
   d->pending.stream_id = stream;
-  d->pending.ssn = unordered ? 0u : d->tx_ssn[stream];
+  d->pending.ssn_deferred =
+      (d->reset_out_mask & (UINT32_C(1) << stream)) != 0u;
+  d->pending.ssn = d->pending.ssn_deferred ? 0u :
+      (unordered ? 0u : d->tx_ssn[stream]);
   d->pending.ppid = ppid;
   d->pending.unordered = unordered != 0;
   d->pending.active = 1u;
@@ -397,6 +423,14 @@ cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d,
   *written = 0u;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
   if (!d->pending.active) return CNET_SCTP_DATA_EMPTY;
+  if (d->pending.ssn_deferred) {
+    if ((d->reset_out_mask &
+         (UINT32_C(1) << d->pending.stream_id)) != 0u)
+      return CNET_SCTP_DATA_EMPTY;
+    d->pending.ssn = d->pending.unordered ? 0u :
+        d->tx_ssn[d->pending.stream_id];
+    d->pending.ssn_deferred = 0u;
+  }
   n = d->pending.size - d->pending.offset;
   if (n > CNET_SCTP_DATA_PAYLOAD_MAX) n = CNET_SCTP_DATA_PAYLOAD_MAX;
   flags = (uint8_t)((d->pending.offset == 0u ? DATA_B : 0u) |
@@ -1158,6 +1192,80 @@ cnet_sctp_data_status cnet_sctp_data_deadline(cnet_sctp_data *d,
     *deadline = d->last_time_ms;
   }
   return CNET_SCTP_DATA_OK;
+}
+
+static uint32_t stream_limit_mask(uint16_t count) {
+  return count >= 32u ? UINT32_MAX :
+      (count == 0u ? 0u : (UINT32_C(1) << count) - 1u);
+}
+
+cnet_sctp_data_status cnet_sctp_data_begin_outgoing_reset(
+    cnet_sctp_data *d, uint32_t stream_mask) {
+  cnet_sctp_data_status status = guard(d);
+  if (status != CNET_SCTP_DATA_OK) return status;
+  if (stream_mask == 0u ||
+      (stream_mask & ~stream_limit_mask(d->config.outbound_streams)) != 0u)
+    return CNET_SCTP_DATA_INVALID;
+  if (d->reset_out_mask != 0u) return CNET_SCTP_DATA_CAPACITY;
+  if (d->pending.active &&
+      (stream_mask & (UINT32_C(1) << d->pending.stream_id)) != 0u) {
+    if (d->pending.offset != 0u) return CNET_SCTP_DATA_CAPACITY;
+    d->pending.ssn = 0u;
+    d->pending.ssn_deferred = 1u;
+  }
+  d->reset_out_mask = stream_mask;
+  return CNET_SCTP_DATA_OK;
+}
+
+cnet_sctp_data_status cnet_sctp_data_complete_outgoing_reset(
+    cnet_sctp_data *d, uint32_t stream_mask, int success) {
+  unsigned int i;
+  cnet_sctp_data_status status = guard(d);
+  if (status != CNET_SCTP_DATA_OK) return status;
+  if (stream_mask == 0u || d->reset_out_mask != stream_mask)
+    return CNET_SCTP_DATA_INVALID;
+  if (success) {
+    for (i = 0u; i < d->config.outbound_streams; ++i)
+      if ((stream_mask & (UINT32_C(1) << i)) != 0u)
+        d->tx_ssn[i] = 0u;
+  }
+  d->reset_out_mask = 0u;
+  return CNET_SCTP_DATA_OK;
+}
+
+int cnet_sctp_data_incoming_reset_ready(
+    const cnet_sctp_data *d, uint32_t sender_last_tsn,
+    uint32_t stream_mask) {
+  unsigned int i;
+  if (!d || d->magic != DATA_MAGIC || stream_mask == 0u ||
+      (stream_mask & ~stream_limit_mask(d->config.inbound_streams)) != 0u)
+    return 0;
+  if (ahead(sender_last_tsn, d->cumulative_rx)) return 0;
+  /* cumulative ACK may advance before ULP delivery. Preserve old ordered
+   * records until the application has consumed all affected RX tickets. */
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i)
+    if (d->rx[i].used &&
+        (stream_mask & (UINT32_C(1) << d->rx[i].stream_id)) != 0u)
+      return 0;
+  return 1;
+}
+
+cnet_sctp_data_status cnet_sctp_data_apply_incoming_reset(
+    cnet_sctp_data *d, uint32_t stream_mask) {
+  unsigned int i;
+  cnet_sctp_data_status status = guard(d);
+  if (status != CNET_SCTP_DATA_OK) return status;
+  if (stream_mask == 0u ||
+      (stream_mask & ~stream_limit_mask(d->config.inbound_streams)) != 0u)
+    return CNET_SCTP_DATA_INVALID;
+  for (i = 0u; i < d->config.inbound_streams; ++i)
+    if ((stream_mask & (UINT32_C(1) << i)) != 0u)
+      d->rx_ssn[i] = 0u;
+  return CNET_SCTP_DATA_OK;
+}
+
+uint32_t cnet_sctp_data_last_assigned_tsn(const cnet_sctp_data *d) {
+  return d && d->magic == DATA_MAGIC ? d->next_tsn - 1u : 0u;
 }
 
 cnet_sctp_data_status cnet_sctp_data_stop(cnet_sctp_data *d) {
