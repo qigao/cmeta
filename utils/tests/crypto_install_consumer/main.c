@@ -1,4 +1,5 @@
 #include <cmeta_crypto.h>
+#include "sm2_test_vectors.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -21,5 +22,48 @@ int main(void) {
   if (cmeta_sm3_stream_update(stream, "abc", 3u) != SALTS_OK) return 6;
   if (cmeta_sm3_stream_finish(stream, digest) != SALTS_OK) return 7;
   cmeta_sm3_stream_destroy(stream);
-  return memcmp(digest, expected, sizeof(digest)) == 0 ? 0 : 8;
+  if (memcmp(digest, expected, sizeof(digest)) != 0) return 8;
+
+  if (cmeta_sm2_verify(
+          SALTS_INSTALL_SM2_PUBLIC_SPKI, sizeof(SALTS_INSTALL_SM2_PUBLIC_SPKI),
+          SALTS_INSTALL_SM2_USER_ID, sizeof(SALTS_INSTALL_SM2_USER_ID) - 1u,
+          SALTS_INSTALL_SM2_MESSAGE, sizeof(SALTS_INSTALL_SM2_MESSAGE) - 1u,
+          SALTS_INSTALL_SM2_SIGNATURE, sizeof(SALTS_INSTALL_SM2_SIGNATURE)) != SALTS_OK)
+    return 9;
+  {
+    static const uint8_t wrong_id[] = "1234567812345679";
+    uint8_t bad_signature[sizeof(SALTS_INSTALL_SM2_SIGNATURE)];
+    uint8_t private_key_stub[] = {0x30u};
+    uint8_t output[SALTS_SM2_SIGNATURE_DER_MAX_BYTES];
+    uint8_t before[sizeof(output)];
+    size_t signature_size = 0x1234u;
+
+    if (cmeta_sm2_verify(
+            SALTS_INSTALL_SM2_PUBLIC_SPKI, sizeof(SALTS_INSTALL_SM2_PUBLIC_SPKI),
+            wrong_id, sizeof(wrong_id) - 1u,
+            SALTS_INSTALL_SM2_MESSAGE, sizeof(SALTS_INSTALL_SM2_MESSAGE) - 1u,
+            SALTS_INSTALL_SM2_SIGNATURE, sizeof(SALTS_INSTALL_SM2_SIGNATURE)) != SALTS_EAUTH)
+      return 10;
+    memcpy(bad_signature, SALTS_INSTALL_SM2_SIGNATURE, sizeof(bad_signature));
+    bad_signature[sizeof(bad_signature) - 1u] ^= 1u;
+    if (cmeta_sm2_verify(
+            SALTS_INSTALL_SM2_PUBLIC_SPKI, sizeof(SALTS_INSTALL_SM2_PUBLIC_SPKI),
+            SALTS_INSTALL_SM2_USER_ID, sizeof(SALTS_INSTALL_SM2_USER_ID) - 1u,
+            SALTS_INSTALL_SM2_MESSAGE, sizeof(SALTS_INSTALL_SM2_MESSAGE) - 1u,
+            bad_signature, sizeof(bad_signature)) != SALTS_EAUTH)
+      return 11;
+
+    memset(output, 0xa5, sizeof(output));
+    memcpy(before, output, sizeof(before));
+    if (cmeta_sm2_sign(
+            private_key_stub, sizeof(private_key_stub),
+            SALTS_INSTALL_SM2_USER_ID, sizeof(SALTS_INSTALL_SM2_USER_ID) - 1u,
+            SALTS_INSTALL_SM2_MESSAGE, sizeof(SALTS_INSTALL_SM2_MESSAGE) - 1u,
+            output, sizeof(output) - 1u, &signature_size) != SALTS_ERANGE)
+      return 12;
+    if (signature_size != SALTS_SM2_SIGNATURE_DER_MAX_BYTES ||
+        memcmp(output, before, sizeof(output)) != 0)
+      return 13;
+  }
+  return 0;
 }
