@@ -41,6 +41,14 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify curl-only package transport policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/tests/test_curl_cache_policy.py
+          python3 cmake/ci/tests/test_github_packages.py
+          python3 cmake/ci/verify-pinned-vcpkg-actions.py --self-test
+          python3 cmake/ci/verify-pinned-vcpkg-actions.py --repo .
       - name: Verify CFlow test-only scope routing
         if: github.event_name == 'pull_request'
         shell: pwsh

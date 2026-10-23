@@ -3,6 +3,10 @@ name: CNet/DataBind private Monocypher full-source ASan
 'on':
   pull_request:
     paths:
+      - '.github/actions/setup-vcpkg-curl-cache/**'
+      - 'cmake/ci/github-packages.py'
+      - 'cmake/ci/restore-vcpkg-cache.py'
+      - 'cmake/ci/setup-vcpkg-curl-cache.py'
       - '.github/workflows/cnet-databind-source-asan.yml'
       - 'vendor/monocypher/**'
       - 'cnet/src/**'
@@ -58,13 +62,10 @@ jobs:
           path: build/native-sources/salts-utils-release
           persist-credentials: false
 
-      - name: Restore exact shared vcpkg dependencies
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@0dc254695917bc180504d916240292e9096e9da5
+      - name: Configure pinned vcpkg and restore re2c with curl
+        uses: ./.github/actions/setup-vcpkg-curl-cache
         with:
-          mode: read
-
-      - name: Restore exact re2c generator
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@0dc254695917bc180504d916240292e9096e9da5
+          cache-ref: 0dc254695917bc180504d916240292e9096e9da5
 
       - name: Prepare native Salts build host
         uses: ./.github/actions/setup-build-host
@@ -105,6 +106,14 @@ jobs:
             echo "LD_LIBRARY_PATH=$SALTS_ROOT/lib:$GRAPH_ROOT/build-utils/bin:$GITHUB_WORKSPACE/vcpkg_installed/x64-linux/lib:${LD_LIBRARY_PATH:-}"
           } >> "$GITHUB_ENV"
 
+      - name: Restore exact Salts sanitizer vcpkg graph with curl
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/restore-vcpkg-cache.py preset linux-dev-ci
+
       - name: Build and install actual Salts CNet from instrumented current source
         shell: bash
         run: |
@@ -125,6 +134,17 @@ jobs:
           cmake --install "$GRAPH_ROOT/build-salts"
           test -f "$SALTS_ROOT/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$SALTS_ROOT/lib/libcnet.so"
+
+      - name: Restore exact SaltsUtils source vcpkg graph with curl
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/restore-vcpkg-cache.py manifest \
+            "$GITHUB_WORKSPACE/build/native-sources/salts-utils-release" \
+            --triplet x64-linux --host-triplet x64-linux \
+            --label salts-utils-release
 
       - name: Build actual pinned DataBind source against installed Salts
         shell: bash

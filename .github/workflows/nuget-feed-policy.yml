@@ -8,6 +8,8 @@ name: Salts.Native public NuGet feed publishing policy (#1089)
       - '.github/workflows/nuget-floating-six-rid-audit.yml'
       - '.github/workflows/nuget-feed-policy.yml'
       - 'packaging/nuget/feed_hygiene.py'
+      - 'cmake/ci/github-packages.py'
+      - 'cmake/ci/tests/test_github_packages.py'
   workflow_dispatch:
 permissions:
   contents: read

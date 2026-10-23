@@ -186,8 +186,13 @@ variable and contains no token. The platform presets select
 | macOS | `$HOME/Library/Caches/qigao/vcpkg-cache` |
 
 Clone the shared cache repository into the matching directory before configuring.
-Linux also requires Mono for NuGet binary restore. Local presets do not read
-`VCPKG_CACHE_REPOSITORY_ROOT` from the parent environment or load `.env` files.
+Local developer presets still use the standard NuGet binary provider; Linux/macOS
+may therefore require Mono for local binary restore. CI does not install Mono or
+run NuGet: it asks the pinned vcpkg tool for exact package/ABI references in a
+configure-only dry run, downloads those GitHub Packages archives with curl, and
+materializes validated payloads into the local `files` cache.
+Local presets do not read `VCPKG_CACHE_REPOSITORY_ROOT` from the parent environment
+or load `.env` files.
 Local Windows presets fix the target triplet to `x64-windows`; no
 `VCPKG_WINDOWS_TRIPLET` environment variable is required. The Windows CI preset
 explicitly consumes the triplet supplied by the shared cache setup action.

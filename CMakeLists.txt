@@ -11,6 +11,15 @@ project(
   VERSION 2.3.0
   LANGUAGES C CXX)
 
+# CI cache preflight computes the exact vcpkg ABI graph using this release
+# preset, but must not configure production targets or build dependencies.
+if(SALTS_CACHE_PREFLIGHT)
+  if(NOT "--dry-run" IN_LIST VCPKG_INSTALL_OPTIONS)
+    message(FATAL_ERROR "SALTS_CACHE_PREFLIGHT requires vcpkg --dry-run")
+  endif()
+  return()
+endif()
+
 # The 2.3 SDK includes an explicit native ABI transition from released 2.2.
 # Distinct SONAME (2.3) prevents old 2.2 binaries loading incompatible 2.3
 # Component/Plugin records merely because the SemVer major remains 2.

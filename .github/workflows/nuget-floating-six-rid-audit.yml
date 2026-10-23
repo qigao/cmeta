@@ -1,4 +1,4 @@
-name: Salts.Native actual NuGet 2.3.0-* floating six-RID admission
+name: Salts.Native GitHub Packages 2.3.0-* floating six-RID admission
 
 # Deliberately MANUAL and read-only until #1089 historic rc.sha cleanup
 # succeeds. It is expected to fail while incomplete higher-ranked packages
@@ -24,10 +24,6 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Set isolated NuGet package directory
-        shell: bash
-        run: echo "NUGET_PACKAGES=$RUNNER_TEMP/salts-floating-packages" >> "$GITHUB_ENV"
-
       - name: Prove no candidate workflow still pushes to shared feed
         shell: bash
         run: |
@@ -35,58 +31,41 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           python3 packaging/nuget/feed_hygiene.py policy .
 
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-
-      - name: Restore an UNOVERRIDDEN literal 2.3.0-* from GitHub Packages
+      - name: Resolve literal 2.3.0-* and download from GitHub Packages with curl
         shell: bash
         run: |
           set -euo pipefail
           probe="$RUNNER_TEMP/salts-literal-floating"
+          archive="$probe/Salts.Native.floating.nupkg"
+          version_file="$probe/resolved-version.txt"
+          rm -rf "$probe"
           mkdir -p "$probe"
-          cat > "$probe/probe.csproj" <<'EOF'
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup>
-              <TargetFramework>net8.0</TargetFramework>
-              <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
-            </PropertyGroup>
-            <ItemGroup>
-              <PackageReference Include="Salts.Native" Version="2.3.0-*" />
-            </ItemGroup>
-          </Project>
-          EOF
-          # A throwaway project outside this checkout does not inherit
-          # repo Directory.Packages.props or pinning/overrides.
-          cat > "$probe/nuget.config" <<'EOF'
-          <configuration>
-            <packageSources>
-              <clear />
-            </packageSources>
-          </configuration>
-          EOF
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
-            --name github --username qigao --password "$GH_TOKEN" \
-            --store-password-in-clear-text --configfile "$probe/nuget.config"
-          dotnet restore "$probe/probe.csproj" \
-            --configfile "$probe/nuget.config" --packages "$NUGET_PACKAGES" \
-            --no-cache --force --verbosity minimal
-          test -s "$probe/obj/project.assets.json"
-          cp "$probe/obj/project.assets.json" "$RUNNER_TEMP/salts-floating-assets.json"
-          sha256sum "$RUNNER_TEMP/salts-floating-assets.json" \
-            > "$RUNNER_TEMP/salts-floating-assets.sha256"
-          echo 'Restore used literal PackageReference Version="2.3.0-*"; no override.' \
-            >> "$GITHUB_STEP_SUMMARY"
+          python3 cmake/ci/github-packages.py floating \
+            Salts.Native '2.3.0-*' "$archive" "$version_file"
+          version="$(tr -d '\r\n' < "$version_file")"
+          [[ "$version" =~ ^2[.]3[.]0-[0-9A-Za-z.-]+$ ]]
+          package_root="$probe/salts.native/${version,,}"
+          mkdir -p "$package_root"
+          python3 cmake/ci/github-packages.py extract "$archive" "$package_root"
+          sha256sum "$archive" > "$RUNNER_TEMP/salts-floating-package.sha256"
+          cp "$version_file" "$RUNNER_TEMP/salts-floating-version.txt"
+          {
+            echo 'Floating requirement: 2.3.0-*'
+            echo "GitHub Packages V3 selected: $version"
+            echo 'Transport: curl only; no managed package restore.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Require actual resolved official six-RID source identity
+      - name: Require curl-resolved official six-RID source identity
         shell: bash
         run: |
           set -euo pipefail
-          python3 packaging/nuget/feed_hygiene.py floating-restore \
-            "$RUNNER_TEMP/salts-floating-assets.json" "$NUGET_PACKAGES" \
+          version="$(tr -d '\r\n' < "$RUNNER_TEMP/salts-floating-version.txt")"
+          package_root="$RUNNER_TEMP/salts-literal-floating/salts.native/${version,,}"
+          python3 packaging/nuget/feed_hygiene.py floating-package \
+            "$version" "$package_root" \
             2>&1 | tee "$RUNNER_TEMP/salts-floating-inspection.txt"
-          python3 packaging/nuget/feed_hygiene.py floating-restore \
-            "$RUNNER_TEMP/salts-floating-assets.json" "$NUGET_PACKAGES" \
+          python3 packaging/nuget/feed_hygiene.py floating-package \
+            "$version" "$package_root" \
             > "$RUNNER_TEMP/salts-floating-inspection.json"
 
       - name: Confirm resolved version is an immutable official Git tag/Release
@@ -128,7 +107,7 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
           path: |
-            ${{ runner.temp }}/salts-floating-assets.json
-            ${{ runner.temp }}/salts-floating-assets.sha256
+            ${{ runner.temp }}/salts-floating-version.txt
+            ${{ runner.temp }}/salts-floating-package.sha256
             ${{ runner.temp }}/salts-floating-inspection.txt
             ${{ runner.temp }}/salts-floating-inspection.json
