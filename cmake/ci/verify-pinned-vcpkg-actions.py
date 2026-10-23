@@ -66,7 +66,7 @@ def check(lines: dict[str, str]) -> dict:
         if body is None:
             raise ValueError(f"required migrated workflow is missing: {filename}")
         if len(re.findall(
-                r"^\s*uses:\s+\./\.github/actions/setup-vcpkg-curl-cache\s*$",
+                r"^\s*(?:-\s*)?uses:\s+\./\.github/actions/setup-vcpkg-curl-cache\s*$",
                 body, re.MULTILINE)) != 1:
             raise ValueError(
                 f"{filename}: expected exactly one local curl-only cache action")
