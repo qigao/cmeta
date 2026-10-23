@@ -34,6 +34,29 @@ foreach(test_source ${TEST_SOURCES} ${CXX_TEST_SOURCES})
     LIBS ${COMMON_LIBS})
 endforeach()
 
+# Installed SDK gate for the provider-neutral crypto ABI. This builds and runs
+# independent C11/C++17 consumers through exported Salts::Core only.
+if(NOT CMAKE_CROSSCOMPILING)
+  add_test(
+    NAME test_cmeta_crypto_installed_sdk
+    COMMAND "${CMAKE_COMMAND}"
+      "-DSALTS_BINARY_DIR=${CMAKE_BINARY_DIR}"
+      "-DSALTS_TEST_VERSION=${PROJECT_VERSION}"
+      "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/crypto_install_consumer"
+      "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-crypto/$<CONFIG>"
+      "-DCTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
+      "-DSALTS_TEST_CONFIG=$<CONFIG>"
+      "-DSALTS_GENERATOR=${CMAKE_GENERATOR}"
+      "-DSALTS_C_COMPILER=${CMAKE_C_COMPILER}"
+      "-DSALTS_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
+      "-DSALTS_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
+      -P "${CMAKE_SOURCE_DIR}/cmake/ci/verify-installed-consumer.cmake")
+  set_tests_properties(test_cmeta_crypto_installed_sdk PROPERTIES
+    LABELS "crypto;installed;sdk"
+    RUN_SERIAL TRUE
+    TIMEOUT 300)
+endif()
+
 # Seed a parent-only variable so the process clean-environment contract can be
 # tested without relying on PATH, which command interpreters may synthesize.
 if(TARGET test_cmeta_process)

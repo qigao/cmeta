@@ -68,6 +68,30 @@ static const uint8_t HMAC_SHA256_HI_THERE[SALTS_SHA256_DIGEST_BYTES] = {
     0x88, 0x1d, 0xc2, 0x00, 0xc9, 0x83, 0x3d, 0xa7,
     0x26, 0xe9, 0x37, 0x6c, 0x2e, 0x32, 0xcf, 0xf7};
 
+static const uint8_t SM3_ABC[SALTS_SM3_DIGEST_BYTES] = {
+    0x66,0xc7,0xf0,0xf4,0x62,0xee,0xed,0xd9,
+    0xd1,0xf2,0xd4,0x6b,0xdc,0x10,0xe4,0xe2,
+    0x41,0x67,0xc4,0x87,0x5c,0xf2,0xf7,0xa2,
+    0x29,0x7d,0xa0,0x2b,0x8f,0x4b,0xa8,0xe0};
+
+static const uint8_t SM3_ABCD_16[SALTS_SM3_DIGEST_BYTES] = {
+    0xde,0xbe,0x9f,0xf9,0x22,0x75,0xb8,0xa1,
+    0x38,0x60,0x48,0x89,0xc1,0x8e,0x5a,0x4d,
+    0x6f,0xdb,0x70,0xe5,0x38,0x7e,0x57,0x65,
+    0x29,0x3d,0xcb,0xa3,0x9c,0x0c,0x57,0x32};
+
+static const uint8_t HMAC_SM3_HI_THERE[SALTS_SM3_DIGEST_BYTES] = {
+    0x51,0xb0,0x0d,0x1f,0xb4,0x98,0x32,0xbf,
+    0xb0,0x1c,0x3c,0xe2,0x78,0x48,0xe5,0x9f,
+    0x87,0x1d,0x9b,0xa9,0x38,0xdc,0x56,0x3b,
+    0x33,0x8c,0xa9,0x64,0x75,0x5c,0xce,0x70};
+
+static const uint8_t HKDF_SM3_OKM_32[SALTS_SM3_DIGEST_BYTES] = {
+    0x18,0x1a,0xd1,0x15,0x65,0x7b,0x29,0xaa,
+    0x30,0x6e,0xc1,0x54,0x87,0xf8,0x3d,0x95,
+    0xf6,0xa9,0xe1,0x23,0xb7,0x8d,0xe5,0xfa,
+    0x2c,0x2a,0x4d,0x6a,0x29,0x9e,0xc6,0x53};
+
 spec("cmeta_crypto") {
   it("computes legacy MD5 for the standard abc vector") {
     uint8_t digest[SALTS_MD5_DIGEST_BYTES];
@@ -119,6 +143,88 @@ spec("cmeta_crypto") {
     check_equal(cmeta_sha256_stream_reset(NULL), SALTS_EINVAL);
     cmeta_sha256_stream_destroy(stream);
     cmeta_sha256_stream_destroy(NULL);
+  }
+
+  it("computes official SM3 abc and 64-byte standard vectors") {
+    static const uint8_t long_message[] =
+        "abcdabcdabcdabcdabcdabcdabcdabcd"
+        "abcdabcdabcdabcdabcdabcdabcdabcd";
+    uint8_t digest[SALTS_SM3_DIGEST_BYTES];
+
+    check_equal(cmeta_sm3("abc", 3u, digest), SALTS_OK);
+    check_equal(memcmp(digest, SM3_ABC, sizeof(digest)), 0);
+    check_equal(cmeta_sm3(long_message, sizeof(long_message) - 1u, digest), SALTS_OK);
+    check_equal(memcmp(digest, SM3_ABCD_16, sizeof(digest)), 0);
+  }
+
+  it("computes SM3 incrementally and enforces reset-after-finish") {
+    cmeta_sm3_stream *stream = NULL;
+    uint8_t digest[SALTS_SM3_DIGEST_BYTES];
+
+    check_equal(cmeta_sm3_stream_create(&stream), SALTS_OK);
+    check_not_null(stream);
+    check_equal(cmeta_sm3_stream_update(stream, "a", 1u), SALTS_OK);
+    check_equal(cmeta_sm3_stream_update(stream, NULL, 0u), SALTS_OK);
+    check_equal(cmeta_sm3_stream_update(stream, "bc", 2u), SALTS_OK);
+    check_equal(cmeta_sm3_stream_finish(stream, digest), SALTS_OK);
+    check_equal(memcmp(digest, SM3_ABC, sizeof(digest)), 0);
+    check_equal(cmeta_sm3_stream_update(stream, "x", 1u), SALTS_EINVAL);
+    check_equal(cmeta_sm3_stream_finish(stream, digest), SALTS_EINVAL);
+    check_equal(cmeta_sm3_stream_reset(stream), SALTS_OK);
+    check_equal(cmeta_sm3_stream_update(stream, "abc", 3u), SALTS_OK);
+    check_equal(cmeta_sm3_stream_finish(stream, digest), SALTS_OK);
+    check_equal(memcmp(digest, SM3_ABC, sizeof(digest)), 0);
+    cmeta_sm3_stream_destroy(stream);
+  }
+
+  it("computes independent HMAC-SM3 and HKDF-SM3 vectors") {
+    static const uint8_t hkdf_salt[] = "salt";
+    static const uint8_t hkdf_ikm[] = "input key material";
+    static const uint8_t hkdf_info[] = "context";
+    uint8_t key[20];
+    uint8_t mac[SALTS_SM3_DIGEST_BYTES];
+    uint8_t okm[SALTS_SM3_DIGEST_BYTES];
+
+    memset(key, 0x0b, sizeof(key));
+    check_equal(cmeta_hmac_sm3(key, sizeof(key), "Hi There", 8u, mac), SALTS_OK);
+    check_equal(memcmp(mac, HMAC_SM3_HI_THERE, sizeof(mac)), 0);
+
+    check_equal(cmeta_hkdf_sm3(
+                    hkdf_ikm, sizeof(hkdf_ikm) - 1u,
+                    hkdf_salt, sizeof(hkdf_salt) - 1u,
+                    hkdf_info, sizeof(hkdf_info) - 1u,
+                    okm, sizeof(okm)),
+                SALTS_OK);
+    check_equal(memcmp(okm, HKDF_SM3_OKM_32, sizeof(okm)), 0);
+  }
+
+  it("keeps SM3 family outputs unchanged on rejected arguments") {
+    uint8_t digest[SALTS_SM3_DIGEST_BYTES];
+    uint8_t before[SALTS_SM3_DIGEST_BYTES];
+    cmeta_sm3_stream *stream = NULL;
+
+    memset(digest, 0xa5, sizeof(digest));
+    memcpy(before, digest, sizeof(before));
+    check_equal(cmeta_sm3(NULL, 1u, digest), SALTS_EINVAL);
+    check_equal(memcmp(digest, before, sizeof(digest)), 0);
+    check_equal(cmeta_hmac_sm3(NULL, 1u, NULL, 0u, digest), SALTS_EINVAL);
+    check_equal(memcmp(digest, before, sizeof(digest)), 0);
+    check_equal(cmeta_hkdf_sm3(
+                    "ikm", 3u, NULL, 0u, NULL, 0u,
+                    digest, SALTS_HKDF_SM3_MAX_OUTPUT_BYTES + 1u),
+                SALTS_ERANGE);
+    check_equal(memcmp(digest, before, sizeof(digest)), 0);
+
+    check_equal(cmeta_sm3_stream_create(NULL), SALTS_EINVAL);
+    check_equal(cmeta_sm3_stream_create(&stream), SALTS_OK);
+    check_equal(cmeta_sm3_stream_update(stream, NULL, 1u), SALTS_EINVAL);
+    check_equal(cmeta_sm3_stream_finish(stream, NULL), SALTS_EINVAL);
+    check_equal(cmeta_sm3_stream_reset(NULL), SALTS_EINVAL);
+    cmeta_sm3_stream_destroy(stream);
+    cmeta_sm3_stream_destroy(NULL);
+
+    check_equal(cmeta_hmac_sm3(NULL, 0u, NULL, 0u, digest), SALTS_OK);
+    check_equal(cmeta_hkdf_sm3(NULL, 0u, NULL, 0u, NULL, 0u, NULL, 0u), SALTS_OK);
   }
 
   it("computes RFC 2202 HMAC-MD5") {

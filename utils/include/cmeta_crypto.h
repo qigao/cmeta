@@ -14,6 +14,8 @@ extern "C" {
 #define SALTS_MD5_DIGEST_BYTES 16u
 #define SALTS_SHA1_DIGEST_BYTES 20u
 #define SALTS_SHA256_DIGEST_BYTES 32u
+#define SALTS_SM3_DIGEST_BYTES 32u
+#define SALTS_HKDF_SM3_MAX_OUTPUT_BYTES (255u * SALTS_SM3_DIGEST_BYTES)
 #define SALTS_AES128_KEY_BYTES 16u
 #define SALTS_AES_BLOCK_BYTES 16u
 #define SALTS_DES_KEY_BYTES 8u
@@ -21,6 +23,9 @@ extern "C" {
 
 /** Opaque provider-neutral incremental SHA-256 context. */
 typedef struct cmeta_sha256_stream cmeta_sha256_stream;
+
+/** Opaque provider-neutral incremental SM3 context. */
+typedef struct cmeta_sm3_stream cmeta_sm3_stream;
 
 /**
  * Compute MD5 over one contiguous byte range.
@@ -89,6 +94,67 @@ SALTS_C_API int cmeta_sha256_stream_finish(
 
 /** Wipe provider state and release an incremental SHA-256 context. */
 SALTS_C_API void cmeta_sha256_stream_destroy(cmeta_sha256_stream *stream);
+
+/**
+ * Compute SM3 over one contiguous byte range.
+ *
+ * Input is borrowed for this call. NULL data is allowed only when size is zero.
+ * On success, out receives exactly SALTS_SM3_DIGEST_BYTES. On failure, out is
+ * left unchanged. No provider type or state crosses the public ABI.
+ */
+SALTS_C_API int cmeta_sm3(const void *data, size_t size,
+                          uint8_t out[SALTS_SM3_DIGEST_BYTES]);
+
+/** Create an opaque incremental SM3 context owned by the caller. */
+SALTS_C_API int cmeta_sm3_stream_create(cmeta_sm3_stream **out_stream);
+
+/** Reset an incremental SM3 context to the empty-message state. */
+SALTS_C_API int cmeta_sm3_stream_reset(cmeta_sm3_stream *stream);
+
+/** Add one borrowed byte range; NULL data is allowed only when size is zero. */
+SALTS_C_API int cmeta_sm3_stream_update(cmeta_sm3_stream *stream,
+                                        const void *data, size_t size);
+
+/**
+ * Finish the current SM3 digest. Further update/finish calls fail until reset.
+ * On failure, out is left unchanged.
+ */
+SALTS_C_API int cmeta_sm3_stream_finish(
+    cmeta_sm3_stream *stream,
+    uint8_t out[SALTS_SM3_DIGEST_BYTES]);
+
+/** Wipe provider state and release an incremental SM3 context. */
+SALTS_C_API void cmeta_sm3_stream_destroy(cmeta_sm3_stream *stream);
+
+/**
+ * Compute HMAC-SM3 over one contiguous byte range.
+ *
+ * key/data are borrowed. NULL is allowed only for a corresponding zero length.
+ * On success, out receives exactly SALTS_SM3_DIGEST_BYTES. On failure, out is
+ * left unchanged.
+ */
+SALTS_C_API int cmeta_hmac_sm3(
+    const void *key, size_t key_size,
+    const void *data, size_t data_size,
+    uint8_t out[SALTS_SM3_DIGEST_BYTES]);
+
+/**
+ * RFC 5869 HKDF-SM3 extract+expand.
+ *
+ * ikm, salt and info are borrowed for this call. NULL is allowed only when the
+ * corresponding size is zero. output_size may be zero with output == NULL.
+ * output_size must not exceed SALTS_HKDF_SM3_MAX_OUTPUT_BYTES (8160). The
+ * function performs no hidden nonce generation, provider selection or runtime
+ * persistence. Output is committed only after the complete derivation succeeds;
+ * every error leaves caller output unchanged.
+ *
+ * @return SALTS_OK, SALTS_EINVAL, SALTS_ERANGE, or SALTS_EIO.
+ */
+SALTS_C_API int cmeta_hkdf_sm3(
+    const void *ikm, size_t ikm_size,
+    const void *salt, size_t salt_size,
+    const void *info, size_t info_size,
+    void *output, size_t output_size);
 
 /**
  * Compute HMAC-MD5 over one contiguous byte range.
