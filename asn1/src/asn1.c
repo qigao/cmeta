@@ -303,9 +303,12 @@ salts_asn1_status salts_asn1_reader_open_children(
     const salts_asn1_reader *parent, const salts_asn1_tlv *value,
     salts_asn1_reader *children) {
     if (!parent || !value || !children) return SALTS_ASN1_INVALID_ARGUMENT;
+    if ((parent->mode != SALTS_ASN1_BER && parent->mode != SALTS_ASN1_DER) ||
+        value->depth != parent->depth)
+        return SALTS_ASN1_INVALID_ARGUMENT;
     if (!value->constructed) return SALTS_ASN1_INVALID_ARGUMENT;
     if ((!value->content && value->content_size != 0u) ||
-        value->depth + 1u >= SALTS_ASN1_MAX_DEPTH)
+        value->depth >= SALTS_ASN1_MAX_DEPTH - 1u)
         return SALTS_ASN1_LIMIT_EXCEEDED;
     children->data = value->content;
     children->size = value->content_size;

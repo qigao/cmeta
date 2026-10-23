@@ -1,3 +1,5 @@
+include(GNUInstallDirs)
+
 set(TARGET_NAME salts_asn1)
 
 add_library(${TARGET_NAME} SHARED src/asn1.c)
