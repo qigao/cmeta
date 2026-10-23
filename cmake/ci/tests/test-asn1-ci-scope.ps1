@@ -14,7 +14,8 @@ $cases = @(
   'asn1/src/asn1.c',
   'asn1/include/salts/asn1.h',
   'asn1/tests/asn1_reader_test.c',
-  'asn1/tests/asn1_value_test.c'
+  'asn1/tests/asn1_value_test.c',
+  'asn1/tests/installed/CMakeLists.txt'
 )
 $hosts = @(
   'linux-release', 'linux-arm64-release', 'linux-clang-release',
