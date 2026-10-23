@@ -34,6 +34,12 @@ foreach(test_source ${TEST_SOURCES} ${CXX_TEST_SOURCES})
     LIBS ${COMMON_LIBS})
 endforeach()
 
+# The SM2 unit test generates ephemeral keys through the pinned provider. The
+# public installed-SDK consumers below do not include provider headers.
+if(TARGET test_cmeta_sm2)
+  target_link_libraries(test_cmeta_sm2 PRIVATE GmSSL::GmSSL)
+endif()
+
 # Installed SDK gate for the provider-neutral crypto ABI. This builds and runs
 # independent C11/C++17 consumers through exported Salts::Core only.
 if(NOT CMAKE_CROSSCOMPILING)
