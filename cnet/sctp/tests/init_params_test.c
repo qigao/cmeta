@@ -190,11 +190,40 @@ static void test_capacity_and_mutations(void) {
   }
 }
 
+
+static void test_supported_extensions_reconfig(void) {
+  uint8_t p[64] = {0};
+  cnet_sctp_init_param_view out = {0};
+  size_t n = 16u;
+  put16(p + n, 0x8008u);
+  put16(p + n + 2u, 6u);
+  p[n + 4u] = 130u;
+  p[n + 5u] = 192u;
+  n += 8u; /* six-byte TLV plus padding */
+  assert(cnet_sctp_init_params_preflight(p, n, 0, &out) ==
+         CNET_SCTP_INIT_PARAMS_OK);
+  assert(out.supports_reconfig == 1 && out.parsed_count == 1u);
+
+  p[20u] = 192u;
+  assert(cnet_sctp_init_params_preflight(p, n, 0, &out) ==
+         CNET_SCTP_INIT_PARAMS_OK);
+  assert(out.supports_reconfig == 0);
+
+  /* A duplicate Supported Extensions parameter is malformed, not merged. */
+  put16(p + n, 0x8008u);
+  put16(p + n + 2u, 5u);
+  p[n + 4u] = 130u;
+  n += 8u;
+  assert_failure_does_not_expose_borrowed_cookie(
+      p, n, 0, CNET_SCTP_INIT_PARAMS_MALFORMED);
+}
+
 int main(void) {
   test_cookie_and_padding();
   test_unknown_actions();
   test_report_capacity_and_cookie();
   test_received_unrecognized_parameter();
+  test_supported_extensions_reconfig();
   test_malformed_and_unsupported();
   test_capacity_and_mutations();
   puts("C11 SCTP RFC9260 TLV action/report/abort-intent parser: PASS");
