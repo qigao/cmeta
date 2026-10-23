@@ -63,13 +63,10 @@ jobs:
           echo "candidate_version=$candidate_version" >> "$GITHUB_OUTPUT"
           echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Restore canonical re2c
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
-
-      - name: Configure shared vcpkg cache
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@fafb1efe5ac2440bfd7a08e493988d0459d89e51
+      - name: Configure candidate vcpkg and restore re2c with curl
+        uses: ./.github/actions/setup-vcpkg-curl-cache
         with:
-          mode: read
+          cache-ref: fafb1efe5ac2440bfd7a08e493988d0459d89e51
 
       - name: Prepare Linux build host
         uses: ./.github/actions/setup-build-host
@@ -79,6 +76,14 @@ jobs:
         uses: ./.github/actions/setup-compiler-cache
         with:
           profile: linux-ace-2.3-candidate
+
+      - name: Restore exact candidate release vcpkg graph with curl
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/restore-vcpkg-cache.py linux-release-ci
 
       - name: Configure and build 2.3 SDK
         shell: bash
