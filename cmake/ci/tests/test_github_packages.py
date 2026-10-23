@@ -122,6 +122,7 @@ class TransportTests(unittest.TestCase):
             self.assertIn("Authorization: Bearer secret-test-token", kwargs["input"])
             self.assertEqual(args[args.index("--proto-redir") + 1], "=https")
             Path(args[args.index("--output") + 1]).write_bytes(b"payload")
+            return subprocess.CompletedProcess(args, 0, stdout="200", stderr="")
         with patch.object(pkg.subprocess, "run", side_effect=download):
             pkg.Curl().download("https://api.github.com/test", self.nupkg)
         self.assertEqual(self.nupkg.read_bytes(), b"payload")
@@ -138,7 +139,7 @@ class TransportTests(unittest.TestCase):
     def test_failed_curl_never_publishes_partial_download(self):
         def download(args, **kwargs):
             Path(args[args.index("--output") + 1]).write_bytes(b"partial")
-            raise subprocess.CalledProcessError(22, ["curl"])
+            return subprocess.CompletedProcess(args, 22, stdout="500", stderr="server error")
         with patch.object(pkg.subprocess, "run", side_effect=download), self.assertRaises(subprocess.CalledProcessError):
             pkg.Curl().download("https://api.github.com/test", self.nupkg)
         self.assertFalse(self.nupkg.exists())
@@ -194,14 +195,39 @@ class TransportTests(unittest.TestCase):
             execute.assert_not_called()
         self.assertFalse((self.root / "powershell/package").exists())
 
-    def test_missing_exact_cache_package_propagates_failure(self):
+    @patch.dict(os.environ, {"GH_TOKEN": "secret-test-token"})
+    def test_exact_cache_404_is_a_cache_miss_but_401_is_fatal(self):
+        def response(status, returncode):
+            def run(args, **kwargs):
+                partial = Path(args[args.index("--output") + 1])
+                partial.write_bytes(b"error response")
+                return subprocess.CompletedProcess(
+                    args, returncode, stdout=status, stderr="http error")
+            return run
+
+        with patch.object(pkg.subprocess, "run", side_effect=response("404", 22)):
+            self.assertFalse(pkg.Curl().download(
+                "https://nuget.pkg.github.com/qigao/download/missing",
+                self.nupkg, "application/octet-stream", allow_not_found=True))
+            self.assertFalse(self.nupkg.exists())
+
+        with patch.object(pkg.subprocess, "run", side_effect=response("401", 22)):
+            with self.assertRaises(subprocess.CalledProcessError):
+                pkg.Curl().download(
+                    "https://nuget.pkg.github.com/qigao/download/private",
+                    self.nupkg, "application/octet-stream", allow_not_found=True)
+            self.assertFalse(self.nupkg.exists())
+
+    def test_missing_exact_cache_package_is_not_materialized(self):
         class Feed:
-            def package(self, *args):
-                raise RuntimeError("404 missing exact package")
+            def package(self, *args, **kwargs):
+                self.assertTrue(kwargs.get("allow_not_found"))
+                return False
+        feed = Feed()
+        feed.assertTrue = self.assertTrue
         config = self.root / "packages.config"
         config.write_text(f'<packages><package id="{IDENTITY}" version="{VERSION}" /></packages>')
-        with self.assertRaisesRegex(RuntimeError, "404"):
-            pkg.restore_cache(Feed(), config, self.root / "cache")
+        pkg.restore_cache(feed, config, self.root / "cache")
         self.assertFalse((self.root / "cache").exists())
 
 
