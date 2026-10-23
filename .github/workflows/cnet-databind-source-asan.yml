@@ -3,6 +3,10 @@ name: CNet/DataBind private Monocypher full-source ASan
 'on':
   pull_request:
     paths:
+      - '.github/actions/setup-vcpkg-curl-cache/**'
+      - 'cmake/ci/github-packages.py'
+      - 'cmake/ci/restore-vcpkg-cache.py'
+      - 'cmake/ci/setup-vcpkg-curl-cache.py'
       - '.github/workflows/cnet-databind-source-asan.yml'
       - 'vendor/monocypher/**'
       - 'cnet/src/**'
