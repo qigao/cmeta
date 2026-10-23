@@ -184,7 +184,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$BUILD_ROOT/install" \
             -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
             -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
-          cmake --build "$BUILD_ROOT" --target test_cmeta_crypto test_cmeta_crypto_cpp --parallel 2
+          cmake --build "$BUILD_ROOT" --target install test_cmeta_crypto test_cmeta_crypto_cpp --parallel 2
 
       - name: Run native C11/C++17 crypto KATs
         shell: bash
@@ -249,7 +249,7 @@ jobs:
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           cmake --preset win-release-ci -B "%BUILD_ROOT%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="%BUILD_ROOT%/install" -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
           if errorlevel 1 exit /b 1
-          cmake --build "%BUILD_ROOT%" --target test_cmeta_crypto test_cmeta_crypto_cpp --parallel 2
+          cmake --build "%BUILD_ROOT%" --target install test_cmeta_crypto test_cmeta_crypto_cpp --parallel 2
           if errorlevel 1 exit /b 1
 
       - name: Run native C11/C++17 crypto KATs
