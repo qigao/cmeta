@@ -34,15 +34,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Restore shared vcpkg binary cache
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
-        with:
-          mode: read
-      - name: Restore re2c tools
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
+      - name: Configure vcpkg and restore re2c with curl
+        uses: ./.github/actions/setup-vcpkg-curl-cache
       - name: Prepare C11 source TSan toolchain
         shell: bash
         run: |
@@ -50,6 +43,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache
           ccache --zero-stats
+      - name: Restore exact TSan vcpkg graph with curl
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/restore-vcpkg-cache.py linux-tsan-ci
       - name: Configure CNet and Core with full source TSan
         shell: bash
         run: |
