@@ -49,7 +49,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 cmake/ci/restore-vcpkg-cache.py linux-tsan-ci
+          python3 cmake/ci/restore-vcpkg-cache.py preset linux-tsan-ci
       - name: Configure CNet and Core with full source TSan
         shell: bash
         run: |
