@@ -365,8 +365,19 @@ def floating_self_test() -> dict[str, Any]:
         passed = audit_floating_resolution(assets, cache)
         ensure(passed["status"] == "PASS" and len(passed["sdk_rids"]) == 6,
                "official six-RID fixture did not pass")
+        direct = audit_floating_package(release, cache / "salts.native" / release)
+        ensure(direct["status"] == "PASS"
+               and direct["resolution_transport"] == "curl-github-packages-v3",
+               "curl-resolved six-RID fixture did not pass")
         poisoned = "2.3.0-rc.sha" + "b31598521b23f7833a999eb05733e846b6174644"
         write_assets(poisoned)
+        try:
+            audit_floating_package(poisoned, cache / "salts.native" / release)
+        except FeedPolicyError as exc:
+            ensure("RC_SHA_POLLUTION_PRESENT" in str(exc),
+                   "curl floating resolver rejected poisoned version for wrong reason")
+        else:
+            raise FeedPolicyError("curl floating resolver admitted SHA prerelease")
         try:
             audit_floating_resolution(assets, cache)
         except FeedPolicyError as exc:
@@ -398,6 +409,7 @@ def floating_self_test() -> dict[str, Any]:
         "status": "PASS",
         "scenarios": [
             "real project.assets.json numeric RC + six-RID admitted",
+            "curl-resolved numeric RC + six-RID admitted",
             "semver rc.sha floating selection rejected",
             "missing installed SDK configuration rejected",
             "cross-RID SHA mismatch rejected",
