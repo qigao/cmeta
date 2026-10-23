@@ -46,6 +46,15 @@ jobs:
       - name: Configure vcpkg and restore host tools with curl
         id: shared_deps
         uses: ./.github/actions/setup-vcpkg-curl-cache
+      - name: Test curl-only package transport and cache policy
+        shell: pwsh
+        run: |
+          python cmake/ci/tests/test_curl_cache_policy.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python cmake/ci/tests/test_github_packages.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python cmake/ci/verify-pinned-vcpkg-actions.py --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prepare build host
         uses: ./.github/actions/setup-build-host
       - name: Restore native compiler cache
