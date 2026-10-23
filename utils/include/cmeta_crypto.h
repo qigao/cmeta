@@ -156,6 +156,63 @@ SALTS_C_API int cmeta_hkdf_sm3(
     const void *info, size_t info_size,
     void *output, size_t output_size);
 
+#define SALTS_SM4_KEY_BYTES 16u
+#define SALTS_SM4_GCM_NONCE_BYTES 12u
+#define SALTS_SM4_GCM_TAG_BYTES 16u
+#define SALTS_SM4_GCM_MAX_AAD_BYTES (16u * 1024u * 1024u)
+#define SALTS_SM4_GCM_MAX_MESSAGE_BYTES ((UINT64_C(1) << 36) - UINT64_C(32))
+
+/**
+ * Encrypt one message with SM4-GCM using a fixed 96-bit nonce and 128-bit tag.
+ *
+ * The caller owns nonce generation and MUST NOT reuse a nonce with the same
+ * key. AAD and plaintext are borrowed and NULL is valid only for zero length.
+ * The GmSSL provider's 16 MiB AAD bound and GCM message bound are enforced.
+ * Ciphertext length equals plaintext length; the tag is returned separately.
+ *
+ * The output size pointer is mandatory and must not overlap any other argument.
+ * If capacity is too small, the function sets *out_ciphertext_size to the
+ * required plaintext size and returns SALTS_ERANGE without modifying
+ * ciphertext or tag. Exact in-place payload encryption is allowed; partial
+ * overlap is rejected. Every other failure leaves all caller outputs unchanged.
+ * A zero-length message may use ciphertext == NULL and capacity == 0.
+ *
+ * @return SALTS_OK, SALTS_EINVAL, SALTS_ERANGE, SALTS_ENOMEM, or SALTS_EIO.
+ */
+SALTS_C_API int cmeta_sm4_gcm_seal(
+    const uint8_t key[SALTS_SM4_KEY_BYTES],
+    const uint8_t nonce[SALTS_SM4_GCM_NONCE_BYTES],
+    const void *aad, size_t aad_size,
+    const void *plaintext, size_t plaintext_size,
+    void *ciphertext, size_t ciphertext_capacity,
+    size_t *out_ciphertext_size,
+    uint8_t tag[SALTS_SM4_GCM_TAG_BYTES]);
+
+/**
+ * Authenticate and decrypt one SM4-GCM message.
+ *
+ * The caller owns the key and nonce. Ciphertext, AAD and tag are borrowed.
+ * Plaintext is staged privately and copied to caller memory only after tag
+ * verification succeeds; invalid authentication returns SALTS_EAUTH and leaves
+ * both plaintext and *out_plaintext_size unchanged. If capacity is too small,
+ * the function sets *out_plaintext_size to the required ciphertext size and
+ * returns SALTS_ERANGE without modifying plaintext. Exact in-place decryption
+ * is allowed; partial overlap is rejected. The output size pointer must not
+ * overlap any other argument. A zero-length message may use plaintext == NULL
+ * and capacity == 0.
+ *
+ * @return SALTS_OK, SALTS_EINVAL, SALTS_ERANGE, SALTS_ENOMEM, SALTS_EAUTH,
+ *         or SALTS_EIO.
+ */
+SALTS_C_API int cmeta_sm4_gcm_open(
+    const uint8_t key[SALTS_SM4_KEY_BYTES],
+    const uint8_t nonce[SALTS_SM4_GCM_NONCE_BYTES],
+    const void *aad, size_t aad_size,
+    const void *ciphertext, size_t ciphertext_size,
+    const uint8_t tag[SALTS_SM4_GCM_TAG_BYTES],
+    void *plaintext, size_t plaintext_capacity,
+    size_t *out_plaintext_size);
+
 /**
  * Compute HMAC-MD5 over one contiguous byte range.
  *
