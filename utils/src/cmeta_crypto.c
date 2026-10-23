@@ -4,10 +4,12 @@
 #include <gmssl/des.h>
 #include <gmssl/digest.h>
 #include <gmssl/hmac.h>
+#include <gmssl/hkdf.h>
 #include <gmssl/md5.h>
 #include <gmssl/mem.h>
 #include <gmssl/sha1.h>
 #include <gmssl/sha2.h>
+#include <gmssl/sm3.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -96,6 +98,147 @@ void cmeta_sha256_stream_destroy(cmeta_sha256_stream *stream) {
   if (stream == NULL) return;
   gmssl_secure_clear(stream, sizeof(*stream));
   free(stream);
+}
+
+struct cmeta_sm3_stream {
+  SM3_CTX context;
+  int finished;
+};
+
+int cmeta_sm3(const void *data, size_t size,
+              uint8_t out[SALTS_SM3_DIGEST_BYTES]) {
+  SM3_CTX context;
+  uint8_t digest[SALTS_SM3_DIGEST_BYTES];
+  static const uint8_t empty = 0u;
+
+  if (out == NULL || (data == NULL && size != 0u)) return SALTS_EINVAL;
+
+  sm3_init(&context);
+  if (size != 0u)
+    sm3_update(&context, (const uint8_t *)data, size);
+  else
+    sm3_update(&context, data != NULL ? (const uint8_t *)data : &empty, 0u);
+  sm3_finish(&context, digest);
+  memcpy(out, digest, sizeof(digest));
+  gmssl_secure_clear(&context, sizeof(context));
+  gmssl_secure_clear(digest, sizeof(digest));
+  return SALTS_OK;
+}
+
+int cmeta_sm3_stream_create(cmeta_sm3_stream **out_stream) {
+  cmeta_sm3_stream *stream;
+  if (out_stream == NULL) return SALTS_EINVAL;
+  *out_stream = NULL;
+  stream = (cmeta_sm3_stream *)calloc(1u, sizeof(*stream));
+  if (stream == NULL) return SALTS_ENOMEM;
+  sm3_init(&stream->context);
+  *out_stream = stream;
+  return SALTS_OK;
+}
+
+int cmeta_sm3_stream_reset(cmeta_sm3_stream *stream) {
+  if (stream == NULL) return SALTS_EINVAL;
+  gmssl_secure_clear(&stream->context, sizeof(stream->context));
+  sm3_init(&stream->context);
+  stream->finished = 0;
+  return SALTS_OK;
+}
+
+int cmeta_sm3_stream_update(cmeta_sm3_stream *stream,
+                            const void *data, size_t size) {
+  static const uint8_t empty = 0u;
+  if (stream == NULL || stream->finished ||
+      (data == NULL && size != 0u))
+    return SALTS_EINVAL;
+  sm3_update(&stream->context,
+             data != NULL ? (const uint8_t *)data : &empty, size);
+  return SALTS_OK;
+}
+
+int cmeta_sm3_stream_finish(
+    cmeta_sm3_stream *stream,
+    uint8_t out[SALTS_SM3_DIGEST_BYTES]) {
+  uint8_t digest[SALTS_SM3_DIGEST_BYTES];
+  if (stream == NULL || out == NULL || stream->finished) return SALTS_EINVAL;
+  sm3_finish(&stream->context, digest);
+  memcpy(out, digest, sizeof(digest));
+  gmssl_secure_clear(digest, sizeof(digest));
+  gmssl_secure_clear(&stream->context, sizeof(stream->context));
+  stream->finished = 1;
+  return SALTS_OK;
+}
+
+void cmeta_sm3_stream_destroy(cmeta_sm3_stream *stream) {
+  if (stream == NULL) return;
+  gmssl_secure_clear(stream, sizeof(*stream));
+  free(stream);
+}
+
+int cmeta_hmac_sm3(
+    const void *key, size_t key_size,
+    const void *data, size_t data_size,
+    uint8_t out[SALTS_SM3_DIGEST_BYTES]) {
+  SM3_HMAC_CTX context;
+  uint8_t mac[SALTS_SM3_DIGEST_BYTES];
+  static const uint8_t empty = 0u;
+  const uint8_t *key_bytes;
+  const uint8_t *data_bytes;
+
+  if (out == NULL || (key == NULL && key_size != 0u) ||
+      (data == NULL && data_size != 0u))
+    return SALTS_EINVAL;
+
+  key_bytes = key != NULL ? (const uint8_t *)key : &empty;
+  data_bytes = data != NULL ? (const uint8_t *)data : &empty;
+  sm3_hmac_init(&context, key_bytes, key_size);
+  sm3_hmac_update(&context, data_bytes, data_size);
+  sm3_hmac_finish(&context, mac);
+  memcpy(out, mac, sizeof(mac));
+  gmssl_secure_clear(&context, sizeof(context));
+  gmssl_secure_clear(mac, sizeof(mac));
+  return SALTS_OK;
+}
+
+int cmeta_hkdf_sm3(
+    const void *ikm, size_t ikm_size,
+    const void *salt, size_t salt_size,
+    const void *info, size_t info_size,
+    void *output, size_t output_size) {
+  uint8_t prk[SALTS_SM3_DIGEST_BYTES];
+  uint8_t scratch[SALTS_HKDF_SM3_MAX_OUTPUT_BYTES];
+  static const uint8_t empty = 0u;
+  const uint8_t *ikm_bytes;
+  const uint8_t *salt_bytes;
+  const uint8_t *info_bytes;
+  int status = SALTS_EIO;
+
+  if ((ikm == NULL && ikm_size != 0u) ||
+      (salt == NULL && salt_size != 0u) ||
+      (info == NULL && info_size != 0u) ||
+      (output == NULL && output_size != 0u))
+    return SALTS_EINVAL;
+  if (output_size > SALTS_HKDF_SM3_MAX_OUTPUT_BYTES) return SALTS_ERANGE;
+  if (output_size == 0u) return SALTS_OK;
+
+  ikm_bytes = ikm != NULL ? (const uint8_t *)ikm : &empty;
+  salt_bytes = salt != NULL ? (const uint8_t *)salt : &empty;
+  info_bytes = info != NULL ? (const uint8_t *)info : &empty;
+  memset(prk, 0, sizeof(prk));
+  memset(scratch, 0, sizeof(scratch));
+
+  if (sm3_hkdf_extract(salt_size != 0u ? salt_bytes : NULL, salt_size,
+                       ikm_bytes, ikm_size, prk) != 1)
+    goto done;
+  if (sm3_hkdf_expand(prk, info_bytes, info_size,
+                      output_size, scratch) != 1)
+    goto done;
+
+  memcpy(output, scratch, output_size);
+  status = SALTS_OK;
+done:
+  gmssl_secure_clear(prk, sizeof(prk));
+  gmssl_secure_clear(scratch, sizeof(scratch));
+  return status;
 }
 
 int cmeta_hmac_md5(const void *key, size_t key_size,
