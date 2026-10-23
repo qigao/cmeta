@@ -52,7 +52,7 @@ def main() -> int:
     if (not re.fullmatch(r"[0-9a-f]{40}", scripts)
             or not re.fullmatch(r"[0-9a-f]{64}", revision)
             or not contract.isdigit()
-            or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){2,}", expected_tool_version)):
+            or not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z.-]*", expected_tool_version)):
         raise ValueError("invalid canonical vcpkg cache identity")
 
     root = temporary / f"qigao-vcpkg-{scripts}"
