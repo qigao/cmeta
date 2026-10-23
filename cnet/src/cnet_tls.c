@@ -77,9 +77,11 @@ typedef struct cnet_tls_gmssl_state {
   size_t input_size;
   size_t output_head;
   size_t output_size;
+#if defined(CNET_INTERNAL_TESTING)
   size_t diagnostic_send_calls;
   size_t diagnostic_send_requested;
   size_t diagnostic_send_accepted;
+#endif
   size_t plaintext_pending_offset;
   size_t plaintext_pending_size;
   const unsigned char *write_source;
@@ -900,14 +902,18 @@ static tls_ret_t cnet_tls_io_send(void *user, const void *buffer, size_t length,
   (void)flags;
   if (engine == NULL || buffer == NULL || length == 0u)
     return TLS_ERROR_SYSCALL;
+#if defined(CNET_INTERNAL_TESTING)
   ++engine->diagnostic_send_calls;
   engine->diagnostic_send_requested += length;
+#endif
   written = cnet_tls_ring_write(
       engine->cipher_output, engine->capacity, engine->output_head,
       engine->output_size, (const unsigned char *)buffer, length);
   if (written == 0u) return TLS_ERROR_SEND_AGAIN;
   engine->output_size += written;
+#if defined(CNET_INTERNAL_TESTING)
   engine->diagnostic_send_accepted += written;
+#endif
   return (tls_ret_t)written;
 }
 
@@ -1372,6 +1378,7 @@ int cnet_tls_feed_cipher(cnet_tls_state *state, const void *data, size_t size) {
   return SALTS_OK;
 }
 
+#if defined(CNET_INTERNAL_TESTING)
 int cnet_tls_diagnostic_send_stats(const cnet_tls_state *state,
                                    size_t *calls, size_t *requested,
                                    size_t *accepted, size_t *queued) {
@@ -1385,6 +1392,7 @@ int cnet_tls_diagnostic_send_stats(const cnet_tls_state *state,
   *queued = engine->output_size;
   return SALTS_OK;
 }
+#endif
 
 int cnet_tls_take_cipher(cnet_tls_state *state, void *buffer,
                          size_t capacity, size_t *out_size) {
