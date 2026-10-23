@@ -307,9 +307,12 @@ salts_asn1_status salts_asn1_reader_open_children(
         value->depth != parent->depth)
         return SALTS_ASN1_INVALID_ARGUMENT;
     if (!value->constructed) return SALTS_ASN1_INVALID_ARGUMENT;
-    if ((!value->content && value->content_size != 0u) ||
-        value->depth >= SALTS_ASN1_MAX_DEPTH - 1u)
+    if (value->depth >= SALTS_ASN1_MAX_DEPTH ||
+        (value->content_size != 0u &&
+         value->depth >= SALTS_ASN1_MAX_DEPTH - 1u))
         return SALTS_ASN1_LIMIT_EXCEEDED;
+    if (!value->content && value->content_size != 0u)
+        return SALTS_ASN1_INVALID_ARGUMENT;
     children->data = value->content;
     children->size = value->content_size;
     children->offset = 0u;
