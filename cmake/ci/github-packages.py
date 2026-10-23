@@ -196,7 +196,13 @@ def cache_package(nupkg, package_id, version, cache):
         core = source.read("CONTROL").decode().split("\n\n", 1)[0]
         fields = dict(line.split(": ", 1) for line in core.splitlines() if ": " in line and not line.startswith(" "))
         identity = fields.get("Package", "") + "_" + fields.get("Architecture", "")
-        if fields.get("Abi") != abi or package_id not in (identity, "vcpkg-cache_" + identity):
+        allowed_ids = {identity, "vcpkg-cache_" + identity}
+        configured_prefix = os.environ.get("X_VCPKG_NUGET_ID_PREFIX", "")
+        if configured_prefix:
+            if not re.fullmatch(r"[A-Za-z0-9_.+-]+", configured_prefix):
+                raise ValueError("invalid configured vcpkg NuGet prefix")
+            allowed_ids.add(configured_prefix + "_" + identity)
+        if fields.get("Abi") != abi or package_id not in allowed_ids:
             raise ValueError("vcpkg CONTROL identity/ABI mismatch")
         if "BUILD_INFO" not in source.namelist():
             raise ValueError("vcpkg package lacks BUILD_INFO")
