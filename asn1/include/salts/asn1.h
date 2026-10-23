@@ -34,7 +34,8 @@ typedef enum salts_asn1_status {
     SALTS_ASN1_MALFORMED = 6,
     SALTS_ASN1_LIMIT_EXCEEDED = 7,
     SALTS_ASN1_UNSUPPORTED = 8,
-    SALTS_ASN1_TRAILING_DATA = 9
+    SALTS_ASN1_TRAILING_DATA = 9,
+    SALTS_ASN1_BUFFER_TOO_SMALL = 10
 } salts_asn1_status;
 
 /* Borrowed view into caller-owned bytes. The source buffer must remain alive
@@ -80,6 +81,19 @@ SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_reader_open_children(
  * DER mode rejects indefinite lengths and non-canonical universal encodings. */
 SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_validate(
     const void *data, size_t size, salts_asn1_mode mode);
+
+/* Encodes one canonical TLV into caller-owned storage. Constructed content must
+ * itself be a valid sequence of complete TLVs. Indefinite length is BER-only
+ * and only valid for constructed values. No output bytes are written on error.
+ *
+ * With output=NULL and output_capacity=0, performs a size query and returns
+ * the required byte count in written. If the buffer is too small, returns
+ * BUFFER_TOO_SMALL and reports the required size without modifying the buffer. */
+SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_encode_tlv(
+    uint8_t tag_class, uint8_t constructed, uint32_t tag_number,
+    const void *content, size_t content_size, salts_asn1_mode mode,
+    uint8_t indefinite_length, void *output, size_t output_capacity,
+    size_t *written);
 
 #ifdef __cplusplus
 }

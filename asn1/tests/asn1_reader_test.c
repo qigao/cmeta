@@ -2,6 +2,7 @@
 #include "tinytest.h"
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 spec("Salts ASN.1 bounded BER/DER reader") {
     it("reads a TLV and opens validated constructed children") {
@@ -89,6 +90,65 @@ spec("Salts ASN.1 bounded BER/DER reader") {
                                         SALTS_ASN1_BER), SALTS_ASN1_OK);
         check_equal(salts_asn1_validate(wrong_segment, sizeof(wrong_segment),
                                         SALTS_ASN1_BER), SALTS_ASN1_MALFORMED);
+    }
+    it("encodes a canonical DER value without partial writes") {
+        static const uint8_t content[] = {0x02,0x01,0x2a,0x04,0x01,0xaa};
+        static const uint8_t expected[] = {0x30,0x06,0x02,0x01,0x2a,0x04,0x01,0xaa};
+        uint8_t output[16];
+        size_t written = 0u;
+        memset(output, 0xcc, sizeof(output));
+        check_equal(salts_asn1_encode_tlv(0u, 1u, 16u, content, sizeof(content),
+                                           SALTS_ASN1_DER, 0u, NULL, 0u, &written),
+                    SALTS_ASN1_OK);
+        check_equal(written, sizeof(expected));
+        written = 0u;
+        check_equal(salts_asn1_encode_tlv(0u, 1u, 16u, content, sizeof(content),
+                                           SALTS_ASN1_DER, 0u, output, 7u, &written),
+                    SALTS_ASN1_BUFFER_TOO_SMALL);
+        check_equal(written, sizeof(expected));
+        check_equal(output[0], 0xccu);
+        check_equal(salts_asn1_encode_tlv(0u, 1u, 16u, content, sizeof(content),
+                                           SALTS_ASN1_DER, 0u, output, sizeof(output),
+                                           &written), SALTS_ASN1_OK);
+        check_equal(written, sizeof(expected));
+        check_equal(output, expected, sizeof(expected));
+        check_equal(salts_asn1_validate(output, written, SALTS_ASN1_DER), SALTS_ASN1_OK);
+    }
+    it("encodes high tags, long lengths and BER indefinite values") {
+        static const uint8_t integer_content[] = {0x02,0x01,0x01};
+        uint8_t high_tag[8];
+        uint8_t indefinite[8];
+        uint8_t long_content[128] = {0};
+        uint8_t long_value[140];
+        size_t written = 0u;
+        check_equal(salts_asn1_encode_tlv(2u, 0u, 128u, NULL, 0u, SALTS_ASN1_BER,
+                                           0u, high_tag, sizeof(high_tag), &written),
+                    SALTS_ASN1_OK);
+        check_equal(written, (size_t)4u);
+        check_equal(high_tag[0], 0x9fu);
+        check_equal(high_tag[1], 0x81u);
+        check_equal(high_tag[2], 0x00u);
+        check_equal(high_tag[3], 0x00u);
+        check_equal(salts_asn1_encode_tlv(0u, 1u, 16u, integer_content,
+                                           sizeof(integer_content), SALTS_ASN1_BER,
+                                           1u, indefinite, sizeof(indefinite), &written),
+                    SALTS_ASN1_OK);
+        check_equal(written, (size_t)7u);
+        check_equal(indefinite[1], 0x80u);
+        check_equal(indefinite[5], 0x00u);
+        check_equal(indefinite[6], 0x00u);
+        check_equal(salts_asn1_validate(indefinite, written, SALTS_ASN1_BER),
+                    SALTS_ASN1_OK);
+        check_equal(salts_asn1_encode_tlv(0u, 0u, 4u, long_content,
+                                           sizeof(long_content), SALTS_ASN1_DER,
+                                           0u, long_value, sizeof(long_value),
+                                           &written), SALTS_ASN1_OK);
+        check_equal(written, (size_t)131u);
+        check_equal(long_value[0], 0x04u);
+        check_equal(long_value[1], 0x81u);
+        check_equal(long_value[2], 0x80u);
+        check_equal(salts_asn1_validate(long_value, written, SALTS_ASN1_DER),
+                    SALTS_ASN1_OK);
     }
     it("rejects invalid initialization and top-level EOC") {
         static const uint8_t eoc[] = {0x00,0x00};
