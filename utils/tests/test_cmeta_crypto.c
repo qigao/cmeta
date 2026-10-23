@@ -110,6 +110,12 @@ static const uint8_t SM3_BYTES_0_TO_255[SALTS_SM3_DIGEST_BYTES] = {
     0x7d,0x64,0xa4,0xcd,0x7f,0xa8,0x18,0x2b,
     0xeb,0x10,0x0a,0x01,0x6f,0xa3,0xac,0x44};
 
+static const uint8_t SM3_PATTERN_4096[SALTS_SM3_DIGEST_BYTES] = {
+    0xb8,0xc0,0xa2,0x8a,0xad,0x58,0x33,0x5c,
+    0xe7,0xf0,0x26,0xfa,0x6a,0x8d,0xfe,0xf3,
+    0xfd,0x0e,0x4f,0x24,0x32,0x00,0xdf,0x9e,
+    0x4f,0x70,0xb4,0xcf,0x78,0x07,0xbd,0x38};
+
 static const uint8_t HMAC_SM3_EMPTY[SALTS_SM3_DIGEST_BYTES] = {
     0x0d,0x23,0xf7,0x2b,0xa1,0x5e,0x9c,0x18,
     0x9a,0x87,0x9a,0xef,0xc7,0x09,0x96,0xb0,
@@ -215,6 +221,31 @@ spec("cmeta_crypto") {
     check_equal(memcmp(digest, SM3_EMBEDDED_NUL, sizeof(digest)), 0);
     check_equal(cmeta_sm3(binary_message, sizeof(binary_message), digest), SALTS_OK);
     check_equal(memcmp(digest, SM3_BYTES_0_TO_255, sizeof(digest)), 0);
+  }
+
+  it("matches an independent 4096-byte SM3 vector across chunk boundaries") {
+    uint8_t message[4096];
+    uint8_t digest[SALTS_SM3_DIGEST_BYTES];
+    cmeta_sm3_stream *stream = NULL;
+    const size_t chunks[] = {1u, 63u, 64u, 65u, 1023u, 1024u, 1856u};
+    size_t offset = 0u;
+
+    for (size_t i = 0u; i < sizeof(message); ++i)
+      message[i] = (uint8_t)(i % 251u);
+
+    check_equal(cmeta_sm3(message, sizeof(message), digest), SALTS_OK);
+    check_equal(memcmp(digest, SM3_PATTERN_4096, sizeof(digest)), 0);
+    check_equal(cmeta_sm3_stream_create(&stream), SALTS_OK);
+    check_not_null(stream);
+    for (size_t i = 0u; i < sizeof(chunks) / sizeof(chunks[0]); ++i) {
+      check_true(chunks[i] <= sizeof(message) - offset);
+      check_equal(cmeta_sm3_stream_update(stream, message + offset, chunks[i]), SALTS_OK);
+      offset += chunks[i];
+    }
+    check_equal(offset, sizeof(message));
+    check_equal(cmeta_sm3_stream_finish(stream, digest), SALTS_OK);
+    check_equal(memcmp(digest, SM3_PATTERN_4096, sizeof(digest)), 0);
+    cmeta_sm3_stream_destroy(stream);
   }
 
   it("computes SM3 incrementally and enforces reset-after-finish") {
