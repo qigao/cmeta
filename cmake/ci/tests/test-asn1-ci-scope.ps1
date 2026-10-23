@@ -13,7 +13,8 @@ $selector = Join-Path $root 'cmake/ci/select-ci-scope.ps1'
 $cases = @(
   'asn1/src/asn1.c',
   'asn1/include/salts/asn1.h',
-  'asn1/tests/asn1_reader_test.c'
+  'asn1/tests/asn1_reader_test.c',
+  'asn1/tests/asn1_value_test.c'
 )
 $hosts = @(
   'linux-release', 'linux-arm64-release', 'linux-clang-release',
