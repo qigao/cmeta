@@ -58,3 +58,145 @@ This ABI freeze is the dependency for the remaining explicit additions:
 
 No dynamic crypto-provider registry, PKCS#11/SDF adapter, raw provider-state
 persistence, or compatibility alias is introduced by this contract.
+
+
+## Candidate ABI v1 for SM4-GCM and SM2 (review required)
+
+The following is a **design proposal only**. Do not add these declarations to
+cmeta_crypto.h, export symbols, or consume them from CNet until the contract is
+approved and the implementation/test PRs are separately qualified. It
+intentionally uses byte buffers and fixed-width constants rather than GmSSL
+objects or provider-specific key types.
+
+### SM4-GCM
+
+Proposed constants:
+
+~~~c
+#define SALTS_SM4_KEY_BYTES 16u
+#define SALTS_SM4_GCM_NONCE_BYTES 12u
+#define SALTS_SM4_GCM_TAG_BYTES 16u
+#define SALTS_SM4_GCM_MAX_MESSAGE_BYTES ((UINT64_C(1) << 36) - 32u)
+~~~
+
+Proposed signatures:
+
+~~~c
+SALTS_C_API int cmeta_sm4_gcm_seal(
+    const uint8_t key[SALTS_SM4_KEY_BYTES],
+    const uint8_t nonce[SALTS_SM4_GCM_NONCE_BYTES],
+    const void *aad, size_t aad_size,
+    const void *plaintext, size_t plaintext_size,
+    void *ciphertext, size_t ciphertext_capacity,
+    size_t *out_ciphertext_size,
+    uint8_t tag[SALTS_SM4_GCM_TAG_BYTES]);
+
+SALTS_C_API int cmeta_sm4_gcm_open(
+    const uint8_t key[SALTS_SM4_KEY_BYTES],
+    const uint8_t nonce[SALTS_SM4_GCM_NONCE_BYTES],
+    const void *aad, size_t aad_size,
+    const void *ciphertext, size_t ciphertext_size,
+    const uint8_t tag[SALTS_SM4_GCM_TAG_BYTES],
+    void *plaintext, size_t plaintext_capacity,
+    size_t *out_plaintext_size);
+~~~
+
+Contract:
+- Key, nonce and tag lengths are fixed by the ABI; no variable tag length,
+  implicit nonce generation, provider fallback, or automatic key selection.
+- Caller owns nonce uniqueness: a key/nonce pair MUST NOT be reused.
+  This API does not maintain process-global counters or persist nonce state.
+- AAD and payload pointers are borrowed; NULL is valid only with size zero.
+  The payload limit is SALTS_SM4_GCM_MAX_MESSAGE_BYTES; validate lengths and
+  integer arithmetic before calling the provider.
+- Ciphertext and plaintext lengths are equal. out_*_size is required. On
+  success it is set to the exact payload length. If capacity is too small,
+  return SALTS_ERANGE, set the required payload length, and leave payload
+  and tag buffers unchanged. On other errors, do not modify the size output.
+- Exact in-place payload operation (plaintext == ciphertext or
+  ciphertext == plaintext) is permitted. Any partial payload overlap, or
+  overlap between the payload output and key, nonce, AAD, tag or size output,
+  is invalid and returns SALTS_EINVAL.
+- open MUST stage unauthenticated plaintext privately and commit it only
+  after tag verification succeeds. A bad tag returns SALTS_EAUTH and leaves
+  the caller's plaintext and size outputs unchanged. If private staging
+  allocation fails, return SALTS_ENOMEM with caller output unchanged.
+- SALTS_EINVAL means malformed pointers/lengths/overlap; SALTS_ERANGE means a
+  valid request exceeds the fixed bound or output capacity; SALTS_ENOMEM means
+  private staging allocation failed; SALTS_ENOTSUP means the pinned provider
+  lacks the required primitive; SALTS_EIO means an unexpected provider
+  failure; SALTS_EAUTH means authentication failed. Do not translate a tag
+  failure into a generic provider error.
+
+### SM2 sign/verify
+
+Proposed constants and signatures:
+
+~~~c
+#define SALTS_SM2_MAX_USER_ID_BYTES 8191u
+#define SALTS_SM2_SIGNATURE_DER_MAX_BYTES 72u
+
+SALTS_C_API int cmeta_sm2_sign(
+    const void *private_key_pkcs8_der, size_t private_key_der_size,
+    const void *user_id, size_t user_id_size,
+    const void *message, size_t message_size,
+    uint8_t *signature_der, size_t signature_capacity,
+    size_t *out_signature_size);
+
+SALTS_C_API int cmeta_sm2_verify(
+    const void *public_key_spki_der, size_t public_key_der_size,
+    const void *user_id, size_t user_id_size,
+    const void *message, size_t message_size,
+    const void *signature_der, size_t signature_der_size);
+~~~
+
+Contract:
+- Private keys are DER-encoded PKCS#8 PrivateKeyInfo containing an SM2 key.
+  Public keys are DER-encoded X.509 SubjectPublicKeyInfo containing an SM2
+  public key. Reject other key algorithms, malformed DER, trailing bytes and
+  invalid/off-curve public points. PEM and raw scalar/point encodings are not
+  part of ABI v1.
+- user_id is mandatory, non-empty, borrowed, and at most 8191 bytes (the
+  largest whole-byte identity representable by SM2's 16-bit ENTL bit count).
+  There is no implicit default identity, process-global identity, or hidden
+  identity substitution. Sign and verify use the exact same supplied bytes.
+- Signature output/input is strict canonical ASN.1 DER SEQUENCE(INTEGER r,
+  INTEGER s), with both values in the valid SM2 group range and no trailing
+  bytes. The maximum DER encoding is 72 bytes. Signing requires a non-NULL
+  out_signature_size and a capacity of at least
+  SALTS_SM2_SIGNATURE_DER_MAX_BYTES; on insufficient capacity return
+  SALTS_ERANGE, set the required capacity to 72, and do not sign or modify
+  signature bytes. On success, set the actual DER length.
+- Signing uses only the pinned provider's cryptographically secure randomness;
+  no caller-supplied nonce, deterministic fallback, or weak random source is
+  accepted. Private key bytes and all intermediate key/signature state are
+  cleared on every exit path.
+- cmeta_sm2_verify returns SALTS_OK only for a valid signature over the exact
+  message and explicit identity. A malformed or invalid signature returns
+  SALTS_EAUTH; malformed arguments or key DER return SALTS_EINVAL; unsupported
+  provider capability returns SALTS_ENOTSUP; unexpected provider failure
+  returns SALTS_EIO. Invalid signatures are a normal negative result, not a
+  provider fallback condition.
+- The error taxonomy needs one additive stable code, proposed as
+  SALTS_EAUTH = -4054. Existing numeric values remain unchanged. This code
+  must be added to the shared error table and tested before either API ships.
+
+### Cross-API ownership and failure rules
+
+- Inputs are immutable borrowed byte ranges. Output buffers belong to callers.
+  Do not retain caller pointers after return; do not serialize provider state.
+- Validate NULL/zero semantics, maximum lengths, capacity, range arithmetic,
+  and forbidden overlap before provider calls. Payload and signature bytes are
+  committed only on success. Output-size metadata changes only on success or
+  the explicitly documented SALTS_ERANGE capacity response.
+- No public header or installed target may include gmssl/*, require
+  GmSSL::GmSSL, or expose provider structs. No C++ runtime is required by
+  this C11 ABI; C++17 consumers compile against the same C declarations.
+- Required negative tests: null/nonzero pairs, zero-length input, exact and
+  partial overlap, undersized capacity, max/max+1 bounds, malformed/trailing
+  DER, wrong SM2 identity, wrong key algorithm, invalid/off-curve public key,
+  bad signature, bad GCM tag, tampered AAD/ciphertext, allocation failure,
+  output-unchanged assertions and ASan/UBSan.
+- CNet profile policy is a separate layer. RFC 8998 TLS 1.3 ShangMi and TLCP
+  must remain distinct explicit profiles; neither primitive API selects a
+  protocol, cipher suite, certificate identity or fallback policy.
