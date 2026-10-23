@@ -171,15 +171,15 @@ spec("ManagedDial close admission under bounded backpressure") {
                  SALTS_ESHUTDOWN);
     while (close_neighbor.connected == 0u && cmeta_monotonic_ms() < until) close_progress();
     check_equal(close_neighbor.connected, (size_t)1u);
-    /* A nonblocking accept may transiently report ENOBUFS on macOS under
-     * socket-buffer pressure. Keep the assertion bounded, and continue driving
-     * the existing Owners while retrying only transient accept results. */
+    /* The nonblocking listener can briefly report no queued peer while the
+     * outgoing CONNECTED callback is being observed. Retry only ETIMEDOUT:
+     * adoption/capacity errors must remain visible, not be mistaken for a
+     * transient empty accept queue. Keep the retry bounded by the test deadline. */
     int accept_status = SALTS_ETIMEDOUT;
     while (cmeta_monotonic_ms() < until) {
       accept_status = cnet_listener_accept(&close_listener, &close_peers,
                                            &peer_observer, &neighbor_peer);
-      if (accept_status == SALTS_OK) break;
-      if (accept_status != SALTS_ETIMEDOUT && accept_status != SALTS_ENOBUFS) break;
+      if (accept_status == SALTS_OK || accept_status != SALTS_ETIMEDOUT) break;
       close_progress();
     }
     check_equal(accept_status, SALTS_OK);
