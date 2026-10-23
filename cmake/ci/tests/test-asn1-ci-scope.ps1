@@ -68,6 +68,17 @@ try {
       throw "$path unnecessarily selected benchmark or formal work"
     }
 
+    $sanitizer = @($matrix.include | Where-Object { $_.id -eq 'linux-ace-asan-ubsan' })
+    if ($sanitizer.Count -ne 1 -or [string]$sanitizer[0].sanitizer -ne 'asan-ubsan') {
+      throw "$path did not select exactly one Linux ASan/UBSan profile"
+    }
+    if ([string]$sanitizer[0].package -ne 'false' -or [string]$sanitizer[0].benchmarks -ne 'OFF') {
+      throw "$path unexpectedly enabled package or benchmark work in the sanitizer profile"
+    }
+    if (@($matrix.include | Where-Object { $_.id -eq 'linux-ace-tsan' }).Count -ne 0) {
+      throw "$path must not select TSan for ASN.1 parser changes"
+    }
+
     foreach ($id in $hosts) {
       $entry = @($matrix.include | Where-Object { $_.id -eq $id })
       if ($entry.Count -ne 1) { throw "$path did not select exactly one $id profile" }

@@ -93,6 +93,7 @@ $utilsRuntime = Test-Changed '^utils/(include/|src/|CMakeLists\.txt$)'
 $unicodeRuntime = Test-Changed '^(unicode|idna)/'
 $harness = Test-Changed '^(tinytest|tinymock)/'
 $asn1Runtime = Test-Changed '^asn1/(include/|src/|tests/|CMakeLists\.txt$)'
+$asn1Qualification = (-not $PrepareRelease) -and ($full -or $asn1Runtime)
 $nativeCommon = $shared -or $contractsChanged -or $cmetaRuntime -or $componentRuntime -or $componentPluginRuntime -or $componentRuntimeCandidate -or $platformRuntime -or $harness -or $unicodeRuntime -or $asn1Runtime
 $native = $nativeCommon -or $concurrencyRuntime -or $pluginRuntime -or $utilsRuntime -or
   (Test-Changed '^(coroutine/|platform/tests/|plugin/|cmeta/(tests/|benchmarks/))')
@@ -230,12 +231,19 @@ $profiles = @(
   @{ id = 'android-arm64-v8a-release'; runner = 'ubuntu-24.04'; family = 'android'; preset = 'android-arm64-v8a-release-ci'; build_dir = 'build/android-arm64-v8a-release'; sdk = 'android-arm64-v8a' },
   @{ id = 'ios-arm64-release'; runner = 'macos-15'; family = 'ios'; preset = 'ios-arm64-release-ci'; build_dir = 'build/ios-arm64'; sdk = 'ios-arm64'; triplet = 'arm64-ios' }
 )
-if ($serviceHostSanOnly -or $aceSanitizerQualification -or $unifiedSanitizerQualification -or $concurrencyQualification -or $cnetProgressQualification -or $cnetHandoffQualification -or $nativeReadinessQualification) {
-  # Reuse existing Debug ASan and independent TSan CMake presets; the ASan
-  # profile adds UBSan via the canonical Sanitizers.cmake flag. Do not combine
-  # TSan with ASan, or reuse release binaries for sanitizer checks.
+$tsanQualification = $serviceHostSanOnly -or $aceSanitizerQualification -or
+  $unifiedSanitizerQualification -or $concurrencyQualification -or
+  $cnetProgressQualification -or $cnetHandoffQualification -or
+  $nativeReadinessQualification
+if ($tsanQualification -or $asn1Qualification) {
+  # Source-only ASan+UBSan qualification is required for ASN.1 parsing and
+  # encoding changes; it does not imply that the parser needs a TSan run.
   $profiles += @(
-    @{ id = 'linux-ace-asan-ubsan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-dev-ci'; build_dir = 'build/linux-gcc-debug'; sdk = ''; sanitizer = 'asan-ubsan' },
+    @{ id = 'linux-ace-asan-ubsan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-dev-ci'; build_dir = 'build/linux-gcc-debug'; sdk = ''; sanitizer = 'asan-ubsan' }
+  )
+}
+if ($tsanQualification) {
+  $profiles += @(
     @{ id = 'linux-ace-tsan'; runner = 'ubuntu-24.04'; family = 'linux'; preset = 'linux-tsan-ci'; build_dir = 'build/linux-gcc-tsan'; sdk = ''; sanitizer = 'tsan' }
   )
 }
