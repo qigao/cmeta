@@ -4,6 +4,10 @@ name: CNet mixed instrumentation native DSO TSan (#1143)
   workflow_dispatch:
   pull_request:
     paths:
+      - '.github/actions/setup-vcpkg-curl-cache/**'
+      - 'cmake/ci/github-packages.py'
+      - 'cmake/ci/restore-vcpkg-cache.py'
+      - 'cmake/ci/setup-vcpkg-curl-cache.py'
       - ".github/workflows/cnet-module-once-mixed-sdk-tsan.yml"
       - "cnet/tests/cnet_module_once_mixed_tsan_driver.c"
       - "platform/include/salts/thread.h"
