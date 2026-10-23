@@ -26,6 +26,33 @@ PRESETS = {
 }
 
 
+def normalize_nuget_prefix(path: Path) -> None:
+    """Match vcpkg's NuGet provider prefix normalization for x-write packages.config."""
+    prefix = os.environ.get("X_VCPKG_NUGET_ID_PREFIX", "")
+    if not prefix:
+        return
+    if not re.fullmatch(r"[A-Za-z0-9_.+-]+", prefix):
+        raise ValueError(f"invalid X_VCPKG_NUGET_ID_PREFIX: {prefix!r}")
+    tree = ET.parse(path)
+    root = tree.getroot()
+    changed = False
+    for item in root:
+        package_id = item.attrib.get("id", "")
+        canonical = prefix + "_"
+        if package_id.startswith(canonical):
+            continue
+        if not package_id.startswith(prefix):
+            raise ValueError(
+                f"packages.config entry {package_id!r} does not use configured prefix {prefix!r}")
+        suffix = package_id[len(prefix):]
+        if not suffix:
+            raise ValueError("empty package identity after NuGet prefix")
+        item.set("id", canonical + suffix)
+        changed = True
+    if changed:
+        tree.write(path, encoding="utf-8", xml_declaration=True)
+
+
 def validate_packages_config(path: Path) -> int:
     root = ET.parse(path).getroot()
     if root.tag != "packages":
@@ -51,6 +78,7 @@ def validate_packages_config(path: Path) -> int:
 def populate(config: Path, cache: Path, label: str) -> None:
     if not config.is_file():
         raise SystemExit(f"canonical vcpkg did not emit packages.config for {label}")
+    normalize_nuget_prefix(config)
     count = validate_packages_config(config)
     print(f"Resolved {count} exact vcpkg package/ABI references for {label}", flush=True)
     root = Path(__file__).resolve().parents[2]
