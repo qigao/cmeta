@@ -2,6 +2,7 @@
 """Resolve exact vcpkg ABI references, then populate the read-only files cache via curl."""
 from __future__ import annotations
 
+import argparse
 import os
 from pathlib import Path
 import re
@@ -47,35 +48,101 @@ def validate_packages_config(path: Path) -> int:
     return len(seen)
 
 
-def main() -> int:
-    if len(sys.argv) != 2 or sys.argv[1] not in PRESETS:
-        raise SystemExit("usage: restore-vcpkg-cache.py <exact-release-preset>")
+def populate(config: Path, cache: Path, label: str) -> None:
+    if not config.is_file():
+        raise SystemExit(f"canonical vcpkg did not emit packages.config for {label}")
+    count = validate_packages_config(config)
+    print(f"Resolved {count} exact vcpkg package/ABI references for {label}", flush=True)
     root = Path(__file__).resolve().parents[2]
-    preset = sys.argv[1]
-    cache = Path(os.environ["VCPKG_BINARY_CACHE"]).resolve()
+    subprocess.run([
+        sys.executable, str(root / "cmake/ci/github-packages.py"),
+        "cache", str(config), str(cache),
+    ], cwd=root, check=True)
+    print(f"Restored exact GitHub Packages cache entries into {cache}", flush=True)
+
+
+def restore_preset(root: Path, preset: str, cache: Path) -> None:
+    if preset not in PRESETS:
+        raise ValueError(f"unsupported Salts CI preset: {preset}")
     config = root / "build/cache-preflight" / preset / "packages.config"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.unlink(missing_ok=True)
 
-    # Use the actual release preset so the selected compiler, target triplet,
-    # overlay ports, toolchain and manifest produce the same ABI graph as build.
-    # The root CMakeLists exits before defining production targets in this mode.
+    # Use the actual release/sanitizer preset so compiler, target triplet,
+    # overlays, chainload toolchain and manifest produce the same ABI graph as build.
     command = [
         "cmake", "--preset", preset, "-B", str(config.parent),
         "-DSALTS_CACHE_PREFLIGHT=ON",
         f"-DVCPKG_INSTALL_OPTIONS=--dry-run;--x-write-nuget-packages-config={config.as_posix()}",
     ]
     subprocess.run(command, cwd=root, check=True)
-    if not config.is_file():
-        raise SystemExit("canonical vcpkg did not emit packages.config")
-    count = validate_packages_config(config)
-    print(f"Resolved {count} exact vcpkg package/ABI references for {preset}", flush=True)
+    populate(config, cache, preset)
 
-    subprocess.run([
-        sys.executable, str(root / "cmake/ci/github-packages.py"),
-        "cache", str(config), str(cache),
-    ], cwd=root, check=True)
-    print(f"Restored exact GitHub Packages cache entries into {cache}", flush=True)
+
+def restore_manifest(root: Path, manifest_root: Path, triplet: str,
+                     host_triplet: str, label: str, cache: Path) -> None:
+    manifest_root = manifest_root.resolve()
+    if not (manifest_root / "vcpkg.json").is_file():
+        raise ValueError(f"manifest root has no vcpkg.json: {manifest_root}")
+    for value, name in ((triplet, "triplet"), (host_triplet, "host triplet"), (label, "label")):
+        if not re.fullmatch(r"[A-Za-z0-9_.+-]+", value):
+            raise ValueError(f"invalid {name}: {value!r}")
+
+    work = root / "build/cache-preflight" / ("manifest-" + label)
+    config = work / "packages.config"
+    install_root = work / "installed"
+    work.mkdir(parents=True, exist_ok=True)
+    config.unlink(missing_ok=True)
+
+    exe = Path(os.environ["VCPKG_ROOT"]) / ("vcpkg.exe" if os.name == "nt" else "vcpkg")
+    if not exe.is_file():
+        raise ValueError(f"canonical vcpkg executable is missing: {exe}")
+    command = [
+        str(exe), "install",
+        f"--x-manifest-root={manifest_root}",
+        f"--x-install-root={install_root}",
+        f"--triplet={triplet}",
+        f"--host-triplet={host_triplet}",
+        "--dry-run",
+        f"--x-write-nuget-packages-config={config}",
+    ]
+    subprocess.run(command, cwd=manifest_root, check=True)
+    populate(config, cache, f"{label}:{triplet}/{host_triplet}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="mode")
+
+    preset = sub.add_parser("preset")
+    preset.add_argument("name", choices=sorted(PRESETS))
+
+    manifest = sub.add_parser("manifest")
+    manifest.add_argument("manifest_root", type=Path)
+    manifest.add_argument("--triplet", required=True)
+    manifest.add_argument("--host-triplet", required=True)
+    manifest.add_argument("--label", required=True)
+
+    # Backward-compatible one-token form used by existing workflow edits.
+    parser.add_argument("legacy_preset", nargs="?")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    root = Path(__file__).resolve().parents[2]
+    cache = Path(os.environ["VCPKG_BINARY_CACHE"]).resolve()
+    cache.mkdir(parents=True, exist_ok=True)
+
+    if args.mode == "preset":
+        restore_preset(root, args.name, cache)
+    elif args.mode == "manifest":
+        restore_manifest(root, args.manifest_root, args.triplet,
+                         args.host_triplet, args.label, cache)
+    elif args.legacy_preset:
+        restore_preset(root, args.legacy_preset, cache)
+    else:
+        raise SystemExit("select 'preset <name>' or 'manifest <root> ...'")
     return 0
 
 
