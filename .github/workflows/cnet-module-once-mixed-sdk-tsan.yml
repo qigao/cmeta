@@ -37,12 +37,8 @@ jobs:
         with:
           ref: ${{ env.EXPECTED_SALTS }}
           persist-credentials: false
-      - name: Restore canonical vcpkg graph
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
-        with:
-          mode: read
-      - name: Restore re2c host tools
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
+      - name: Configure vcpkg and restore re2c with curl
+        uses: ./.github/actions/setup-vcpkg-curl-cache
       - name: Prepare Linux build host
         uses: ./.github/actions/setup-build-host
       - name: Set up toolchain and provenance
@@ -60,6 +56,13 @@ jobs:
             printf 'published_sdk=false\n'
             printf 'candidate_build=source_no_suppressions\n'
           } | tee build/cnet-mixed-uninstrumented/provenance.txt
+      - name: Restore exact Linux release vcpkg graph with curl
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/restore-vcpkg-cache.py linux-release-ci
       - name: Build ordinary candidate Salts native SDK without TSan
         shell: bash
         run: |
