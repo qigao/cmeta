@@ -40,6 +40,8 @@ FORBIDDEN_MIGRATED = re.compile(
 def check(lines: dict[str, str]) -> dict:
     rows = []
     for filename, content in sorted(lines.items()):
+        if re.search(r"mono-complete|brew\s+install\s+mono|dotnet\s+restore", content, re.IGNORECASE):
+            raise ValueError(f"{filename}: Mono installation or dotnet restore is forbidden in CI")
         for lineno, line in enumerate(content.splitlines(), 1):
             if not ANY_PROVIDER.match(line):
                 continue
@@ -68,6 +70,9 @@ def check(lines: dict[str, str]) -> dict:
                 body, re.MULTILINE)) != 1:
             raise ValueError(
                 f"{filename}: expected exactly one local curl-only cache action")
+        for cache_ref in re.findall(r"^\s*cache-ref:\s*([^\s#]+)", body, re.MULTILINE):
+            if EXACT_SHA.fullmatch(cache_ref) is None:
+                raise ValueError(f"{filename}: mutable curl cache-ref {cache_ref!r}")
         forbidden = FORBIDDEN_MIGRATED.search(body)
         if forbidden:
             raise ValueError(
