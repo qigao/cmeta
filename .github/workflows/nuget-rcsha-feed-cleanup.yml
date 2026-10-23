@@ -37,9 +37,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Set isolated NuGet package directory
-        shell: bash
-        run: echo "NUGET_PACKAGES=$RUNNER_TEMP/isolated-salts-nuget-packages" >> "$GITHUB_ENV"
       - name: Validate exact version and destructive confirmation
         shell: bash
         run: |
@@ -99,31 +96,21 @@ jobs:
                   if exc.code != 404:
                       raise SystemExit(f"Cannot verify absence of {suffix}: HTTP {exc.code}")
           PY
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-      - name: Restore EXACT version and inspect extracted SDK bytes
+      - name: Download EXACT version with curl and inspect extracted SDK bytes
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/probe"
-          cat > "$RUNNER_TEMP/probe/probe.csproj" <<EOF
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
-            <ItemGroup><PackageReference Include="Salts.Native" Version="$PACKAGE_VERSION"/></ItemGroup>
-          </Project>
-          EOF
-          cfg="$RUNNER_TEMP/probe/nuget.config"
-          printf '<configuration><packageSources><clear /></packageSources></configuration>\n' > "$cfg"
-          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
-            --name github --username qigao --password "$GH_TOKEN" \
-            --store-password-in-clear-text --configfile "$cfg"
-          dotnet restore "$RUNNER_TEMP/probe/probe.csproj" --configfile "$cfg" \
-            --packages "$NUGET_PACKAGES" --force --no-cache
-          sdk="$NUGET_PACKAGES/salts.native/$PACKAGE_VERSION"
-          test -d "$sdk"
+          probe="$RUNNER_TEMP/probe"
+          archive="$probe/Salts.Native.$PACKAGE_VERSION.nupkg"
+          sdk="$probe/salts.native/$PACKAGE_VERSION"
+          rm -rf "$probe"
+          mkdir -p "$probe" "$sdk"
+          python3 cmake/ci/github-packages.py package \
+            Salts.Native "$PACKAGE_VERSION" "$archive"
+          python3 cmake/ci/github-packages.py extract "$archive" "$sdk"
           python3 packaging/nuget/feed_hygiene.py inspect-dir "$PACKAGE_VERSION" "$sdk" \
             | tee "$RUNNER_TEMP/confirmed-incomplete.json"
+          sha256sum "$archive" > "$RUNNER_TEMP/package-sha256.txt"
           find "$sdk/sdk" -type f -name salts-sdk-manifest.txt -print0 \
             | sort -z | xargs -0 -r sha256sum > "$RUNNER_TEMP/manifests-sha256.txt"
       - name: Delete ONLY the exact verified incomplete candidate
@@ -163,4 +150,5 @@ jobs:
           path: |
             ${{ runner.temp }}/package-inventory.json
             ${{ runner.temp }}/confirmed-incomplete.json
+            ${{ runner.temp }}/package-sha256.txt
             ${{ runner.temp }}/manifests-sha256.txt
