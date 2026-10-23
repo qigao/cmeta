@@ -1,5 +1,5 @@
 #include <cmeta_crypto.h>
-#include "sm2_test_vectors.h"
+#include "crypto_test_vectors.h"
 #include <cstring>
 #include <cstddef>
 #include <cstdint>
@@ -25,6 +25,22 @@ int main() {
           SALTS_INSTALL_SM2_MESSAGE, sizeof(SALTS_INSTALL_SM2_MESSAGE) - 1u,
           SALTS_INSTALL_SM2_SIGNATURE, sizeof(SALTS_INSTALL_SM2_SIGNATURE)) != SALTS_OK)
     return 6;
+
+  {
+    std::uint8_t ciphertext[sizeof(SALTS_INSTALL_SM4_GCM_CIPHERTEXT)] = {};
+    std::uint8_t tag[SALTS_SM4_GCM_TAG_BYTES] = {};
+    std::size_t ciphertext_size = 0u;
+    if (cmeta_sm4_gcm_seal(
+            SALTS_INSTALL_SM4_GCM_KEY, SALTS_INSTALL_SM4_GCM_NONCE,
+            SALTS_INSTALL_SM4_GCM_AAD, sizeof(SALTS_INSTALL_SM4_GCM_AAD),
+            SALTS_INSTALL_SM4_GCM_PLAINTEXT, sizeof(SALTS_INSTALL_SM4_GCM_PLAINTEXT),
+            ciphertext, sizeof(ciphertext), &ciphertext_size, tag) != SALTS_OK)
+      return 10;
+    if (ciphertext_size != sizeof(ciphertext) ||
+        std::memcmp(ciphertext, SALTS_INSTALL_SM4_GCM_CIPHERTEXT, sizeof(ciphertext)) != 0 ||
+        std::memcmp(tag, SALTS_INSTALL_SM4_GCM_TAG, sizeof(tag)) != 0)
+      return 11;
+  }
   {
     static const std::uint8_t wrong_id[] = "1234567812345679";
     std::uint8_t private_key_stub[] = {0x30u};
