@@ -68,9 +68,9 @@ class CurlCachePolicyTests(unittest.TestCase):
         self.assertIn("github-packages.py re2c", action)
         self.assertNotRegex(action, r"(?i)(mono-complete|brew install mono|dotnet\s+(?:restore|nuget)|setup-vcpkg-cache@)")
 
-    def test_vcpkg_uses_only_local_read_only_files_provider(self):
+    def test_vcpkg_uses_only_local_files_provider(self):
         setup = (ROOT / "cmake/ci/setup-vcpkg-curl-cache.py").read_text(encoding="utf-8")
-        self.assertRegex(setup, r'VCPKG_BINARY_SOURCES":\s*f"clear;files,\{cache\.as_posix\(\)\},read"')
+        self.assertRegex(setup, r'VCPKG_BINARY_SOURCES":\s*f"clear;files,\{cache\.as_posix\(\)\},readwrite"')
         self.assertNotIn("nugetconfig,", setup)
         self.assertIn("cache-contract-revision.py", setup)
         self.assertIn("vcpkg-required-commits.py", setup)
