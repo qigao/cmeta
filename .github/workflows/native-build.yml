@@ -43,26 +43,9 @@ jobs:
         if: matrix.family == 'ios'
         shell: bash
         run: echo "X_VCPKG_NUGET_ID_PREFIX=vcpkg-cache" >> "$GITHUB_ENV"
-      - name: Set up Python for curl package restore
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Check out pinned shared vcpkg cache contract
-        uses: actions/checkout@v4
-        with:
-          repository: qigao/vcpkg-cache
-          ref: d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
-          path: build/ci-vcpkg-infrastructure
-          persist-credentials: false
-      - name: Bootstrap pinned vcpkg and configure local binary cache
+      - name: Configure vcpkg and restore host tools with curl
         id: shared_deps
-        shell: pwsh
-        run: python cmake/ci/setup-vcpkg-curl-cache.py build/ci-vcpkg-infrastructure
-      - name: Restore re2c from GitHub Packages using curl
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python cmake/ci/github-packages.py re2c "$env:RUNNER_TEMP/qigao-re2c-binary"
+        uses: ./.github/actions/setup-vcpkg-curl-cache
       - name: Prepare build host
         uses: ./.github/actions/setup-build-host
       - name: Restore native compiler cache
