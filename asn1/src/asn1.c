@@ -129,7 +129,8 @@ static salts_asn1_status validate_primitive(const uint8_t *data, size_t size,
         }
         return SALTS_ASN1_OK;
     case 5u: return size == 0u ? SALTS_ASN1_OK : SALTS_ASN1_MALFORMED;
-    case 6u: return validate_oid(data, size);
+    case 6u:
+    case 13u: return validate_oid(data, size);
     default: return SALTS_ASN1_OK;
     }
 }
@@ -166,8 +167,6 @@ static salts_asn1_status parse_one(const uint8_t *data, size_t size,
     salts_asn1_status st;
     size_t tag_size = 0u, len_size = 0u, remaining;
     const uint8_t *content;
-    bool eoc = false;
-
     if (!data || !out || !is_eoc) return SALTS_ASN1_INVALID_ARGUMENT;
     if (depth >= SALTS_ASN1_MAX_DEPTH) return SALTS_ASN1_LIMIT_EXCEEDED;
     if (size < 2u) return SALTS_ASN1_UNEXPECTED_END;
