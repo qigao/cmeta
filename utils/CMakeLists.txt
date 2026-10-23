@@ -59,7 +59,8 @@ target_link_libraries(
          Salts::Platform
          Salts::Concurrency
          Salts::Coroutine
-  PRIVATE Salts::CSTL
+  PRIVATE Salts::ASN1
+          Salts::CSTL
           Salts::CFlow
           ${FMT_LEXER_LIBRARY} Salts::SDS # Simple Dynamic Strings
           aklomp::base64 zstd::libzstd GmSSL::GmSSL
