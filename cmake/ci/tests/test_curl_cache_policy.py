@@ -1,14 +1,38 @@
 """Policy tests for the curl-only GitHub Packages binary-cache path."""
 import ast
+import importlib.util
 from pathlib import Path
 import re
 import unittest
+from unittest.mock import patch
+import tempfile
+import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
+RESTORE_SPEC = importlib.util.spec_from_file_location(
+    "restore_vcpkg_cache", ROOT / "cmake/ci/restore-vcpkg-cache.py")
+RESTORE = importlib.util.module_from_spec(RESTORE_SPEC)
+RESTORE_SPEC.loader.exec_module(RESTORE)
+
+
 class CurlCachePolicyTests(unittest.TestCase):
+    def test_xwrite_prefix_is_normalized_to_binary_provider_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "packages.config"
+            config.write_text(
+                '<?xml version="1.0"?><packages>'
+                '<package id="vcpkg-cachesqlite3_arm64-ios" '
+                'version="3.49.0-vcpkg' + "a" * 64 + '" />'
+                '</packages>',
+                encoding="utf-8")
+            with patch.dict("os.environ", {"X_VCPKG_NUGET_ID_PREFIX": "vcpkg-cache"}):
+                RESTORE.normalize_nuget_prefix(config)
+            item = ET.parse(config).getroot()[0]
+            self.assertEqual(item.attrib["id"], "vcpkg-cache_sqlite3_arm64-ios")
+
     def test_helper_scripts_are_valid_python(self):
         for relative in (
             "cmake/ci/github-packages.py",
