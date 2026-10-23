@@ -3,12 +3,24 @@ name: CNet SCTP C11 prototype
 on:
   push:
     paths:
+      - ".github/actions/setup-vcpkg-curl-cache/**"
+      - "cmake/ci/github-packages.py"
+      - "cmake/ci/restore-vcpkg-cache.py"
+      - "cmake/ci/setup-vcpkg-curl-cache.py"
       - "cnet/sctp/**"
       - ".github/workflows/cnet-sctp-c11.yml"
   pull_request:
     paths:
+      - ".github/actions/setup-vcpkg-curl-cache/**"
+      - "cmake/ci/github-packages.py"
+      - "cmake/ci/restore-vcpkg-cache.py"
+      - "cmake/ci/setup-vcpkg-curl-cache.py"
       - "cnet/sctp/**"
       - ".github/workflows/cnet-sctp-c11.yml"
+
+permissions:
+  contents: read
+  packages: read
 
 jobs:
   c11-wire:
@@ -18,7 +30,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build pure C11 wire module
         shell: bash
         run: |
@@ -36,7 +48,7 @@ jobs:
   sanitizer-source:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Compile and test C11 source with ASan/UBSan
         shell: bash
         env:
@@ -54,7 +66,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build and qualify actual pthread Owner handoffs with TSan
         shell: bash
         env:
@@ -104,13 +116,21 @@ jobs:
       ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Install canonical read-only cached GmSSL
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
-        with:
-          mode: read
+      - name: Configure pinned vcpkg and restore re2c with curl
+        uses: ./.github/actions/setup-vcpkg-curl-cache
+      - name: Restore exact GmSSL manifest packages with curl
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/restore-vcpkg-cache.py manifest \
+            "$GITHUB_WORKSPACE/cnet/sctp/ci/vcpkg-gmssl" \
+            --triplet x64-linux --host-triplet x64-linux \
+            --label sctp-gmssl
       - name: Verify GmSSL C11 HMAC isolated prototype with ASan/UBSan
         shell: bash
         run: |
