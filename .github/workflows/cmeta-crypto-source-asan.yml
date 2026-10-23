@@ -50,8 +50,23 @@ jobs:
       - name: Configure pinned vcpkg and curl package cache
         uses: ./.github/actions/setup-vcpkg-curl-cache
 
-      - name: Prepare native build host
-        uses: ./.github/actions/setup-build-host
+      - name: Prepare Linux build prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages=()
+          command -v ninja >/dev/null 2>&1 || packages+=(ninja-build)
+          command -v pkg-config >/dev/null 2>&1 || packages+=(pkg-config)
+          command -v nasm >/dev/null 2>&1 || packages+=(nasm)
+          pkg-config --exists libudev 2>/dev/null || packages+=(libudev-dev)
+          if (("${#packages[@]}" > 0)); then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends "${packages[@]}"
+          fi
+          command -v ninja >/dev/null
+          command -v pkg-config >/dev/null
+          command -v nasm >/dev/null
+          pkg-config --exists libudev
 
       - name: Restore exact vcpkg packages from GitHub Packages with curl
         shell: bash
