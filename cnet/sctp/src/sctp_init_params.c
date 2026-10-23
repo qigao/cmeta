@@ -10,7 +10,8 @@ enum {
   PARAM_COOKIE_PRESERVATIVE = 9,
   PARAM_HOSTNAME = 11,
   PARAM_SUPPORTED_ADDRESSES = 12,
-  PARAM_ECN_CAPABLE = 0x8000
+  PARAM_ECN_CAPABLE = 0x8000,
+  PARAM_SUPPORTED_EXTENSIONS = 0x8008
 };
 
 static uint16_t read16(const uint8_t *bytes) {
@@ -22,6 +23,7 @@ cnet_sctp_init_param_status cnet_sctp_init_params_preflight(
     cnet_sctp_init_param_view *out) {
   cnet_sctp_init_param_view parsed = {0};
   size_t position = 16u;
+  int supported_extensions_seen = 0;
   if (!out) return CNET_SCTP_INIT_PARAMS_INVALID;
   /* A failed preflight must also revoke any previously returned borrowed view. */
   memset(out, 0, sizeof(*out));
@@ -83,6 +85,15 @@ cnet_sctp_init_param_status cnet_sctp_init_params_preflight(
       case PARAM_ECN_CAPABLE:
         if (length != 4u) return CNET_SCTP_INIT_PARAMS_MALFORMED;
         return CNET_SCTP_INIT_PARAMS_UNSUPPORTED; /* ECN unimplemented */
+      case PARAM_SUPPORTED_EXTENSIONS: {
+        size_t i;
+        if (length < 5u || supported_extensions_seen)
+          return CNET_SCTP_INIT_PARAMS_MALFORMED;
+        supported_extensions_seen = 1;
+        for (i = position + 4u; i < position + length; ++i)
+          if (value[i] == 130u) parsed.supports_reconfig = 1;
+        break;
+      }
       default: {
         const uint16_t action = (uint16_t)(type >> 14);
         if (action == 1u || action == 3u) {
