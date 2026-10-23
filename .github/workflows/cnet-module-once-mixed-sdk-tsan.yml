@@ -62,7 +62,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 cmake/ci/restore-vcpkg-cache.py linux-release-ci
+          python3 cmake/ci/restore-vcpkg-cache.py preset linux-release-ci
       - name: Build ordinary candidate Salts native SDK without TSan
         shell: bash
         run: |
