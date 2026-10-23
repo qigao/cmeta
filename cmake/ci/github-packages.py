@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import base64
 import hashlib
 import json
@@ -184,6 +185,30 @@ class NugetFeed:
         return selected
 
 
+def executable_payload(data):
+    return (
+        data.startswith(b"#!") or
+        data.startswith(b"\x7fELF") or
+        data.startswith(b"MZ") or
+        data[:4] in {
+            b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
+            b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+            b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+        }
+    )
+
+
+def archive_entry_for_files_cache(entry, data):
+    out = copy.copy(entry)
+    mode = out.external_attr >> 16
+    executable = bool(mode & 0o111) or executable_payload(data[:8])
+    if executable and not entry.is_dir():
+        permissions = (mode & 0o777) if mode else 0o644
+        out.create_system = 3
+        out.external_attr = (stat.S_IFREG | permissions | 0o111) << 16
+    return out
+
+
 def cache_package(nupkg, package_id, version, cache):
     match = re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-vcpkg([0-9a-f]{64})", version)
     if not match:
@@ -206,6 +231,10 @@ def cache_package(nupkg, package_id, version, cache):
             raise ValueError("vcpkg CONTROL identity/ABI mismatch")
         if "BUILD_INFO" not in source.namelist():
             raise ValueError("vcpkg package lacks BUILD_INFO")
+        if fields.get("Package") == "gmssl" and not fields.get("Architecture", "").endswith("-ios"):
+            tool_names = {"tools/gmssl/gmssl", "tools/gmssl/gmssl.exe"}
+            if not tool_names.intersection(source.namelist()):
+                raise ValueError("desktop GmSSL cache package lacks the required gmssl tool")
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
             output = Path(temporary) / "payload.zip"
@@ -216,8 +245,9 @@ def cache_package(nupkg, package_id, version, cache):
                             name.endswith(".nuspec") and "/" not in name or
                             name.startswith(("_rels/", "package/"))):
                         continue
-                    with source.open(entry) as data, target.open(entry, "w") as sink:
-                        shutil.copyfileobj(data, sink)
+                    data = source.read(entry)
+                    target_entry = archive_entry_for_files_cache(entry, data)
+                    target.writestr(target_entry, data)
             output.replace(destination)
     return destination
 
