@@ -4,6 +4,10 @@ name: CNet cold module-once source TSan (#1143)
   workflow_dispatch:
   pull_request:
     paths:
+      - '.github/actions/setup-vcpkg-curl-cache/**'
+      - 'cmake/ci/github-packages.py'
+      - 'cmake/ci/restore-vcpkg-cache.py'
+      - 'cmake/ci/setup-vcpkg-curl-cache.py'
       - ".github/workflows/cnet-module-once-tsan.yml"
       - "cnet/tests/cnet_module_once_concurrency_test.c"
       - "cnet/tests/CMakeLists.txt"
