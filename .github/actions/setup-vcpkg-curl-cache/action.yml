@@ -40,6 +40,15 @@ runs:
         path: build/ci-vcpkg-infrastructure
         persist-credentials: false
 
+    - name: Verify exact shared cache checkout
+      shell: bash
+      env:
+        EXPECTED_CACHE_REF: ${{ inputs.cache-ref }}
+      run: |
+        set -euo pipefail
+        [[ "$EXPECTED_CACHE_REF" =~ ^[0-9a-f]{40}$ ]]
+        test "$(git -C build/ci-vcpkg-infrastructure rev-parse HEAD)" = "$EXPECTED_CACHE_REF"
+
     - name: Bootstrap pinned vcpkg and configure local binary cache
       id: bootstrap
       shell: pwsh
