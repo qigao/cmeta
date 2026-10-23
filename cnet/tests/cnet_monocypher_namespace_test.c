@@ -107,6 +107,10 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Expected public CNet ABI export missing: cnet_client_init\n");
     failed = 1;
   }
+  if (cnet_has_symbol(module, "cnet_tls_diagnostic_send_stats")) {
+    fprintf(stderr, "Test-only TLS diagnostic export leaked into production CNet\n");
+    failed = 1;
+  }
   for (i = 0; i < count; ++i) {
     char internal_name[128];
     int n;
