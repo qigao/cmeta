@@ -10,6 +10,7 @@
 #include <gmssl/sha1.h>
 #include <gmssl/sha2.h>
 #include <gmssl/sm3.h>
+#include <gmssl/sm4.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -405,6 +406,264 @@ int cmeta_aes128_cfb_decrypt(
     const uint8_t iv[SALTS_AES_BLOCK_BYTES],
     const void *input, size_t size, void *output) {
   return cmeta_aes128_cfb_crypt(key, iv, input, size, output, 1);
+}
+
+
+static int cmeta_crypto_range_valid_v1(const void *ptr, size_t size) {
+  uintptr_t start;
+
+  if (size == 0u) return 1;
+  if (ptr == NULL) return 0;
+  start = (uintptr_t)ptr;
+  return (uintmax_t)size <= (uintmax_t)(UINTPTR_MAX - start);
+}
+
+/* Returns 1 for overlap, 0 for disjoint ranges, and -1 for invalid ranges. */
+static int cmeta_crypto_ranges_overlap_v1(const void *lhs, size_t lhs_size,
+                                          const void *rhs, size_t rhs_size) {
+  uintptr_t lhs_start;
+  uintptr_t rhs_start;
+  uintptr_t lhs_end;
+  uintptr_t rhs_end;
+
+  if (lhs_size == 0u || rhs_size == 0u) return 0;
+  if (!cmeta_crypto_range_valid_v1(lhs, lhs_size) ||
+      !cmeta_crypto_range_valid_v1(rhs, rhs_size))
+    return -1;
+
+  lhs_start = (uintptr_t)lhs;
+  rhs_start = (uintptr_t)rhs;
+  lhs_end = lhs_start + (uintptr_t)lhs_size;
+  rhs_end = rhs_start + (uintptr_t)rhs_size;
+  return lhs_start < rhs_end && rhs_start < lhs_end ? 1 : 0;
+}
+
+static int cmeta_crypto_ranges_conflict_v1(const void *lhs, size_t lhs_size,
+                                           const void *rhs, size_t rhs_size) {
+  return cmeta_crypto_ranges_overlap_v1(lhs, lhs_size, rhs, rhs_size) != 0;
+}
+
+static int cmeta_sm4_gcm_seal_ranges_valid(
+    const uint8_t key[SALTS_SM4_KEY_BYTES],
+    const uint8_t nonce[SALTS_SM4_GCM_NONCE_BYTES],
+    const void *aad, size_t aad_size,
+    const void *plaintext, size_t plaintext_size,
+    void *ciphertext, size_t ciphertext_capacity,
+    size_t *out_ciphertext_size,
+    uint8_t tag[SALTS_SM4_GCM_TAG_BYTES]) {
+  size_t output_range_size =
+      ciphertext_capacity < plaintext_size ? ciphertext_capacity : plaintext_size;
+
+  if (key == NULL || nonce == NULL || out_ciphertext_size == NULL || tag == NULL ||
+      (aad == NULL && aad_size != 0u) ||
+      (plaintext == NULL && plaintext_size != 0u) ||
+      (ciphertext == NULL && ciphertext_capacity != 0u))
+    return 0;
+  if (!cmeta_crypto_range_valid_v1(key, SALTS_SM4_KEY_BYTES) ||
+      !cmeta_crypto_range_valid_v1(nonce, SALTS_SM4_GCM_NONCE_BYTES) ||
+      !cmeta_crypto_range_valid_v1(aad, aad_size) ||
+      !cmeta_crypto_range_valid_v1(plaintext, plaintext_size) ||
+      !cmeta_crypto_range_valid_v1(out_ciphertext_size, sizeof(*out_ciphertext_size)) ||
+      !cmeta_crypto_range_valid_v1(tag, SALTS_SM4_GCM_TAG_BYTES) ||
+      !cmeta_crypto_range_valid_v1(ciphertext, output_range_size))
+    return 0;
+
+  if (cmeta_crypto_ranges_conflict_v1(out_ciphertext_size, sizeof(*out_ciphertext_size),
+                                      key, SALTS_SM4_KEY_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(out_ciphertext_size, sizeof(*out_ciphertext_size),
+                                      nonce, SALTS_SM4_GCM_NONCE_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(out_ciphertext_size, sizeof(*out_ciphertext_size),
+                                      aad, aad_size) ||
+      cmeta_crypto_ranges_conflict_v1(out_ciphertext_size, sizeof(*out_ciphertext_size),
+                                      plaintext, plaintext_size) ||
+      cmeta_crypto_ranges_conflict_v1(out_ciphertext_size, sizeof(*out_ciphertext_size),
+                                      ciphertext, output_range_size) ||
+      cmeta_crypto_ranges_conflict_v1(out_ciphertext_size, sizeof(*out_ciphertext_size),
+                                      tag, SALTS_SM4_GCM_TAG_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(tag, SALTS_SM4_GCM_TAG_BYTES,
+                                      key, SALTS_SM4_KEY_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(tag, SALTS_SM4_GCM_TAG_BYTES,
+                                      nonce, SALTS_SM4_GCM_NONCE_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(tag, SALTS_SM4_GCM_TAG_BYTES,
+                                      aad, aad_size) ||
+      cmeta_crypto_ranges_conflict_v1(tag, SALTS_SM4_GCM_TAG_BYTES,
+                                      plaintext, plaintext_size) ||
+      cmeta_crypto_ranges_conflict_v1(tag, SALTS_SM4_GCM_TAG_BYTES,
+                                      ciphertext, output_range_size))
+    return 0;
+
+  if (ciphertext != NULL && ciphertext != plaintext &&
+      cmeta_crypto_ranges_conflict_v1(ciphertext, output_range_size,
+                                      plaintext, plaintext_size))
+    return 0;
+  if (cmeta_crypto_ranges_conflict_v1(ciphertext, output_range_size,
+                                      key, SALTS_SM4_KEY_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(ciphertext, output_range_size,
+                                      nonce, SALTS_SM4_GCM_NONCE_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(ciphertext, output_range_size,
+                                      aad, aad_size))
+    return 0;
+  return 1;
+}
+
+static int cmeta_sm4_gcm_open_ranges_valid(
+    const uint8_t key[SALTS_SM4_KEY_BYTES],
+    const uint8_t nonce[SALTS_SM4_GCM_NONCE_BYTES],
+    const void *aad, size_t aad_size,
+    const void *ciphertext, size_t ciphertext_size,
+    const uint8_t tag[SALTS_SM4_GCM_TAG_BYTES],
+    void *plaintext, size_t plaintext_capacity,
+    size_t *out_plaintext_size) {
+  size_t output_range_size =
+      plaintext_capacity < ciphertext_size ? plaintext_capacity : ciphertext_size;
+
+  if (key == NULL || nonce == NULL || tag == NULL || out_plaintext_size == NULL ||
+      (aad == NULL && aad_size != 0u) ||
+      (ciphertext == NULL && ciphertext_size != 0u) ||
+      (plaintext == NULL && plaintext_capacity != 0u))
+    return 0;
+  if (!cmeta_crypto_range_valid_v1(key, SALTS_SM4_KEY_BYTES) ||
+      !cmeta_crypto_range_valid_v1(nonce, SALTS_SM4_GCM_NONCE_BYTES) ||
+      !cmeta_crypto_range_valid_v1(aad, aad_size) ||
+      !cmeta_crypto_range_valid_v1(ciphertext, ciphertext_size) ||
+      !cmeta_crypto_range_valid_v1(tag, SALTS_SM4_GCM_TAG_BYTES) ||
+      !cmeta_crypto_range_valid_v1(plaintext, output_range_size) ||
+      !cmeta_crypto_range_valid_v1(out_plaintext_size, sizeof(*out_plaintext_size)))
+    return 0;
+
+  if (cmeta_crypto_ranges_conflict_v1(out_plaintext_size, sizeof(*out_plaintext_size),
+                                      key, SALTS_SM4_KEY_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(out_plaintext_size, sizeof(*out_plaintext_size),
+                                      nonce, SALTS_SM4_GCM_NONCE_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(out_plaintext_size, sizeof(*out_plaintext_size),
+                                      aad, aad_size) ||
+      cmeta_crypto_ranges_conflict_v1(out_plaintext_size, sizeof(*out_plaintext_size),
+                                      ciphertext, ciphertext_size) ||
+      cmeta_crypto_ranges_conflict_v1(out_plaintext_size, sizeof(*out_plaintext_size),
+                                      tag, SALTS_SM4_GCM_TAG_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(out_plaintext_size, sizeof(*out_plaintext_size),
+                                      plaintext, output_range_size) ||
+      cmeta_crypto_ranges_conflict_v1(plaintext, output_range_size,
+                                      key, SALTS_SM4_KEY_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(plaintext, output_range_size,
+                                      nonce, SALTS_SM4_GCM_NONCE_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(plaintext, output_range_size,
+                                      aad, aad_size) ||
+      cmeta_crypto_ranges_conflict_v1(plaintext, output_range_size,
+                                      tag, SALTS_SM4_GCM_TAG_BYTES))
+    return 0;
+
+  if (plaintext != NULL && plaintext != ciphertext &&
+      cmeta_crypto_ranges_conflict_v1(plaintext, output_range_size,
+                                      ciphertext, ciphertext_size))
+    return 0;
+  return 1;
+}
+
+int cmeta_sm4_gcm_seal(
+    const uint8_t key[SALTS_SM4_KEY_BYTES],
+    const uint8_t nonce[SALTS_SM4_GCM_NONCE_BYTES],
+    const void *aad, size_t aad_size,
+    const void *plaintext, size_t plaintext_size,
+    void *ciphertext, size_t ciphertext_capacity,
+    size_t *out_ciphertext_size,
+    uint8_t tag[SALTS_SM4_GCM_TAG_BYTES]) {
+  SM4_KEY provider_key;
+  uint8_t staged_tag[SALTS_SM4_GCM_TAG_BYTES] = {0};
+  uint8_t empty_input = 0u;
+  uint8_t *staged_ciphertext;
+  int provider_result;
+
+  if (aad_size > SALTS_SM4_GCM_MAX_AAD_BYTES ||
+      (uint64_t)plaintext_size > SALTS_SM4_GCM_MAX_MESSAGE_BYTES)
+    return SALTS_ERANGE;
+  if (!cmeta_sm4_gcm_seal_ranges_valid(
+          key, nonce, aad, aad_size, plaintext, plaintext_size,
+          ciphertext, ciphertext_capacity, out_ciphertext_size, tag))
+    return SALTS_EINVAL;
+
+  if (ciphertext_capacity < plaintext_size) {
+    *out_ciphertext_size = plaintext_size;
+    return SALTS_ERANGE;
+  }
+
+  staged_ciphertext = (uint8_t *)malloc(plaintext_size == 0u ? 1u : plaintext_size);
+  if (staged_ciphertext == NULL) return SALTS_ENOMEM;
+
+  sm4_set_encrypt_key(&provider_key, key);
+  provider_result = sm4_gcm_encrypt(
+      &provider_key, nonce, SALTS_SM4_GCM_NONCE_BYTES,
+      (const uint8_t *)aad, aad_size,
+      plaintext_size == 0u ? &empty_input : (const uint8_t *)plaintext,
+      plaintext_size, staged_ciphertext, SALTS_SM4_GCM_TAG_BYTES, staged_tag);
+  gmssl_secure_clear(&provider_key, sizeof(provider_key));
+
+  if (provider_result != 1) {
+    gmssl_secure_clear(staged_ciphertext, plaintext_size == 0u ? 1u : plaintext_size);
+    free(staged_ciphertext);
+    gmssl_secure_clear(staged_tag, sizeof(staged_tag));
+    return SALTS_EIO;
+  }
+
+  if (plaintext_size != 0u) memcpy(ciphertext, staged_ciphertext, plaintext_size);
+  memcpy(tag, staged_tag, sizeof(staged_tag));
+  *out_ciphertext_size = plaintext_size;
+
+  gmssl_secure_clear(staged_ciphertext, plaintext_size == 0u ? 1u : plaintext_size);
+  free(staged_ciphertext);
+  gmssl_secure_clear(staged_tag, sizeof(staged_tag));
+  return SALTS_OK;
+}
+
+int cmeta_sm4_gcm_open(
+    const uint8_t key[SALTS_SM4_KEY_BYTES],
+    const uint8_t nonce[SALTS_SM4_GCM_NONCE_BYTES],
+    const void *aad, size_t aad_size,
+    const void *ciphertext, size_t ciphertext_size,
+    const uint8_t tag[SALTS_SM4_GCM_TAG_BYTES],
+    void *plaintext, size_t plaintext_capacity,
+    size_t *out_plaintext_size) {
+  SM4_KEY provider_key;
+  uint8_t empty_input = 0u;
+  uint8_t *staged_plaintext;
+  int provider_result;
+
+  if (aad_size > SALTS_SM4_GCM_MAX_AAD_BYTES ||
+      (uint64_t)ciphertext_size > SALTS_SM4_GCM_MAX_MESSAGE_BYTES)
+    return SALTS_ERANGE;
+  if (!cmeta_sm4_gcm_open_ranges_valid(
+          key, nonce, aad, aad_size, ciphertext, ciphertext_size, tag,
+          plaintext, plaintext_capacity, out_plaintext_size))
+    return SALTS_EINVAL;
+
+  if (plaintext_capacity < ciphertext_size) {
+    *out_plaintext_size = ciphertext_size;
+    return SALTS_ERANGE;
+  }
+
+  staged_plaintext = (uint8_t *)malloc(ciphertext_size == 0u ? 1u : ciphertext_size);
+  if (staged_plaintext == NULL) return SALTS_ENOMEM;
+
+  sm4_set_encrypt_key(&provider_key, key);
+  provider_result = sm4_gcm_decrypt(
+      &provider_key, nonce, SALTS_SM4_GCM_NONCE_BYTES,
+      (const uint8_t *)aad, aad_size,
+      ciphertext_size == 0u ? &empty_input : (const uint8_t *)ciphertext,
+      ciphertext_size, tag, SALTS_SM4_GCM_TAG_BYTES, staged_plaintext);
+  gmssl_secure_clear(&provider_key, sizeof(provider_key));
+
+  if (provider_result != 1) {
+    gmssl_secure_clear(staged_plaintext, ciphertext_size == 0u ? 1u : ciphertext_size);
+    free(staged_plaintext);
+    return SALTS_EAUTH;
+  }
+
+  if (ciphertext_size != 0u) memcpy(plaintext, staged_plaintext, ciphertext_size);
+  *out_plaintext_size = ciphertext_size;
+
+  gmssl_secure_clear(staged_plaintext, ciphertext_size == 0u ? 1u : ciphertext_size);
+  free(staged_plaintext);
+  return SALTS_OK;
 }
 
 int cmeta_crypto_equal(const void *lhs, const void *rhs, size_t size,
