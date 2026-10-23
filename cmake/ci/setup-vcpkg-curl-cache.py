@@ -179,7 +179,7 @@ def main() -> int:
         "QIGAO_VCPKG_WINDOWS_TRIPLET": "qigao-x64-windows-v145",
         "QIGAO_VCPKG_WINDOWS_HOST_TRIPLET": "qigao-x64-windows-v145",
         "VCPKG_BINARY_CACHE": cache.as_posix(),
-        "VCPKG_BINARY_SOURCES": f"clear;files,{cache.as_posix()},read",
+        "VCPKG_BINARY_SOURCES": f"clear;files,{cache.as_posix()},readwrite",
         "VCPKG_NUGET_REPOSITORY": "https://github.com/qigao/vcpkg-cache",
     }
     append_env(values)
@@ -194,7 +194,7 @@ def main() -> int:
         f"Configured curl-only binary cache: contract=v{contract} revision={revision} "
         f"vcpkg={expected_tool_version} scripts={scripts}"
     )
-    print("VCPKG_BINARY_SOURCES uses only the local files provider; no NuGet executable or Mono.")
+    print("VCPKG_BINARY_SOURCES uses only the local read/write files provider; no NuGet executable or Mono.")
     return 0
 
 
