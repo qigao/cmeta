@@ -92,6 +92,60 @@ static const uint8_t HKDF_SM3_OKM_32[SALTS_SM3_DIGEST_BYTES] = {
     0xf6,0xa9,0xe1,0x23,0xb7,0x8d,0xe5,0xfa,
     0x2c,0x2a,0x4d,0x6a,0x29,0x9e,0xc6,0x53};
 
+static const uint8_t SM3_EMPTY[SALTS_SM3_DIGEST_BYTES] = {
+    0x1a,0xb2,0x1d,0x83,0x55,0xcf,0xa1,0x7f,
+    0x8e,0x61,0x19,0x48,0x31,0xe8,0x1a,0x8f,
+    0x22,0xbe,0xc8,0xc7,0x28,0xfe,0xfb,0x74,
+    0x7e,0xd0,0x35,0xeb,0x50,0x82,0xaa,0x2b};
+
+static const uint8_t SM3_EMBEDDED_NUL[SALTS_SM3_DIGEST_BYTES] = {
+    0xcf,0x51,0xd7,0x99,0xee,0x61,0x3d,0xae,
+    0xb2,0x66,0xee,0x73,0x20,0x3c,0x6b,0xde,
+    0xfd,0xc3,0xfd,0xaa,0x20,0xbf,0x62,0xd1,
+    0x4a,0xbe,0x01,0xcc,0x6e,0x8d,0x61,0x2d};
+
+static const uint8_t SM3_BYTES_0_TO_255[SALTS_SM3_DIGEST_BYTES] = {
+    0x59,0xd1,0x71,0xdb,0xfd,0x25,0x1d,0x5a,
+    0x4c,0xd7,0x7d,0x6b,0xa2,0xb7,0x10,0x9b,
+    0x7d,0x64,0xa4,0xcd,0x7f,0xa8,0x18,0x2b,
+    0xeb,0x10,0x0a,0x01,0x6f,0xa3,0xac,0x44};
+
+/* SM3 digest for byte[i] = i % 251 over 4096 bytes; independently
+ * checked with OpenSSL 3.5.5's SM3 implementation. */
+static const uint8_t SM3_PATTERN_4096[SALTS_SM3_DIGEST_BYTES] = {
+    0xb8,0xc0,0xa2,0x8a,0xad,0x58,0x33,0x5c,
+    0xe7,0xf0,0x26,0xfa,0x6a,0x8d,0xfe,0xf3,
+    0xfd,0x0e,0x4f,0x24,0x32,0x00,0xdf,0x9e,
+    0x4f,0x70,0xb4,0xcf,0x78,0x07,0xbd,0x38};
+
+static const uint8_t HMAC_SM3_EMPTY[SALTS_SM3_DIGEST_BYTES] = {
+    0x0d,0x23,0xf7,0x2b,0xa1,0x5e,0x9c,0x18,
+    0x9a,0x87,0x9a,0xef,0xc7,0x09,0x96,0xb0,
+    0x60,0x91,0xde,0x6e,0x64,0xd3,0x1b,0x7a,
+    0x84,0x00,0x43,0x56,0xdd,0x91,0x52,0x61};
+
+static const uint8_t HMAC_SM3_EMBEDDED_NUL[SALTS_SM3_DIGEST_BYTES] = {
+    0x91,0xd5,0x43,0xd3,0x95,0x0d,0xac,0xbe,
+    0x5b,0x3f,0x4e,0x0d,0x48,0xa5,0xdf,0x43,
+    0x18,0x1c,0x63,0x71,0x21,0xfd,0xab,0x27,
+    0x51,0xab,0x4c,0xe0,0x78,0x0c,0x1a,0x34};
+
+/* HKDF-SM3 for IKM i\\0km, salt s\\0alt and info c\\0tx,
+ * independently checked with OpenSSL 3.5.5. */
+static const uint8_t HKDF_SM3_EMBEDDED_NUL_32[SALTS_SM3_DIGEST_BYTES] = {
+    0x86,0x97,0x35,0x0e,0xee,0xf5,0x86,0xf4,
+    0x16,0x2c,0x18,0x0f,0xb6,0x51,0x5b,0x1b,
+    0xa4,0x8c,0xe2,0x9f,0x82,0xad,0xa2,0xaf,
+    0xd8,0xfd,0xe8,0x0b,0x07,0x6f,0x86,0x30};
+
+/* SM3 digest of the full 8160-byte empty-input HKDF-SM3 output, independently
+ * cross-checked with OpenSSL 3.5.5. */
+static const uint8_t HKDF_SM3_EMPTY_MAX_OUTPUT_DIGEST[SALTS_SM3_DIGEST_BYTES] = {
+    0xa6,0x6a,0xeb,0xc3,0x27,0x29,0x06,0xb5,
+    0x1b,0x10,0x2a,0x13,0xf6,0x5e,0x10,0x9d,
+    0xeb,0x79,0x23,0xa1,0xce,0x2b,0xdc,0xa2,
+    0xf3,0xd9,0x9b,0x7a,0x1c,0x72,0xa9,0xce};
+
 spec("cmeta_crypto") {
   it("computes legacy MD5 for the standard abc vector") {
     uint8_t digest[SALTS_MD5_DIGEST_BYTES];
@@ -157,6 +211,47 @@ spec("cmeta_crypto") {
     check_equal(memcmp(digest, SM3_ABCD_16, sizeof(digest)), 0);
   }
 
+  it("computes empty, embedded-NUL and binary SM3 vectors") {
+    static const uint8_t embedded_nul[] = {'a', 0u, 'b', 'c'};
+    uint8_t binary_message[256];
+    uint8_t digest[SALTS_SM3_DIGEST_BYTES];
+
+    for (size_t i = 0u; i < sizeof(binary_message); ++i)
+      binary_message[i] = (uint8_t)i;
+
+    check_equal(cmeta_sm3(NULL, 0u, digest), SALTS_OK);
+    check_equal(memcmp(digest, SM3_EMPTY, sizeof(digest)), 0);
+    check_equal(cmeta_sm3(embedded_nul, sizeof(embedded_nul), digest), SALTS_OK);
+    check_equal(memcmp(digest, SM3_EMBEDDED_NUL, sizeof(digest)), 0);
+    check_equal(cmeta_sm3(binary_message, sizeof(binary_message), digest), SALTS_OK);
+    check_equal(memcmp(digest, SM3_BYTES_0_TO_255, sizeof(digest)), 0);
+  }
+
+  it("matches an independent 4096-byte SM3 vector across chunk boundaries") {
+    uint8_t message[4096];
+    uint8_t digest[SALTS_SM3_DIGEST_BYTES];
+    cmeta_sm3_stream *stream = NULL;
+    const size_t chunks[] = {1u, 63u, 64u, 65u, 1023u, 1024u, 1856u};
+    size_t offset = 0u;
+
+    for (size_t i = 0u; i < sizeof(message); ++i)
+      message[i] = (uint8_t)(i % 251u);
+
+    check_equal(cmeta_sm3(message, sizeof(message), digest), SALTS_OK);
+    check_equal(memcmp(digest, SM3_PATTERN_4096, sizeof(digest)), 0);
+    check_equal(cmeta_sm3_stream_create(&stream), SALTS_OK);
+    check_not_null(stream);
+    for (size_t i = 0u; i < sizeof(chunks) / sizeof(chunks[0]); ++i) {
+      check_true(chunks[i] <= sizeof(message) - offset);
+      check_equal(cmeta_sm3_stream_update(stream, message + offset, chunks[i]), SALTS_OK);
+      offset += chunks[i];
+    }
+    check_equal(offset, sizeof(message));
+    check_equal(cmeta_sm3_stream_finish(stream, digest), SALTS_OK);
+    check_equal(memcmp(digest, SM3_PATTERN_4096, sizeof(digest)), 0);
+    cmeta_sm3_stream_destroy(stream);
+  }
+
   it("computes SM3 incrementally and enforces reset-after-finish") {
     cmeta_sm3_stream *stream = NULL;
     uint8_t digest[SALTS_SM3_DIGEST_BYTES];
@@ -181,6 +276,11 @@ spec("cmeta_crypto") {
     static const uint8_t hkdf_salt[] = "salt";
     static const uint8_t hkdf_ikm[] = "input key material";
     static const uint8_t hkdf_info[] = "context";
+    static const uint8_t binary_key[] = {'k', 0u, 'e', 'y'};
+    static const uint8_t binary_data[] = {'d', 0u, 'a', 't', 'a'};
+    static const uint8_t binary_ikm[] = {'i', 0u, 'k', 'm'};
+    static const uint8_t binary_salt[] = {'s', 0u, 'a', 'l', 't'};
+    static const uint8_t binary_info[] = {'c', 0u, 't', 'x'};
     uint8_t key[20];
     uint8_t mac[SALTS_SM3_DIGEST_BYTES];
     uint8_t okm[SALTS_SM3_DIGEST_BYTES];
@@ -188,6 +288,11 @@ spec("cmeta_crypto") {
     memset(key, 0x0b, sizeof(key));
     check_equal(cmeta_hmac_sm3(key, sizeof(key), "Hi There", 8u, mac), SALTS_OK);
     check_equal(memcmp(mac, HMAC_SM3_HI_THERE, sizeof(mac)), 0);
+    check_equal(cmeta_hmac_sm3(NULL, 0u, NULL, 0u, mac), SALTS_OK);
+    check_equal(memcmp(mac, HMAC_SM3_EMPTY, sizeof(mac)), 0);
+    check_equal(cmeta_hmac_sm3(binary_key, sizeof(binary_key),
+                               binary_data, sizeof(binary_data), mac), SALTS_OK);
+    check_equal(memcmp(mac, HMAC_SM3_EMBEDDED_NUL, sizeof(mac)), 0);
 
     check_equal(cmeta_hkdf_sm3(
                     hkdf_ikm, sizeof(hkdf_ikm) - 1u,
@@ -196,6 +301,22 @@ spec("cmeta_crypto") {
                     okm, sizeof(okm)),
                 SALTS_OK);
     check_equal(memcmp(okm, HKDF_SM3_OKM_32, sizeof(okm)), 0);
+    check_equal(cmeta_hkdf_sm3(binary_ikm, sizeof(binary_ikm),
+                               binary_salt, sizeof(binary_salt),
+                               binary_info, sizeof(binary_info),
+                               okm, sizeof(okm)), SALTS_OK);
+    check_equal(memcmp(okm, HKDF_SM3_EMBEDDED_NUL_32, sizeof(okm)), 0);
+  }
+
+  it("accepts the exact maximum HKDF-SM3 output length") {
+    uint8_t okm[SALTS_HKDF_SM3_MAX_OUTPUT_BYTES];
+    uint8_t digest[SALTS_SM3_DIGEST_BYTES];
+
+    check_equal(cmeta_hkdf_sm3(NULL, 0u, NULL, 0u, NULL, 0u,
+                               okm, sizeof(okm)), SALTS_OK);
+    check_equal(cmeta_sm3(okm, sizeof(okm), digest), SALTS_OK);
+    check_equal(memcmp(digest, HKDF_SM3_EMPTY_MAX_OUTPUT_DIGEST,
+                       sizeof(digest)), 0);
   }
 
   it("keeps SM3 family outputs unchanged on rejected arguments") {
