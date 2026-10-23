@@ -134,6 +134,30 @@ static salts_asn1_status validate_primitive(const uint8_t *data, size_t size,
     }
 }
 
+static bool universal_tag_requires_primitive(uint32_t tag) {
+    switch (tag) {
+    case 1u: case 2u: case 3u: case 4u: case 5u: case 6u:
+    case 9u: case 10u: case 12u: case 13u: case 14u:
+    case 18u: case 19u: case 20u: case 21u: case 22u:
+    case 23u: case 24u: case 25u: case 26u: case 27u:
+    case 28u: case 30u:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool universal_tag_is_constructible_string(uint32_t tag) {
+    switch (tag) {
+    case 3u: case 4u: case 12u: case 18u: case 19u: case 20u:
+    case 21u: case 22u: case 25u: case 26u: case 27u: case 28u:
+    case 30u:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static salts_asn1_status parse_one(const uint8_t *data, size_t size,
                                    salts_asn1_mode mode, size_t depth,
                                    salts_asn1_tlv *out, bool *is_eoc) {
@@ -171,8 +195,16 @@ static salts_asn1_status parse_one(const uint8_t *data, size_t size,
     if (h.indefinite && mode == SALTS_ASN1_DER) return SALTS_ASN1_INVALID_LENGTH;
     if (!h.indefinite && h.content_size > remaining)
         return SALTS_ASN1_UNEXPECTED_END;
-    if (h.tag_class == 0u && (h.tag_number == 16u || h.tag_number == 17u) &&
-        !h.constructed) return SALTS_ASN1_MALFORMED;
+    if (h.tag_class == 0u) {
+        if ((h.tag_number == 8u || h.tag_number == 11u ||
+             h.tag_number == 16u || h.tag_number == 17u ||
+             h.tag_number == 29u) && !h.constructed)
+            return SALTS_ASN1_MALFORMED;
+        if (h.constructed && universal_tag_requires_primitive(h.tag_number) &&
+            (mode == SALTS_ASN1_DER ||
+             !universal_tag_is_constructible_string(h.tag_number)))
+            return SALTS_ASN1_MALFORMED;
+    }
 
     memset(&value, 0, sizeof(value));
     value.tag_class = h.tag_class;
@@ -203,6 +235,10 @@ static salts_asn1_status parse_one(const uint8_t *data, size_t size,
             }
             if (child.encoded_size == 0u ||
                 child.encoded_size > content_bound - pos)
+                return SALTS_ASN1_MALFORMED;
+            if (mode == SALTS_ASN1_BER && h.tag_class == 0u &&
+                universal_tag_is_constructible_string(h.tag_number) &&
+                (child.tag_class != 0u || child.tag_number != h.tag_number))
                 return SALTS_ASN1_MALFORMED;
             if (mode == SALTS_ASN1_DER && h.tag_class == 0u &&
                 h.tag_number == 17u && prev &&

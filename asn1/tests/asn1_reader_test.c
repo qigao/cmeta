@@ -80,6 +80,16 @@ spec("Salts ASN.1 bounded BER/DER reader") {
         check_equal(salts_asn1_validate(unsorted_set, sizeof(unsorted_set), SALTS_ASN1_DER), SALTS_ASN1_MALFORMED);
         check_equal(salts_asn1_validate(sorted_set, sizeof(sorted_set), SALTS_ASN1_DER), SALTS_ASN1_OK);
     }
+    it("rejects constructed primitive types in DER and mismatched BER string segments") {
+        static const uint8_t constructed_octets[] = {0x24,0x03,0x04,0x01,0xaa};
+        static const uint8_t wrong_segment[] = {0x24,0x03,0x02,0x01,0x01};
+        check_equal(salts_asn1_validate(constructed_octets, sizeof(constructed_octets),
+                                        SALTS_ASN1_DER), SALTS_ASN1_MALFORMED);
+        check_equal(salts_asn1_validate(constructed_octets, sizeof(constructed_octets),
+                                        SALTS_ASN1_BER), SALTS_ASN1_OK);
+        check_equal(salts_asn1_validate(wrong_segment, sizeof(wrong_segment),
+                                        SALTS_ASN1_BER), SALTS_ASN1_MALFORMED);
+    }
     it("rejects invalid initialization and top-level EOC") {
         static const uint8_t eoc[] = {0x00,0x00};
         salts_asn1_reader reader; salts_asn1_tlv value;
