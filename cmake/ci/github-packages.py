@@ -167,9 +167,13 @@ class NugetFeed:
                 raise ValueError("invalid NuGet identity")
         identity, selected = package_id.lower(), version.lower()
         url = f"{self.base}/{identity}/{selected}/{identity}.{selected}.nupkg"
-        if not self.client.download(
+        if allow_not_found:
+            downloaded = self.client.download(
                 url, destination, "application/octet-stream",
-                allow_not_found=allow_not_found):
+                allow_not_found=True)
+        else:
+            downloaded = self.client.download(url, destination, "application/octet-stream")
+        if downloaded is False:
             return False
         with zipfile.ZipFile(destination) as archive:
             list(archive_members(archive))
