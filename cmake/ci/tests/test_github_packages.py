@@ -130,6 +130,37 @@ class TransportTests(unittest.TestCase):
         self.assertFalse(self.nupkg.exists())
         self.assertEqual(list(self.root.iterdir()), [])
 
+    def test_semver_floating_keeps_rc_sha_above_numeric_rc(self):
+        numeric = pkg.nuget_semver_key("2.3.0-rc.99")
+        sha = pkg.nuget_semver_key("2.3.0-rc.sha" + "a" * 40)
+        stable = pkg.nuget_semver_key("2.3.0")
+        self.assertGreater(sha, numeric)
+        self.assertGreater(stable, sha)
+
+    def test_floating_download_uses_feed_ordering_and_records_exact_version(self):
+        selected = "2.3.0-rc.sha" + "b" * 40
+        class Client:
+            def __init__(inner):
+                inner.downloaded = None
+            def json(inner, url):
+                if url.endswith("/index.json") and "salts.native" not in url:
+                    return {"resources": [{"@id": "https://nuget.pkg.github.com/qigao/download",
+                                           "@type": "PackageBaseAddress/3.0.0"}]}
+                return {"versions": ["2.3.0-rc.18", selected, "2.2.0"]}
+            def download(inner, url, destination, accept):
+                inner.downloaded = url
+                with zipfile.ZipFile(destination, "w") as archive:
+                    archive.writestr(
+                        "Salts.Native.nuspec",
+                        f'<package><metadata><id>Salts.Native</id><version>{selected}</version></metadata></package>')
+        client = Client()
+        version_file = self.root / "version.txt"
+        pkg.NugetFeed(client).floating(
+            "Salts.Native", "2.3.0-*", self.nupkg, version_file)
+        self.assertEqual(version_file.read_text().strip(), selected)
+        self.assertTrue(client.downloaded.endswith(
+            f"/salts.native/{selected}/salts.native.{selected}.nupkg"))
+
     def test_feed_uses_advertised_flat_container_and_exact_reference(self):
         class Client:
             def json(self, url):
