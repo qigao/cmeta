@@ -1,0 +1,52 @@
+name: Set up curl-based vcpkg and GitHub Packages cache
+description: Bootstrap the pinned vcpkg contract and restore exact packages with curl, without NuGet or Mono.
+
+inputs:
+  cache-ref:
+    description: Exact qigao/vcpkg-cache commit containing the cache contract.
+    required: false
+    default: d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
+
+outputs:
+  contract_version:
+    description: Semantic version of the shared cache contract.
+    value: ${{ steps.bootstrap.outputs.contract_version }}
+  cache_revision:
+    description: Canonical content revision for overlays and vcpkg identities.
+    value: ${{ steps.bootstrap.outputs.cache_revision }}
+  tool_revision:
+    description: Canonical vcpkg executable identity.
+    value: ${{ steps.bootstrap.outputs.tool_revision }}
+  scripts_revision:
+    description: Canonical Microsoft vcpkg scripts commit.
+    value: ${{ steps.bootstrap.outputs.scripts_revision }}
+  toolchain_file:
+    description: Canonical project toolchain path.
+    value: ${{ steps.bootstrap.outputs.toolchain_file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python for curl package restore
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Check out pinned shared vcpkg cache contract
+      uses: actions/checkout@v4
+      with:
+        repository: qigao/vcpkg-cache
+        ref: ${{ inputs.cache-ref }}
+        path: build/ci-vcpkg-infrastructure
+        persist-credentials: false
+
+    - name: Bootstrap pinned vcpkg and configure local binary cache
+      id: bootstrap
+      shell: pwsh
+      run: python cmake/ci/setup-vcpkg-curl-cache.py build/ci-vcpkg-infrastructure
+
+    - name: Restore re2c from GitHub Packages using curl
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python cmake/ci/github-packages.py re2c "$env:RUNNER_TEMP/qigao-re2c-binary"
