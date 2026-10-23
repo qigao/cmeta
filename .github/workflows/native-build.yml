@@ -156,6 +156,24 @@ jobs:
           set -euo pipefail
           cmake --preset "${{ matrix.preset }}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SUPPRESS_REGENERATION=ON
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
+      # Validate the installed export, not only the build-tree interface.
+      - name: Verify installed ASN.1 C11/C++17 SDK consumer
+        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.id == 'linux-release' && matrix.sanitizer == '' }}
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/asn1-installed-sdk"
+          cmake --install "${{ matrix.build_dir }}" --prefix "$prefix"
+          test -f "$prefix/include/salts/asn1.h"
+          test -f "$prefix/include/salts/asn1_value.h"
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          cmake -S asn1/tests/installed -B build/asn1-installed-sdk-consumer \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build build/asn1-installed-sdk-consumer --parallel 2
+          LD_LIBRARY_PATH="$prefix/lib:$prefix/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            ctest --test-dir build/asn1-installed-sdk-consumer \
+              --no-tests=error --output-on-failure --timeout 30
       # ACE/Actor and CNet progress sampling is owned by the separate benchmark
       # consumer, using the exact native producer SHA; never delay native CI.
       # Unicode conformance must execute (not merely compile) on each native OS.
