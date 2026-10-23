@@ -53,6 +53,13 @@ class TransportTests(unittest.TestCase):
                     pkg.cache_package(self.nupkg, IDENTITY, VERSION, self.root / "cache")
                 self.assertFalse((self.root / "cache").exists())
 
+    @patch.dict(os.environ, {"X_VCPKG_NUGET_ID_PREFIX": "vcpkg-cache"})
+    def test_cache_accepts_only_the_configured_prefixed_identity(self):
+        prefixed = "vcpkg-cache_" + IDENTITY
+        package(self.nupkg, identity=prefixed)
+        result = pkg.cache_package(self.nupkg, prefixed, VERSION, self.root / "cache")
+        self.assertTrue(result.is_file())
+
     def test_rejects_noncanonical_abi_reference(self):
         package(self.nupkg)
         with self.assertRaises(ValueError):
