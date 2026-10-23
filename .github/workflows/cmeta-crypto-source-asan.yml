@@ -10,10 +10,20 @@ name: CMeta Crypto native KATs and ASan/UBSan
       - 'cmake/ci/github-packages.py'
       - 'cmake/ci/restore-vcpkg-cache.py'
       - 'cmake/ci/setup-vcpkg-curl-cache.py'
+      - 'cmake/ci/verify-installed-consumer.cmake'
+      - 'CMakeLists.txt'
+      - 'utils/CMakeLists.txt'
+      - 'utils/tests/CMakeLists.txt'
+      - 'asn1/**'
+      - 'cnet/tests/verify_installed_cnet.cmake'
+      - 'platform/include/salts/error_codes.h'
       - 'utils/include/cmeta_crypto.h'
       - 'utils/src/cmeta_crypto.c'
       - 'utils/tests/test_cmeta_crypto.c'
       - 'utils/tests/test_cmeta_crypto_cpp.cpp'
+      - 'utils/tests/test_cmeta_sm2.c'
+      - 'utils/tests/test_cmeta_sm4_gcm.c'
+      - 'utils/tests/test_cmeta_error.c'
       - 'utils/tests/crypto_install_consumer/**'
   workflow_dispatch:
 
@@ -115,8 +125,16 @@ jobs:
           rows = json.loads((build / "compile_commands.json").read_text(encoding="utf-8"))
           required = {
               "production crypto implementation": "utils/src/cmeta_crypto.c",
-              "C11 crypto tests": "utils/tests/test_cmeta_crypto.c",
+              "C11 SM3/HMAC/HKDF tests": "utils/tests/test_cmeta_crypto.c",
               "C++17 crypto tests": "utils/tests/test_cmeta_crypto_cpp.cpp",
+              "SM2 KAT and negative tests": "utils/tests/test_cmeta_sm2.c",
+              "SM4-GCM KAT and fail-closed tests": "utils/tests/test_cmeta_sm4_gcm.c",
+              "SALTS_EAUTH metadata test": "utils/tests/test_cmeta_error.c",
+              "ASN.1 DER validation implementation": "asn1/src/asn1_der_validate.c",
+              "ASN.1 runtime implementation": "asn1/src/asn1_runtime.c",
+              "ASN.1 DER encoder": "asn1/src/asn1_encoder.c",
+              "ASN.1 binary scanner": "asn1/src/binary_scanner.c",
+              "ASN.1 DER compatibility layer": "asn1/src/asn1_der_compat.c",
           }
           for label, suffix in required.items():
               matches = [
@@ -129,7 +147,7 @@ jobs:
               for flag in ("-fsanitize=address", "-fsanitize=undefined"):
                   if flag not in command:
                       raise SystemExit(f"{label}: missing {flag}: {suffix}")
-          print("Verified ASan+UBSan instrumentation for implementation and both test consumers.")
+          print("Verified ASan+UBSan instrumentation for crypto, SM2/SM4 tests, error metadata and canonical ASN.1 sources.")
           PY
 
       - name: Run crypto KATs and installed SDK C11/C++17 consumer
@@ -144,7 +162,7 @@ jobs:
           export LDFLAGS='-fsanitize=address -fsanitize=undefined'
           ctest --test-dir "$BUILD_ROOT" -C RelWithDebInfo \
             --output-on-failure --no-tests=error \
-            -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_crypto_installed_sdk)$"
+            -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_sm2|test_cmeta_sm4_gcm|test_cmeta_error|test_cmeta_crypto_installed_sdk)$"
 
       - name: Preserve sanitizer evidence
         if: always()
@@ -199,7 +217,7 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$BUILD_ROOT/install" \
             -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
             -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
-          cmake --build "$BUILD_ROOT" --target install test_cmeta_crypto test_cmeta_crypto_cpp --parallel 2
+          cmake --build "$BUILD_ROOT" --target install test_cmeta_crypto test_cmeta_crypto_cpp test_cmeta_sm2 test_cmeta_sm4_gcm test_cmeta_error --parallel 2
 
       - name: Run native C11/C++17 crypto KATs
         shell: bash
@@ -264,7 +282,7 @@ jobs:
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           cmake --preset win-release-ci -B "%BUILD_ROOT%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="%BUILD_ROOT%/install" -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
           if errorlevel 1 exit /b 1
-          cmake --build "%BUILD_ROOT%" --target install test_cmeta_crypto test_cmeta_crypto_cpp --parallel 2
+          cmake --build "%BUILD_ROOT%" --target install test_cmeta_crypto test_cmeta_crypto_cpp test_cmeta_sm2 test_cmeta_sm4_gcm test_cmeta_error --parallel 2
           if errorlevel 1 exit /b 1
 
       - name: Run native C11/C++17 crypto KATs
@@ -274,5 +292,5 @@ jobs:
           call "%VSINSTALL%\\Common7\\Tools\\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --test-dir "%BUILD_ROOT%" -C Release --output-on-failure --no-tests=error -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_crypto_installed_sdk)$"
+          ctest --test-dir "%BUILD_ROOT%" -C Release --output-on-failure --no-tests=error -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_sm2|test_cmeta_sm4_gcm|test_cmeta_error|test_cmeta_crypto_installed_sdk)$"
           if errorlevel 1 exit /b 1
