@@ -13,6 +13,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from urllib.parse import quote, urlsplit
 import xml.etree.ElementTree as ET
@@ -26,7 +27,7 @@ class Curl:
             raise ValueError("a valid GH_TOKEN or GITHUB_TOKEN is required")
         self.token = token
 
-    def download(self, url, destination, accept="application/json"):
+    def download(self, url, destination, accept="application/json", allow_not_found=False):
         parsed = urlsplit(url)
         if (parsed.scheme != "https" or parsed.hostname not in
                 {"api.github.com", "nuget.pkg.github.com"} or parsed.username or
@@ -44,13 +45,33 @@ class Curl:
             # Keep credentials off argv and disk. curl does not forward Authorization
             # to a different redirect host; credentials are never forwarded across redirects.
             config = f'header = "Authorization: {authorization}"\n'
-            subprocess.run([
+            command = [
                 "curl", "--disable", "--config", "-", "--fail", "--silent", "--show-error",
                 "--location", "--proto", "=https", "--proto-redir", "=https",
                 "--connect-timeout", "30", "--max-time", "900", "--retry", "3",
+                "--write-out", "%{http_code}",
                 "--header", f"Accept: {accept}", "--output", str(partial), url,
-            ], input=config, text=True, check=True)
+            ]
+            result = subprocess.run(
+                command, input=config, text=True, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, check=False)
+            code = result.stdout[-3:] if len(result.stdout) >= 3 else ""
+            if result.returncode != 0:
+                if partial.exists():
+                    partial.unlink()
+                if allow_not_found and code == "404":
+                    print(f"cache_miss={url}", flush=True)
+                    return False
+                if result.stderr:
+                    print(result.stderr, file=sys.stderr, end="")
+                raise subprocess.CalledProcessError(
+                    result.returncode, command, output=result.stdout, stderr=result.stderr)
+            if code and code[0] not in "23":
+                if partial.exists():
+                    partial.unlink()
+                raise ValueError(f"unexpected GitHub HTTP status {code}")
             partial.replace(destination)
+            return True
 
     def json(self, url):
         with tempfile.TemporaryDirectory() as temporary:
@@ -140,17 +161,21 @@ class NugetFeed:
             raise ValueError("GitHub feed must advertise one PackageBaseAddress/3.0.0")
         self.base = addresses[0].rstrip("/")
 
-    def package(self, package_id, version, destination):
+    def package(self, package_id, version, destination, allow_not_found=False):
         for value in (package_id, version):
             if not re.fullmatch(r"[A-Za-z0-9_.+-]+", value):
                 raise ValueError("invalid NuGet identity")
         identity, selected = package_id.lower(), version.lower()
         url = f"{self.base}/{identity}/{selected}/{identity}.{selected}.nupkg"
-        self.client.download(url, destination, "application/octet-stream")
+        if not self.client.download(
+                url, destination, "application/octet-stream",
+                allow_not_found=allow_not_found):
+            return False
         with zipfile.ZipFile(destination) as archive:
             list(archive_members(archive))
             package_metadata(archive, package_id, version)
         print(f"package={package_id} version={version} sha256={sha256(destination)}", flush=True)
+        return True
 
     def versions(self, package_id):
         if not re.fullmatch(r"[A-Za-z0-9_.+-]+", package_id):
@@ -272,7 +297,8 @@ def restore_cache(feed, config, cache):
                 raise ValueError("unexpected packages.config element")
             package_id, version = item.attrib["id"], item.attrib["version"]
             path = Path(temporary) / "package.nupkg"
-            feed.package(package_id, version, path)
+            if not feed.package(package_id, version, path, allow_not_found=True):
+                continue
             cache_package(path, package_id, version, cache)
 
 
