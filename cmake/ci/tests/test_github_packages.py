@@ -37,6 +37,13 @@ class TransportTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.nupkg = self.root / "test.nupkg"
 
+    def test_cache_restores_executable_mode_from_binary_payload(self):
+        package(self.nupkg, extra=[("tools/sqlite3/sqlite3", b"\x7fELF" + b"x" * 12)])
+        result = pkg.cache_package(self.nupkg, IDENTITY, VERSION, self.root / "cache")
+        with zipfile.ZipFile(result) as archive:
+            entry = archive.getinfo("tools/sqlite3/sqlite3")
+            self.assertTrue((entry.external_attr >> 16) & 0o111)
+
     def test_cache_keeps_binary_payload_and_removes_nuget_envelope(self):
         package(self.nupkg)
         result = pkg.cache_package(self.nupkg, IDENTITY, VERSION, self.root / "cache")
