@@ -124,12 +124,18 @@ jobs:
                   row for row in rows
                   if Path(row["file"]).resolve() == root / suffix
               ]
-              if len(matches) != 1:
-                  raise SystemExit(f"{label}: expected exactly one compile unit for {suffix}, found {len(matches)}")
-              command = matches[0].get("command", " ".join(matches[0].get("arguments", [])))
-              for flag in ("-fsanitize=address", "-fsanitize=undefined"):
-                  if flag not in command:
-                      raise SystemExit(f"{label}: missing {flag}: {suffix}")
+              if not matches:
+                  raise SystemExit(f"{label}: no compile unit found for {suffix}")
+              # The same production source may legitimately be compiled into
+              # more than one target. Every instance must be instrumented.
+              for index, row in enumerate(matches, start=1):
+                  command = row.get("command", " ".join(row.get("arguments", [])))
+                  for flag in ("-fsanitize=address", "-fsanitize=undefined"):
+                      if flag not in command:
+                          raise SystemExit(
+                              f"{label}: compile unit {index}/{len(matches)} missing {flag}: {suffix}"
+                          )
+              print(f"{label}: verified {len(matches)} instrumented compile unit(s)")
           print("Verified ASan+UBSan instrumentation for CNet TLS implementation and regression tests.")
           PY
 
