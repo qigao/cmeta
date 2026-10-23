@@ -19,6 +19,12 @@ class CurlCachePolicyTests(unittest.TestCase):
                 source = (ROOT / relative).read_text(encoding="utf-8")
                 ast.parse(source, filename=relative)
 
+    def test_no_workflow_installs_mono_or_uses_dotnet_restore(self):
+        for workflow in (ROOT / ".github/workflows").glob("*.yml"):
+            body = workflow.read_text(encoding="utf-8")
+            with self.subTest(workflow=workflow.name):
+                self.assertNotRegex(body, r"(?i)(mono-complete|brew\s+install\s+mono|dotnet\s+restore)")
+
     def test_main_native_workflow_uses_local_curl_action(self):
         workflow = (ROOT / ".github/workflows/native-build.yml").read_text(encoding="utf-8")
         self.assertRegex(workflow, r"uses:\s+\./\.github/actions/setup-vcpkg-curl-cache")
