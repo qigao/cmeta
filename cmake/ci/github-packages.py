@@ -295,15 +295,23 @@ def restore_cache(feed, config, cache):
     root = ET.parse(config).getroot()
     if root.tag != "packages":
         raise ValueError("invalid vcpkg packages.config")
+    total = restored = misses = 0
     with tempfile.TemporaryDirectory() as temporary:
         for item in root:
             if item.tag != "package":
                 raise ValueError("unexpected packages.config element")
+            total += 1
             package_id, version = item.attrib["id"], item.attrib["version"]
             path = Path(temporary) / "package.nupkg"
             if not feed.package(package_id, version, path, allow_not_found=True):
+                misses += 1
                 continue
             cache_package(path, package_id, version, cache)
+            restored += 1
+    print(
+        f"cache_restore_summary total={total} restored={restored} misses={misses}",
+        flush=True)
+    return restored, misses
 
 
 def restore_re2c(feed, destination):
