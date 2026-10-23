@@ -1,4 +1,5 @@
 """Policy tests for the curl-only GitHub Packages binary-cache path."""
+import ast
 from pathlib import Path
 import re
 import unittest
@@ -8,6 +9,16 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class CurlCachePolicyTests(unittest.TestCase):
+    def test_helper_scripts_are_valid_python(self):
+        for relative in (
+            "cmake/ci/github-packages.py",
+            "cmake/ci/setup-vcpkg-curl-cache.py",
+            "cmake/ci/restore-vcpkg-cache.py",
+        ):
+            with self.subTest(path=relative):
+                source = (ROOT / relative).read_text(encoding="utf-8")
+                ast.parse(source, filename=relative)
+
     def test_main_native_workflow_uses_local_curl_action(self):
         workflow = (ROOT / ".github/workflows/native-build.yml").read_text(encoding="utf-8")
         self.assertRegex(workflow, r"uses:\s+\./\.github/actions/setup-vcpkg-curl-cache")
