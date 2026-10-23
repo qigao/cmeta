@@ -102,7 +102,7 @@ def self_test() -> dict:
         "native-build.yml": "      - uses: ./.github/actions/setup-vcpkg-curl-cache",
     }
     for filename in PINNED_PROVIDER_FILES:
-        fixture[filename] = "\\n".join(
+        fixture[filename] = "\n".join(
             f"      - uses: qigao/vcpkg-cache/.github/actions/{kind}@"
             + (EXISTING_CANDIDATE_VCPKG_PIN
                if filename == "ace-candidate-native-sdk.yml"
