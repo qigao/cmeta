@@ -112,6 +112,24 @@ def archive_members(archive):
         yield entry
 
 
+def nuget_semver_key(value):
+    """Comparable key for the controlled GitHub Packages SemVer 2 feed."""
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?", value)
+    if not match:
+        raise ValueError(f"unsupported NuGet version syntax: {value!r}")
+    base = tuple(int(match.group(i)) for i in range(1, 4))
+    prerelease = match.group(4)
+    if prerelease is None:
+        return base + (1, ())
+    identifiers = []
+    for item in prerelease.split("."):
+        if not item:
+            raise ValueError(f"empty prerelease identifier: {value!r}")
+        identifiers.append((0, int(item)) if item.isascii() and item.isdigit()
+                           else (1, item.casefold()))
+    return base + (0, tuple(identifiers))
+
+
 class NugetFeed:
     def __init__(self, client):
         self.client = client
@@ -133,12 +151,37 @@ class NugetFeed:
             package_metadata(archive, package_id, version)
         print(f"package={package_id} version={version} sha256={sha256(destination)}", flush=True)
 
+    def versions(self, package_id):
+        if not re.fullmatch(r"[A-Za-z0-9_.+-]+", package_id):
+            raise ValueError("invalid NuGet package identity")
+        data = self.client.json(f"{self.base}/{package_id.lower()}/index.json")
+        versions = data.get("versions")
+        if not isinstance(versions, list) or not versions or not all(isinstance(v, str) for v in versions):
+            raise ValueError("GitHub feed returned no usable package versions")
+        lowered = [v.lower() for v in versions]
+        if len(lowered) != len(set(lowered)):
+            raise ValueError("GitHub feed returned duplicate package versions")
+        return versions
+
     def latest_stable(self, package_id):
-        versions = self.client.json(f"{self.base}/{package_id.lower()}/index.json")["versions"]
-        stable = [v for v in versions if re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", v)]
+        stable = [v for v in self.versions(package_id)
+                  if re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", v)]
         if not stable:
             raise ValueError("no stable re2c binary package is published")
         return max(stable, key=lambda v: tuple(int(n) for n in v.split(".")) + (0,) * (4-len(v.split("."))))
+
+    def floating(self, package_id, requirement, destination, version_file):
+        if requirement != "2.3.0-*":
+            raise ValueError("only the audited literal 2.3.0-* floating requirement is supported")
+        candidates = [v for v in self.versions(package_id)
+                      if re.fullmatch(r"2\.3\.0-[0-9A-Za-z.-]+", v)]
+        if not candidates:
+            raise ValueError("GitHub feed has no 2.3.0 prerelease candidates")
+        selected = max(candidates, key=nuget_semver_key)
+        self.package(package_id, selected, destination)
+        Path(version_file).write_text(selected + "\n", encoding="utf-8")
+        print(f"floating_requirement={requirement} resolved={selected}", flush=True)
+        return selected
 
 
 def cache_package(nupkg, package_id, version, cache):
@@ -254,16 +297,36 @@ def main():
     cache = commands.add_parser("cache")
     cache.add_argument("config")
     cache.add_argument("destination")
+    package = commands.add_parser("package")
+    package.add_argument("package_id")
+    package.add_argument("version")
+    package.add_argument("destination")
+    floating = commands.add_parser("floating")
+    floating.add_argument("package_id")
+    floating.add_argument("requirement")
+    floating.add_argument("destination")
+    floating.add_argument("version_file")
+    extract = commands.add_parser("extract")
+    extract.add_argument("archive")
+    extract.add_argument("destination")
     re2c = commands.add_parser("re2c")
     re2c.add_argument("destination")
     powershell = commands.add_parser("windows-powershell")
     powershell.add_argument("destination")
     args = parser.parse_args()
+    if args.command == "extract":
+        extract_package(args.archive, args.destination)
+        return
     client = Curl()
     if args.command == "release":
         release_asset(client, args.repository, args.tag, args.asset, args.destination)
     elif args.command == "cache":
         restore_cache(NugetFeed(client), args.config, args.destination)
+    elif args.command == "package":
+        NugetFeed(client).package(args.package_id, args.version, args.destination)
+    elif args.command == "floating":
+        NugetFeed(client).floating(
+            args.package_id, args.requirement, args.destination, args.version_file)
     elif args.command == "re2c":
         restore_re2c(NugetFeed(client), args.destination)
     else:
