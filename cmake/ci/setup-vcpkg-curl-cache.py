@@ -134,8 +134,15 @@ def main() -> int:
         bootstrap = ["cmd", "/c", str(root / "bootstrap-vcpkg.bat"), "-disableMetrics"]
     else:
         if os.environ.get("RUNNER_OS") == "Linux" and os.environ.get("RUNNER_ARCH") == "ARM64":
+            # Preserve the shared cache producer's ARM64 tool-selection contract.
+            # The binary cache itself is files-only, so enabling downloaded host
+            # tools cannot reintroduce NuGet/Mono as a package transport.
             os.environ["VCPKG_FORCE_SYSTEM_BINARIES"] = "1"
-            append_env({"VCPKG_FORCE_SYSTEM_BINARIES": "1"})
+            os.environ["VCPKG_FORCE_DOWNLOADED_BINARIES"] = "1"
+            append_env({
+                "VCPKG_FORCE_SYSTEM_BINARIES": "1",
+                "VCPKG_FORCE_DOWNLOADED_BINARIES": "1",
+            })
         bootstrap = ["sh", str(root / "bootstrap-vcpkg.sh"), "-disableMetrics"]
     subprocess.run(bootstrap, cwd=root, check=True)
 
