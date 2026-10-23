@@ -42,6 +42,7 @@ typedef struct cnet_sctp_init_param_view {
   size_t report_wire_size; /* sum of padded TLVs within error cause / param */
   cnet_sctp_init_report reports[CNET_SCTP_INIT_REPORT_MAX];
   int stopped_by_unknown;
+  int supports_reconfig; /* Supported Extensions parameter contains chunk 130. */
 } cnet_sctp_init_param_view;
 
 /* value points at the complete INIT/INIT-ACK chunk payload (including its
