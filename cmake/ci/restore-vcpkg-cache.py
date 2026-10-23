@@ -123,8 +123,6 @@ def parse_args() -> argparse.Namespace:
     manifest.add_argument("--host-triplet", required=True)
     manifest.add_argument("--label", required=True)
 
-    # Backward-compatible one-token form used by existing workflow edits.
-    parser.add_argument("legacy_preset", nargs="?")
     return parser.parse_args()
 
 
@@ -139,8 +137,6 @@ def main() -> int:
     elif args.mode == "manifest":
         restore_manifest(root, args.manifest_root, args.triplet,
                          args.host_triplet, args.label, cache)
-    elif args.legacy_preset:
-        restore_preset(root, args.legacy_preset, cache)
     else:
         raise SystemExit("select 'preset <name>' or 'manifest <root> ...'")
     return 0
