@@ -43,14 +43,26 @@ jobs:
         if: matrix.family == 'ios'
         shell: bash
         run: echo "X_VCPKG_NUGET_ID_PREFIX=vcpkg-cache" >> "$GITHUB_ENV"
-      - name: Restore shared re2c binary
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
-      - name: Configure shared vcpkg cache
-        id: shared_deps
-        # Bootstrap the pinned tool independently of hosted runner image updates (vcpkg-cache#186).
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
+      - name: Set up Python for curl package restore
+        uses: actions/setup-python@v5
         with:
-          mode: read
+          python-version: '3.12'
+      - name: Check out pinned shared vcpkg cache contract
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/vcpkg-cache
+          ref: d4afc8cd2f5ed3585c1e26469e379a087ce9ecf3
+          path: build/ci-vcpkg-infrastructure
+          persist-credentials: false
+      - name: Bootstrap pinned vcpkg and configure local binary cache
+        id: shared_deps
+        shell: pwsh
+        run: python cmake/ci/setup-vcpkg-curl-cache.py build/ci-vcpkg-infrastructure
+      - name: Restore re2c from GitHub Packages using curl
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python cmake/ci/github-packages.py re2c "$env:RUNNER_TEMP/qigao-re2c-binary"
       - name: Prepare build host
         uses: ./.github/actions/setup-build-host
       - name: Restore native compiler cache
@@ -104,6 +116,26 @@ jobs:
           $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) { throw "Visual Studio with the x64 C++ toolchain was not found" }
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+      - name: Restore exact vcpkg packages from GitHub Packages with curl
+        if: matrix.family != 'windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/restore-vcpkg-cache.py "${{ matrix.preset }}"
+      - name: Restore exact vcpkg packages from GitHub Packages with curl (Windows)
+        if: matrix.family == 'windows'
+        shell: cmd
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set "BUILD_VCPKG_ROOT=%VCPKG_ROOT%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
+          python cmake\ci\restore-vcpkg-cache.py win-release-ci
+          if errorlevel 1 exit /b 1
       - name: Configure and build all modules
         id: build_unix
         if: matrix.family != 'windows' && !matrix.cross
