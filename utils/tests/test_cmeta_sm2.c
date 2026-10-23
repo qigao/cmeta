@@ -95,7 +95,7 @@ suite("CMeta SM2") {
       uint8_t signature_before[SALTS_SM2_SIGNATURE_DER_MAX_BYTES];
       uint8_t message[] = {0x61, 0x00, 0x62, 0x63};
       uint8_t user_id[] = {0x69, 0x64, 0x00, 0x31};
-      uint8_t private_der_with_trailing[sizeof(private_der)];
+      uint8_t private_der_with_trailing[sizeof(private_der) + 1u];
       uint8_t private_der_bad[sizeof(private_der)];
       uint8_t *private_cursor = private_der;
       uint8_t *public_cursor = public_der;
