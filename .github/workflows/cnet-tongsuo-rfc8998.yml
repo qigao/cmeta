@@ -3,6 +3,10 @@ name: CNet independent RFC8998 interop
 'on':
   pull_request:
     paths:
+      - '.github/actions/setup-vcpkg-curl-cache/**'
+      - 'cmake/ci/github-packages.py'
+      - 'cmake/ci/restore-vcpkg-cache.py'
+      - 'cmake/ci/setup-vcpkg-curl-cache.py'
       - 'cnet/tests/interop/**'
       - '.github/workflows/cnet-tongsuo-rfc8998.yml'
   workflow_dispatch:
