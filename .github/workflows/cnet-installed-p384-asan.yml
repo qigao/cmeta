@@ -146,6 +146,38 @@ jobs:
             --output-on-failure --no-tests=error \
             -R '^(cnet_tls_test|cnet_installed_sdk_test)$'
 
+      - name: Verify installed C11 consumer instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["PROJECT_ROOT"]).resolve()
+          build = Path(os.environ["BUILD_ROOT"])
+          consumer = build / "cnet/tests/installed-strategy/consumer-build"
+          rows = json.loads((consumer / "compile_commands.json").read_text(encoding="utf-8"))
+          source = root / "cnet/tests/package_config/strategy/p384_tls.c"
+          matches = [row for row in rows if Path(row["file"]).resolve() == source]
+          if len(matches) != 1:
+              raise SystemExit(f"installed C11 consumer: expected one compile unit, found {len(matches)}")
+          command = matches[0].get("command", " ".join(matches[0].get("arguments", [])))
+          for flag in ("-fsanitize=address", "-fsanitize=undefined"):
+              if flag not in command:
+                  raise SystemExit(f"installed C11 consumer missing {flag}")
+          cache = (consumer / "CMakeCache.txt").read_text(encoding="utf-8")
+          linker_rows = [line for line in cache.splitlines()
+                         if line.startswith("CMAKE_EXE_LINKER_FLAGS:STRING=")]
+          if len(linker_rows) != 1 or any(
+              flag not in linker_rows[0]
+              for flag in ("-fsanitize=address", "-fsanitize=undefined")
+          ):
+              raise SystemExit("installed C11 consumer linker flags are not ASan/UBSan-instrumented")
+          print("Verified installed C11 consumer compile and link instrumentation.")
+          PY
+
       - name: Preserve CNet sanitizer evidence
         if: always()
         uses: actions/upload-artifact@v4
