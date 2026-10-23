@@ -15,7 +15,7 @@
 
 #define REQUIRE(condition) do { \
     if (!(condition)) { \
-      fprintf(stderr, "%s:%d: %s\\n", __FILE__, __LINE__, #condition); \
+      fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #condition); \
       return 1; \
     } \
   } while (0)
@@ -174,7 +174,7 @@ static int run_case(const char *ca_file, const char *cert_file,
     if (!cp.terminal || !cp.failed || cp.connected)
       fprintf(stderr,
               "CNet installed TLS reject state: client terminal=%d failed=%d connected=%d "
-              "server terminal=%d failed=%d iteration=%zu\\n",
+              "server terminal=%d failed=%d iteration=%zu\n",
               cp.terminal, cp.failed, cp.connected, sp.terminal, sp.failed, iteration);
     REQUIRE(cp.terminal && cp.failed && !cp.connected);
     REQUIRE(cp.failure_stage != NULL);
@@ -205,7 +205,7 @@ static int run_case(const char *ca_file, const char *cert_file,
 int main(int argc, char **argv)
 {
   if (argc != 5) {
-    fprintf(stderr, "usage: %s CA CERT KEY WRONG_CA\\n", argv[0]);
+    fprintf(stderr, "usage: %s CA CERT KEY WRONG_CA\n", argv[0]);
     return 2;
   }
   if (run_case(argv[1], argv[2], argv[3], "localhost", false)) return 1;
