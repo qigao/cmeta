@@ -17,6 +17,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(CMETA_CRYPTO_TEST_HOOKS)
+#include "cmeta_crypto_test_hooks.h"
+#define CMETA_CRYPTO_ALLOC(size) cmeta_crypto_test_alloc(size)
+#define CMETA_CRYPTO_FREE(data) cmeta_crypto_test_free(data)
+#else
+#define CMETA_CRYPTO_ALLOC(size) malloc(size)
+#define CMETA_CRYPTO_FREE(data) free(data)
+#endif
+
 int cmeta_md5(const void *data, size_t size,
               uint8_t out[SALTS_MD5_DIGEST_BYTES]) {
   MD5_CTX context;
@@ -589,7 +598,8 @@ int cmeta_sm4_gcm_seal(
     return SALTS_ERANGE;
   }
 
-  staged_ciphertext = (uint8_t *)malloc(plaintext_size == 0u ? 1u : plaintext_size);
+  staged_ciphertext =
+      (uint8_t *)CMETA_CRYPTO_ALLOC(plaintext_size == 0u ? 1u : plaintext_size);
   if (staged_ciphertext == NULL) return SALTS_ENOMEM;
 
   sm4_set_encrypt_key(&provider_key, key);
@@ -602,7 +612,7 @@ int cmeta_sm4_gcm_seal(
 
   if (provider_result != 1) {
     gmssl_secure_clear(staged_ciphertext, plaintext_size == 0u ? 1u : plaintext_size);
-    free(staged_ciphertext);
+    CMETA_CRYPTO_FREE(staged_ciphertext);
     gmssl_secure_clear(staged_tag, sizeof(staged_tag));
     return SALTS_EIO;
   }
@@ -612,7 +622,7 @@ int cmeta_sm4_gcm_seal(
   *out_ciphertext_size = plaintext_size;
 
   gmssl_secure_clear(staged_ciphertext, plaintext_size == 0u ? 1u : plaintext_size);
-  free(staged_ciphertext);
+  CMETA_CRYPTO_FREE(staged_ciphertext);
   gmssl_secure_clear(staged_tag, sizeof(staged_tag));
   return SALTS_OK;
 }
@@ -643,7 +653,8 @@ int cmeta_sm4_gcm_open(
     return SALTS_ERANGE;
   }
 
-  staged_plaintext = (uint8_t *)malloc(ciphertext_size == 0u ? 1u : ciphertext_size);
+  staged_plaintext =
+      (uint8_t *)CMETA_CRYPTO_ALLOC(ciphertext_size == 0u ? 1u : ciphertext_size);
   if (staged_plaintext == NULL) return SALTS_ENOMEM;
 
   sm4_set_encrypt_key(&provider_key, key);
@@ -656,7 +667,7 @@ int cmeta_sm4_gcm_open(
 
   if (provider_result != 1) {
     gmssl_secure_clear(staged_plaintext, ciphertext_size == 0u ? 1u : ciphertext_size);
-    free(staged_plaintext);
+    CMETA_CRYPTO_FREE(staged_plaintext);
     return SALTS_EAUTH;
   }
 
@@ -664,7 +675,7 @@ int cmeta_sm4_gcm_open(
   *out_plaintext_size = ciphertext_size;
 
   gmssl_secure_clear(staged_plaintext, ciphertext_size == 0u ? 1u : ciphertext_size);
-  free(staged_plaintext);
+  CMETA_CRYPTO_FREE(staged_plaintext);
   return SALTS_OK;
 }
 

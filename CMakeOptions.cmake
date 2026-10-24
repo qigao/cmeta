@@ -28,6 +28,8 @@ option(CMETA_BUILD_BENCHMARKS
        "Build CMeta benchmarks independently" OFF)
 option(CMETA_BUILD_NATIVE_THUNKS
        "Build opt-in exact x86-64 native specialization" OFF)
+option(SALTS_BUILD_CRYPTO_FUZZERS
+       "Build Clang libFuzzer targets for the public crypto ABI" OFF)
 option(SALTS_ENABLE_EPOLL_READINESS
        "Enable the Linux epoll readiness backend" OFF)
 if(SALTS_ENABLE_EPOLL_READINESS AND
