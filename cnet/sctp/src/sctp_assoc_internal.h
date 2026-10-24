@@ -132,7 +132,7 @@ typedef struct cnet_sctp_assoc {
   uint8_t reset_active;
   uint8_t reset_is_reciprocal;
   uint8_t reset_retransmits;
-  uint16_t reset_stream;
+  uint16_t reset_streams;
   /* RFC 8831 DataChannel close is bidirectional. Fixed bitsets keep at most
    * one bounded state flag per private profile SID; no queue or heap grows. */
   uint16_t reciprocal_reset_pending;
@@ -152,10 +152,11 @@ typedef struct cnet_sctp_assoc {
   uint16_t deferred_peer_reset_streams;
   uint32_t deferred_peer_reset_request;
   uint32_t deferred_peer_reset_last_tsn;
-  /* One received Incoming SSN Reset may wait for retained outbound DATA to
-   * drain before its corresponding Outgoing Reset can be emitted. */
+  /* One received Incoming SSN Reset may wait for an active reset, retained
+   * outbound DATA and unread overlapping events before its corresponding
+   * Outgoing Reset can be emitted. */
   uint8_t peer_incoming_reset_pending;
-  uint16_t peer_incoming_reset_stream;
+  uint16_t peer_incoming_reset_streams;
   uint32_t peer_incoming_reset_request;
   uint16_t incoming_reset_events;
   uint16_t outgoing_reset_events;
