@@ -33,6 +33,17 @@ suite("Salts Error") {
       check_equal(cmeta_strerror(SALTS_EAI_FAMILY), "address family not supported by DNS result");
     }
 
+    it("describes authentication failures as a stable Salts code") {
+      cmeta_error_info_t info = cmeta_error_info(SALTS_EAUTH);
+
+      check_equal(SALTS_EAUTH, -4054);
+      check_equal(cmeta_strerror(SALTS_EAUTH), "authentication failed");
+      check_equal(info.code, SALTS_EAUTH);
+      check_equal(info.domain, SALTS_ERROR_DOMAIN_SALTS);
+      check_equal(info.name, "SALTS_EAUTH");
+      check_equal(info.message, "authentication failed");
+    }
+
     it("returns structured metadata") {
       cmeta_error_info_t info = cmeta_error_info(SALTS_ENOMEM);
 

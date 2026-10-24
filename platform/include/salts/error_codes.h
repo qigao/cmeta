@@ -71,6 +71,7 @@
   X(SALTS_ETXTBSY, -4051, "SALTS_ETXTBSY", "text file busy")                                        \
   X(SALTS_EXDEV, -4052, "SALTS_EXDEV", "cross-device link")                                         \
   X(SALTS_UNKNOWN, -4053, "SALTS_UNKNOWN", "unknown error")                                          \
+  X(SALTS_EAUTH, -4054, "SALTS_EAUTH", "authentication failed")                                      \
   X(SALTS_EOF, -4095, "SALTS_EOF", "end of file")
 
 #define SALTS_ERROR_CODE_ITEM_DECL(name, value, name_text, message_text) name = value,
