@@ -1725,6 +1725,32 @@ static size_t encode_reset_response_packet(const cnet_sctp_assoc *sender,
   return written;
 }
 
+static size_t encode_reset_response_pair_packet(
+    const cnet_sctp_assoc *sender,
+    uint32_t first_sequence, cnet_sctp_assoc_stream_reset_result first_result,
+    uint32_t second_sequence,
+    cnet_sctp_assoc_stream_reset_result second_result,
+    uint8_t *packet, size_t capacity) {
+  cnet_sctp_wire_chunk chunk = {0};
+  uint8_t value[24u];
+  size_t written = 0u;
+  write16_test(value, 16u);
+  write16_test(value + 2u, 12u);
+  write32_test(value + 4u, first_sequence);
+  write32_test(value + 8u, (uint32_t)first_result);
+  write16_test(value + 12u, 16u);
+  write16_test(value + 14u, 12u);
+  write32_test(value + 16u, second_sequence);
+  write32_test(value + 20u, (uint32_t)second_result);
+  chunk.type = 130u;
+  chunk.value = value;
+  chunk.value_size = sizeof(value);
+  assert(cnet_sctp_wire_encode(sender->config.local_port,
+      sender->config.remote_port, sender->peer_tag, &chunk, 1u,
+      packet, capacity, &written) == CNET_SCTP_WIRE_OK);
+  return written;
+}
+
 static uint32_t outgoing_reset_response_sequence(
     const uint8_t *packet, size_t size) {
   cnet_sctp_wire_header header = {0};
@@ -1790,6 +1816,58 @@ static size_t encode_outgoing_incoming_reset_pair(
       sender->config.remote_port, sender->peer_tag, &combined, 1u,
       packet, capacity, &written) == CNET_SCTP_WIRE_OK);
   return written;
+}
+
+static void assert_outgoing_incoming_reset_pair(const uint8_t *packet,
+    size_t size, uint32_t outgoing_sequence, uint32_t incoming_sequence,
+    uint16_t expected_outgoing_mask, uint16_t expected_incoming_mask,
+    uint16_t outbound_streams, uint16_t inbound_streams) {
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk chunk = {0};
+  uint16_t outgoing_mask = 0u, incoming_mask = 0u;
+  const uint16_t all_outgoing = outbound_streams == CNET_SCTP_DATA_STREAMS ?
+      UINT16_MAX : (uint16_t)((UINT16_C(1) << outbound_streams) - 1u);
+  const uint16_t all_incoming = inbound_streams == CNET_SCTP_DATA_STREAMS ?
+      UINT16_MAX : (uint16_t)((UINT16_C(1) << inbound_streams) - 1u);
+  size_t outgoing_size, incoming_offset, incoming_size, position;
+  assert(cnet_sctp_wire_decode(packet, size, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == 1u &&
+      cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
+      chunk.type == 130u && chunk.value_size >= 24u &&
+      read16_test(chunk.value) == 13u &&
+      read32_test(chunk.value + 4u) == outgoing_sequence);
+  outgoing_size = read16_test(chunk.value + 2u);
+  assert(outgoing_size >= 16u && outgoing_size <= chunk.value_size);
+  if (outgoing_size == 16u) {
+    outgoing_mask = all_outgoing;
+  } else {
+    for (position = 16u; position < outgoing_size; position += 2u) {
+      const uint16_t stream = read16_test(chunk.value + position);
+      assert(stream < outbound_streams);
+      outgoing_mask |= (uint16_t)(UINT16_C(1) << stream);
+    }
+  }
+  incoming_offset = (outgoing_size + 3u) & ~(size_t)3u;
+  assert(incoming_offset + 8u <= chunk.value_size &&
+      read16_test(chunk.value + incoming_offset) == 14u &&
+      read32_test(chunk.value + incoming_offset + 4u) == incoming_sequence);
+  incoming_size = read16_test(chunk.value + incoming_offset + 2u);
+  assert(incoming_size >= 8u &&
+      incoming_offset + incoming_size == chunk.value_size);
+  if (incoming_size == 8u) {
+    incoming_mask = all_incoming;
+  } else {
+    for (position = incoming_offset + 8u;
+         position < incoming_offset + incoming_size; position += 2u) {
+      const uint16_t stream = read16_test(chunk.value + position);
+      assert(stream < inbound_streams);
+      incoming_mask |= (uint16_t)(UINT16_C(1) << stream);
+    }
+  }
+  assert(outgoing_mask == expected_outgoing_mask &&
+      incoming_mask == expected_incoming_mask);
 }
 
 static void assert_response_outgoing_pair(const uint8_t *packet, size_t size,
@@ -2621,6 +2699,173 @@ static void paired_outgoing_incoming_reset_is_atomic(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void local_paired_bidirectional_reset_roundtrip_is_atomic(void) {
+  cnet_sctp_assoc a, b, before;
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_assoc_stream_reset_event event = {0};
+  const uint16_t stream = 1u;
+  const uint16_t mask = (uint16_t)(UINT16_C(1) << 1u);
+  uint16_t a_incoming = 0u, a_outgoing = 0u;
+  uint16_t b_incoming = 0u, b_outgoing = 0u;
+  uint8_t pair[1200], combined[1200], response[1200], scratch[1200];
+  size_t pair_n = 0u, combined_n = 0u, response_n = 0u, scratch_n = 0u;
+  uint32_t outgoing_sequence, incoming_sequence;
+
+  ready_pair(&a, &b, &ca, &cb);
+  a.data.tx_ssn[stream] = 5u;
+  a.data.rx_ssn[stream] = 6u;
+  b.data.tx_ssn[stream] = 7u;
+  b.data.rx_ssn[stream] = 8u;
+  outgoing_sequence = a.next_reset_request;
+  incoming_sequence = outgoing_sequence + 1u;
+  memcpy(&before, &a, sizeof(before));
+  assert(cnet_sctp_assoc_reset_streams_bidirectional(&a, 6u,
+      &stream, 1u, pair, 1u, &pair_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(pair_n == 0u && memcmp(&a, &before, sizeof(a)) == 0);
+  assert(cnet_sctp_assoc_reset_streams_bidirectional(&a, 6u,
+      &stream, 1u, pair, sizeof(pair), &pair_n) == CNET_SCTP_ASSOC_OK);
+  assert(pair_n != 0u && a.reset_active &&
+      a.reset_has_paired_incoming && !a.reset_outgoing_complete &&
+      !a.reset_paired_incoming_complete && a.reset_streams == mask &&
+      a.reset_paired_incoming_streams == mask &&
+      a.reset_request == outgoing_sequence &&
+      a.reset_paired_incoming_request == incoming_sequence &&
+      a.next_reset_request == incoming_sequence + 1u);
+  assert_outgoing_incoming_reset_pair(pair, pair_n,
+      outgoing_sequence, incoming_sequence, mask, mask,
+      a.config.outbound_streams, a.config.inbound_streams);
+
+  assert(cnet_sctp_assoc_input(&b, 7u, pair, pair_n,
+      combined, sizeof(combined), &combined_n) == CNET_SCTP_ASSOC_OK);
+  assert(combined_n != 0u && b.reset_active && b.reset_is_reciprocal);
+  assert_response_outgoing_pair(combined, combined_n,
+      outgoing_sequence, incoming_sequence, mask,
+      b.config.outbound_streams);
+  memcpy(&before, &a, sizeof(before));
+  assert(cnet_sctp_assoc_input(&a, 8u, combined, combined_n,
+      response, 1u, &response_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(response_n == 0u && memcmp(&a, &before, sizeof(a)) == 0);
+  assert(cnet_sctp_assoc_input(&a, 8u, combined, combined_n,
+      response, sizeof(response), &response_n) == CNET_SCTP_ASSOC_OK);
+  assert(response_n != 0u && !a.reset_active &&
+      a.data.tx_ssn[stream] == 0u && a.data.rx_ssn[stream] == 0u);
+  while (cnet_sctp_assoc_take_stream_reset(&a, &event) ==
+         CNET_SCTP_ASSOC_OK) {
+    assert(event.stream_id == stream &&
+        event.result == CNET_SCTP_STREAM_RESET_PERFORMED);
+    if (event.incoming) a_incoming |= mask;
+    else a_outgoing |= mask;
+  }
+  assert(a_incoming == mask && a_outgoing == mask);
+
+  assert(cnet_sctp_assoc_input(&b, 9u, response, response_n,
+      scratch, sizeof(scratch), &scratch_n) == CNET_SCTP_ASSOC_OK);
+  assert(!b.reset_active && b.data.tx_ssn[stream] == 0u &&
+      b.data.rx_ssn[stream] == 0u);
+  while (cnet_sctp_assoc_take_stream_reset(&b, &event) ==
+         CNET_SCTP_ASSOC_OK) {
+    assert(event.stream_id == stream &&
+        event.result == CNET_SCTP_STREAM_RESET_PERFORMED);
+    if (event.incoming) b_incoming |= mask;
+    else b_outgoing |= mask;
+  }
+  assert(b_incoming == mask && b_outgoing == mask);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
+static void local_paired_reset_partial_completion_times_out_once(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_assoc_stream_reset_event event = {0};
+  const uint16_t stream = 2u;
+  uint8_t pair[1200], response[1200], replay[1200], scratch[1200];
+  size_t pair_n = 0u, response_n, replay_n = 0u, scratch_n = 123u;
+
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_reset_streams_bidirectional(&a, 6u,
+      &stream, 1u, pair, sizeof(pair), &pair_n) == CNET_SCTP_ASSOC_OK);
+  response_n = encode_reset_response_packet(&b, a.reset_request,
+      CNET_SCTP_STREAM_RESET_PERFORMED, response, sizeof(response));
+  assert(cnet_sctp_assoc_input(&a, 7u, response, response_n,
+      scratch, sizeof(scratch), &scratch_n) == CNET_SCTP_ASSOC_OK);
+  assert(scratch_n == 0u && a.reset_active && a.reset_outgoing_complete &&
+      !a.reset_paired_incoming_complete);
+  assert(cnet_sctp_assoc_take_stream_reset(&a, &event) ==
+      CNET_SCTP_ASSOC_OK && !event.incoming &&
+      event.stream_id == stream &&
+      event.result == CNET_SCTP_STREAM_RESET_PERFORMED);
+  assert(cnet_sctp_assoc_advance(&a, 106u, replay,
+      sizeof(replay), &replay_n) == CNET_SCTP_ASSOC_OK &&
+      replay_n == pair_n && memcmp(replay, pair, pair_n) == 0);
+  assert(cnet_sctp_assoc_advance(&a, 306u, replay,
+      sizeof(replay), &replay_n) == CNET_SCTP_ASSOC_OK &&
+      replay_n == pair_n);
+  assert(cnet_sctp_assoc_advance(&a, 706u, replay,
+      sizeof(replay), &replay_n) == CNET_SCTP_ASSOC_OK &&
+      replay_n == pair_n);
+  replay_n = 123u;
+  assert(cnet_sctp_assoc_advance(&a, 1106u, replay,
+      sizeof(replay), &replay_n) == CNET_SCTP_ASSOC_OK);
+  assert(replay_n == 0u && !a.reset_active &&
+      a.state == CNET_SCTP_ASSOC_ESTABLISHED);
+  assert(cnet_sctp_assoc_take_stream_reset(&a, &event) ==
+      CNET_SCTP_ASSOC_OK && event.incoming &&
+      event.stream_id == stream &&
+      event.result == CNET_SCTP_STREAM_RESET_TIMEOUT);
+  assert(cnet_sctp_assoc_take_stream_reset(&a, &event) ==
+      CNET_SCTP_ASSOC_EMPTY);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
+static void local_paired_reset_all_streams_and_denials_are_bounded(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_assoc_stream_reset_event event = {0};
+  const uint16_t all = UINT16_C(0x000f);
+  uint16_t incoming = 0u, outgoing = 0u;
+  uint8_t pair[1200], denials[1200], scratch[1200];
+  size_t pair_n = 0u, denials_n, scratch_n = 123u;
+  uint32_t outgoing_sequence, incoming_sequence;
+
+  ready_pair(&a, &b, &ca, &cb);
+  outgoing_sequence = a.next_reset_request;
+  incoming_sequence = outgoing_sequence + 1u;
+  assert(cnet_sctp_assoc_reset_streams_bidirectional(&a, 6u,
+      NULL, 0u, pair, sizeof(pair), &pair_n) == CNET_SCTP_ASSOC_OK);
+  assert_outgoing_incoming_reset_pair(pair, pair_n,
+      outgoing_sequence, incoming_sequence, all, all,
+      a.config.outbound_streams, a.config.inbound_streams);
+  denials_n = encode_reset_response_pair_packet(&b,
+      outgoing_sequence, CNET_SCTP_STREAM_RESET_DENIED,
+      incoming_sequence, CNET_SCTP_STREAM_RESET_WRONG_SSN,
+      denials, sizeof(denials));
+  assert(cnet_sctp_assoc_input(&a, 7u, denials, denials_n,
+      scratch, sizeof(scratch), &scratch_n) == CNET_SCTP_ASSOC_OK);
+  assert(scratch_n == 0u && !a.reset_active);
+  while (cnet_sctp_assoc_take_stream_reset(&a, &event) ==
+         CNET_SCTP_ASSOC_OK) {
+    const uint16_t bit = (uint16_t)(UINT16_C(1) << event.stream_id);
+    if (event.incoming) {
+      assert(event.result == CNET_SCTP_STREAM_RESET_WRONG_SSN);
+      incoming |= bit;
+    } else {
+      assert(event.result == CNET_SCTP_STREAM_RESET_DENIED);
+      outgoing |= bit;
+    }
+  }
+  assert(incoming == all && outgoing == all);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void local_incoming_reset_encoding_is_capacity_atomic(void) {
   cnet_sctp_assoc a, b, before;
   test_context ca = {0}, cb = {0};
@@ -3074,6 +3319,9 @@ int main(void) {
   incoming_reset_multi_sid_roundtrip();
   incoming_reset_partial_overlap_is_deferred();
   paired_outgoing_incoming_reset_is_atomic();
+  local_paired_bidirectional_reset_roundtrip_is_atomic();
+  local_paired_reset_partial_completion_times_out_once();
+  local_paired_reset_all_streams_and_denials_are_bounded();
   local_incoming_reset_encoding_is_capacity_atomic();
   local_incoming_reset_roundtrip_and_outbound_independence();
   local_incoming_reset_waits_for_peer_tsn_barrier();

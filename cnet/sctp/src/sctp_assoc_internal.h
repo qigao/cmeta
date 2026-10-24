@@ -132,8 +132,15 @@ typedef struct cnet_sctp_assoc {
   uint8_t reset_active;
   uint8_t reset_is_reciprocal;
   uint8_t reset_requests_incoming;
+  /* One retained RE-CONFIG packet may carry the RFC 6525 Appendix A
+   * Outgoing+Incoming pair. Both halves share its timer and retransmission
+   * budget, but complete independently. */
+  uint8_t reset_has_paired_incoming;
+  uint8_t reset_outgoing_complete;
+  uint8_t reset_paired_incoming_complete;
   uint8_t reset_retransmits;
   uint16_t reset_streams;
+  uint16_t reset_paired_incoming_streams;
   /* RFC 8831 DataChannel close is bidirectional. Fixed bitsets keep at most
    * one bounded state flag per private profile SID; no queue or heap grows. */
   uint16_t reciprocal_reset_pending;
@@ -142,6 +149,7 @@ typedef struct cnet_sctp_assoc {
   uint32_t next_reset_request;
   uint32_t expected_peer_reset_request;
   uint32_t reset_request;
+  uint32_t reset_paired_incoming_request;
   uint64_t reset_deadline_ms;
   uint64_t reset_rto_ms;
   size_t reset_packet_size;
@@ -153,6 +161,7 @@ typedef struct cnet_sctp_assoc {
   uint16_t deferred_peer_reset_streams;
   uint16_t deferred_peer_reset_suppress_reciprocal;
   uint8_t deferred_peer_reset_answers_incoming;
+  uint8_t deferred_peer_reset_answers_pair;
   uint32_t deferred_peer_reset_request;
   uint32_t deferred_peer_reset_last_tsn;
   /* One received Incoming SSN Reset may wait for an active reset, retained
@@ -244,6 +253,14 @@ cnet_sctp_assoc_status cnet_sctp_assoc_reset_stream(cnet_sctp_assoc *association
  * copied into fixed Association state. The request does not block outbound
  * DATA. Completion is reported as incoming stream-reset events. */
 cnet_sctp_assoc_status cnet_sctp_assoc_reset_incoming_streams(
+    cnet_sctp_assoc *association, uint64_t now_ms,
+    const uint16_t *stream_ids, size_t stream_count,
+    void *output, size_t capacity, size_t *written);
+/* RFC 6525 Appendix A paired Outgoing+Incoming reset. stream_count == 0
+ * encodes the all-stream form independently for each direction; otherwise
+ * every borrowed SID must exist in both directions. One retained packet,
+ * timer and retry budget own both independently reported completions. */
+cnet_sctp_assoc_status cnet_sctp_assoc_reset_streams_bidirectional(
     cnet_sctp_assoc *association, uint64_t now_ms,
     const uint16_t *stream_ids, size_t stream_count,
     void *output, size_t capacity, size_t *written);
