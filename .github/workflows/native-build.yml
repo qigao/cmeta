@@ -156,6 +156,24 @@ jobs:
           set -euo pipefail
           cmake --preset "${{ matrix.preset }}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SUPPRESS_REGENERATION=ON
           cmake --build --preset "${{ matrix.preset }}" --parallel 2
+      # Validate the installed export, not only the build-tree interface.
+      - name: Verify installed ASN.1 C11/C++17 SDK consumer
+        if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.id == 'linux-release' && matrix.sanitizer == '' }}
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/asn1-installed-sdk"
+          cmake --install "${{ matrix.build_dir }}" --prefix "$prefix"
+          test -f "$prefix/include/salts/asn1.h"
+          test -f "$prefix/include/salts/asn1_value.h"
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          cmake -S asn1/tests/installed -B build/asn1-installed-sdk-consumer \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build build/asn1-installed-sdk-consumer --parallel 2
+          LD_LIBRARY_PATH="$prefix/lib:$prefix/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            ctest --test-dir build/asn1-installed-sdk-consumer \
+              --no-tests=error --output-on-failure --timeout 30
       # ACE/Actor and CNet progress sampling is owned by the separate benchmark
       # consumer, using the exact native producer SHA; never delay native CI.
       # Unicode conformance must execute (not merely compile) on each native OS.
@@ -286,7 +304,7 @@ jobs:
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.execution }}
         timeout-minutes: 30
         shell: bash
-        run: ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(test_cmeta_process$|native_io_test$|cflow_io_(actor|native_adapter|pipe)_test$|tinytest_regression_runtime$|cnet_.*_test$|native_ipc(_header_cpp)?_test$|cmeta_native_|thread_pool_test$|thread_pool_lf_test$|thread_pool_lf_installed_test$|disruptor_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cflow_.*_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
+        run: ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(test_cmeta_process$|native_io_test$|cflow_io_(actor|native_adapter|pipe)_test$|tinytest_regression_runtime$|cnet_.*_test$|native_ipc(_header_cpp)?_test$|cmeta_native_|thread_pool_test$|thread_pool_lf_test$|thread_pool_lf_installed_test$|disruptor_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cflow_.*_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$|asn1_(reader|value|header_cpp)_test$)"
       - name: Run Windows execution and nested CSTL contracts
         if: ${{ !cancelled() && steps.build_windows.outcome == 'success' && matrix.execution }}
         timeout-minutes: 30
@@ -296,7 +314,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(test_cmeta_process$|native_io_test$|cflow_io_(actor|native_adapter|pipe)_test$|tinytest_regression_runtime$|cnet_.*_test$|native_ipc(_header_cpp)?_test$|cmeta_native_|thread_pool_test$|thread_pool_lf_test$|thread_pool_lf_installed_test$|disruptor_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cflow_.*_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$)"
+          ctest --preset "${{ matrix.preset }}" --output-on-failure -R "^(test_cmeta_process$|native_io_test$|cflow_io_(actor|native_adapter|pipe)_test$|tinytest_regression_runtime$|cnet_.*_test$|native_ipc(_header_cpp)?_test$|cmeta_native_|thread_pool_test$|thread_pool_lf_test$|thread_pool_lf_installed_test$|disruptor_test$|concurrency_rcu_test$|concurrency_typed_primitives_test$|concurrency_typed_rcu_cpp_test$|concurrency_header_cpp_test$|platform_header_cpp_test$|platform_thread_test$|test_object_pool$|cflow_stream_terminal_test$|cflow_.*_test$|cstl_generic_identity_test$|cstl_typed_decl_cpp_test$|asn1_(reader|value|header_cpp)_test$)"
           if errorlevel 1 exit /b 1
       - name: Run reflected CFlow contracts
         if: ${{ !cancelled() && steps.build_unix.outcome == 'success' && matrix.projection }}
@@ -310,7 +328,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ctest --preset linux-arm64-release-ci --no-tests=error --output-on-failure --timeout 60 -R '^(thread_pool_test|thread_pool_lf_test|thread_pool_lf_installed_test|concurrency_header_cpp_test|disruptor_test|cmeta_native_component.*|native_io_header_cpp_test|cmeta_header_cpp_test|cflow_header_cpp_test|cflow_owner_executor_test|cflow_owner_scheduler_test|cflow_reactive_test|cflow_actor_test|cflow_machine_instance_test|cflow_statechart_instance_test|cnet_header_cpp_test|cmeta_coroutine_completion_test|cmeta_coroutine_facade_test|coro_executor_test|coro_executor_header_cpp_test|cnet_api_test|cnet_progress_strategy_test|cnet_tls_test)$'
+          ctest --preset linux-arm64-release-ci --no-tests=error --output-on-failure --timeout 60 -R '^(thread_pool_test|thread_pool_lf_test|thread_pool_lf_installed_test|concurrency_header_cpp_test|disruptor_test|cmeta_native_component.*|native_io_header_cpp_test|cmeta_header_cpp_test|cflow_header_cpp_test|cflow_owner_executor_test|cflow_owner_scheduler_test|cflow_reactive_test|cflow_actor_test|cflow_machine_instance_test|cflow_statechart_instance_test|cnet_header_cpp_test|cmeta_coroutine_completion_test|cmeta_coroutine_facade_test|coro_executor_test|coro_executor_header_cpp_test|cnet_api_test|cnet_progress_strategy_test|cnet_tls_test|asn1_(reader|value|header_cpp)_test)$'
       - name: Compile PR-base modules for the CNet comparison
         if: matrix.compare
         shell: cmd

@@ -35,7 +35,8 @@ typedef enum salts_asn1_status {
     SALTS_ASN1_LIMIT_EXCEEDED = 7,
     SALTS_ASN1_UNSUPPORTED = 8,
     SALTS_ASN1_TRAILING_DATA = 9,
-    SALTS_ASN1_BUFFER_TOO_SMALL = 10
+    SALTS_ASN1_BUFFER_TOO_SMALL = 10,
+    SALTS_ASN1_OUT_OF_MEMORY = 11
 } salts_asn1_status;
 
 /* Borrowed view into caller-owned bytes. The source buffer must remain alive
