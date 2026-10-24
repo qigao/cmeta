@@ -65,7 +65,9 @@ The prototype handles a bounded handshake, DATA/SACK/T3/Fast Recovery/flow-contr
 
 **Release status: NO-GO.** See [RELEASE_READINESS.md](RELEASE_READINESS.md) for exact 2.3.0/rc.15 ancestry, M0–M6 gaps, installed-SDK qualifications and the separation between Salts.Native stable release and this non-production prototype.
 
-**Draft / DO NOT MERGE:** [PR #1182](https://github.com/qigao/salts/pull/1182). Preserve current production CNet, TurboMedia/usrsctp and published SDK unchanged.
+**Draft / DO NOT MERGE:** [PR #1281](https://github.com/qigao/salts/pull/1281),
+the clean current-master successor to historical research PR #1182. Preserve
+production CNet, TurboMedia/usrsctp and the published SDK unchanged.
 
 ### Experimental peer ABORT reason retrieval (private)
 
