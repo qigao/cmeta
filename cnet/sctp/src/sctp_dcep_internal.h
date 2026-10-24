@@ -6,8 +6,9 @@
 
 /* RFC 8832 DCEP control plane. Private C11, no heap or external timer.
  * All DCEP packets MUST travel as reliable ordered SCTP DATA PPID=50 on
- * their selected SID. Channel close/reuse requires RFC 6525 Stream Reset,
- * not merely deleting a local channel record.
+ * their selected SID. The Association has a private bounded outgoing-reset
+ * slice, but complete channel close still requires reciprocal RFC 6525 reset
+ * and ULP state coordination, not merely deleting a local channel record.
  */
 #define CNET_SCTP_DCEP_PPID 50u
 #define CNET_SCTP_DCEP_STREAMS 16u

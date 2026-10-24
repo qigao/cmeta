@@ -10,7 +10,9 @@ enum {
   PARAM_COOKIE_PRESERVATIVE = 9,
   PARAM_HOSTNAME = 11,
   PARAM_SUPPORTED_ADDRESSES = 12,
-  PARAM_ECN_CAPABLE = 0x8000
+  PARAM_ECN_CAPABLE = 0x8000,
+  PARAM_SUPPORTED_EXTENSIONS = 0x8008,
+  CHUNK_RECONFIG = 130
 };
 
 static uint16_t read16(const uint8_t *bytes) {
@@ -21,6 +23,7 @@ cnet_sctp_init_param_status cnet_sctp_init_params_preflight(
     const uint8_t *value, size_t value_size, int init_ack,
     cnet_sctp_init_param_view *out) {
   cnet_sctp_init_param_view parsed = {0};
+  int supported_extensions_seen = 0;
   size_t position = 16u;
   if (!out) return CNET_SCTP_INIT_PARAMS_INVALID;
   /* A failed preflight must also revoke any previously returned borrowed view. */
@@ -83,6 +86,22 @@ cnet_sctp_init_param_status cnet_sctp_init_params_preflight(
       case PARAM_ECN_CAPABLE:
         if (length != 4u) return CNET_SCTP_INIT_PARAMS_MALFORMED;
         return CNET_SCTP_INIT_PARAMS_UNSUPPORTED; /* ECN unimplemented */
+      case PARAM_SUPPORTED_EXTENSIONS: {
+        size_t i;
+        /* RFC 5061 defines the value as a list but does not require a
+         * non-empty list. Treat an empty list as valid negotiation of no
+         * extensions; only duplicate parameters are malformed. */
+        if (length < 4u || supported_extensions_seen)
+          return CNET_SCTP_INIT_PARAMS_MALFORMED;
+        supported_extensions_seen = 1;
+        for (i = 4u; i < length; ++i)
+          if (value[position + i] == CHUNK_RECONFIG)
+            parsed.supports_reconfig = 1;
+        /* A parameter without RE-CONFIG is still valid and must not be
+         * confused with an absent/duplicate RE-CONFIG advertisement. */
+        if (!parsed.supports_reconfig) ++parsed.skipped_count;
+        break;
+      }
       default: {
         const uint16_t action = (uint16_t)(type >> 14);
         if (action == 1u || action == 3u) {

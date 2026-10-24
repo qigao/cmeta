@@ -211,7 +211,7 @@ static void init_ack_capacity_preserves_input_watermark(void) {
   setup(&a, &b, &ca, &cb);
   assert(cnet_sctp_assoc_start(&a, 10u, packet, sizeof(packet),
       &packet_n) == CNET_SCTP_ASSOC_OK);
-  assert(packet_n == 32u && b.state == CNET_SCTP_ASSOC_CLOSED);
+  assert(packet_n == 40u && b.state == CNET_SCTP_ASSOC_CLOSED);
   memcpy(&before, &b, sizeof(before));
   memset(output, 0xCC, sizeof(output));
   assert(cnet_sctp_assoc_input(&b, now, packet, packet_n, output, 8u,
@@ -251,7 +251,7 @@ static void normal_handshake(void) {
   assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_CLOSED);
   assert(cnet_sctp_assoc_start(&a, 10u, wire_init, sizeof(wire_init), &n_init) ==
          CNET_SCTP_ASSOC_OK);
-  assert(n_init == 32u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  assert(n_init == 40u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
   retag_single_chunk_flags(wire_init, n_init, 0x80u); /* INIT */
   assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
          CNET_SCTP_ASSOC_OK);
@@ -261,14 +261,14 @@ static void normal_handshake(void) {
   assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
   assert(cnet_sctp_assoc_input(&b, 20u, wire_init, n_init,
                                wire_ack, sizeof(wire_ack), &n_ack) == CNET_SCTP_ASSOC_OK);
-  assert(n_ack == 124u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  assert(n_ack == 136u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
   retag_single_chunk_flags(wire_ack, n_ack, 0xA0u); /* INIT ACK */
   assert(cnet_sctp_assoc_input(&a, 30u, wire_ack, n_ack,
                                wire_echo, 4u, &n_echo) == CNET_SCTP_ASSOC_CAPACITY);
   assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
   assert(cnet_sctp_assoc_input(&a, 30u, wire_ack, n_ack,
                                wire_echo, sizeof(wire_echo), &n_echo) == CNET_SCTP_ASSOC_OK);
-  assert(n_echo == 104u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_ECHOED);
+  assert(n_echo == 108u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_ECHOED);
   retag_single_chunk_flags(wire_echo, n_echo, 0xF0u); /* COOKIE ECHO */
   assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
          CNET_SCTP_ASSOC_OK);
@@ -550,11 +550,12 @@ static void init_tlv_wire_gate(void) {
   assert(cnet_sctp_wire_decode(ack, ack_n, &header, &decoder) == CNET_SCTP_WIRE_OK);
   assert(header.chunk_count == 1u && header.verification_tag == a.local_tag);
   assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
-  assert(chunk.type == 2u && chunk.value_size >= 116u);
-  /* 108 bytes fixed INIT ACK + Cookie followed by Unrecognized Parameter. */
-  assert(chunk.value[108u] == 0u && chunk.value[109u] == 8u);
-  assert(chunk.value[110u] == 0u && chunk.value[111u] == 8u);
-  assert(chunk.value[112u] == 0x40u && chunk.value[113u] == 3u);
+  assert(chunk.type == 2u && chunk.value_size >= 128u);
+  /* 120 bytes fixed INIT ACK + Cookie + Supported Extensions, followed by
+   * the required Unrecognized Parameter report. */
+  assert(chunk.value[120u] == 0u && chunk.value[121u] == 8u);
+  assert(chunk.value[122u] == 0u && chunk.value[123u] == 8u);
+  assert(chunk.value[124u] == 0x40u && chunk.value[125u] == 3u);
   assert(cnet_sctp_assoc_input(&a, 3u, ack, ack_n, echo,
                                sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_input(&b, 4u, echo, echo_n, confirm,
@@ -610,7 +611,7 @@ static void init_tlv_wire_gate(void) {
   {
     uint64_t prior_time = b.last_time_ms;
     memcpy(scratch, echo, echo_n);
-    scratch[111u] ^= 1u; /* ERROR cause length 8 -> 9 */
+    scratch[115u] ^= 1u; /* ERROR cause length 8 -> 9 */
     reseal_sctp_checksum(scratch, echo_n);
     assert(cnet_sctp_assoc_input(&b, 4u, scratch, echo_n, confirm,
                                  sizeof(confirm), &confirm_n) == CNET_SCTP_ASSOC_PROTOCOL);
@@ -753,7 +754,9 @@ static void established_expired_duplicate_cookie(void) {
 
   memcpy(modified_cookie, cookie_echo + 16u, sizeof(modified_cookie));
   modified_cookie[16u] ^= 1u; /* authenticated Cookie's peer Initiate Tag */
-  assert(fake_mac(&cb, modified_cookie, 56u, modified_cookie + 56u) == 0);
+  assert(fake_mac(&cb, modified_cookie,
+      CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES,
+      modified_cookie + CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES) == 0);
   assert(cnet_sctp_wire_encode(5000u, 5001u, b.local_tag, &echo_chunk, 1u,
                                 forged, sizeof(forged), &nf) == CNET_SCTP_WIRE_OK);
   assert(cnet_sctp_assoc_input(&b, 504u, forged, nf, reply,
@@ -762,7 +765,9 @@ static void established_expired_duplicate_cookie(void) {
 
   modified_cookie[16u] ^= 1u;
   modified_cookie[24u] ^= 1u; /* authenticated Cookie's peer TSN */
-  assert(fake_mac(&cb, modified_cookie, 56u, modified_cookie + 56u) == 0);
+  assert(fake_mac(&cb, modified_cookie,
+      CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES,
+      modified_cookie + CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES) == 0);
   assert(cnet_sctp_wire_encode(5000u, 5001u, b.local_tag, &echo_chunk, 1u,
                                 forged, sizeof(forged), &nf) == CNET_SCTP_WIRE_OK);
   assert(cnet_sctp_assoc_input(&b, 505u, forged, nf, reply,
@@ -967,7 +972,8 @@ static void simultaneous_signed_peer_change_denied(void) {
   assert(parsed.type == 10u && parsed.value_size == sizeof(cookie));
   memcpy(cookie, parsed.value, sizeof(cookie));
   cookie[16u] ^= 1u; /* a different peer tag within authenticated claims */
-  assert(fake_mac(&ca, cookie, 56u, cookie + 56u) == 0);
+  assert(fake_mac(&ca, cookie, CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES,
+      cookie + CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES) == 0);
   counterfeit.type = 10u;
   counterfeit.flags = 0u;
   counterfeit.value = cookie;

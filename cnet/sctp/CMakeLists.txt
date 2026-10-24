@@ -16,7 +16,7 @@ add_library(cnet_sctp_assoc_proto STATIC
 # M2/M3 DATA sub-engine: independent static C11 target, not installed/exported.
 add_library(cnet_sctp_data_proto STATIC src/sctp_data.c)
 
-# RFC 8832 DCEP codec is private until PR-SCTP, stream reset and full
+# RFC 8832 DCEP codec is private until PR-SCTP, complete stream reset and full
 # peer interoperability qualify a complete public WebRTC DataChannel API.
 add_library(cnet_sctp_dcep_proto STATIC src/sctp_dcep.c)
 

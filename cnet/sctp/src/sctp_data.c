@@ -787,6 +787,27 @@ int cnet_sctp_data_outbound_drained(const cnet_sctp_data *d) {
     if (d->tx[i].used) return 0;
   return 1;
 }
+int cnet_sctp_data_stream_inbound_drained(const cnet_sctp_data *d,
+    uint16_t stream_id) {
+  unsigned int i;
+  if (!d || d->magic != DATA_MAGIC || stream_id >= d->config.inbound_streams)
+    return 0;
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i)
+    if (d->rx[i].used && d->rx[i].stream_id == stream_id) return 0;
+  return 1;
+}
+void cnet_sctp_data_reset_outbound_ssn(cnet_sctp_data *d,
+    uint16_t stream_id) {
+  if (d && d->magic == DATA_MAGIC &&
+      stream_id < d->config.outbound_streams)
+    d->tx_ssn[stream_id] = 0u;
+}
+void cnet_sctp_data_reset_inbound_ssn(cnet_sctp_data *d,
+    uint16_t stream_id) {
+  if (d && d->magic == DATA_MAGIC &&
+      stream_id < d->config.inbound_streams)
+    d->rx_ssn[stream_id] = 0u;
+}
 
 cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now,
     const void *packet, size_t packet_size, void *out, size_t cap,

@@ -24,7 +24,7 @@ Evidence is scoped narrowly: **M1 wire = tested framing**; **M2 private = Owner-
 | RFC 9260 §§6.9–6.10 Chunk bundling | **Private bounded multi-DATA and leading-SACK receive; up to four outbound DATA chunks**, all-or-nothing input/send, one cumulative SACK, per-TSN retransmit tickets | General control bundling, independent peer and negotiated PMTU |
 | RFC 8261 SCTP over DTLS | **Not implemented** | Existing GmSSL DTLS plaintext ingress/egress with real browser |
 | RFC 3758 / RFC 7496 PR-SCTP | **Not implemented** | Timed/max-retransmits, FORWARD-TSN, independent peer |
-| RFC 6525 / RFC 5061 stream reset | **Not implemented** | Reset/reuse and collisions |
+| RFC 6525 / RFC 5061 stream reset | **Private bounded outgoing-SSN reset slice**: INIT/INIT-ACK Supported Extensions negotiation, cookie-bound peer capability, one in-flight SID, drained-DATA admission, send blocking, request/response sequence checks, duplicate-request response replay, Owner RTO/backoff/timeout event, SSN zeroing and tested SID reuse | Deferred reset processing, Incoming Reset request/pairing, collisions, stream growth, SSN/TSN reset, multi-parameter coverage and independent peer |
 | RFC 9260 DATA B/E fragmentation/reassembly | **Private 24 KiB queued message**, 1,024-byte fragments, common SID/SSN/PPID/U, strictly sequential TSNs; 20 KiB lost-first-fragment recovery via Fast Retransmit or T3 | Full browser-negotiated message limits, partial delivery, reassembly congestion/rwnd and independent peer validation |
 | RFC 8260 I-DATA interleaving | **Not implemented** | Negotiation, FSN/MID and I-FORWARD-TSN; fragmented legacy DATA cannot interleave messages |
 | RFC 8831 / RFC 8832 DataChannel/DCEP | **Private RFC 8832 DCEP OPEN/ACK** transmitted on SCTP ordered PPID 50 with DTLS-role SID parity; RFC 8831 PPID 51/53 and one-zero-byte PPID 56/57 empty messages | RFC 3758 partial reliability, DCEP channel close/reuse, full UTF-8/datachannel lifetime and independent browser peer |
@@ -115,7 +115,7 @@ The private C11 Association now handles a bounded terminal ABORT packet accordin
 
 Regression coverage includes SACK+ERROR+ABORT, malformed preceding controls and malformed ABORT Causes at T5, both T-bit modes, unknown action bits before ABORT, semantically malformed HEARTBEAT and unknown STOP+REPORT after ABORT, malformed trailing Chunk Length, and Wire rejection of INIT/INIT ACK/SHUTDOWN COMPLETE bundled with ABORT in both orders.
 
-The implementation is still a **bounded private subset**. Semantic processing/ULP reporting of preceding controls, full OOTB response generation, independent peer interoperability, fuzz/TSan, M3 PR-SCTP/reset/interleaving, and installed-SDK/six-RID qualification remain OPEN. PR #1281 remains Draft/Open; do not merge, publish, release, or cut over.
+The implementation is still a **bounded private subset**. Semantic processing/ULP reporting of preceding controls, full OOTB response generation, independent peer interoperability, fuzz/TSan, M3 PR-SCTP/complete-reset/interleaving, and installed-SDK/six-RID qualification remain OPEN. PR #1281 remains Draft/Open; do not merge, publish, release, or cut over.
 
 ## Peer-ABORT Owner-pulled ULP event (2026-10-22)
 
@@ -127,7 +127,15 @@ Private C11 SCTP Association now supports an **exactly-once, Owner-pulled** peer
 - `cnet_sctp_assoc_take_peer_abort()` requires the Owner. Insufficient caller buffer returns CAPACITY without consuming the event or modifying the caller's info/output; a successful take copies the exact reason bytes and clears internal storage. A second take returns EMPTY. Explicit `stop()` discards an unread event and clears its bytes; `destroy()` clears the whole Association.
 - Regression tests cover a preceding non-user cause, final unpadded Cause 12, zero-byte Cause-12 absence, exact 1180-byte upper boundary, too-small output retry, terminal no-reply and lifecycle wipe. A real post-COOKIE DATA path also verifies last-ACKed/last-sent TSN capture before the DATA TCB is torn down.
 
-Remaining **OPEN**: callback/ULP integration beyond this private Owner-pull seam, complete preceding-control semantics, actual independent SCTP peer/DTLS/Browser wire oracle, fuzz/TSan, PR-SCTP/reset/interleaving, and installed SDK/six-RID. Passing private C11 tests does not authorize merge, release, publish or production cutover.
+Remaining **OPEN**: callback/ULP integration beyond this private Owner-pull seam, complete preceding-control semantics, actual independent SCTP peer/DTLS/Browser wire oracle, fuzz/TSan, PR-SCTP/complete reset/interleaving, and installed SDK/six-RID. Passing private C11 tests does not authorize merge, release, publish or production cutover.
+
+## RFC 6525 bounded outgoing-stream reset (2026-10-24)
+
+The private Association advertises RE-CONFIG chunk type 130 through the RFC 5061 Supported Extensions parameter in INIT and INIT-ACK. A stateless responder signs the peer's advertised capability into its opaque Cookie before committing it. The request sequence starts at the local Initial TSN; the expected peer sequence starts at the peer Initial TSN. Only one locally initiated request is retained, with one fixed 1,200-byte packet and the existing single Owner clock.
+
+`reset_stream(SID)` is admitted only when all owned outbound DATA has been cumulatively acknowledged. It stops new sends on that SID, records Sender's Last Assigned TSN, uses the negotiated verification tag, retransmits with bounded exponential RTO and completes through an Owner-pulled event. Success resets the outgoing SSN to zero; an exact duplicate peer request receives the byte-identical saved response without repeating the SSN transition or event. A received Outgoing SSN Reset is successful only when its preceding TSNs are cumulatively received and every buffered message on each affected SID has been delivered to the ULP; otherwise the endpoint sends an explicit Denied result. Tests cover output-capacity rollback, request/response completion, duplicate replay, delivery-before-reset denial/retry, timeout without association teardown and an ordered message using SSN 0 after SID reuse.
+
+This is not complete RFC 6525 or RFC 8831 channel close. Deferred `In progress` receive processing, Incoming SSN Reset requests and automatic reciprocal close, collision rules, two-request transactions, stream growth, SSN/TSN reset, independent peer wire evidence and browser DataChannel reuse remain **OPEN**.
 
 ## ABORT-prefix SACK ULP TSN projection (2026-10-22)
 

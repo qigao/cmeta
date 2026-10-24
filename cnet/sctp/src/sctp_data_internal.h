@@ -176,6 +176,10 @@ cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d, uint64_t now_ms,
 cnet_sctp_data_status cnet_sctp_data_shutdown_cumack(cnet_sctp_data *d,
     uint64_t now_ms, uint32_t cumulative);
 int cnet_sctp_data_outbound_drained(const cnet_sctp_data *d);
+int cnet_sctp_data_stream_inbound_drained(const cnet_sctp_data *d,
+                                          uint16_t stream_id);
+void cnet_sctp_data_reset_outbound_ssn(cnet_sctp_data *d, uint16_t stream_id);
+void cnet_sctp_data_reset_inbound_ssn(cnet_sctp_data *d, uint16_t stream_id);
 
 cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now_ms,
     const void *packet, size_t packet_size,

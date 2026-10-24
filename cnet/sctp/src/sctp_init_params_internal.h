@@ -41,6 +41,9 @@ typedef struct cnet_sctp_init_param_view {
   size_t report_count;
   size_t report_wire_size; /* sum of padded TLVs within error cause / param */
   cnet_sctp_init_report reports[CNET_SCTP_INIT_REPORT_MAX];
+  /* RFC 5061 Supported Extensions (0x8008) advertised RE-CONFIG (130).
+   * The parameter itself is borrowed only during parsing; this bit is owned. */
+  int supports_reconfig;
   int stopped_by_unknown;
 } cnet_sctp_init_param_view;
 

@@ -13,8 +13,10 @@
 #define CNET_SCTP_ASSOC_MAX_PACKET 1200u
 /* Whole-packet ingress is <=1200: 12 common + 4 ABORT + 4 Cause header. */
 #define CNET_SCTP_ASSOC_MAX_ABORT_REASON (CNET_SCTP_ASSOC_MAX_PACKET - 20u)
-#define CNET_SCTP_ASSOC_COOKIE_BYTES 88u
 #define CNET_SCTP_ASSOC_MAC_BYTES 32u
+#define CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES 60u
+#define CNET_SCTP_ASSOC_COOKIE_BYTES \
+  (CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES + CNET_SCTP_ASSOC_MAC_BYTES)
 #define CNET_SCTP_ASSOC_ENTROPY_BYTES 8u
 
 typedef enum cnet_sctp_assoc_state {
@@ -95,6 +97,23 @@ typedef struct cnet_sctp_assoc_peer_abort_info {
   uint8_t has_user_reason;
 } cnet_sctp_assoc_peer_abort_info;
 
+typedef enum cnet_sctp_assoc_stream_reset_result {
+  CNET_SCTP_STREAM_RESET_NOTHING_TO_DO = 0,
+  CNET_SCTP_STREAM_RESET_PERFORMED = 1,
+  CNET_SCTP_STREAM_RESET_DENIED = 2,
+  CNET_SCTP_STREAM_RESET_WRONG_SSN = 3,
+  CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS = 4,
+  CNET_SCTP_STREAM_RESET_BAD_SEQUENCE = 5,
+  CNET_SCTP_STREAM_RESET_IN_PROGRESS = 6,
+  CNET_SCTP_STREAM_RESET_TIMEOUT = 7
+} cnet_sctp_assoc_stream_reset_result;
+
+typedef struct cnet_sctp_assoc_stream_reset_event {
+  uint16_t stream_id;
+  uint8_t incoming; /* peer's outgoing stream (our receive direction) */
+  cnet_sctp_assoc_stream_reset_result result;
+} cnet_sctp_assoc_stream_reset_event;
+
 typedef struct cnet_sctp_assoc {
   cnet_sctp_assoc_config config;
   cnet_sctp_assoc_state state;
@@ -109,6 +128,23 @@ typedef struct cnet_sctp_assoc {
   uint32_t peer_receive_window;
   uint16_t peer_outbound_streams;
   uint16_t peer_inbound_streams;
+  uint8_t peer_reconfig_supported;
+  uint8_t reset_active;
+  uint8_t reset_retransmits;
+  uint16_t reset_stream;
+  uint32_t next_reset_request;
+  uint32_t expected_peer_reset_request;
+  uint32_t reset_request;
+  uint64_t reset_deadline_ms;
+  uint64_t reset_rto_ms;
+  size_t reset_packet_size;
+  uint8_t reset_packet[CNET_SCTP_ASSOC_MAX_PACKET];
+  uint32_t last_peer_reset_request;
+  size_t last_reset_response_size;
+  uint8_t last_reset_response[CNET_SCTP_ASSOC_MAX_PACKET];
+  uint16_t incoming_reset_events;
+  uint16_t outgoing_reset_events;
+  uint8_t outgoing_reset_results[CNET_SCTP_DATA_STREAMS];
   uint8_t saved_packet[CNET_SCTP_ASSOC_MAX_PACKET];
   size_t saved_size;
   uint8_t retransmits;
@@ -169,6 +205,17 @@ cnet_sctp_assoc_status cnet_sctp_assoc_pump_message(cnet_sctp_assoc *a,
 /* Owner-pulled SACK after application receive capacity reopens. */
 cnet_sctp_assoc_status cnet_sctp_assoc_window_update(cnet_sctp_assoc *s,
     uint64_t now_ms, void *output, size_t capacity, size_t *written);
+
+/* RFC 6525 outgoing SSN reset for one bounded stream. The request is admitted
+ * only after all locally retained DATA is cumulatively acknowledged. While it
+ * is in flight, new sends on that SID are rejected. Completion is Owner-pulled
+ * with take_stream_reset(); no callback or borrowed storage is retained. */
+cnet_sctp_assoc_status cnet_sctp_assoc_reset_stream(cnet_sctp_assoc *association,
+    uint64_t now_ms, uint16_t stream_id, void *output, size_t capacity,
+    size_t *written);
+cnet_sctp_assoc_status cnet_sctp_assoc_take_stream_reset(
+    cnet_sctp_assoc *association,
+    cnet_sctp_assoc_stream_reset_event *event);
 
 /* RFC 9260 9.2 graceful shutdown request.  New application sends are
  * refused, but existing owned DATA may drain before SHUTDOWN/T2 starts.

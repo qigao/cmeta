@@ -109,7 +109,7 @@ static void run_owner_phase(owner_fixture *f, size_t phase) {
     case 1u:
       assert(cnet_sctp_assoc_start(&f->assoc, 1u, f->response,
           sizeof(f->response), &written) == CNET_SCTP_ASSOC_OK);
-      assert(written == 32u &&
+      assert(written == 40u &&
           f->assoc.state == CNET_SCTP_ASSOC_COOKIE_WAIT);
       break;
     case 2u:
