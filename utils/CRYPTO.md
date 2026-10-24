@@ -59,27 +59,26 @@ This ABI freeze is the dependency for the remaining explicit additions:
 No dynamic crypto-provider registry, PKCS#11/SDF adapter, raw provider-state
 persistence, or compatibility alias is introduced by this contract.
 
+## ABI v1 contract for SM4-GCM and SM2
 
-## Candidate ABI v1 for SM4-GCM and SM2 (review required)
-
-The following is a **design proposal only**. Do not add these declarations to
-cmeta_crypto.h, export symbols, or consume them from CNet until the contract is
-approved and the implementation/test PRs are separately qualified. It
-intentionally uses byte buffers and fixed-width constants rather than GmSSL
-objects or provider-specific key types.
+These additions intentionally use byte buffers and fixed-width constants
+rather than GmSSL objects or provider-specific key types. Implementations must
+pass their native, sanitizer and installed-SDK qualification gates before the
+symbols ship or CNet consumes them.
 
 ### SM4-GCM
 
-Proposed constants:
+Constants:
 
 ~~~c
 #define SALTS_SM4_KEY_BYTES 16u
 #define SALTS_SM4_GCM_NONCE_BYTES 12u
 #define SALTS_SM4_GCM_TAG_BYTES 16u
-#define SALTS_SM4_GCM_MAX_MESSAGE_BYTES ((UINT64_C(1) << 36) - 32u)
+#define SALTS_SM4_GCM_MAX_AAD_BYTES (16u * 1024u * 1024u)
+#define SALTS_SM4_GCM_MAX_MESSAGE_BYTES ((UINT64_C(1) << 36) - UINT64_C(32))
 ~~~
 
-Proposed signatures:
+Signatures:
 
 ~~~c
 SALTS_C_API int cmeta_sm4_gcm_seal(
@@ -107,8 +106,9 @@ Contract:
 - Caller owns nonce uniqueness: a key/nonce pair MUST NOT be reused.
   This API does not maintain process-global counters or persist nonce state.
 - AAD and payload pointers are borrowed; NULL is valid only with size zero.
-  The payload limit is SALTS_SM4_GCM_MAX_MESSAGE_BYTES; validate lengths and
-  integer arithmetic before calling the provider.
+  AAD is bounded to SALTS_SM4_GCM_MAX_AAD_BYTES and payload is bounded to
+  SALTS_SM4_GCM_MAX_MESSAGE_BYTES; validate lengths and integer arithmetic
+  before calling the provider.
 - Ciphertext and plaintext lengths are equal. out_*_size is required. On
   success it is set to the exact payload length. If capacity is too small,
   return SALTS_ERANGE, set the required payload length, and leave payload
@@ -123,16 +123,16 @@ Contract:
   allocation fails, return SALTS_ENOMEM with caller output unchanged.
 - SALTS_EINVAL means malformed pointers/lengths/overlap; SALTS_ERANGE means a
   valid request exceeds the fixed bound or output capacity; SALTS_ENOMEM means
-  private staging allocation failed; SALTS_ENOTSUP means the pinned provider
-  lacks the required primitive; SALTS_EIO means an unexpected provider
+  private staging allocation failed; SALTS_EIO means an unexpected provider
   failure; SALTS_EAUTH means authentication failed. Do not translate a tag
   failure into a generic provider error.
 
 ### SM2 sign/verify
 
-Proposed constants and signatures:
+Constants and signatures:
 
 ~~~c
+#define SALTS_SM2_MAX_KEY_DER_BYTES (64u * 1024u)
 #define SALTS_SM2_MAX_USER_ID_BYTES 8191u
 #define SALTS_SM2_SIGNATURE_DER_MAX_BYTES 72u
 
@@ -162,7 +162,9 @@ Contract:
   identity substitution. Sign and verify use the exact same supplied bytes.
 - Signature output/input is strict canonical ASN.1 DER SEQUENCE(INTEGER r,
   INTEGER s), with both values in the valid SM2 group range and no trailing
-  bytes. The maximum DER encoding is 72 bytes. Signing requires a non-NULL
+  bytes. Validation uses the public Salts ASN.1 API directly; no crypto-local
+  parser, wrapper or compatibility layer is introduced. The maximum DER
+  encoding is 72 bytes. Signing requires a non-NULL
   out_signature_size and a capacity of at least
   SALTS_SM2_SIGNATURE_DER_MAX_BYTES; on insufficient capacity return
   SALTS_ERANGE, set the required capacity to 72, and do not sign or modify
@@ -173,13 +175,12 @@ Contract:
   cleared on every exit path.
 - cmeta_sm2_verify returns SALTS_OK only for a valid signature over the exact
   message and explicit identity. A malformed or invalid signature returns
-  SALTS_EAUTH; malformed arguments or key DER return SALTS_EINVAL; unsupported
-  provider capability returns SALTS_ENOTSUP; unexpected provider failure
-  returns SALTS_EIO. Invalid signatures are a normal negative result, not a
-  provider fallback condition.
-- The error taxonomy needs one additive stable code, proposed as
-  SALTS_EAUTH = -4054. Existing numeric values remain unchanged. This code
-  must be added to the shared error table and tested before either API ships.
+  SALTS_EAUTH; malformed arguments or key DER return SALTS_EINVAL; unexpected
+  provider failure returns SALTS_EIO. Invalid signatures are a normal negative
+  result, not a provider fallback condition.
+- The error taxonomy adds the stable code SALTS_EAUTH = -4054. Existing
+  numeric values remain unchanged. The shared error table and its metadata
+  test must land with the implementation before either API ships.
 
 ### Cross-API ownership and failure rules
 
