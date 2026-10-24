@@ -1619,11 +1619,52 @@ static uint32_t read32_test(const uint8_t *p) {
       ((uint32_t)p[2] << 8) | p[3];
 }
 
+static void write16_test(uint8_t *p, uint16_t value) {
+  p[0] = (uint8_t)(value >> 8);
+  p[1] = (uint8_t)value;
+}
+
 static void write32_test(uint8_t *p, uint32_t value) {
   p[0] = (uint8_t)(value >> 24);
   p[1] = (uint8_t)(value >> 16);
   p[2] = (uint8_t)(value >> 8);
   p[3] = (uint8_t)value;
+}
+
+static size_t encode_incoming_reset_request(const cnet_sctp_assoc *sender,
+    uint32_t sequence, const uint16_t *streams, size_t stream_count,
+    uint8_t *packet, size_t capacity) {
+  cnet_sctp_wire_chunk chunk = {0};
+  uint8_t value[8u + 2u * CNET_SCTP_DATA_STREAMS];
+  size_t i, written = 0u;
+  assert(sender && packet && stream_count <= CNET_SCTP_DATA_STREAMS &&
+      (stream_count == 0u || streams));
+  write16_test(value, 14u);
+  write16_test(value + 2u, (uint16_t)(8u + 2u * stream_count));
+  write32_test(value + 4u, sequence);
+  for (i = 0u; i < stream_count; ++i)
+    write16_test(value + 8u + 2u * i, streams[i]);
+  chunk.type = 130u;
+  chunk.value = value;
+  chunk.value_size = 8u + 2u * stream_count;
+  assert(cnet_sctp_wire_encode(sender->config.local_port,
+      sender->config.remote_port, sender->peer_tag, &chunk, 1u,
+      packet, capacity, &written) == CNET_SCTP_WIRE_OK);
+  return written;
+}
+
+static uint32_t outgoing_reset_response_sequence(
+    const uint8_t *packet, size_t size) {
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk chunk = {0};
+  assert(cnet_sctp_wire_decode(packet, size, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == 1u &&
+      cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
+      chunk.type == 130u && chunk.value_size >= 18u &&
+      read16_test(chunk.value) == 13u);
+  return read32_test(chunk.value + 8u);
 }
 
 static void rewrite_reset_last_tsn(uint8_t *packet, size_t size,
@@ -2006,6 +2047,175 @@ static void stream_reset_holds_post_barrier_data_until_completion(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void incoming_reset_waits_for_outbound_drain(void) {
+  cnet_sctp_assoc a, b, before;
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_assoc_stream_reset_event event = {0};
+  cnet_sctp_data_message message = {0};
+  const uint8_t byte = 'i';
+  const uint16_t stream = 1u, other_stream = 2u;
+  uint8_t data[1200], sack[1200], incoming[1200], duplicate[1200];
+  uint8_t next[1200], reply[1200], outgoing[1200], response[1200];
+  uint8_t payload[8];
+  size_t data_n = 0u, sack_n = 0u, incoming_n, duplicate_n = 0u;
+  size_t next_n, reply_n = 0u, outgoing_n = 0u, response_n = 0u;
+  size_t payload_n = 0u;
+  uint64_t deadline = 0u;
+  uint32_t sequence;
+  int has_deadline = 0;
+
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_send_message(&b, 6u, stream, 53u, 0,
+      &byte, 1u, data, sizeof(data), &data_n) == CNET_SCTP_ASSOC_OK);
+  sequence = b.expected_peer_reset_request;
+  incoming_n = encode_incoming_reset_request(&a,
+      sequence, &stream, 1u,
+      incoming, sizeof(incoming));
+  assert(cnet_sctp_assoc_input(&b, 7u, incoming, incoming_n,
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_ASSOC_OK);
+  assert(reply_n == 0u && b.peer_incoming_reset_pending &&
+      b.peer_incoming_reset_stream == stream &&
+      (b.reciprocal_reset_pending &
+       (uint16_t)(UINT16_C(1) << stream)) != 0u);
+  assert(cnet_sctp_assoc_send_message(&b, 7u, stream, 53u, 0,
+      &byte, 1u, reply, sizeof(reply), &reply_n) == CNET_SCTP_ASSOC_BUSY);
+
+  assert(cnet_sctp_assoc_input(&b, 8u, incoming, incoming_n,
+      duplicate, sizeof(duplicate), &duplicate_n) == CNET_SCTP_ASSOC_OK);
+  assert(duplicate_n == 0u && b.peer_incoming_reset_pending);
+  next_n = encode_incoming_reset_request(&a,
+      b.expected_peer_reset_request, &other_stream, 1u,
+      next, sizeof(next));
+  assert(cnet_sctp_assoc_input(&b, 8u, next, next_n,
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_ASSOC_OK);
+  assert(reset_response_result(reply, reply_n) ==
+      CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS);
+  assert(b.expected_peer_reset_request ==
+      b.peer_incoming_reset_request + 1u);
+
+  assert(cnet_sctp_assoc_input(&a, 9u, data, data_n,
+      sack, sizeof(sack), &sack_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_take_message(&a, &message, payload,
+      sizeof(payload), &payload_n) == CNET_SCTP_ASSOC_OK);
+  assert(message.stream_id == stream && payload_n == 1u &&
+      payload[0] == byte);
+  assert(cnet_sctp_assoc_input(&b, 10u, sack, sack_n,
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_data_outbound_drained(&b.data));
+  assert(cnet_sctp_assoc_next_deadline(&b, &deadline, &has_deadline) ==
+      CNET_SCTP_ASSOC_OK && has_deadline && deadline == 10u);
+
+  memcpy(&before, &b, sizeof(before));
+  assert(cnet_sctp_assoc_advance(&b, 10u, outgoing, 1u,
+      &outgoing_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(outgoing_n == 0u && memcmp(&b, &before, sizeof(b)) == 0);
+  assert(cnet_sctp_assoc_advance(&b, 10u, outgoing,
+      sizeof(outgoing), &outgoing_n) == CNET_SCTP_ASSOC_OK);
+  assert(outgoing_n != 0u && b.reset_active && b.reset_is_reciprocal &&
+      !b.peer_incoming_reset_pending &&
+      outgoing_reset_response_sequence(outgoing, outgoing_n) ==
+          sequence);
+  assert(cnet_sctp_assoc_input(&b, 11u, incoming, incoming_n,
+      duplicate, sizeof(duplicate), &duplicate_n) == CNET_SCTP_ASSOC_OK);
+  assert(duplicate_n == outgoing_n &&
+      memcmp(duplicate, outgoing, outgoing_n) == 0);
+
+  assert(cnet_sctp_assoc_input(&a, 12u, outgoing, outgoing_n,
+      response, sizeof(response), &response_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 13u, response, response_n,
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_ASSOC_OK);
+  assert(!b.reset_active && b.data.tx_ssn[stream] == 0u);
+  assert(cnet_sctp_assoc_take_stream_reset(&b, &event) ==
+      CNET_SCTP_ASSOC_OK && !event.incoming &&
+      event.stream_id == stream &&
+      event.result == CNET_SCTP_STREAM_RESET_PERFORMED);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
+static void incoming_reset_immediate_is_capacity_atomic(void) {
+  cnet_sctp_assoc a, b, before;
+  test_context ca = {0}, cb = {0};
+  const uint16_t stream = 0u;
+  uint8_t incoming[1200], outgoing[1200];
+  size_t incoming_n, outgoing_n = 0u;
+  uint32_t sequence;
+
+  ready_pair(&a, &b, &ca, &cb);
+  sequence = b.expected_peer_reset_request;
+  incoming_n = encode_incoming_reset_request(&a, sequence, &stream, 1u,
+      incoming, sizeof(incoming));
+  memcpy(&before, &b, sizeof(before));
+  assert(cnet_sctp_assoc_input(&b, 6u, incoming, incoming_n,
+      outgoing, 1u, &outgoing_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(outgoing_n == 0u && memcmp(&b, &before, sizeof(b)) == 0);
+  assert(cnet_sctp_assoc_input(&b, 6u, incoming, incoming_n,
+      outgoing, sizeof(outgoing), &outgoing_n) == CNET_SCTP_ASSOC_OK);
+  assert(outgoing_n != 0u && b.reset_active && b.reset_is_reciprocal &&
+      outgoing_reset_response_sequence(outgoing, outgoing_n) == sequence);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
+static void incoming_reset_overlap_is_nothing_to_do(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  const uint16_t stream = 2u, other_stream = 3u;
+  const uint16_t multiple_streams[2] = {2u, 3u};
+  uint8_t outgoing[1200], incoming[1200], response[1200];
+  uint8_t duplicate[1200], next[1200], collision[1200], scratch[1200];
+  size_t outgoing_n = 0u, incoming_n, response_n = 0u;
+  size_t duplicate_n = 0u, next_n, collision_n = 0u, scratch_n = 0u;
+  uint32_t sequence;
+
+  ready_pair(&a, &b, &ca, &cb);
+  assert(cnet_sctp_assoc_reset_stream(&b, 6u, stream,
+      outgoing, sizeof(outgoing), &outgoing_n) == CNET_SCTP_ASSOC_OK);
+  sequence = b.expected_peer_reset_request;
+  incoming_n = encode_incoming_reset_request(&a, sequence, &stream, 1u,
+      incoming, sizeof(incoming));
+  assert(cnet_sctp_assoc_input(&b, 7u, incoming, incoming_n,
+      response, sizeof(response), &response_n) == CNET_SCTP_ASSOC_OK);
+  assert(reset_response_result(response, response_n) ==
+      CNET_SCTP_STREAM_RESET_NOTHING_TO_DO);
+  assert(b.reset_active && b.reset_stream == stream &&
+      b.expected_peer_reset_request == sequence + 1u);
+  assert(cnet_sctp_assoc_input(&b, 8u, incoming, incoming_n,
+      duplicate, sizeof(duplicate), &duplicate_n) == CNET_SCTP_ASSOC_OK);
+  assert(duplicate_n == response_n &&
+      memcmp(duplicate, response, response_n) == 0);
+
+  next_n = encode_incoming_reset_request(&a,
+      b.expected_peer_reset_request, &other_stream, 1u,
+      next, sizeof(next));
+  assert(cnet_sctp_assoc_input(&b, 8u, next, next_n,
+      collision, sizeof(collision), &collision_n) == CNET_SCTP_ASSOC_OK);
+  assert(reset_response_result(collision, collision_n) ==
+      CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS);
+  assert(b.expected_peer_reset_request == sequence + 1u);
+
+  assert(cnet_sctp_assoc_input(&a, 9u, outgoing, outgoing_n,
+      response, sizeof(response), &response_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 10u, response, response_n,
+      scratch, sizeof(scratch), &scratch_n) == CNET_SCTP_ASSOC_OK);
+  assert(!b.reset_active && b.data.tx_ssn[stream] == 0u);
+  next_n = encode_incoming_reset_request(&a,
+      b.expected_peer_reset_request, multiple_streams, 2u,
+      next, sizeof(next));
+  assert(cnet_sctp_assoc_input(&b, 11u, next, next_n,
+      collision, sizeof(collision), &collision_n) == CNET_SCTP_ASSOC_OK);
+  assert(reset_response_result(collision, collision_n) ==
+      CNET_SCTP_STREAM_RESET_DENIED);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void stream_reset_timer_is_bounded_and_nonterminal(void) {
   cnet_sctp_assoc a, b, before;
   test_context ca = {0}, cb = {0};
@@ -2238,6 +2448,9 @@ int main(void) {
   stream_reset_roundtrip_reuse_and_duplicate();
   stream_reset_defers_until_buffered_delivery();
   stream_reset_holds_post_barrier_data_until_completion();
+  incoming_reset_waits_for_outbound_drain();
+  incoming_reset_immediate_is_capacity_atomic();
+  incoming_reset_overlap_is_nothing_to_do();
   stream_reset_timer_is_bounded_and_nonterminal();
   stream_reset_reciprocal_waits_for_outbound_drain();
   stream_reset_simultaneous_close_does_not_loop();

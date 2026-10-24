@@ -152,6 +152,11 @@ typedef struct cnet_sctp_assoc {
   uint16_t deferred_peer_reset_streams;
   uint32_t deferred_peer_reset_request;
   uint32_t deferred_peer_reset_last_tsn;
+  /* One received Incoming SSN Reset may wait for retained outbound DATA to
+   * drain before its corresponding Outgoing Reset can be emitted. */
+  uint8_t peer_incoming_reset_pending;
+  uint16_t peer_incoming_reset_stream;
+  uint32_t peer_incoming_reset_request;
   uint16_t incoming_reset_events;
   uint16_t outgoing_reset_events;
   uint8_t outgoing_reset_results[CNET_SCTP_DATA_STREAMS];
