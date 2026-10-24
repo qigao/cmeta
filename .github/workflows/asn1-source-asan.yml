@@ -1,0 +1,68 @@
+name: ASN.1 Source ASan and UBSan
+
+'on':
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
+    paths:
+      - 'asn1/**'
+      - 'tinytest/include/tinytest.h'
+      - 'tinytest/include/tinytest/**'
+      - 'tinytest/src/tinytest.c'
+      - '.github/workflows/asn1-source-asan.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'asn1/**'
+      - 'tinytest/include/tinytest.h'
+      - 'tinytest/include/tinytest/**'
+      - 'tinytest/src/tinytest.c'
+      - '.github/workflows/asn1-source-asan.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asn1-source-asan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  asn1-source-asan-ubsan:
+    name: C11/C++17 ASN.1 tests under ASan+UBSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compile ASN.1 source and tests with ASan+UBSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_dir="$RUNNER_TEMP/asn1-asan"
+          mkdir -p "$build_dir"
+          common=(-g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer)
+          includes=(-Iasn1/include -Itinytest/include)
+
+          cc -std=c11 -D_POSIX_C_SOURCE=200809L "${common[@]}" "${includes[@]}" \
+            -c asn1/src/asn1.c -o "$build_dir/asn1.o"
+          cc -std=c11 -D_POSIX_C_SOURCE=200809L "${common[@]}" "${includes[@]}" \
+            -c tinytest/src/tinytest.c -o "$build_dir/tinytest.o"
+          cc -std=c11 -D_POSIX_C_SOURCE=200809L "${common[@]}" "${includes[@]}" \
+            -c asn1/tests/asn1_reader_test.c -o "$build_dir/asn1_reader_test.o"
+          cc "${common[@]}" "$build_dir/asn1.o" "$build_dir/tinytest.o" \
+            "$build_dir/asn1_reader_test.o" -o "$build_dir/asn1_reader_test"
+
+          c++ -std=c++17 -D_POSIX_C_SOURCE=200809L "${common[@]}" "${includes[@]}" \
+            -c asn1/tests/asn1_header_cpp_test.cpp -o "$build_dir/asn1_header_cpp_test.o"
+          c++ "${common[@]}" "$build_dir/asn1.o" "$build_dir/tinytest.o" \
+            "$build_dir/asn1_header_cpp_test.o" -o "$build_dir/asn1_header_cpp_test"
+
+      - name: Run C11 and C++17 sanitizer tests
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/asn1-asan/asn1_reader_test"
+          "$RUNNER_TEMP/asn1-asan/asn1_header_cpp_test"
