@@ -1382,14 +1382,32 @@ static cnet_sctp_assoc_stream_reset_result evaluate_incoming_reset(
   return CNET_SCTP_STREAM_RESET_PERFORMED; /* schedule Outgoing Reset */
 }
 
+static void write_reset_response(uint8_t value[12], uint32_t sequence,
+    cnet_sctp_assoc_stream_reset_result result) {
+  wr16(value, SCTP_PARAM_RECONFIG_RESPONSE);
+  wr16(value + 2u, 12u);
+  wr32(value + 4u, sequence);
+  wr32(value + 8u, (uint32_t)result);
+}
+
 static cnet_sctp_assoc_status encode_reset_response(const cnet_sctp_assoc *s,
     uint32_t sequence, cnet_sctp_assoc_stream_reset_result result,
     uint8_t packet[CNET_SCTP_ASSOC_MAX_PACKET], size_t *packet_size) {
   uint8_t value[12];
-  wr16(value, SCTP_PARAM_RECONFIG_RESPONSE);
-  wr16(value + 2u, sizeof(value));
-  wr32(value + 4u, sequence);
-  wr32(value + 8u, (uint32_t)result);
+  write_reset_response(value, sequence, result);
+  return encode_one(s, s->peer_tag, SCTP_TYPE_RECONFIG,
+      value, sizeof(value), packet, CNET_SCTP_ASSOC_MAX_PACKET, packet_size);
+}
+
+static cnet_sctp_assoc_status encode_reset_response_pair(
+    const cnet_sctp_assoc *s,
+    uint32_t first_sequence, cnet_sctp_assoc_stream_reset_result first_result,
+    uint32_t second_sequence,
+    cnet_sctp_assoc_stream_reset_result second_result,
+    uint8_t packet[CNET_SCTP_ASSOC_MAX_PACKET], size_t *packet_size) {
+  uint8_t value[24];
+  write_reset_response(value, first_sequence, first_result);
+  write_reset_response(value + 12u, second_sequence, second_result);
   return encode_one(s, s->peer_tag, SCTP_TYPE_RECONFIG,
       value, sizeof(value), packet, CNET_SCTP_ASSOC_MAX_PACKET, packet_size);
 }
@@ -1427,17 +1445,21 @@ static cnet_sctp_assoc_status complete_deferred_peer_reset(
   return CNET_SCTP_ASSOC_OK;
 }
 
-static cnet_sctp_assoc_status start_local_reset(cnet_sctp_assoc *s,
+static cnet_sctp_assoc_status start_local_reset_with_prefix(cnet_sctp_assoc *s,
     uint64_t now, uint16_t streams, int reciprocal,
-    uint32_t response_sequence,
+    uint32_t response_sequence, const uint8_t *prefix, size_t prefix_size,
     void *out, size_t cap, size_t *written) {
   uint8_t value[16u + 2u * CNET_SCTP_DATA_STREAMS];
+  uint8_t combined[12u + 16u + 2u * CNET_SCTP_DATA_STREAMS];
   uint8_t packet[CNET_SCTP_ASSOC_MAX_PACKET];
   const uint16_t valid = reset_stream_mask(s->config.outbound_streams);
   size_t packet_size = 0u, value_size = 16u;
   uint16_t stream;
   cnet_sctp_assoc_status status;
   if (streams == 0u || (streams & (uint16_t)~valid) != 0u)
+    return CNET_SCTP_ASSOC_INVALID;
+  if ((prefix == NULL) != (prefix_size == 0u) ||
+      (prefix_size != 0u && prefix_size != 12u))
     return CNET_SCTP_ASSOC_INVALID;
   if (s->reset_active || (s->outgoing_reset_events & streams) != 0u)
     return CNET_SCTP_ASSOC_BUSY;
@@ -1475,8 +1497,16 @@ static cnet_sctp_assoc_status start_local_reset(cnet_sctp_assoc *s,
     }
   }
   wr16(value + 2u, (uint16_t)value_size);
-  status = encode_one(s, s->peer_tag, SCTP_TYPE_RECONFIG,
-      value, value_size, packet, sizeof(packet), &packet_size);
+  if (prefix_size != 0u) {
+    memcpy(combined, prefix, prefix_size);
+    memcpy(combined + prefix_size, value, value_size);
+    status = encode_one(s, s->peer_tag, SCTP_TYPE_RECONFIG,
+        combined, prefix_size + value_size,
+        packet, sizeof(packet), &packet_size);
+  } else {
+    status = encode_one(s, s->peer_tag, SCTP_TYPE_RECONFIG,
+        value, value_size, packet, sizeof(packet), &packet_size);
+  }
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (packet_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
   memcpy(out, packet, packet_size);
@@ -1499,6 +1529,14 @@ static cnet_sctp_assoc_status start_local_reset(cnet_sctp_assoc *s,
   }
   s->last_time_ms = now;
   return CNET_SCTP_ASSOC_OK;
+}
+
+static cnet_sctp_assoc_status start_local_reset(cnet_sctp_assoc *s,
+    uint64_t now, uint16_t streams, int reciprocal,
+    uint32_t response_sequence,
+    void *out, size_t cap, size_t *written) {
+  return start_local_reset_with_prefix(s, now, streams, reciprocal,
+      response_sequence, NULL, 0u, out, cap, written);
 }
 
 static cnet_sctp_assoc_status start_local_incoming_reset(
@@ -1601,10 +1639,131 @@ static cnet_sctp_assoc_status handle_reconfig(cnet_sctp_assoc *s,
       return CNET_SCTP_ASSOC_PROTOCOL;
     }
   }
-  /* The RFC permits Outgoing+Incoming pairing. This bounded slice executes
-   * either request alone; atomic two-parameter transactions remain open. */
-  if (outgoing_request && incoming_request)
-    return CNET_SCTP_ASSOC_PROTOCOL;
+  if (outgoing_request && incoming_request) {
+    const uint32_t outgoing_sequence =
+        rd32(outgoing_request->bytes + 4u);
+    const uint32_t incoming_sequence =
+        rd32(incoming_request->bytes + 4u);
+    const uint32_t last_assigned =
+        rd32(outgoing_request->bytes + 12u);
+    cnet_sctp_assoc_stream_reset_result outgoing_result;
+    cnet_sctp_assoc_stream_reset_result incoming_result;
+    uint8_t outgoing_response[12];
+    uint16_t incoming_mask = 0u, outgoing_streams = 0u;
+    int started_corresponding = 0;
+
+    /* Each request parameter consumes its own monotonically increasing
+     * sequence number; RFC 6525 Appendix A encodes OUT:X then IN:X+1. */
+    if (incoming_sequence == staged.last_peer_reset_request &&
+        outgoing_sequence + 1u == incoming_sequence &&
+        staged.last_reset_response_size != 0u) {
+      if (staged.last_reset_response_size > cap)
+        return CNET_SCTP_ASSOC_CAPACITY;
+      memcpy(output, staged.last_reset_response,
+             staged.last_reset_response_size);
+      *written = staged.last_reset_response_size;
+      staged.last_time_ms = now;
+      memcpy(s, &staged, sizeof(staged));
+      return CNET_SCTP_ASSOC_OK;
+    }
+    if (outgoing_sequence != staged.expected_peer_reset_request ||
+        outgoing_sequence + 1u != incoming_sequence) {
+      status = encode_reset_response_pair(&staged,
+          outgoing_sequence, CNET_SCTP_STREAM_RESET_BAD_SEQUENCE,
+          incoming_sequence, CNET_SCTP_STREAM_RESET_BAD_SEQUENCE,
+          response, &response_size);
+      if (status != CNET_SCTP_ASSOC_OK) return status;
+      if (response_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+      memcpy(output, response, response_size);
+      *written = response_size;
+      staged.last_time_ms = now;
+      memcpy(s, &staged, sizeof(staged));
+      return CNET_SCTP_ASSOC_OK;
+    }
+
+    /* Keep the two-request admission atomic. A collision with any existing
+     * local/deferred transaction asks the peer to retry the original chunk. */
+    if (staged.reset_active ||
+        staged.awaiting_local_incoming_reset != 0u ||
+        staged.deferred_peer_reset_active ||
+        staged.peer_incoming_reset_pending) {
+      outgoing_result = CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS;
+      incoming_result = CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS;
+    } else {
+      outgoing_result =
+          evaluate_peer_reset(&staged, outgoing_request, &incoming_mask);
+      incoming_result = evaluate_incoming_reset(
+          &staged, incoming_request, &outgoing_streams);
+      if (outgoing_result == CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS ||
+          incoming_result == CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS) {
+        outgoing_result = CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS;
+        incoming_result = CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS;
+      }
+    }
+    if (outgoing_result == CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS) {
+      status = encode_reset_response_pair(&staged,
+          outgoing_sequence, outgoing_result,
+          incoming_sequence, incoming_result,
+          response, &response_size);
+      if (status != CNET_SCTP_ASSOC_OK) return status;
+      if (response_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+      memcpy(output, response, response_size);
+      *written = response_size;
+      staged.last_time_ms = now;
+      memcpy(s, &staged, sizeof(staged));
+      return CNET_SCTP_ASSOC_OK;
+    }
+
+    write_reset_response(
+        outgoing_response, outgoing_sequence, outgoing_result);
+    if (incoming_result == CNET_SCTP_STREAM_RESET_PERFORMED &&
+        (staged.outgoing_reset_events & outgoing_streams) == 0u &&
+        cnet_sctp_data_outbound_drained(&staged.data)) {
+      status = start_local_reset_with_prefix(&staged, now,
+          outgoing_streams, 1, incoming_sequence,
+          outgoing_response, sizeof(outgoing_response),
+          response, sizeof(response), &response_size);
+      if (status != CNET_SCTP_ASSOC_OK) return status;
+      started_corresponding = 1;
+    } else if (incoming_result == CNET_SCTP_STREAM_RESET_PERFORMED) {
+      status = encode_reset_response(&staged,
+          outgoing_sequence, outgoing_result,
+          response, &response_size);
+      if (status != CNET_SCTP_ASSOC_OK) return status;
+    } else {
+      status = encode_reset_response_pair(&staged,
+          outgoing_sequence, outgoing_result,
+          incoming_sequence, incoming_result,
+          response, &response_size);
+      if (status != CNET_SCTP_ASSOC_OK) return status;
+    }
+    if (response_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+
+    staged.last_peer_reset_request = incoming_sequence;
+    staged.expected_peer_reset_request = incoming_sequence + 1u;
+    memcpy(staged.last_reset_response, response, response_size);
+    staged.last_reset_response_size = response_size;
+    if (outgoing_result == CNET_SCTP_STREAM_RESET_PERFORMED) {
+      apply_peer_reset(&staged, incoming_mask, 0u);
+    } else if (outgoing_result == CNET_SCTP_STREAM_RESET_IN_PROGRESS) {
+      staged.deferred_peer_reset_active = 1u;
+      staged.deferred_peer_reset_streams = incoming_mask;
+      staged.deferred_peer_reset_request = outgoing_sequence;
+      staged.deferred_peer_reset_last_tsn = last_assigned;
+    }
+    if (incoming_result == CNET_SCTP_STREAM_RESET_PERFORMED &&
+        !started_corresponding) {
+      staged.peer_incoming_reset_pending = 1u;
+      staged.peer_incoming_reset_streams = outgoing_streams;
+      staged.peer_incoming_reset_request = incoming_sequence;
+      staged.reciprocal_reset_pending |= outgoing_streams;
+    }
+    memcpy(output, response, response_size);
+    *written = response_size;
+    staged.last_time_ms = now;
+    memcpy(s, &staged, sizeof(staged));
+    return CNET_SCTP_ASSOC_OK;
+  }
   if (outgoing_request) {
     const uint32_t sequence = rd32(outgoing_request->bytes + 4u);
     const uint32_t response_sequence = rd32(outgoing_request->bytes + 8u);

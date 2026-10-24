@@ -1739,6 +1739,94 @@ static uint32_t outgoing_reset_response_sequence(
   return read32_test(chunk.value + 8u);
 }
 
+static uint32_t outgoing_reset_request_sequence(
+    const uint8_t *packet, size_t size) {
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk chunk = {0};
+  assert(cnet_sctp_wire_decode(packet, size, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == 1u &&
+      cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
+      chunk.type == 130u && chunk.value_size >= 16u &&
+      read16_test(chunk.value) == 13u);
+  return read32_test(chunk.value + 4u);
+}
+
+static size_t encode_outgoing_incoming_reset_pair(
+    const cnet_sctp_assoc *sender,
+    const uint8_t *outgoing_packet, size_t outgoing_size,
+    uint32_t incoming_sequence, const uint16_t *streams, size_t stream_count,
+    uint8_t *packet, size_t capacity) {
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk outgoing = {0}, combined = {0};
+  uint8_t value[CNET_SCTP_ASSOC_MAX_PACKET];
+  size_t outgoing_padded, value_size, i, written = 0u;
+  assert(sender && outgoing_packet && packet &&
+      stream_count <= CNET_SCTP_DATA_STREAMS &&
+      (stream_count == 0u || streams));
+  assert(cnet_sctp_wire_decode(outgoing_packet, outgoing_size,
+      &header, &decoder) == CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == 1u &&
+      cnet_sctp_wire_next_chunk(&decoder, &outgoing) == CNET_SCTP_WIRE_OK &&
+      outgoing.type == 130u && outgoing.value_size >= 16u &&
+      read16_test(outgoing.value) == 13u);
+  outgoing_padded = (outgoing.value_size + 3u) & ~(size_t)3u;
+  value_size = outgoing_padded + 8u + 2u * stream_count;
+  assert(value_size <= sizeof(value));
+  memset(value, 0, value_size);
+  memcpy(value, outgoing.value, outgoing.value_size);
+  write16_test(value + outgoing_padded, 14u);
+  write16_test(value + outgoing_padded + 2u,
+      (uint16_t)(8u + 2u * stream_count));
+  write32_test(value + outgoing_padded + 4u, incoming_sequence);
+  for (i = 0u; i < stream_count; ++i)
+    write16_test(value + outgoing_padded + 8u + 2u * i, streams[i]);
+  combined.type = 130u;
+  combined.value = value;
+  combined.value_size = value_size;
+  assert(cnet_sctp_wire_encode(sender->config.local_port,
+      sender->config.remote_port, sender->peer_tag, &combined, 1u,
+      packet, capacity, &written) == CNET_SCTP_WIRE_OK);
+  return written;
+}
+
+static void assert_response_outgoing_pair(const uint8_t *packet, size_t size,
+    uint32_t response_sequence, uint32_t outgoing_response_sequence_value,
+    uint16_t expected_stream_mask, uint16_t outbound_streams) {
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk chunk = {0};
+  size_t second;
+  uint16_t mask = 0u;
+  size_t position;
+  assert(cnet_sctp_wire_decode(packet, size, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK);
+  assert(header.chunk_count == 1u &&
+      cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
+      chunk.type == 130u && chunk.value_size >= 28u &&
+      read16_test(chunk.value) == 16u &&
+      read16_test(chunk.value + 2u) == 12u &&
+      read32_test(chunk.value + 4u) == response_sequence);
+  second = 12u;
+  assert(read16_test(chunk.value + second) == 13u &&
+      read32_test(chunk.value + second + 8u) ==
+          outgoing_response_sequence_value);
+  if (read16_test(chunk.value + second + 2u) == 16u) {
+    mask = outbound_streams == CNET_SCTP_DATA_STREAMS ? UINT16_MAX :
+        (uint16_t)((UINT16_C(1) << outbound_streams) - 1u);
+  } else {
+    for (position = second + 16u;
+         position < second + read16_test(chunk.value + second + 2u);
+         position += 2u) {
+      const uint16_t stream = read16_test(chunk.value + position);
+      mask |= (uint16_t)(UINT16_C(1) << stream);
+    }
+  }
+  assert(mask == expected_stream_mask);
+}
+
 static uint16_t outgoing_reset_stream_mask(
     const uint8_t *packet, size_t size, uint16_t outbound_streams) {
   cnet_sctp_wire_header header = {0};
@@ -1835,8 +1923,9 @@ static uint32_t reset_response_result(const uint8_t *packet, size_t size) {
       CNET_SCTP_WIRE_OK);
   assert(header.chunk_count == 1u &&
       cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
-      chunk.type == 130u && chunk.value_size == 12u &&
-      read16_test(chunk.value) == 16u);
+      chunk.type == 130u && chunk.value_size >= 12u &&
+      read16_test(chunk.value) == 16u &&
+      read16_test(chunk.value + 2u) == 12u);
   return read32_test(chunk.value + 8u);
 }
 
@@ -2461,6 +2550,77 @@ static void incoming_reset_partial_overlap_is_deferred(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void paired_outgoing_incoming_reset_is_atomic(void) {
+  cnet_sctp_assoc a, b, before;
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_assoc_stream_reset_event event = {0};
+  const uint16_t incoming_stream = 1u;
+  const uint16_t incoming_mask = (uint16_t)(UINT16_C(1) << 1u);
+  uint8_t outgoing[1200], pair[1200], combined[1200];
+  uint8_t duplicate[1200], final_response[1200], scratch[1200];
+  size_t outgoing_n = 0u, pair_n, combined_n = 0u;
+  size_t duplicate_n = 0u, final_n = 0u, scratch_n = 0u;
+  uint32_t outgoing_sequence, incoming_sequence;
+
+  ready_pair(&a, &b, &ca, &cb);
+  b.data.rx_ssn[0] = 3u;
+  b.data.tx_ssn[incoming_stream] = 4u;
+  assert(cnet_sctp_assoc_reset_stream(&a, 6u, 0u,
+      outgoing, sizeof(outgoing), &outgoing_n) == CNET_SCTP_ASSOC_OK);
+  outgoing_sequence = outgoing_reset_request_sequence(outgoing, outgoing_n);
+  incoming_sequence = outgoing_sequence + 1u;
+  pair_n = encode_outgoing_incoming_reset_pair(&a,
+      outgoing, outgoing_n, incoming_sequence,
+      &incoming_stream, 1u, pair, sizeof(pair));
+
+  memcpy(&before, &b, sizeof(before));
+  assert(cnet_sctp_assoc_input(&b, 7u, pair, pair_n,
+      combined, 1u, &combined_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(combined_n == 0u && memcmp(&b, &before, sizeof(b)) == 0);
+  assert(cnet_sctp_assoc_input(&b, 7u, pair, pair_n,
+      combined, sizeof(combined), &combined_n) == CNET_SCTP_ASSOC_OK);
+  assert(combined_n != 0u && b.reset_active && b.reset_is_reciprocal &&
+      b.reset_streams == incoming_mask && b.data.rx_ssn[0] == 0u &&
+      b.expected_peer_reset_request == incoming_sequence + 1u);
+  assert(reset_response_result(combined, combined_n) ==
+      CNET_SCTP_STREAM_RESET_PERFORMED);
+  assert_response_outgoing_pair(combined, combined_n,
+      outgoing_sequence, incoming_sequence, incoming_mask,
+      b.config.outbound_streams);
+  assert(cnet_sctp_assoc_take_stream_reset(&b, &event) ==
+      CNET_SCTP_ASSOC_OK && event.incoming && event.stream_id == 0u &&
+      event.result == CNET_SCTP_STREAM_RESET_PERFORMED);
+
+  assert(cnet_sctp_assoc_input(&b, 8u, pair, pair_n,
+      duplicate, sizeof(duplicate), &duplicate_n) == CNET_SCTP_ASSOC_OK);
+  assert(duplicate_n == combined_n &&
+      memcmp(duplicate, combined, combined_n) == 0);
+  memcpy(&before, &a, sizeof(before));
+  assert(cnet_sctp_assoc_input(&a, 9u, combined, combined_n,
+      final_response, 1u, &final_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(final_n == 0u && memcmp(&a, &before, sizeof(a)) == 0);
+  assert(cnet_sctp_assoc_input(&a, 9u, combined, combined_n,
+      final_response, sizeof(final_response), &final_n) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(final_n != 0u && !a.reset_active &&
+      a.data.tx_ssn[0] == 0u && a.data.rx_ssn[incoming_stream] == 0u);
+  assert(cnet_sctp_assoc_take_stream_reset(&a, &event) ==
+      CNET_SCTP_ASSOC_OK && !event.incoming && event.stream_id == 0u);
+  assert(cnet_sctp_assoc_take_stream_reset(&a, &event) ==
+      CNET_SCTP_ASSOC_OK && event.incoming &&
+      event.stream_id == incoming_stream);
+  assert(cnet_sctp_assoc_input(&b, 10u, final_response, final_n,
+      scratch, sizeof(scratch), &scratch_n) == CNET_SCTP_ASSOC_OK);
+  assert(!b.reset_active && b.data.tx_ssn[incoming_stream] == 0u);
+  assert(cnet_sctp_assoc_take_stream_reset(&b, &event) ==
+      CNET_SCTP_ASSOC_OK && !event.incoming &&
+      event.stream_id == incoming_stream);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void local_incoming_reset_encoding_is_capacity_atomic(void) {
   cnet_sctp_assoc a, b, before;
   test_context ca = {0}, cb = {0};
@@ -2913,6 +3073,7 @@ int main(void) {
   incoming_reset_all_streams_uses_empty_outgoing_list();
   incoming_reset_multi_sid_roundtrip();
   incoming_reset_partial_overlap_is_deferred();
+  paired_outgoing_incoming_reset_is_atomic();
   local_incoming_reset_encoding_is_capacity_atomic();
   local_incoming_reset_roundtrip_and_outbound_independence();
   local_incoming_reset_waits_for_peer_tsn_barrier();
