@@ -202,15 +202,52 @@ static int run_case(const char *ca_file, const char *cert_file,
   return 0;
 }
 
+static int require_server_config_rejected(const char *cert_file,
+                                          const char *key_file,
+                                          const char *case_name)
+{
+  cnet_tls_server server = {0};
+  cnet_tls_server_config config = {0};
+  int status;
+
+  config.size = sizeof(config);
+  config.cert_file = cert_file;
+  config.key_file = key_file;
+  config.client_auth = CNET_TLS_CLIENT_AUTH_NONE;
+  status = cnet_tls_server_init(&server, &config);
+  if (status != SALTS_EIO) {
+    fprintf(stderr, "%s: expected SALTS_EIO, got %d\n", case_name, status);
+    if (server.impl != NULL) (void)cnet_tls_server_destroy(&server);
+    return 1;
+  }
+  REQUIRE(server.impl == NULL);
+  REQUIRE(cnet_tls_server_destroy(&server) == SALTS_OK);
+  return 0;
+}
+
 int main(int argc, char **argv)
 {
-  if (argc != 5) {
-    fprintf(stderr, "usage: %s CA CERT KEY WRONG_CA\n", argv[0]);
+  if (argc != 15) {
+    fprintf(stderr,
+            "usage: %s CA CERT KEY WRONG_CA EXPIRED TAMPERED "
+            "CHAIN_CA CHAIN_FULL CHAIN_LEAF CHAIN_KEY MALFORMED "
+            "MISMATCHED_KEY UNSUPPORTED_CERT UNSUPPORTED_KEY\n",
+            argv[0]);
     return 2;
   }
   if (run_case(argv[1], argv[2], argv[3], "localhost", false)) return 1;
   if (run_case(argv[4], argv[2], argv[3], "localhost", true)) return 1;
   if (run_case(argv[1], argv[2], argv[3], "wrong.example", true)) return 1;
-  puts("installed C11 CNet P384 issuer SHA384 TLS: PASS");
+  if (run_case(argv[1], argv[5], argv[3], "localhost", true)) return 1;
+  if (run_case(argv[1], argv[6], argv[3], "localhost", true)) return 1;
+  if (run_case(argv[7], argv[8], argv[10], "localhost", false)) return 1;
+  if (run_case(argv[7], argv[9], argv[10], "localhost", true)) return 1;
+  if (require_server_config_rejected(argv[11], argv[10], "malformed certificate"))
+    return 1;
+  if (require_server_config_rejected(argv[2], argv[12], "mismatched private key"))
+    return 1;
+  if (require_server_config_rejected(argv[13], argv[14], "unsupported Ed25519 key"))
+    return 1;
+  puts("installed C11 CNet P384 issuer SHA384 TLS negative matrix: PASS");
   return 0;
 }

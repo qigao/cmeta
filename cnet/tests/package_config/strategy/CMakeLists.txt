@@ -43,18 +43,51 @@ set(_p384_fixtures
   p384-test-root-cert.pem
   p384-test-server-cert.pem
   p384-test-server-key.pem
-  p384-test-wrong-root-cert.pem)
+  p384-test-wrong-root-cert.pem
+  p384-test-expired-cert.pem
+  p384-test-tampered-cert.pem
+  p256-test-server-key.pem
+  p384-chain-root-cert.pem
+  p384-chain-intermediate-cert.pem
+  p384-chain-server-cert.pem
+  p384-chain-server-key.pem
+  unsupported-ed25519-server-cert.pem
+  unsupported-ed25519-server-key.pem)
 foreach(_fixture IN LISTS _p384_fixtures)
   configure_file(
     "${CMAKE_CURRENT_LIST_DIR}/../../fixtures/${_fixture}"
     "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/${_fixture}" COPYONLY)
 endforeach()
+file(READ
+  "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-chain-server-cert.pem"
+  _p384_chain_leaf)
+file(READ
+  "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-chain-intermediate-cert.pem"
+  _p384_chain_intermediate)
+file(WRITE
+  "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-chain-server-fullchain.pem"
+  "${_p384_chain_leaf}${_p384_chain_intermediate}")
+file(WRITE
+  "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/malformed-server-cert.pem"
+  "-----BEGIN CERTIFICATE-----\nMALFORMED-DER\n-----END CERTIFICATE-----\n")
+unset(_p384_chain_leaf)
+unset(_p384_chain_intermediate)
 add_test(NAME cnet_installed_p384_tls
   COMMAND cnet_installed_p384_tls
     "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-root-cert.pem"
     "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-server-cert.pem"
     "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-server-key.pem"
-    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-wrong-root-cert.pem")
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-wrong-root-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-expired-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-tampered-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-chain-root-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-chain-server-fullchain.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-chain-server-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-chain-server-key.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/malformed-server-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p256-test-server-key.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/unsupported-ed25519-server-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/unsupported-ed25519-server-key.pem")
 set_tests_properties(cnet_installed_p384_tls PROPERTIES TIMEOUT 90)
 
 # ELF DT_RUNPATH does not resolve indirect shared-library dependencies.
