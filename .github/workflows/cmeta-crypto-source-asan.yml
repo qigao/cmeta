@@ -31,6 +31,7 @@ name: CMeta Crypto native KATs and ASan/UBSan
       - 'utils/tests/test_cmeta_sm4_gcm.c'
       - 'utils/tests/test_cmeta_error.c'
       - 'utils/tests/crypto_install_consumer/**'
+      - 'vendor/monocypher/**'
   workflow_dispatch:
 
 permissions:
@@ -132,12 +133,16 @@ jobs:
           required = {
               "production and fault-injected crypto implementation": ("utils/src/cmeta_crypto.c", 2),
               "C11 SM3/HMAC/HKDF tests": ("utils/tests/test_cmeta_crypto.c", 1),
+              "elliptic-curve KAT and negative tests": ("utils/tests/test_cmeta_ec.c", 1),
               "C++17 crypto tests": ("utils/tests/test_cmeta_crypto_cpp.cpp", 1),
               "SM2 KAT and negative tests": ("utils/tests/test_cmeta_sm2.c", 1),
               "SM4-GCM KAT and fail-closed tests": ("utils/tests/test_cmeta_sm4_gcm.c", 1),
               "crypto allocation/clear fault tests": ("utils/tests/test_cmeta_crypto_fault.c", 1),
               "SALTS_EAUTH metadata test": ("utils/tests/test_cmeta_error.c", 1),
               "canonical ASN.1 implementation": ("asn1/src/asn1.c", 1),
+              "cryptographic ASN.1 implementation": ("asn1/src/crypto.c", 1),
+              "Core-private Monocypher implementation": ("vendor/monocypher/core_monocypher.c", 1),
+              "Core-private Monocypher Ed25519 implementation": ("vendor/monocypher/core_monocypher_ed25519.c", 1),
           }
           for label, (suffix, expected_count) in required.items():
               matches = [
@@ -153,7 +158,7 @@ jobs:
                   for flag in ("-fsanitize=address", "-fsanitize=undefined"):
                       if flag not in command:
                           raise SystemExit(f"{label}: missing {flag}: {suffix}")
-          print("Verified ASan+UBSan instrumentation for crypto, SM2/SM4 tests, error metadata and canonical ASN.1 sources.")
+          print("Verified ASan+UBSan instrumentation for crypto, EC/SM2/SM4 tests, error metadata, ASN.1 and private Monocypher sources.")
           PY
 
       - name: Run crypto KATs and installed SDK C11/C++17 consumer
@@ -168,7 +173,7 @@ jobs:
           export LDFLAGS='-fsanitize=address -fsanitize=undefined'
           ctest --test-dir "$BUILD_ROOT" -C RelWithDebInfo \
             --output-on-failure --no-tests=error \
-            -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_crypto_fault|test_cmeta_sm2|test_cmeta_sm4_gcm|test_cmeta_error|test_cmeta_crypto_installed_sdk|cnet_shangmi_tls13_nativeio_negatives_test)$"
+            -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_crypto_fault|test_cmeta_ec|test_cmeta_sm2|test_cmeta_sm4_gcm|test_cmeta_error|test_cmeta_crypto_installed_sdk|cnet_shangmi_tls13_nativeio_negatives_test)$"
 
       - name: Preserve sanitizer evidence
         if: always()
