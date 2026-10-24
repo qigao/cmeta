@@ -114,6 +114,21 @@ typedef struct cnet_sctp_assoc_stream_reset_event {
   cnet_sctp_assoc_stream_reset_result result;
 } cnet_sctp_assoc_stream_reset_event;
 
+/* RFC 6525 stream-change snapshot. Counts are the Association's usable
+ * streams after this operation finished; result is TIMEOUT only for a local
+ * request whose bounded retry budget expired. */
+typedef struct cnet_sctp_assoc_stream_change_event {
+  uint16_t inbound_streams;
+  uint16_t outbound_streams;
+  cnet_sctp_assoc_stream_reset_result result;
+} cnet_sctp_assoc_stream_change_event;
+
+typedef enum cnet_sctp_assoc_reconfig_kind {
+  CNET_SCTP_RECONFIG_NONE = 0,
+  CNET_SCTP_RECONFIG_STREAM_RESET = 1,
+  CNET_SCTP_RECONFIG_ADD_OUTGOING = 2
+} cnet_sctp_assoc_reconfig_kind;
+
 typedef struct cnet_sctp_assoc {
   cnet_sctp_assoc_config config;
   cnet_sctp_assoc_state state;
@@ -130,6 +145,7 @@ typedef struct cnet_sctp_assoc {
   uint16_t peer_inbound_streams;
   uint8_t peer_reconfig_supported;
   uint8_t reset_active;
+  uint8_t reconfig_kind;
   uint8_t reset_is_reciprocal;
   uint8_t reset_requests_incoming;
   /* One retained RE-CONFIG packet may carry the RFC 6525 Appendix A
@@ -139,6 +155,7 @@ typedef struct cnet_sctp_assoc {
   uint8_t reset_outgoing_complete;
   uint8_t reset_paired_incoming_complete;
   uint8_t reset_retransmits;
+  uint16_t add_outgoing_streams;
   uint16_t reset_streams;
   uint16_t reset_paired_incoming_streams;
   /* RFC 8831 DataChannel close is bidirectional. Fixed bitsets keep at most
@@ -178,6 +195,10 @@ typedef struct cnet_sctp_assoc {
   uint16_t outgoing_reset_events;
   uint8_t incoming_reset_results[CNET_SCTP_DATA_STREAMS];
   uint8_t outgoing_reset_results[CNET_SCTP_DATA_STREAMS];
+  uint8_t incoming_stream_change_pending;
+  uint8_t outgoing_stream_change_pending;
+  cnet_sctp_assoc_stream_change_event incoming_stream_change;
+  cnet_sctp_assoc_stream_change_event outgoing_stream_change;
   uint8_t saved_packet[CNET_SCTP_ASSOC_MAX_PACKET];
   size_t saved_size;
   uint8_t retransmits;
@@ -267,6 +288,15 @@ cnet_sctp_assoc_status cnet_sctp_assoc_reset_streams_bidirectional(
 cnet_sctp_assoc_status cnet_sctp_assoc_take_stream_reset(
     cnet_sctp_assoc *association,
     cnet_sctp_assoc_stream_reset_event *event);
+/* RFC 6525 Add Outgoing Streams. The fixed private profile can grow only to
+ * CNET_SCTP_DATA_STREAMS. Newly requested SIDs remain unusable until a
+ * positive peer response; completion is retained for take_stream_change(). */
+cnet_sctp_assoc_status cnet_sctp_assoc_add_outgoing_streams(
+    cnet_sctp_assoc *association, uint64_t now_ms, uint16_t stream_count,
+    void *output, size_t capacity, size_t *written);
+cnet_sctp_assoc_status cnet_sctp_assoc_take_stream_change(
+    cnet_sctp_assoc *association,
+    cnet_sctp_assoc_stream_change_event *event);
 
 /* RFC 9260 9.2 graceful shutdown request.  New application sends are
  * refused, but existing owned DATA may drain before SHUTDOWN/T2 starts.
