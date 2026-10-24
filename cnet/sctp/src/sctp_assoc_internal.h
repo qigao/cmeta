@@ -131,6 +131,7 @@ typedef struct cnet_sctp_assoc {
   uint8_t peer_reconfig_supported;
   uint8_t reset_active;
   uint8_t reset_is_reciprocal;
+  uint8_t reset_requests_incoming;
   uint8_t reset_retransmits;
   uint16_t reset_streams;
   /* RFC 8831 DataChannel close is bidirectional. Fixed bitsets keep at most
@@ -150,6 +151,8 @@ typedef struct cnet_sctp_assoc {
   uint8_t last_reset_response[CNET_SCTP_ASSOC_MAX_PACKET];
   uint8_t deferred_peer_reset_active;
   uint16_t deferred_peer_reset_streams;
+  uint16_t deferred_peer_reset_suppress_reciprocal;
+  uint8_t deferred_peer_reset_answers_incoming;
   uint32_t deferred_peer_reset_request;
   uint32_t deferred_peer_reset_last_tsn;
   /* One received Incoming SSN Reset may wait for an active reset, retained
@@ -158,8 +161,13 @@ typedef struct cnet_sctp_assoc {
   uint8_t peer_incoming_reset_pending;
   uint16_t peer_incoming_reset_streams;
   uint32_t peer_incoming_reset_request;
+  /* A corresponding peer Outgoing Reset acknowledges a locally initiated
+   * Incoming Reset before its TSN barrier necessarily completes. */
+  uint16_t awaiting_local_incoming_reset;
+  uint32_t awaiting_local_incoming_reset_request;
   uint16_t incoming_reset_events;
   uint16_t outgoing_reset_events;
+  uint8_t incoming_reset_results[CNET_SCTP_DATA_STREAMS];
   uint8_t outgoing_reset_results[CNET_SCTP_DATA_STREAMS];
   uint8_t saved_packet[CNET_SCTP_ASSOC_MAX_PACKET];
   size_t saved_size;
@@ -231,6 +239,14 @@ cnet_sctp_assoc_status cnet_sctp_assoc_window_update(cnet_sctp_assoc *s,
 cnet_sctp_assoc_status cnet_sctp_assoc_reset_stream(cnet_sctp_assoc *association,
     uint64_t now_ms, uint16_t stream_id, void *output, size_t capacity,
     size_t *written);
+/* RFC 6525 Incoming SSN Reset. stream_count == 0 requests all configured
+ * inbound streams; otherwise stream_ids is borrowed only for this call and
+ * copied into fixed Association state. The request does not block outbound
+ * DATA. Completion is reported as incoming stream-reset events. */
+cnet_sctp_assoc_status cnet_sctp_assoc_reset_incoming_streams(
+    cnet_sctp_assoc *association, uint64_t now_ms,
+    const uint16_t *stream_ids, size_t stream_count,
+    void *output, size_t capacity, size_t *written);
 cnet_sctp_assoc_status cnet_sctp_assoc_take_stream_reset(
     cnet_sctp_assoc *association,
     cnet_sctp_assoc_stream_reset_event *event);
