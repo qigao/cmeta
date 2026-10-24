@@ -331,3 +331,150 @@ salts_asn1_status salts_asn1_validate(const void *data, size_t size,
     if (reader.offset != size) return SALTS_ASN1_TRAILING_DATA;
     return SALTS_ASN1_OK;
 }
+
+
+static salts_asn1_status validate_content_for_encoding(
+    uint8_t tag_class, uint8_t constructed, uint32_t tag_number,
+    const uint8_t *content, size_t content_size, salts_asn1_mode mode) {
+    salts_asn1_status status;
+    if (tag_class == 0u) {
+        if (tag_number == 0u) return SALTS_ASN1_INVALID_TAG;
+        if ((tag_number == 8u || tag_number == 11u || tag_number == 16u ||
+             tag_number == 17u || tag_number == 29u) && !constructed)
+            return SALTS_ASN1_MALFORMED;
+        if (constructed && universal_tag_requires_primitive(tag_number) &&
+            (mode == SALTS_ASN1_DER ||
+             !universal_tag_is_constructible_string(tag_number)))
+            return SALTS_ASN1_MALFORMED;
+    }
+    if (!constructed)
+        return validate_primitive(content, content_size, tag_class, tag_number,
+                                  mode);
+
+    {
+        salts_asn1_reader reader;
+        salts_asn1_tlv child;
+        const uint8_t *previous = NULL;
+        size_t previous_size = 0u;
+        status = salts_asn1_reader_init(&reader, content, content_size, mode);
+        if (status != SALTS_ASN1_OK) return status;
+        for (;;) {
+            status = salts_asn1_reader_next(&reader, &child);
+            if (status == SALTS_ASN1_DONE) return SALTS_ASN1_OK;
+            if (status != SALTS_ASN1_OK) return status;
+            if (mode == SALTS_ASN1_BER && tag_class == 0u &&
+                universal_tag_is_constructible_string(tag_number) &&
+                (child.tag_class != 0u || child.tag_number != tag_number))
+                return SALTS_ASN1_MALFORMED;
+            if (mode == SALTS_ASN1_DER && tag_class == 0u &&
+                tag_number == 17u && previous &&
+                bytes_compare(previous, previous_size,
+                              content + reader.offset - child.encoded_size,
+                              child.encoded_size) > 0)
+                return SALTS_ASN1_MALFORMED;
+            previous = content + reader.offset - child.encoded_size;
+            previous_size = child.encoded_size;
+        }
+    }
+}
+
+static size_t encode_tag_bytes(uint8_t tag_class, uint8_t constructed,
+                               uint32_t tag_number, uint8_t out[6]) {
+    size_t count = 0u, i;
+    uint32_t value;
+    if (tag_number < 31u) {
+        out[0] = (uint8_t)((tag_class << 6) | (constructed << 5) |
+                           (uint8_t)tag_number);
+        return 1u;
+    }
+    out[0] = (uint8_t)((tag_class << 6) | (constructed << 5) | 0x1fu);
+    value = tag_number;
+    do {
+        out[1u + count] = (uint8_t)(value & 0x7fu);
+        value >>= 7;
+        ++count;
+    } while (value != 0u && count < 5u);
+    for (i = 0u; i < count / 2u; ++i) {
+        uint8_t tmp = out[1u + i];
+        out[1u + i] = out[count - i];
+        out[count - i] = tmp;
+    }
+    for (i = 1u; i < count; ++i) out[i] |= 0x80u;
+    return 1u + count;
+}
+
+static size_t encode_length_bytes(size_t length, uint8_t indefinite,
+                                  uint8_t out[1u + sizeof(size_t)]) {
+    uint8_t reversed[sizeof(size_t)];
+    size_t count = 0u, i;
+    if (indefinite) {
+        out[0] = 0x80u;
+        return 1u;
+    }
+    if (length < 128u) {
+        out[0] = (uint8_t)length;
+        return 1u;
+    }
+    while (length != 0u) {
+        reversed[count++] = (uint8_t)(length & 0xffu);
+        length >>= 8;
+    }
+    out[0] = (uint8_t)(0x80u | (uint8_t)count);
+    for (i = 0u; i < count; ++i) out[1u + i] = reversed[count - 1u - i];
+    return 1u + count;
+}
+
+salts_asn1_status salts_asn1_encode_tlv(
+    uint8_t tag_class, uint8_t constructed, uint32_t tag_number,
+    const void *content, size_t content_size, salts_asn1_mode mode,
+    uint8_t indefinite_length, void *output, size_t output_capacity,
+    size_t *written) {
+    uint8_t tag_bytes[6];
+    uint8_t length_bytes[1u + sizeof(size_t)];
+    size_t tag_size, length_size, header_size, eoc_size, required;
+    salts_asn1_status status;
+    uint8_t *destination = (uint8_t *)output;
+
+    if (!written || tag_class > 3u || constructed > 1u ||
+        indefinite_length > 1u || (!content && content_size != 0u) ||
+        (mode != SALTS_ASN1_BER && mode != SALTS_ASN1_DER) ||
+        (!output && output_capacity != 0u))
+        return SALTS_ASN1_INVALID_ARGUMENT;
+    if (indefinite_length && (mode != SALTS_ASN1_BER || !constructed))
+        return SALTS_ASN1_INVALID_LENGTH;
+
+    status = validate_content_for_encoding(tag_class, constructed, tag_number,
+                                           (const uint8_t *)content,
+                                           content_size, mode);
+    if (status != SALTS_ASN1_OK) return status;
+
+    tag_size = encode_tag_bytes(tag_class, constructed, tag_number, tag_bytes);
+    length_size = encode_length_bytes(content_size, indefinite_length, length_bytes);
+    header_size = tag_size + length_size;
+    eoc_size = indefinite_length ? 2u : 0u;
+    if (content_size > SIZE_MAX - header_size ||
+        eoc_size > SIZE_MAX - header_size - content_size)
+        return SALTS_ASN1_LIMIT_EXCEEDED;
+    required = header_size + content_size + eoc_size;
+
+    if (!output) {
+        *written = required;
+        return SALTS_ASN1_OK;
+    }
+    if (output_capacity < required) {
+        *written = required;
+        return SALTS_ASN1_BUFFER_TOO_SMALL;
+    }
+
+    /* Move content before writing the header, allowing safe in-place wrapping. */
+    if (content_size != 0u)
+        memmove(destination + header_size, content, content_size);
+    memcpy(destination, tag_bytes, tag_size);
+    memcpy(destination + tag_size, length_bytes, length_size);
+    if (indefinite_length) {
+        destination[header_size + content_size] = 0u;
+        destination[header_size + content_size + 1u] = 0u;
+    }
+    *written = required;
+    return SALTS_ASN1_OK;
+}
