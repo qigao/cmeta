@@ -23,6 +23,14 @@ SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_value_create_boolean(
     int value, salts_asn1_value **out);
 SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_value_create_integer(
     int64_t value, salts_asn1_value **out);
+/* Creates a non-negative DER INTEGER from an unsigned big-endian magnitude.
+ * Leading zero bytes are ignored. A zero-length/all-zero magnitude encodes as
+ * INTEGER 0. The input is copied and may be released after return. */
+SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_value_create_unsigned_integer(
+    const void *magnitude, size_t magnitude_size, salts_asn1_value **out);
+SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_value_create_bit_string(
+    const void *data, size_t size, uint8_t unused_bits,
+    salts_asn1_value **out);
 SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_value_create_octet_string(
     const void *data, size_t size, salts_asn1_value **out);
 SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_value_create_null(
@@ -48,6 +56,15 @@ SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_value_get_content(
     const salts_asn1_value *value, const uint8_t **data, size_t *size);
 SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_value_get_integer_i64(
     const salts_asn1_value *value, int64_t *out);
+/* Returns a borrowed minimal unsigned magnitude. INTEGER 0 is returned as one
+ * zero byte. Negative INTEGER values are rejected as MALFORMED. */
+SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_value_get_unsigned_integer(
+    const salts_asn1_value *value, const uint8_t **magnitude,
+    size_t *magnitude_size);
+/* Returns a borrowed view excluding the initial unused-bits octet. */
+SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_value_get_bit_string(
+    const salts_asn1_value *value, const uint8_t **data, size_t *size,
+    uint8_t *unused_bits);
 SALTS_ASN1_PUBLIC salts_asn1_status salts_asn1_value_get_boolean(
     const salts_asn1_value *value, int *out);
 /* If components is NULL, capacity must be zero; required_count is always set

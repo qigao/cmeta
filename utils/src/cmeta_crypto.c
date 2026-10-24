@@ -3,6 +3,7 @@
 #include <gmssl/aes.h>
 #include <gmssl/des.h>
 #include <gmssl/digest.h>
+#include <gmssl/ecdsa.h>
 #include <gmssl/hmac.h>
 #include <gmssl/hkdf.h>
 #include <gmssl/md5.h>
@@ -12,7 +13,12 @@
 #include <gmssl/sm3.h>
 #include <gmssl/sm2.h>
 #include <salts/asn1.h>
+#include <salts/asn1_crypto.h>
 #include <gmssl/sm4.h>
+
+#include "core_monocypher_namespace.h"
+#include "monocypher.h"
+#include "monocypher-ed25519.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -452,6 +458,282 @@ static int cmeta_crypto_ranges_overlap_v1(const void *lhs, size_t lhs_size,
 static int cmeta_crypto_ranges_conflict_v1(const void *lhs, size_t lhs_size,
                                            const void *rhs, size_t rhs_size) {
   return cmeta_crypto_ranges_overlap_v1(lhs, lhs_size, rhs, rhs_size) != 0;
+}
+
+static int cmeta_ecdsa_p256_import_private(
+    SECP256R1_KEY *key,
+    const uint8_t private_key[SALTS_ECDSA_P256_PRIVATE_KEY_BYTES]) {
+  secp256r1_t scalar;
+  int ok;
+  secp256r1_from_32bytes(scalar, private_key);
+  if (secp256r1_is_zero(scalar) || secp256r1_cmp(scalar, SECP256R1_N) >= 0) {
+    gmssl_secure_clear(scalar, sizeof(scalar));
+    return 0;
+  }
+  ok = secp256r1_key_set_private_key(key, scalar) == 1;
+  gmssl_secure_clear(scalar, sizeof(scalar));
+  return ok;
+}
+
+int cmeta_ecdsa_p256_public_key(
+    const uint8_t private_key[SALTS_ECDSA_P256_PRIVATE_KEY_BYTES],
+    uint8_t public_key[SALTS_ECDSA_P256_PUBLIC_KEY_BYTES]) {
+  SECP256R1_KEY key;
+  uint8_t staged[SALTS_ECDSA_P256_PUBLIC_KEY_BYTES];
+  int result = SALTS_EINVAL;
+  if (!private_key || !public_key) return SALTS_EINVAL;
+  if (!cmeta_crypto_range_valid_v1(
+          private_key, SALTS_ECDSA_P256_PRIVATE_KEY_BYTES) ||
+      !cmeta_crypto_range_valid_v1(public_key, sizeof(staged)))
+    return SALTS_EINVAL;
+  memset(&key, 0, sizeof(key));
+  if (!cmeta_ecdsa_p256_import_private(&key, private_key)) goto cleanup;
+  if (secp256r1_point_to_uncompressed_octets(&key.public_key, staged) != 1) {
+    result = SALTS_EIO;
+    goto cleanup;
+  }
+  memcpy(public_key, staged, sizeof(staged));
+  result = SALTS_OK;
+cleanup:
+  gmssl_secure_clear(staged, sizeof(staged));
+  secp256r1_key_cleanup(&key);
+  return result;
+}
+
+int cmeta_ecdsa_p256_sign_sha256(
+    const uint8_t private_key[SALTS_ECDSA_P256_PRIVATE_KEY_BYTES],
+    const void *message, size_t message_size,
+    uint8_t *signature_der, size_t signature_capacity,
+    size_t *out_signature_size) {
+  static const uint8_t empty = 0u;
+  SECP256R1_KEY key;
+  ECDSA_SIGN_CTX context;
+  uint8_t staged[SALTS_ECDSA_P256_SIGNATURE_DER_MAX_BYTES];
+  const uint8_t *r = NULL, *s = NULL;
+  size_t r_size = 0u, s_size = 0u, signature_size = 0u;
+  size_t signature_range_size =
+      signature_capacity < sizeof(staged) ? signature_capacity : sizeof(staged);
+  int result = SALTS_EIO;
+
+  if (!private_key || (!message && message_size != 0u) ||
+      !out_signature_size || (!signature_der && signature_capacity != 0u))
+    return SALTS_EINVAL;
+  if (!cmeta_crypto_range_valid_v1(private_key,
+                                    SALTS_ECDSA_P256_PRIVATE_KEY_BYTES) ||
+      !cmeta_crypto_range_valid_v1(message, message_size) ||
+      !cmeta_crypto_range_valid_v1(signature_der, signature_range_size) ||
+      !cmeta_crypto_range_valid_v1(out_signature_size,
+                                   sizeof(*out_signature_size)) ||
+      cmeta_crypto_ranges_conflict_v1(out_signature_size,
+                                      sizeof(*out_signature_size),
+                                      private_key,
+                                      SALTS_ECDSA_P256_PRIVATE_KEY_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(out_signature_size,
+                                      sizeof(*out_signature_size),
+                                      message, message_size) ||
+      cmeta_crypto_ranges_conflict_v1(out_signature_size,
+                                      sizeof(*out_signature_size),
+                                      signature_der, signature_range_size) ||
+      cmeta_crypto_ranges_conflict_v1(signature_der, signature_range_size,
+                                      private_key,
+                                      SALTS_ECDSA_P256_PRIVATE_KEY_BYTES) ||
+      cmeta_crypto_ranges_conflict_v1(signature_der, signature_range_size,
+                                      message, message_size))
+    return SALTS_EINVAL;
+  if (signature_capacity < sizeof(staged)) {
+    *out_signature_size = sizeof(staged);
+    return SALTS_ERANGE;
+  }
+  if (!signature_der) return SALTS_EINVAL;
+
+  memset(&key, 0, sizeof(key));
+  memset(&context, 0, sizeof(context));
+  memset(staged, 0, sizeof(staged));
+  if (!cmeta_ecdsa_p256_import_private(&key, private_key)) {
+    result = SALTS_EINVAL;
+    goto cleanup;
+  }
+  if (ecdsa_sign_init(&context, &key) != 1 ||
+      ecdsa_sign_update(&context,
+                        message ? (const uint8_t *)message : &empty,
+                        message_size) != 1 ||
+      ecdsa_sign_finish(&context, staged, &signature_size) != 1 ||
+      signature_size == 0u || signature_size > sizeof(staged) ||
+      salts_asn1_ecdsa_signature_decode(staged, signature_size,
+                                        &r, &r_size, &s, &s_size) !=
+          SALTS_ASN1_OK ||
+      r_size > SALTS_ECDSA_P256_PRIVATE_KEY_BYTES ||
+      s_size > SALTS_ECDSA_P256_PRIVATE_KEY_BYTES) {
+    result = SALTS_EIO;
+    goto cleanup;
+  }
+  memcpy(signature_der, staged, signature_size);
+  *out_signature_size = signature_size;
+  result = SALTS_OK;
+cleanup:
+  gmssl_secure_clear(&context, sizeof(context));
+  secp256r1_key_cleanup(&key);
+  gmssl_secure_clear(staged, sizeof(staged));
+  return result;
+}
+
+int cmeta_ecdsa_p256_verify_sha256(
+    const uint8_t public_key[SALTS_ECDSA_P256_PUBLIC_KEY_BYTES],
+    const void *message, size_t message_size,
+    const void *signature_der, size_t signature_der_size) {
+  static const uint8_t empty = 0u;
+  SECP256R1_KEY key;
+  ECDSA_SIGN_CTX context;
+  const uint8_t *r = NULL, *s = NULL;
+  size_t r_size = 0u, s_size = 0u;
+  int result = SALTS_EIO;
+  if (!public_key || (!message && message_size != 0u) || !signature_der)
+    return SALTS_EINVAL;
+  if (signature_der_size == 0u ||
+      signature_der_size > SALTS_ECDSA_P256_SIGNATURE_DER_MAX_BYTES)
+    return SALTS_EAUTH;
+  if (!cmeta_crypto_range_valid_v1(public_key,
+                                    SALTS_ECDSA_P256_PUBLIC_KEY_BYTES) ||
+      !cmeta_crypto_range_valid_v1(message, message_size) ||
+      !cmeta_crypto_range_valid_v1(signature_der, signature_der_size))
+    return SALTS_EINVAL;
+  if (salts_asn1_ecdsa_signature_decode(signature_der, signature_der_size,
+                                        &r, &r_size, &s, &s_size) !=
+          SALTS_ASN1_OK ||
+      r_size > SALTS_ECDSA_P256_PRIVATE_KEY_BYTES ||
+      s_size > SALTS_ECDSA_P256_PRIVATE_KEY_BYTES)
+    return SALTS_EAUTH;
+
+  memset(&key, 0, sizeof(key));
+  memset(&context, 0, sizeof(context));
+  if (secp256r1_point_from_uncompressed_octets(&key.public_key, public_key) != 1 ||
+      secp256r1_point_is_on_curve(&key.public_key) != 1 ||
+      secp256r1_point_is_at_infinity(&key.public_key) == 1) {
+    result = SALTS_EINVAL;
+    goto cleanup;
+  }
+  if (ecdsa_verify_init(&context, &key, (const uint8_t *)signature_der,
+                        signature_der_size) != 1) {
+    result = SALTS_EAUTH;
+    goto cleanup;
+  }
+  if (ecdsa_verify_update(&context,
+                          message ? (const uint8_t *)message : &empty,
+                          message_size) != 1) {
+    result = SALTS_EIO;
+    goto cleanup;
+  }
+  result = ecdsa_verify_finish(&context) == 1 ? SALTS_OK : SALTS_EAUTH;
+cleanup:
+  gmssl_secure_clear(&context, sizeof(context));
+  secp256r1_key_cleanup(&key);
+  return result;
+}
+
+int cmeta_ed25519_public_key(
+    const uint8_t seed[SALTS_ED25519_SEED_BYTES],
+    uint8_t public_key[SALTS_ED25519_PUBLIC_KEY_BYTES]) {
+  uint8_t seed_copy[SALTS_ED25519_SEED_BYTES];
+  uint8_t secret_key[64];
+  uint8_t staged[SALTS_ED25519_PUBLIC_KEY_BYTES];
+  if (!seed || !public_key) return SALTS_EINVAL;
+  if (!cmeta_crypto_range_valid_v1(seed, SALTS_ED25519_SEED_BYTES) ||
+      !cmeta_crypto_range_valid_v1(public_key,
+                                    SALTS_ED25519_PUBLIC_KEY_BYTES))
+    return SALTS_EINVAL;
+  memcpy(seed_copy, seed, sizeof(seed_copy));
+  crypto_ed25519_key_pair(secret_key, staged, seed_copy);
+  memcpy(public_key, staged, sizeof(staged));
+  crypto_wipe(seed_copy, sizeof(seed_copy));
+  crypto_wipe(secret_key, sizeof(secret_key));
+  crypto_wipe(staged, sizeof(staged));
+  return SALTS_OK;
+}
+
+int cmeta_ed25519_sign(
+    const uint8_t seed[SALTS_ED25519_SEED_BYTES],
+    const void *message, size_t message_size,
+    uint8_t signature[SALTS_ED25519_SIGNATURE_BYTES]) {
+  static const uint8_t empty = 0u;
+  uint8_t seed_copy[SALTS_ED25519_SEED_BYTES];
+  uint8_t secret_key[64];
+  uint8_t public_key[SALTS_ED25519_PUBLIC_KEY_BYTES];
+  uint8_t staged[SALTS_ED25519_SIGNATURE_BYTES];
+  if (!seed || (!message && message_size != 0u) || !signature)
+    return SALTS_EINVAL;
+  if (!cmeta_crypto_range_valid_v1(seed, SALTS_ED25519_SEED_BYTES) ||
+      !cmeta_crypto_range_valid_v1(message, message_size) ||
+      !cmeta_crypto_range_valid_v1(signature, SALTS_ED25519_SIGNATURE_BYTES))
+    return SALTS_EINVAL;
+  memcpy(seed_copy, seed, sizeof(seed_copy));
+  crypto_ed25519_key_pair(secret_key, public_key, seed_copy);
+  crypto_ed25519_sign(staged, secret_key,
+                      message ? (const uint8_t *)message : &empty,
+                      message_size);
+  memcpy(signature, staged, sizeof(staged));
+  crypto_wipe(seed_copy, sizeof(seed_copy));
+  crypto_wipe(secret_key, sizeof(secret_key));
+  crypto_wipe(public_key, sizeof(public_key));
+  crypto_wipe(staged, sizeof(staged));
+  return SALTS_OK;
+}
+
+int cmeta_ed25519_verify(
+    const uint8_t public_key[SALTS_ED25519_PUBLIC_KEY_BYTES],
+    const void *message, size_t message_size,
+    const uint8_t signature[SALTS_ED25519_SIGNATURE_BYTES]) {
+  static const uint8_t empty = 0u;
+  if (!public_key || (!message && message_size != 0u) || !signature)
+    return SALTS_EINVAL;
+  if (!cmeta_crypto_range_valid_v1(public_key,
+                                    SALTS_ED25519_PUBLIC_KEY_BYTES) ||
+      !cmeta_crypto_range_valid_v1(message, message_size) ||
+      !cmeta_crypto_range_valid_v1(signature,
+                                    SALTS_ED25519_SIGNATURE_BYTES))
+    return SALTS_EINVAL;
+  return crypto_ed25519_check(signature, public_key,
+                              message ? (const uint8_t *)message : &empty,
+                              message_size) == 0
+             ? SALTS_OK
+             : SALTS_EAUTH;
+}
+
+int cmeta_x25519_public_key(
+    const uint8_t private_key[SALTS_X25519_KEY_BYTES],
+    uint8_t public_key[SALTS_X25519_KEY_BYTES]) {
+  uint8_t staged[SALTS_X25519_KEY_BYTES];
+  if (!private_key || !public_key) return SALTS_EINVAL;
+  if (!cmeta_crypto_range_valid_v1(private_key, SALTS_X25519_KEY_BYTES) ||
+      !cmeta_crypto_range_valid_v1(public_key, SALTS_X25519_KEY_BYTES))
+    return SALTS_EINVAL;
+  crypto_x25519_public_key(staged, private_key);
+  memcpy(public_key, staged, sizeof(staged));
+  crypto_wipe(staged, sizeof(staged));
+  return SALTS_OK;
+}
+
+int cmeta_x25519_derive(
+    const uint8_t private_key[SALTS_X25519_KEY_BYTES],
+    const uint8_t peer_public_key[SALTS_X25519_KEY_BYTES],
+    uint8_t shared_secret[SALTS_X25519_KEY_BYTES]) {
+  uint8_t staged[SALTS_X25519_KEY_BYTES];
+  uint8_t nonzero = 0u;
+  size_t i;
+  if (!private_key || !peer_public_key || !shared_secret)
+    return SALTS_EINVAL;
+  if (!cmeta_crypto_range_valid_v1(private_key, SALTS_X25519_KEY_BYTES) ||
+      !cmeta_crypto_range_valid_v1(peer_public_key, SALTS_X25519_KEY_BYTES) ||
+      !cmeta_crypto_range_valid_v1(shared_secret, SALTS_X25519_KEY_BYTES))
+    return SALTS_EINVAL;
+  crypto_x25519(staged, private_key, peer_public_key);
+  for (i = 0u; i < sizeof(staged); ++i) nonzero |= staged[i];
+  if (nonzero == 0u) {
+    crypto_wipe(staged, sizeof(staged));
+    return SALTS_EAUTH;
+  }
+  memcpy(shared_secret, staged, sizeof(staged));
+  crypto_wipe(staged, sizeof(staged));
+  return SALTS_OK;
 }
 
 static int cmeta_sm4_gcm_seal_ranges_valid(

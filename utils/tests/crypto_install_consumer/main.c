@@ -109,5 +109,21 @@ int main(void) {
         memcmp(output, before, sizeof(output)) != 0)
       return 13;
   }
+  {
+    uint8_t seed[SALTS_ED25519_SEED_BYTES] = {0};
+    uint8_t public_key[SALTS_ED25519_PUBLIC_KEY_BYTES];
+    uint8_t signature[SALTS_ED25519_SIGNATURE_BYTES];
+    uint8_t x_public[SALTS_X25519_KEY_BYTES];
+    uint8_t p256_private[SALTS_ECDSA_P256_PRIVATE_KEY_BYTES] = {0};
+    uint8_t p256_public[SALTS_ECDSA_P256_PUBLIC_KEY_BYTES];
+    p256_private[sizeof(p256_private) - 1u] = 1u;
+    if (cmeta_ed25519_public_key(seed, public_key) != SALTS_OK) return 20;
+    if (cmeta_ed25519_sign(seed, "sdk", 3u, signature) != SALTS_OK) return 21;
+    if (cmeta_ed25519_verify(public_key, "sdk", 3u, signature) != SALTS_OK)
+      return 22;
+    if (cmeta_x25519_public_key(seed, x_public) != SALTS_OK) return 23;
+    if (cmeta_ecdsa_p256_public_key(p256_private, p256_public) != SALTS_OK)
+      return 24;
+  }
   return 0;
 }

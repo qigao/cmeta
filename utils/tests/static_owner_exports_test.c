@@ -39,6 +39,12 @@ static int audit(const char *path, const char *required_symbol) {
       "stl_bplus_tree_container_desc",
       "stl_bplus_tree_generic_desc",
       "cflow_type_executor_protocol_stats_ptr",
+      "crypto_ed25519_sign",
+      "crypto_sha512",
+      "crypto_x25519",
+      "salts_core_private_crypto_ed25519_sign",
+      "salts_core_private_crypto_sha512",
+      "salts_core_private_crypto_x25519",
   };
   image_handle image = open_image(path);
   int failed = 0;

@@ -1,4 +1,5 @@
 #include <salts/asn1_value.h>
+#include <salts/asn1_crypto.h>
 
 #include <stdint.h>
 #include <stdio.h>
@@ -44,6 +45,22 @@ int main(void) {
                     (int)status, (long long)decoded_integer);
             goto done;
         }
+    }
+    {
+        uint8_t key[SALTS_ASN1_RFC8410_KEY_BYTES] = {0};
+        uint8_t spki[SALTS_ASN1_RFC8410_SPKI_BYTES];
+        const uint8_t *decoded_key = NULL;
+        size_t decoded_key_size = 0u;
+        salts_asn1_rfc8410_algorithm algorithm = 0;
+        salts_asn1_status status = salts_asn1_rfc8410_spki_encode(
+            SALTS_ASN1_RFC8410_ED25519, key, spki, sizeof(spki), &written);
+        if (status != SALTS_ASN1_OK || written != sizeof(spki)) goto done;
+        status = salts_asn1_rfc8410_spki_decode(
+            spki, written, &algorithm, &decoded_key, &decoded_key_size);
+        if (status != SALTS_ASN1_OK ||
+            algorithm != SALTS_ASN1_RFC8410_ED25519 ||
+            decoded_key_size != sizeof(key) ||
+            memcmp(decoded_key, key, sizeof(key)) != 0) goto done;
     }
     result = 0;
 

@@ -156,6 +156,70 @@ SALTS_C_API int cmeta_hkdf_sm3(
     const void *info, size_t info_size,
     void *output, size_t output_size);
 
+#define SALTS_ECDSA_P256_PRIVATE_KEY_BYTES 32u
+#define SALTS_ECDSA_P256_PUBLIC_KEY_BYTES 65u
+#define SALTS_ECDSA_P256_SIGNATURE_DER_MAX_BYTES 72u
+#define SALTS_ED25519_SEED_BYTES 32u
+#define SALTS_ED25519_PUBLIC_KEY_BYTES 32u
+#define SALTS_ED25519_SIGNATURE_BYTES 64u
+#define SALTS_X25519_KEY_BYTES 32u
+
+/** Derive an SEC1 uncompressed P-256 public key from a big-endian scalar.
+ * The scalar must be in [1, n-1]. Output is committed only on success. */
+SALTS_C_API int cmeta_ecdsa_p256_public_key(
+    const uint8_t private_key[SALTS_ECDSA_P256_PRIVATE_KEY_BYTES],
+    uint8_t public_key[SALTS_ECDSA_P256_PUBLIC_KEY_BYTES]);
+
+/** Sign a message with ECDSA P-256 and SHA-256.
+ *
+ * The signature is canonical X9.62 DER. If capacity is below the 72-byte
+ * maximum, the function reports 72 through out_signature_size and returns
+ * SALTS_ERANGE without signing. Every other failure leaves caller outputs
+ * unchanged. The provider supplies the per-signature random nonce.
+ */
+SALTS_C_API int cmeta_ecdsa_p256_sign_sha256(
+    const uint8_t private_key[SALTS_ECDSA_P256_PRIVATE_KEY_BYTES],
+    const void *message, size_t message_size,
+    uint8_t *signature_der, size_t signature_capacity,
+    size_t *out_signature_size);
+
+/** Verify a canonical DER ECDSA P-256/SHA-256 signature.
+ * Invalid keys are EINVAL; malformed or incorrect signatures are EAUTH. */
+SALTS_C_API int cmeta_ecdsa_p256_verify_sha256(
+    const uint8_t public_key[SALTS_ECDSA_P256_PUBLIC_KEY_BYTES],
+    const void *message, size_t message_size,
+    const void *signature_der, size_t signature_der_size);
+
+/** Derive an RFC 8032 Ed25519 public key from a 32-byte private seed. */
+SALTS_C_API int cmeta_ed25519_public_key(
+    const uint8_t seed[SALTS_ED25519_SEED_BYTES],
+    uint8_t public_key[SALTS_ED25519_PUBLIC_KEY_BYTES]);
+
+/** Sign one message with deterministic RFC 8032 pure Ed25519. */
+SALTS_C_API int cmeta_ed25519_sign(
+    const uint8_t seed[SALTS_ED25519_SEED_BYTES],
+    const void *message, size_t message_size,
+    uint8_t signature[SALTS_ED25519_SIGNATURE_BYTES]);
+
+/** Verify an RFC 8032 pure Ed25519 signature; forgeries return EAUTH. */
+SALTS_C_API int cmeta_ed25519_verify(
+    const uint8_t public_key[SALTS_ED25519_PUBLIC_KEY_BYTES],
+    const void *message, size_t message_size,
+    const uint8_t signature[SALTS_ED25519_SIGNATURE_BYTES]);
+
+/** Derive an RFC 7748 X25519 public key from a 32-byte private scalar. */
+SALTS_C_API int cmeta_x25519_public_key(
+    const uint8_t private_key[SALTS_X25519_KEY_BYTES],
+    uint8_t public_key[SALTS_X25519_KEY_BYTES]);
+
+/** Derive an RFC 7748 X25519 shared secret.
+ * An all-zero result is rejected with EAUTH and never published. Protocols
+ * must apply their own KDF to the successful raw shared secret. */
+SALTS_C_API int cmeta_x25519_derive(
+    const uint8_t private_key[SALTS_X25519_KEY_BYTES],
+    const uint8_t peer_public_key[SALTS_X25519_KEY_BYTES],
+    uint8_t shared_secret[SALTS_X25519_KEY_BYTES]);
+
 #define SALTS_SM2_MAX_KEY_DER_BYTES (64u * 1024u)
 #define SALTS_SM2_MAX_USER_ID_BYTES 8191u
 #define SALTS_SM2_SIGNATURE_DER_MAX_BYTES 72u

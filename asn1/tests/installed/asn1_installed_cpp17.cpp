@@ -1,9 +1,11 @@
 #include <salts/asn1_value.h>
+#include <salts/asn1_crypto.h>
 
 #include <cstdint>
 #include <cstdio>
 
 int main() {
+    static_assert(SALTS_ASN1_RFC8410_KEY_BYTES == 32u, "RFC 8410 key ABI");
     salts_asn1_value *sequence = nullptr;
     salts_asn1_value *integer = nullptr;
     salts_asn1_value *decoded = nullptr;

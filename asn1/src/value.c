@@ -188,6 +188,55 @@ salts_asn1_status salts_asn1_value_create_integer(int64_t value,
                                    sizeof(encoded) - start, out);
 }
 
+salts_asn1_status salts_asn1_value_create_unsigned_integer(
+    const void *magnitude, size_t magnitude_size, salts_asn1_value **out) {
+    const uint8_t *bytes = (const uint8_t *)magnitude;
+    uint8_t *encoded;
+    size_t prefix, encoded_size;
+    salts_asn1_status status;
+    if (!out || (!magnitude && magnitude_size != 0u))
+        return SALTS_ASN1_INVALID_ARGUMENT;
+    *out = NULL;
+    while (magnitude_size > 0u && *bytes == 0u) {
+        ++bytes;
+        --magnitude_size;
+    }
+    prefix = magnitude_size == 0u || (bytes[0] & 0x80u) != 0u ? 1u : 0u;
+    if (magnitude_size > SIZE_MAX - prefix)
+        return SALTS_ASN1_LIMIT_EXCEEDED;
+    encoded_size = magnitude_size + prefix;
+    encoded = (uint8_t *)malloc(encoded_size);
+    if (!encoded) return SALTS_ASN1_OUT_OF_MEMORY;
+    if (prefix != 0u) encoded[0] = 0u;
+    if (magnitude_size != 0u)
+        memcpy(encoded + prefix, bytes, magnitude_size);
+    status = salts_asn1_value_create(0u, 0u, 2u, encoded, encoded_size, out);
+    free(encoded);
+    return status;
+}
+
+salts_asn1_status salts_asn1_value_create_bit_string(
+    const void *data, size_t size, uint8_t unused_bits,
+    salts_asn1_value **out) {
+    const uint8_t *bytes = (const uint8_t *)data;
+    uint8_t *content;
+    salts_asn1_status status;
+    if (!out || unused_bits > 7u || (!data && size != 0u) ||
+        (size == 0u && unused_bits != 0u) ||
+        (size != 0u && unused_bits != 0u &&
+         (bytes[size - 1u] & (uint8_t)((1u << unused_bits) - 1u)) != 0u))
+        return SALTS_ASN1_INVALID_ARGUMENT;
+    *out = NULL;
+    if (size == SIZE_MAX) return SALTS_ASN1_LIMIT_EXCEEDED;
+    content = (uint8_t *)malloc(size + 1u);
+    if (!content) return SALTS_ASN1_OUT_OF_MEMORY;
+    content[0] = unused_bits;
+    if (size != 0u) memcpy(content + 1u, data, size);
+    status = salts_asn1_value_create(0u, 0u, 3u, content, size + 1u, out);
+    free(content);
+    return status;
+}
+
 salts_asn1_status salts_asn1_value_create_octet_string(
     const void *data, size_t size, salts_asn1_value **out) {
     return salts_asn1_value_create(0u, 0u, 4u, data, size, out);
@@ -348,6 +397,47 @@ salts_asn1_status salts_asn1_value_get_integer_i64(
         *out = INT64_MIN;
     else
         *out = -(int64_t)magnitude;
+    return SALTS_ASN1_OK;
+}
+
+salts_asn1_status salts_asn1_value_get_unsigned_integer(
+    const salts_asn1_value *value, const uint8_t **magnitude,
+    size_t *magnitude_size) {
+    const uint8_t *data;
+    size_t size;
+    if (!value || !magnitude || !magnitude_size || value->tag_class != 0u ||
+        value->tag_number != 2u || value->constructed)
+        return SALTS_ASN1_INVALID_ARGUMENT;
+    data = value->content;
+    size = value->content_size;
+    if (size == 0u || (data[0] & 0x80u) != 0u)
+        return SALTS_ASN1_MALFORMED;
+    while (size > 1u && data[0] == 0u) {
+        ++data;
+        --size;
+    }
+    *magnitude = data;
+    *magnitude_size = size;
+    return SALTS_ASN1_OK;
+}
+
+salts_asn1_status salts_asn1_value_get_bit_string(
+    const salts_asn1_value *value, const uint8_t **data, size_t *size,
+    uint8_t *unused_bits) {
+    uint8_t unused;
+    if (!value || !data || !size || !unused_bits || value->tag_class != 0u ||
+        value->tag_number != 3u || value->constructed)
+        return SALTS_ASN1_INVALID_ARGUMENT;
+    if (value->content_size == 0u) return SALTS_ASN1_MALFORMED;
+    unused = value->content[0];
+    if (unused > 7u || (value->content_size == 1u && unused != 0u) ||
+        (value->content_size > 1u && unused != 0u &&
+         (value->content[value->content_size - 1u] &
+          (uint8_t)((1u << unused) - 1u)) != 0u))
+        return SALTS_ASN1_MALFORMED;
+    *data = value->content + 1u;
+    *size = value->content_size - 1u;
+    *unused_bits = unused;
     return SALTS_ASN1_OK;
 }
 
