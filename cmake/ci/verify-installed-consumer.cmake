@@ -33,6 +33,7 @@ endif()
 set(consumer_configure
   -S "${CONSUMER_SOURCE_DIR}" -B "${build}" -G "${SALTS_GENERATOR}"
   "-DCMAKE_PREFIX_PATH=${prefix}"
+  "-DSALTS_TEST_PREFIX=${prefix}"
   "-DSalts_DIR=${prefix}/lib/cmake/Salts"
   "-DSALTS_TEST_VERSION=${SALTS_TEST_VERSION}"
   -DCMAKE_FIND_USE_PACKAGE_REGISTRY=FALSE
