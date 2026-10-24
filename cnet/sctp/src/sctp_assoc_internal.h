@@ -148,6 +148,10 @@ typedef struct cnet_sctp_assoc {
   uint32_t last_peer_reset_request;
   size_t last_reset_response_size;
   uint8_t last_reset_response[CNET_SCTP_ASSOC_MAX_PACKET];
+  uint8_t deferred_peer_reset_active;
+  uint16_t deferred_peer_reset_streams;
+  uint32_t deferred_peer_reset_request;
+  uint32_t deferred_peer_reset_last_tsn;
   uint16_t incoming_reset_events;
   uint16_t outgoing_reset_events;
   uint8_t outgoing_reset_results[CNET_SCTP_DATA_STREAMS];

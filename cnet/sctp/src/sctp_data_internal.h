@@ -176,8 +176,8 @@ cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d, uint64_t now_ms,
 cnet_sctp_data_status cnet_sctp_data_shutdown_cumack(cnet_sctp_data *d,
     uint64_t now_ms, uint32_t cumulative);
 int cnet_sctp_data_outbound_drained(const cnet_sctp_data *d);
-int cnet_sctp_data_stream_inbound_drained(const cnet_sctp_data *d,
-                                          uint16_t stream_id);
+int cnet_sctp_data_streams_through_tsn_drained(const cnet_sctp_data *d,
+    uint16_t stream_mask, uint32_t last_tsn);
 void cnet_sctp_data_reset_outbound_ssn(cnet_sctp_data *d, uint16_t stream_id);
 void cnet_sctp_data_reset_inbound_ssn(cnet_sctp_data *d, uint16_t stream_id);
 
@@ -186,6 +186,14 @@ cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now_ms,
     void *output, size_t output_capacity, size_t *written);
 
 cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
+    cnet_sctp_data_message *metadata, void *destination,
+    size_t capacity, size_t *written);
+
+/* While an RFC 6525 outgoing reset is deferred, affected records after the
+ * sender's last assigned TSN remain owned by the fixed RX slots but are not
+ * released to the ULP. No view or additional queue is created. */
+cnet_sctp_data_status cnet_sctp_data_take_before_reset(cnet_sctp_data *d,
+    uint16_t stream_mask, uint32_t last_tsn,
     cnet_sctp_data_message *metadata, void *destination,
     size_t capacity, size_t *written);
 

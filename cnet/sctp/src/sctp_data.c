@@ -787,13 +787,17 @@ int cnet_sctp_data_outbound_drained(const cnet_sctp_data *d) {
     if (d->tx[i].used) return 0;
   return 1;
 }
-int cnet_sctp_data_stream_inbound_drained(const cnet_sctp_data *d,
-    uint16_t stream_id) {
+int cnet_sctp_data_streams_through_tsn_drained(const cnet_sctp_data *d,
+    uint16_t stream_mask, uint32_t last_tsn) {
   unsigned int i;
-  if (!d || d->magic != DATA_MAGIC || stream_id >= d->config.inbound_streams)
-    return 0;
-  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i)
-    if (d->rx[i].used && d->rx[i].stream_id == stream_id) return 0;
+  if (!d || d->magic != DATA_MAGIC) return 0;
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
+    const cnet_sctp_data_rx *slot = &d->rx[i];
+    if (slot->used && slot->stream_id < CNET_SCTP_DATA_STREAMS &&
+        (stream_mask & (uint16_t)(UINT16_C(1) << slot->stream_id)) != 0u &&
+        !ahead(slot->tsn, last_tsn))
+      return 0;
+  }
   return 1;
 }
 void cnet_sctp_data_reset_outbound_ssn(cnet_sctp_data *d,
@@ -881,9 +885,9 @@ static cnet_sctp_data_rx *find_rx_tsn(cnet_sctp_data *d, uint32_t tsn) {
   return NULL;
 }
 
-cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
-    cnet_sctp_data_message *meta, void *out, size_t cap,
-    size_t *written) {
+static cnet_sctp_data_status take_message(cnet_sctp_data *d,
+    uint16_t held_streams, uint32_t last_tsn,
+    cnet_sctp_data_message *meta, void *out, size_t cap, size_t *written) {
   if (written) *written = 0u;
   cnet_sctp_data_status status = guard(d);
   unsigned int i;
@@ -894,8 +898,14 @@ cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
     uint32_t tsn;
     size_t total = 0u, count;
     int complete = 0;
+    int held = 0;
     if (!start->used || (start->flags & DATA_B) == 0u ||
         (!start->unordered && start->ssn != d->rx_ssn[start->stream_id]))
+      continue;
+    if (start->stream_id < CNET_SCTP_DATA_STREAMS &&
+        (held_streams &
+         (uint16_t)(UINT16_C(1) << start->stream_id)) != 0u &&
+        ahead(start->tsn, last_tsn))
       continue;
     /* RFC 9260 DATA fragments of one message have contiguous TSNs and
      * identical SID/SSN/PPID/U; they may arrive out of order. Scan only
@@ -909,12 +919,18 @@ cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
           frag->unordered != start->unordered ||
           (count != 0u && (frag->flags & DATA_B) != 0u))
         return CNET_SCTP_DATA_PROTOCOL; /* no legacy interleaving */
+      if (frag->stream_id < CNET_SCTP_DATA_STREAMS &&
+          (held_streams &
+           (uint16_t)(UINT16_C(1) << frag->stream_id)) != 0u &&
+          ahead(frag->tsn, last_tsn))
+        held = 1;
       if (total > CNET_SCTP_DATA_MESSAGE_MAX - frag->size)
         return CNET_SCTP_DATA_CAPACITY;
       total += frag->size;
       if (frag->flags & DATA_E) { complete = 1; break; }
     }
     if (!complete) continue;
+    if (held) continue;
     if (total > cap) return CNET_SCTP_DATA_CAPACITY;
     /* Snapshot metadata before freeing its first fragment. The entire
      * message is committed at once, never exposing erased RX storage. */
@@ -953,6 +969,19 @@ cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
     return CNET_SCTP_DATA_OK;
   }
   return CNET_SCTP_DATA_EMPTY;
+}
+
+cnet_sctp_data_status cnet_sctp_data_take(cnet_sctp_data *d,
+    cnet_sctp_data_message *meta, void *out, size_t cap,
+    size_t *written) {
+  return take_message(d, 0u, 0u, meta, out, cap, written);
+}
+
+cnet_sctp_data_status cnet_sctp_data_take_before_reset(cnet_sctp_data *d,
+    uint16_t stream_mask, uint32_t last_tsn,
+    cnet_sctp_data_message *meta, void *out, size_t cap,
+    size_t *written) {
+  return take_message(d, stream_mask, last_tsn, meta, out, cap, written);
 }
 
 /* RFC 9260 6.2: Owner explicitly emits a reopened-window SACK, not a
