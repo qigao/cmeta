@@ -834,6 +834,11 @@ int cmeta_sm2_verify(
     result = SALTS_EINVAL;
     goto cleanup;
   }
+  if (sm2_z256_point_is_on_curve(&key.public_key) != 1 ||
+      sm2_z256_point_is_at_infinity(&key.public_key) == 1) {
+    result = SALTS_EINVAL;
+    goto cleanup;
+  }
 
   signature_cursor = (const uint8_t *)signature_der;
   signature_remaining = signature_der_size;
