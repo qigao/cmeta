@@ -12,7 +12,8 @@ name: CNet installed P-384/SHA-384 ASan/UBSan
       - 'cnet/src/cnet_tls.c'
       - 'cnet/tests/CMakeLists.txt'
       - 'cnet/tests/cnet_tls_test.c'
-      - 'cnet/tests/fixtures/p384-test-*.pem'
+      - 'cnet/tests/fixtures/p384-*.pem'
+      - 'cnet/tests/fixtures/unsupported-ed25519-*.pem'
       - 'cnet/tests/package_config/strategy/**'
       - 'cnet/tests/verify_installed_cnet.cmake'
       - 'vcpkg-configuration.json'
@@ -101,7 +102,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build "$BUILD_ROOT" --target install cnet_tls_test --parallel 2
+          cmake --build "$BUILD_ROOT" --parallel 2
+          cmake --install "$BUILD_ROOT"
 
       - name: Verify production CNet TLS source and regression test are instrumented
         shell: bash
