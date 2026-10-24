@@ -2,7 +2,7 @@ include(GNUInstallDirs)
 
 set(TARGET_NAME salts_asn1)
 
-add_library(${TARGET_NAME} SHARED src/asn1.c src/value.c)
+add_library(${TARGET_NAME} SHARED src/asn1.c src/value.c src/crypto.c)
 cmake_config_target(
   ${TARGET_NAME}
   VERSION "${PROJECT_VERSION}"

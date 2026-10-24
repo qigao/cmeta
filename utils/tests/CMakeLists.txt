@@ -50,6 +50,7 @@ cmake_add_test(test_cmeta_crypto_fault
   SOURCES ${CMETA_CRYPTO_FAULT_C} ${CMAKE_CURRENT_SOURCE_DIR}/../src/cmeta_crypto.c
   FOLDER "utils/tests"
   LIBS Salts::TinyTest Salts::ASN1 Salts::CMeta Salts::Platform GmSSL::GmSSL
+       core_monocypher
   DEFS CMETA_CRYPTO_TEST_HOOKS=1
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../include)
 set_tests_properties(test_cmeta_crypto_fault PROPERTIES LABELS "crypto;fault")

@@ -19,6 +19,7 @@ The stable error classes for this surface are:
 - `SALTS_EINVAL`: invalid pointer/length/lifecycle contract;
 - `SALTS_ERANGE`: a valid request exceeds a fixed algorithm bound;
 - `SALTS_ENOMEM`: opaque context allocation failed;
+- `SALTS_EAUTH`: authentication, signature or contributory-key check failed;
 - `SALTS_EIO`: the pinned provider failed after public preconditions passed.
 
 No algorithm fallback is permitted. Existing MD5, SHA-1, DES-CBC and AES-CFB
@@ -58,6 +59,40 @@ This ABI freeze is the dependency for the remaining explicit additions:
 
 No dynamic crypto-provider registry, PKCS#11/SDF adapter, raw provider-state
 persistence, or compatibility alias is introduced by this contract.
+
+## Standard elliptic-curve slice
+
+Core exposes three provider-neutral byte APIs needed by common protocols:
+
+- ECDSA P-256 with SHA-256. Private keys are fixed-width big-endian scalars,
+  public keys are 65-byte uncompressed SEC1 points, and signatures are strict
+  X9.62 DER. GmSSL owns scalar multiplication, nonce generation and signing.
+- RFC 8032 pure Ed25519. The private input is a 32-byte seed, the public key is
+  32 bytes, and signatures are 64 bytes. The implementation uses Monocypher's
+  optional Ed25519 4.0.3 source, including its signature timing-leak fix.
+- RFC 7748 X25519. Inputs and results are 32 bytes. The caller must feed the raw
+  shared secret to a protocol KDF. All-zero results are rejected with
+  `SALTS_EAUTH` and are never published.
+
+ASN.1 serialization remains in `Salts::ASN1`, not Core. `asn1_crypto.h`
+provides strict ECDSA-Sig-Value DER and RFC 8410 Ed25519/X25519 SPKI and PKCS#8
+codecs. RFC 8410 AlgorithmIdentifier parameters must be absent. Decoders return
+borrowed views into caller-owned DER; encoders stage and publish only complete
+results. This keeps format policy reusable without introducing a Core wrapper
+or exposing a provider ASN.1 type.
+
+GmSSL 3.2 is retained for P-256 because it is already the pinned Core provider.
+Its build has no Ed25519 or X25519 API, so those operations use the existing
+vendored Monocypher family instead of adding OpenSSL, a provider registry or a
+second package dependency. CNet and Core compile independent hidden namespaces;
+no generic `crypto_*` vendor symbol is exported from either DSO. Updating or
+removing this slice is therefore reversible at the private target boundary and
+does not change serialized keys or the public provider-neutral ABI.
+
+Required qualification covers RFC 8032 and RFC 7748 known-answer vectors,
+ECDSA derive/sign/verify and tampering, DER canonicality and width limits,
+all-zero X25519 rejection, unchanged outputs on failure, C/C++ headers, private
+symbol leakage, installed-SDK consumers and sanitizer builds.
 
 ## ABI v1 contract for SM4-GCM and SM2
 

@@ -6,6 +6,8 @@
 
 static_assert(SALTS_SM3_DIGEST_BYTES == 32u, "SM3 ABI mismatch");
 static_assert(SALTS_HKDF_SM3_MAX_OUTPUT_BYTES == 8160u, "HKDF-SM3 bound mismatch");
+static_assert(SALTS_ED25519_SIGNATURE_BYTES == 64u, "Ed25519 ABI mismatch");
+static_assert(SALTS_X25519_KEY_BYTES == 32u, "X25519 ABI mismatch");
 
 int main() {
   std::uint8_t digest[SALTS_SM3_DIGEST_BYTES] = {};

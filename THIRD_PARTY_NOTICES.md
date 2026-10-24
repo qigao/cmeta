@@ -7,7 +7,7 @@ The components below retain their upstream license terms.
 | --- | --- | --- | --- |
 | CRoaring | `vendor/croar/` | Apache-2.0 OR MIT | License notices are embedded in the amalgamated source. |
 | minicoro | `vendor/minicoro/` | Unlicense OR MIT-0 | Upstream license copied to `vendor/minicoro/LICENSE`. |
-| Monocypher | `vendor/monocypher/` | BSD-2-Clause OR CC0-1.0 | License notices are embedded in the upstream source. |
+| Monocypher | `vendor/monocypher/` | BSD-2-Clause OR CC0-1.0 | Base and optional Ed25519 sources are 4.0.3; provenance and retained local spellings are documented in `vendor/monocypher/UPSTREAM.md`, and license notices remain embedded in the upstream source. |
 | reed/gf256 | `vendor/reed/` | MIT | See `vendor/reed/LICENSE`. |
 | SDS | `vendor/sds/` | BSD-2-Clause | See `vendor/sds/LICENSE`. |
 | TinyTest | `tinytest/` | MIT | Upstream attribution is retained in the TinyTest sources and README. |

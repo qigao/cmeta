@@ -71,7 +71,7 @@ target_link_libraries(
           Salts::CSTL
           Salts::CFlow
           ${FMT_LEXER_LIBRARY} Salts::SDS # Simple Dynamic Strings
-          aklomp::base64 zstd::libzstd GmSSL::GmSSL
+          aklomp::base64 zstd::libzstd GmSSL::GmSSL core_monocypher
           ${LOG_PATTERN_LEXER_LIBRARY} # Log pattern lexer
 )
 

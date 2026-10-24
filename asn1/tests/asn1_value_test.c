@@ -140,4 +140,37 @@ spec("Salts ASN.1 owned value tree") {
                     SALTS_ASN1_INVALID_ARGUMENT);
         salts_asn1_value_free(integer);
     }
+
+    it("owns unsigned INTEGER and BIT STRING payloads") {
+        const uint8_t magnitude[] = {0u, 0x80u, 0x01u};
+        const uint8_t bits[] = {0xa8u};
+        salts_asn1_value *integer = NULL, *bit_string = NULL;
+        const uint8_t *view = NULL;
+        size_t size = 0u;
+        uint8_t unused = 0u;
+
+        check_equal(salts_asn1_value_create_unsigned_integer(
+                        magnitude, sizeof(magnitude), &integer),
+                    SALTS_ASN1_OK);
+        check_equal(salts_asn1_value_get_unsigned_integer(integer, &view, &size),
+                    SALTS_ASN1_OK);
+        check_equal(size, (size_t)2u);
+        check_equal(view[0], 0x80u);
+        check_equal(view[1], 0x01u);
+
+        check_equal(salts_asn1_value_create_bit_string(bits, sizeof(bits), 3u,
+                                                       &bit_string),
+                    SALTS_ASN1_OK);
+        check_equal(salts_asn1_value_get_bit_string(bit_string, &view, &size,
+                                                    &unused),
+                    SALTS_ASN1_OK);
+        check_equal(size, sizeof(bits));
+        check_equal(unused, 3u);
+        check_equal(view[0], bits[0]);
+        check_equal(salts_asn1_value_create_bit_string(bits, sizeof(bits), 4u,
+                                                       &bit_string),
+                    SALTS_ASN1_INVALID_ARGUMENT);
+        salts_asn1_value_free(integer);
+        salts_asn1_value_free(bit_string);
+    }
 }

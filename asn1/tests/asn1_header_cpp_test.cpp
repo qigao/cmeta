@@ -1,5 +1,6 @@
 #include <salts/asn1.h>
 #include <salts/asn1_value.h>
+#include <salts/asn1_crypto.h>
 #include "tinytest.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -22,5 +23,15 @@ spec("Salts ASN.1 C++17 public header") {
         check_equal(salts_asn1_value_add_child(sequence, integer), SALTS_ASN1_OK);
         check_equal(salts_asn1_value_child_count(sequence), static_cast<std::size_t>(1u));
         salts_asn1_value_free(sequence);
+    }
+    it("exposes the RFC 8410 C ABI") {
+        std::uint8_t key[SALTS_ASN1_RFC8410_KEY_BYTES]{};
+        std::uint8_t der[SALTS_ASN1_RFC8410_SPKI_BYTES]{};
+        std::size_t written = 0u;
+        check_equal(salts_asn1_rfc8410_spki_encode(
+                        SALTS_ASN1_RFC8410_ED25519, key, der, sizeof(der),
+                        &written),
+                    SALTS_ASN1_OK);
+        check_equal(written, static_cast<std::size_t>(sizeof(der)));
     }
 }
