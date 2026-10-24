@@ -98,6 +98,7 @@ add_subdirectory(cflow)
 add_subdirectory(cstl)
 add_subdirectory(cnet)
 add_subdirectory(cserde)
+add_subdirectory(asn1)
 add_subdirectory(utils)
 # Unicode depends only on Salts::Core; this migration does not change CNet DNS.
 add_subdirectory(unicode)
