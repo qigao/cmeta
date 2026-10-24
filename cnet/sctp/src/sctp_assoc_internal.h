@@ -130,8 +130,14 @@ typedef struct cnet_sctp_assoc {
   uint16_t peer_inbound_streams;
   uint8_t peer_reconfig_supported;
   uint8_t reset_active;
+  uint8_t reset_is_reciprocal;
   uint8_t reset_retransmits;
   uint16_t reset_stream;
+  /* RFC 8831 DataChannel close is bidirectional. Fixed bitsets keep at most
+   * one bounded state flag per private profile SID; no queue or heap grows. */
+  uint16_t reciprocal_reset_pending;
+  uint16_t awaiting_peer_reciprocal;
+  uint16_t reciprocal_reset_failed;
   uint32_t next_reset_request;
   uint32_t expected_peer_reset_request;
   uint32_t reset_request;
@@ -207,9 +213,11 @@ cnet_sctp_assoc_status cnet_sctp_assoc_window_update(cnet_sctp_assoc *s,
     uint64_t now_ms, void *output, size_t capacity, size_t *written);
 
 /* RFC 6525 outgoing SSN reset for one bounded stream. The request is admitted
- * only after all locally retained DATA is cumulatively acknowledged. While it
- * is in flight, new sends on that SID are rejected. Completion is Owner-pulled
- * with take_stream_reset(); no callback or borrowed storage is retained. */
+ * only after all locally retained DATA is cumulatively acknowledged. RFC 8831
+ * keeps the SID blocked until the peer's reciprocal outgoing reset completes;
+ * a received reset schedules the same bounded reciprocal operation. Completion
+ * is Owner-pulled with take_stream_reset(); no callback or borrowed storage is
+ * retained. A failed reciprocal can be retried explicitly with this function. */
 cnet_sctp_assoc_status cnet_sctp_assoc_reset_stream(cnet_sctp_assoc *association,
     uint64_t now_ms, uint16_t stream_id, void *output, size_t capacity,
     size_t *written);
