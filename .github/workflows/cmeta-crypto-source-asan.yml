@@ -130,11 +130,7 @@ jobs:
               "SM2 KAT and negative tests": "utils/tests/test_cmeta_sm2.c",
               "SM4-GCM KAT and fail-closed tests": "utils/tests/test_cmeta_sm4_gcm.c",
               "SALTS_EAUTH metadata test": "utils/tests/test_cmeta_error.c",
-              "ASN.1 DER validation implementation": "asn1/src/asn1_der_validate.c",
-              "ASN.1 runtime implementation": "asn1/src/asn1_runtime.c",
-              "ASN.1 DER encoder": "asn1/src/asn1_encoder.c",
-              "ASN.1 binary scanner": "asn1/src/binary_scanner.c",
-              "ASN.1 DER compatibility layer": "asn1/src/asn1_der_compat.c",
+              "canonical ASN.1 implementation": "asn1/src/asn1.c",
           }
           for label, suffix in required.items():
               matches = [

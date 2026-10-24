@@ -11,7 +11,7 @@
 #include <gmssl/sha2.h>
 #include <gmssl/sm3.h>
 #include <gmssl/sm2.h>
-#include <asn1_types.h>
+#include <salts/asn1.h>
 #include <gmssl/sm4.h>
 
 #include <stdlib.h>
@@ -731,8 +731,8 @@ int cmeta_sm2_sign(
     return SALTS_ERANGE;
   }
   if (signature_der == NULL) return SALTS_EINVAL;
-  if (asn1_der_validate((const uint8_t *)private_key_pkcs8_der,
-                        private_key_der_size) != 0)
+  if (salts_asn1_validate(private_key_pkcs8_der, private_key_der_size,
+                          SALTS_ASN1_DER) != SALTS_ASN1_OK)
     return SALTS_EINVAL;
 
   key_cursor = (const uint8_t *)private_key_pkcs8_der;
@@ -755,7 +755,8 @@ int cmeta_sm2_sign(
   if (sm2_sign_finish(&sign_ctx, staged_signature, &signature_size) != 1 ||
       signature_size == 0u ||
       signature_size > SALTS_SM2_SIGNATURE_DER_MAX_BYTES ||
-      asn1_der_validate(staged_signature, signature_size) != 0) {
+      salts_asn1_validate(staged_signature, signature_size,
+                          SALTS_ASN1_DER) != SALTS_ASN1_OK) {
     result = SALTS_EIO;
     goto cleanup;
   }
@@ -819,11 +820,11 @@ int cmeta_sm2_verify(
       signature_der_size > SALTS_SM2_SIGNATURE_DER_MAX_BYTES)
     return SALTS_EAUTH;
 
-  if (asn1_der_validate((const uint8_t *)public_key_spki_der,
-                        public_key_der_size) != 0)
+  if (salts_asn1_validate(public_key_spki_der, public_key_der_size,
+                          SALTS_ASN1_DER) != SALTS_ASN1_OK)
     return SALTS_EINVAL;
-  if (asn1_der_validate((const uint8_t *)signature_der,
-                        signature_der_size) != 0)
+  if (salts_asn1_validate(signature_der, signature_der_size,
+                          SALTS_ASN1_DER) != SALTS_ASN1_OK)
     return SALTS_EAUTH;
 
   key_cursor = (const uint8_t *)public_key_spki_der;
