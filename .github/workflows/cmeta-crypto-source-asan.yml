@@ -12,15 +12,21 @@ name: CMeta Crypto native KATs and ASan/UBSan
       - 'cmake/ci/setup-vcpkg-curl-cache.py'
       - 'cmake/ci/verify-installed-consumer.cmake'
       - 'CMakeLists.txt'
+      - 'CMakeOptions.cmake'
       - 'utils/CMakeLists.txt'
+      - 'utils/fuzz/**'
       - 'utils/tests/CMakeLists.txt'
       - 'asn1/**'
+      - 'cnet/tests/cnet_external_tls_listener_test.c'
+      - 'cnet/tests/verify_gmssl_shangmi_tls13.py'
       - 'cnet/tests/verify_installed_cnet.cmake'
       - 'platform/include/salts/error_codes.h'
       - 'utils/include/cmeta_crypto.h'
       - 'utils/src/cmeta_crypto.c'
       - 'utils/tests/test_cmeta_crypto.c'
       - 'utils/tests/test_cmeta_crypto_cpp.cpp'
+      - 'utils/tests/test_cmeta_crypto_fault.c'
+      - 'utils/tests/cmeta_crypto_test_hooks.h'
       - 'utils/tests/test_cmeta_sm2.c'
       - 'utils/tests/test_cmeta_sm4_gcm.c'
       - 'utils/tests/test_cmeta_error.c'
@@ -124,25 +130,29 @@ jobs:
           build = Path(os.environ["BUILD_ROOT"])
           rows = json.loads((build / "compile_commands.json").read_text(encoding="utf-8"))
           required = {
-              "production crypto implementation": "utils/src/cmeta_crypto.c",
-              "C11 SM3/HMAC/HKDF tests": "utils/tests/test_cmeta_crypto.c",
-              "C++17 crypto tests": "utils/tests/test_cmeta_crypto_cpp.cpp",
-              "SM2 KAT and negative tests": "utils/tests/test_cmeta_sm2.c",
-              "SM4-GCM KAT and fail-closed tests": "utils/tests/test_cmeta_sm4_gcm.c",
-              "SALTS_EAUTH metadata test": "utils/tests/test_cmeta_error.c",
-              "canonical ASN.1 implementation": "asn1/src/asn1.c",
+              "production and fault-injected crypto implementation": ("utils/src/cmeta_crypto.c", 2),
+              "C11 SM3/HMAC/HKDF tests": ("utils/tests/test_cmeta_crypto.c", 1),
+              "C++17 crypto tests": ("utils/tests/test_cmeta_crypto_cpp.cpp", 1),
+              "SM2 KAT and negative tests": ("utils/tests/test_cmeta_sm2.c", 1),
+              "SM4-GCM KAT and fail-closed tests": ("utils/tests/test_cmeta_sm4_gcm.c", 1),
+              "crypto allocation/clear fault tests": ("utils/tests/test_cmeta_crypto_fault.c", 1),
+              "SALTS_EAUTH metadata test": ("utils/tests/test_cmeta_error.c", 1),
+              "canonical ASN.1 implementation": ("asn1/src/asn1.c", 1),
           }
-          for label, suffix in required.items():
+          for label, (suffix, expected_count) in required.items():
               matches = [
                   row for row in rows
                   if Path(row["file"]).resolve() == root / suffix
               ]
-              if len(matches) != 1:
-                  raise SystemExit(f"{label}: expected exactly one compile unit for {suffix}, found {len(matches)}")
-              command = matches[0].get("command", " ".join(matches[0].get("arguments", [])))
-              for flag in ("-fsanitize=address", "-fsanitize=undefined"):
-                  if flag not in command:
-                      raise SystemExit(f"{label}: missing {flag}: {suffix}")
+              if len(matches) != expected_count:
+                  raise SystemExit(
+                      f"{label}: expected {expected_count} compile unit(s) for {suffix}, found {len(matches)}"
+                  )
+              for row in matches:
+                  command = row.get("command", " ".join(row.get("arguments", [])))
+                  for flag in ("-fsanitize=address", "-fsanitize=undefined"):
+                      if flag not in command:
+                          raise SystemExit(f"{label}: missing {flag}: {suffix}")
           print("Verified ASan+UBSan instrumentation for crypto, SM2/SM4 tests, error metadata and canonical ASN.1 sources.")
           PY
 
@@ -158,7 +168,7 @@ jobs:
           export LDFLAGS='-fsanitize=address -fsanitize=undefined'
           ctest --test-dir "$BUILD_ROOT" -C RelWithDebInfo \
             --output-on-failure --no-tests=error \
-            -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_sm2|test_cmeta_sm4_gcm|test_cmeta_error|test_cmeta_crypto_installed_sdk)$"
+            -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_crypto_fault|test_cmeta_sm2|test_cmeta_sm4_gcm|test_cmeta_error|test_cmeta_crypto_installed_sdk|cnet_shangmi_tls13_nativeio_negatives_test)$"
 
       - name: Preserve sanitizer evidence
         if: always()
@@ -170,6 +180,91 @@ jobs:
           path: |
             build/cmeta-crypto-source-asan/Testing/Temporary/LastTest.log
             build/cmeta-crypto-source-asan/compile_commands.json
+
+  crypto-linux-fuzz:
+    if: >-
+      github.repository == 'qigao/salts' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == 'qigao/salts')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      BUILD_ROOT: ${{ github.workspace }}/build/cmeta-crypto-fuzz
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      CC: clang
+      CXX: clang++
+    steps:
+      - name: Checkout exact candidate source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Configure pinned vcpkg and curl package cache
+        uses: ./.github/actions/setup-vcpkg-curl-cache
+
+      - name: Prepare Linux build prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages=()
+          command -v ninja >/dev/null 2>&1 || packages+=(ninja-build)
+          command -v pkg-config >/dev/null 2>&1 || packages+=(pkg-config)
+          command -v nasm >/dev/null 2>&1 || packages+=(nasm)
+          pkg-config --exists libudev 2>/dev/null || packages+=(libudev-dev)
+          if [ "${#packages[@]}" -gt 0 ]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends "${packages[@]}"
+          fi
+          clang --version
+
+      - name: Restore exact vcpkg packages from GitHub Packages with curl
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/restore-vcpkg-cache.py preset linux-clang-release-ci
+
+      - name: Configure complete sanitizer graph with libFuzzer targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-clang-release-ci -B "$BUILD_ROOT" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DSALTS_BUILD_CRYPTO_FUZZERS=ON \
+            -DENABLE_SANITIZER_ADDRESS=ON \
+            -DENABLE_SANITIZER_UNDEFINED=ON \
+            -DENABLE_SANITIZER_THREAD=OFF
+
+      - name: Build complete native graph
+        shell: bash
+        run: cmake --build "$BUILD_ROOT" --parallel 2
+
+      - name: Run persistent crypto fuzz gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir "$BUILD_ROOT" -C RelWithDebInfo \
+            --output-on-failure --no-tests=error \
+            -R "^(fuzz_cmeta_sm4_gcm|fuzz_cmeta_sm2_verify)$"
+
+      - name: Preserve fuzz evidence and reproducer inputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmeta-crypto-libfuzzer
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            build/cmeta-crypto-fuzz/Testing/Temporary/LastTest.log
+            build/cmeta-crypto-fuzz/utils/fuzz/crash-*
+            build/cmeta-crypto-fuzz/utils/fuzz/leak-*
+            build/cmeta-crypto-fuzz/utils/fuzz/timeout-*
+            build/cmeta-crypto-fuzz/utils/fuzz/*-corpus/**
 
   crypto-macos-runtime:
     if: >-
@@ -213,7 +308,8 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$BUILD_ROOT/install" \
             -DENABLE_TESTS=ON -DBUILD_TESTS=ON \
             -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
-          cmake --build "$BUILD_ROOT" --target install test_cmeta_crypto test_cmeta_crypto_cpp test_cmeta_sm2 test_cmeta_sm4_gcm test_cmeta_error --parallel 2
+          cmake --build "$BUILD_ROOT" --parallel 2
+          cmake --install "$BUILD_ROOT"
 
       - name: Run native C11/C++17 crypto KATs
         shell: bash
@@ -221,7 +317,7 @@ jobs:
           set -euo pipefail
           ctest --test-dir "$BUILD_ROOT" -C Release \
             --output-on-failure --no-tests=error \
-            -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_sm2|test_cmeta_sm4_gcm|test_cmeta_error|test_cmeta_crypto_installed_sdk)$"
+            -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_crypto_fault|test_cmeta_sm2|test_cmeta_sm4_gcm|test_cmeta_error|test_cmeta_crypto_installed_sdk|cnet_shangmi_tls13_nativeio_negatives_test)$"
   crypto-windows-runtime:
     if: >-
       github.repository == 'qigao/salts' &&
@@ -277,7 +373,9 @@ jobs:
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
           cmake --preset win-release-ci -B "%BUILD_ROOT%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="%BUILD_ROOT%/install" -DENABLE_TESTS=ON -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
           if errorlevel 1 exit /b 1
-          cmake --build "%BUILD_ROOT%" --target install test_cmeta_crypto test_cmeta_crypto_cpp test_cmeta_sm2 test_cmeta_sm4_gcm test_cmeta_error --parallel 2
+          cmake --build "%BUILD_ROOT%" --parallel 2
+          if errorlevel 1 exit /b 1
+          cmake --install "%BUILD_ROOT%"
           if errorlevel 1 exit /b 1
 
       - name: Run native C11/C++17 crypto KATs
@@ -287,5 +385,5 @@ jobs:
           call "%VSINSTALL%\\Common7\\Tools\\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%BUILD_VCPKG_ROOT%"
-          ctest --test-dir "%BUILD_ROOT%" -C Release --output-on-failure --no-tests=error -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_sm2|test_cmeta_sm4_gcm|test_cmeta_error|test_cmeta_crypto_installed_sdk)$"
+          ctest --test-dir "%BUILD_ROOT%" -C Release --output-on-failure --no-tests=error -R "^(test_cmeta_crypto|test_cmeta_crypto_cpp|test_cmeta_crypto_fault|test_cmeta_sm2|test_cmeta_sm4_gcm|test_cmeta_error|test_cmeta_crypto_installed_sdk|cnet_shangmi_tls13_nativeio_negatives_test)$"
           if errorlevel 1 exit /b 1

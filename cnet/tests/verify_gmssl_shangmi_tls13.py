@@ -44,6 +44,9 @@ def fixture(gmssl, cwd):
           "-subject_dns_name", "localhost", "-cacert", "root-cert.pem",
           "-key", "root-key.pem", "-pass", PASS,
           "-out", "server-cert.pem"], cwd)
+    Path(cwd, "malformed-server-cert.pem").write_text(
+        "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
+        encoding="ascii")
 
     # Both roots are independent. Private-key files never enter the repo.
     for name, issuer in (("client", "root"),
@@ -167,7 +170,8 @@ def main():
             probe = str(Path(a.cnet_nativeio_negatives).resolve())
             if not Path(probe).is_file():
                 raise RuntimeError("missing CNet NativeIO negative probe executable")
-            for case in ("wrong-ca", "wrong-san", "standard-peer"):
+            for case in ("wrong-ca", "wrong-san", "standard-peer",
+                         "malformed-server-cert", "mismatched-server-key"):
                 env = dict(os.environ)
                 env.update({
                     "SALTS_SHANGMI_CA": str(Path(cwd, "root-cert.pem")),
@@ -175,6 +179,10 @@ def main():
                         str(Path(cwd, "untrusted-cert.pem")),
                     "SALTS_SHANGMI_CERT": str(Path(cwd, "server-cert.pem")),
                     "SALTS_SHANGMI_KEY": str(Path(cwd, "server-key.pem")),
+                    "SALTS_SHANGMI_MALFORMED_CERT":
+                        str(Path(cwd, "malformed-server-cert.pem")),
+                    "SALTS_SHANGMI_MISMATCHED_KEY":
+                        str(Path(cwd, "untrusted-key.pem")),
                     "SALTS_SHANGMI_FAILURE_CASE": case
                 })
                 trial = subprocess.run([probe], cwd=cwd, env=env,

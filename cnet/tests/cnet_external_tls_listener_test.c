@@ -302,6 +302,7 @@ static void test_external_tls_listener_shared_progress(void) {
   bool expect_failure = failure_case != NULL && failure_case[0] != '\0';
   bool require_mtls = getenv("SALTS_SHANGMI_MTLS") != NULL;
   bool reject_client_certificate = false;
+  bool reject_server_configuration = false;
   if (expect_failure) {
     if (strcmp(failure_case, "wrong-ca") == 0) {
       client_tls_config.ca_file = getenv("SALTS_SHANGMI_UNTRUSTED_CA");
@@ -310,6 +311,14 @@ static void test_external_tls_listener_shared_progress(void) {
       client_tls_config.server_name = "wrong.example";
     } else if (strcmp(failure_case, "standard-peer") == 0) {
       client_tls_config.security_profile = CNET_TLS_SECURITY_PROFILE_STANDARD;
+    } else if (strcmp(failure_case, "malformed-server-cert") == 0) {
+      server_tls_config.cert_file = getenv("SALTS_SHANGMI_MALFORMED_CERT");
+      check(server_tls_config.cert_file != NULL);
+      reject_server_configuration = true;
+    } else if (strcmp(failure_case, "mismatched-server-key") == 0) {
+      server_tls_config.key_file = getenv("SALTS_SHANGMI_MISMATCHED_KEY");
+      check(server_tls_config.key_file != NULL);
+      reject_server_configuration = true;
     } else if (strcmp(failure_case, "missing-client-cert") == 0) {
       check(require_mtls);
       reject_client_certificate = true;
@@ -352,6 +361,13 @@ static void test_external_tls_listener_shared_progress(void) {
   check_equal(cnet_client_set_stream_socket_options(&server, &server_socket_options),
               SALTS_OK);
 
+#if CNET_SHANGMI_TLS13_TEST
+  if (reject_server_configuration) {
+    check_equal(cnet_tls_server_init(&tls_server, &server_tls_config), SALTS_EIO);
+    check_null(tls_server.impl);
+    return;
+  }
+#endif
   check(cnet_tls_server_init(
              &tls_server, &server_tls_config) == SALTS_OK);
   check(cnet_tls_client_init(

@@ -13,9 +13,11 @@ set(EXECUTION_COMPAT_C
     ${CMAKE_CURRENT_SOURCE_DIR}/test_execution_compat.c)
 set(SALTS_FS_REPLACE_FAULT_C
     ${CMAKE_CURRENT_SOURCE_DIR}/test_cmeta_fs_replace_fault.c)
+set(CMETA_CRYPTO_FAULT_C
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_cmeta_crypto_fault.c)
 cmake_add_source(TEST_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR} PATTERNS
                  "test_*.c" EXCLUDES ${TLOG_HEADER_COLLISION_C} ${FMT_SURFACE_CONTRACT_C}
-                 ${EXECUTION_COMPAT_C} ${SALTS_FS_REPLACE_FAULT_C})
+                 ${EXECUTION_COMPAT_C} ${SALTS_FS_REPLACE_FAULT_C} ${CMETA_CRYPTO_FAULT_C})
 cmake_add_source(CXX_TEST_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR} PATTERNS
                  "test_*.cpp" EXCLUDES ${TLOG_HEADER_COLLISION_CPP} ${FMT_SURFACE_CONTRACT_CPP})
 
@@ -39,6 +41,18 @@ endforeach()
 if(TARGET test_cmeta_sm2)
   target_link_libraries(test_cmeta_sm2 PRIVATE GmSSL::GmSSL)
 endif()
+
+# Compile the production crypto implementation with a deterministic private
+# allocator seam. This proves allocation failures do not publish partial
+# outputs and that sensitive staging buffers are cleared before release,
+# without adding a test hook to the installed ABI.
+cmake_add_test(test_cmeta_crypto_fault
+  SOURCES ${CMETA_CRYPTO_FAULT_C} ${CMAKE_CURRENT_SOURCE_DIR}/../src/cmeta_crypto.c
+  FOLDER "utils/tests"
+  LIBS Salts::TinyTest Salts::ASN1 Salts::CMeta Salts::Platform GmSSL::GmSSL
+  DEFS CMETA_CRYPTO_TEST_HOOKS=1
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../include)
+set_tests_properties(test_cmeta_crypto_fault PROPERTIES LABELS "crypto;fault")
 
 # Installed SDK gate for the provider-neutral crypto ABI. This builds and runs
 # independent C11/C++17 consumers through exported Salts::Core only.
