@@ -437,8 +437,8 @@ static int reconfig_parameter_shape(uint16_t type, size_t length) {
 }
 
 /* RFC 6525 3.1: exactly one or two well-framed parameters, with only the
- * ten combinations listed by the RFC. This is syntax preflight only; the
- * bounded prototype currently executes outgoing-reset and response forms. */
+ * ten combinations listed by the RFC. This is syntax preflight only; later
+ * dispatch applies the bounded subset's state and collision rules. */
 static int reconfig_preflight(const cnet_sctp_wire_chunk *chunk,
     sctp_reconfig_view *view) {
   sctp_reconfig_view parsed = {0};
@@ -1189,7 +1189,9 @@ static void clear_active_reset(cnet_sctp_assoc *s, int preserve_packet) {
   s->reset_paired_incoming_streams = 0u;
   s->reset_paired_incoming_request = 0u;
   s->reset_retransmits = 0u;
+  s->add_outgoing_is_reciprocal = 0u;
   s->add_outgoing_streams = 0u;
+  s->add_incoming_streams = 0u;
   s->reset_deadline_ms = 0u;
   s->reset_rto_ms = 0u;
   if (!preserve_packet) {
@@ -1214,6 +1216,7 @@ static void record_stream_change(cnet_sctp_assoc *s, int incoming,
 
 static cnet_sctp_assoc_status finish_local_add_outgoing(cnet_sctp_assoc *s,
     cnet_sctp_assoc_stream_reset_result result) {
+  const int incoming = s->add_outgoing_is_reciprocal;
   if (reset_result_success(result)) {
     if (s->add_outgoing_streams >
         CNET_SCTP_DATA_STREAMS - s->data.config.outbound_streams)
@@ -1221,9 +1224,15 @@ static cnet_sctp_assoc_status finish_local_add_outgoing(cnet_sctp_assoc *s,
     s->data.config.outbound_streams = (uint16_t)(
         s->data.config.outbound_streams + s->add_outgoing_streams);
   }
-  record_stream_change(s, 0, result);
+  record_stream_change(s, incoming, result);
   clear_active_reset(s, 0);
   return CNET_SCTP_ASSOC_OK;
+}
+
+static void finish_local_add_incoming(cnet_sctp_assoc *s,
+    cnet_sctp_assoc_stream_reset_result result) {
+  record_stream_change(s, 0, result);
+  clear_active_reset(s, 0);
 }
 
 static void finish_local_reset(cnet_sctp_assoc *s,
@@ -1233,6 +1242,10 @@ static cnet_sctp_assoc_status finish_active_reconfig(cnet_sctp_assoc *s,
     cnet_sctp_assoc_stream_reset_result result) {
   if (s->reconfig_kind == CNET_SCTP_RECONFIG_ADD_OUTGOING)
     return finish_local_add_outgoing(s, result);
+  if (s->reconfig_kind == CNET_SCTP_RECONFIG_ADD_INCOMING) {
+    finish_local_add_incoming(s, result);
+    return CNET_SCTP_ASSOC_OK;
+  }
   finish_local_reset(s, result);
   return CNET_SCTP_ASSOC_OK;
 }
@@ -1320,6 +1333,26 @@ static cnet_sctp_assoc_status apply_reconfig_response(cnet_sctp_assoc *s,
     }
     return finish_local_add_outgoing(s,
         (cnet_sctp_assoc_stream_reset_result)result);
+  }
+  if (s->reset_active &&
+      s->reconfig_kind == CNET_SCTP_RECONFIG_ADD_INCOMING &&
+      sequence == s->reset_request) {
+    if (parameter->size != 12u) return CNET_SCTP_ASSOC_PROTOCOL;
+    if (result == CNET_SCTP_STREAM_RESET_IN_PROGRESS) {
+      if (now > UINT64_MAX - s->reset_rto_ms)
+        return CNET_SCTP_ASSOC_CLOCK;
+      s->reset_retransmits = 0u;
+      s->reset_deadline_ms = now + s->reset_rto_ms;
+      return CNET_SCTP_ASSOC_OK;
+    }
+    /* RFC 6525 5.2.6 completes this request through a corresponding Add
+     * Outgoing request. A direct success cannot commit receive streams. */
+    if (reset_result_success(
+            (cnet_sctp_assoc_stream_reset_result)result))
+      return CNET_SCTP_ASSOC_PROTOCOL;
+    finish_local_add_incoming(s,
+        (cnet_sctp_assoc_stream_reset_result)result);
+    return CNET_SCTP_ASSOC_OK;
   }
   if (s->reset_active && s->reset_has_paired_incoming &&
       !s->reset_paired_incoming_complete &&
@@ -1520,6 +1553,8 @@ static cnet_sctp_assoc_status handle_add_outgoing_request(
     uint8_t *output, size_t cap, size_t *written) {
   const uint32_t sequence = rd32(parameter->bytes + 4u);
   const uint16_t count = rd16(parameter->bytes + 8u);
+  const int completes_local_add_incoming = s->reset_active &&
+      s->reconfig_kind == CNET_SCTP_RECONFIG_ADD_INCOMING;
   cnet_sctp_assoc_stream_reset_result result;
   uint8_t response[CNET_SCTP_ASSOC_MAX_PACKET];
   size_t response_size = 0u;
@@ -1535,7 +1570,9 @@ static cnet_sctp_assoc_status handle_add_outgoing_request(
   }
   if (sequence != s->expected_peer_reset_request) {
     result = CNET_SCTP_STREAM_RESET_BAD_SEQUENCE;
-  } else if (s->incoming_stream_change_pending) {
+  } else if (completes_local_add_incoming ?
+             s->outgoing_stream_change_pending :
+             s->incoming_stream_change_pending) {
     /* Preserve the fixed Owner-pulled event slot. The sequence is not
      * consumed, so the peer can retry after the Owner drains the event. */
     result = CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS;
@@ -1561,7 +1598,14 @@ static cnet_sctp_assoc_status handle_add_outgoing_request(
     if (reset_result_success(result)) {
       s->data.config.inbound_streams = (uint16_t)(
           s->data.config.inbound_streams + count);
-      record_stream_change(s, 1, result);
+      if (completes_local_add_incoming) {
+        if (result == CNET_SCTP_STREAM_RESET_PERFORMED) {
+          record_stream_change(s, 0, result);
+          clear_active_reset(s, 0);
+        }
+      } else {
+        record_stream_change(s, 1, result);
+      }
     }
   }
   memcpy(output, response, response_size);
@@ -1836,13 +1880,15 @@ static cnet_sctp_assoc_status start_local_paired_reset(
 }
 
 static cnet_sctp_assoc_status start_local_add_outgoing(
-    cnet_sctp_assoc *s, uint64_t now, uint16_t stream_count,
+    cnet_sctp_assoc *s, uint64_t now, uint16_t stream_count, int reciprocal,
     void *out, size_t cap, size_t *written) {
   uint8_t value[12] = {0};
   uint8_t packet[CNET_SCTP_ASSOC_MAX_PACKET];
   size_t packet_size = 0u;
   cnet_sctp_assoc_status status;
-  if (s->reset_active || s->outgoing_stream_change_pending)
+  if (s->reset_active || (reciprocal ?
+      s->incoming_stream_change_pending :
+      s->outgoing_stream_change_pending))
     return CNET_SCTP_ASSOC_BUSY;
   if (now > UINT64_MAX - s->config.t1_ms)
     return CNET_SCTP_ASSOC_CLOCK;
@@ -1862,6 +1908,7 @@ static cnet_sctp_assoc_status start_local_add_outgoing(
   memcpy(s->reset_packet, packet, packet_size);
   s->reset_packet_size = packet_size;
   s->reset_streams = 0u;
+  s->add_outgoing_is_reciprocal = reciprocal ? 1u : 0u;
   s->add_outgoing_streams = stream_count;
   s->reset_request = s->next_reset_request++;
   s->reset_active = 1u;
@@ -1870,6 +1917,102 @@ static cnet_sctp_assoc_status start_local_add_outgoing(
   s->reset_rto_ms = s->config.t1_ms;
   s->reset_deadline_ms = now + s->reset_rto_ms;
   s->last_time_ms = now;
+  return CNET_SCTP_ASSOC_OK;
+}
+
+static cnet_sctp_assoc_status start_local_add_incoming(
+    cnet_sctp_assoc *s, uint64_t now, uint16_t stream_count,
+    void *out, size_t cap, size_t *written) {
+  uint8_t value[12] = {0};
+  uint8_t packet[CNET_SCTP_ASSOC_MAX_PACKET];
+  size_t packet_size = 0u;
+  cnet_sctp_assoc_status status;
+  if (s->reset_active || s->outgoing_stream_change_pending)
+    return CNET_SCTP_ASSOC_BUSY;
+  if (now > UINT64_MAX - s->config.t1_ms)
+    return CNET_SCTP_ASSOC_CLOCK;
+
+  wr16(value, SCTP_PARAM_ADD_INCOMING);
+  wr16(value + 2u, sizeof(value));
+  wr32(value + 4u, s->next_reset_request);
+  wr16(value + 8u, stream_count);
+  status = encode_one(s, s->peer_tag, SCTP_TYPE_RECONFIG,
+      value, sizeof(value), packet, sizeof(packet), &packet_size);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (packet_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+
+  memcpy(out, packet, packet_size);
+  *written = packet_size;
+  memcpy(s->reset_packet, packet, packet_size);
+  s->reset_packet_size = packet_size;
+  s->reset_streams = 0u;
+  s->add_incoming_streams = stream_count;
+  s->reset_request = s->next_reset_request++;
+  s->reset_active = 1u;
+  s->reconfig_kind = CNET_SCTP_RECONFIG_ADD_INCOMING;
+  s->reset_retransmits = 0u;
+  s->reset_rto_ms = s->config.t1_ms;
+  s->reset_deadline_ms = now + s->reset_rto_ms;
+  s->last_time_ms = now;
+  return CNET_SCTP_ASSOC_OK;
+}
+
+static cnet_sctp_assoc_status handle_add_incoming_request(
+    cnet_sctp_assoc *s, uint64_t now,
+    const sctp_reconfig_parameter *parameter,
+    uint8_t *output, size_t cap, size_t *written) {
+  const uint32_t sequence = rd32(parameter->bytes + 4u);
+  const uint16_t count = rd16(parameter->bytes + 8u);
+  cnet_sctp_assoc_stream_reset_result result;
+  uint8_t response[CNET_SCTP_ASSOC_MAX_PACKET];
+  size_t response_size = 0u;
+  cnet_sctp_assoc_status status;
+
+  if (sequence == s->last_peer_reset_request &&
+      s->last_reset_response_size != 0u) {
+    if (s->last_reset_response_size > cap)
+      return CNET_SCTP_ASSOC_CAPACITY;
+    memcpy(output, s->last_reset_response, s->last_reset_response_size);
+    *written = s->last_reset_response_size;
+    return CNET_SCTP_ASSOC_OK;
+  }
+  if (sequence != s->expected_peer_reset_request) {
+    result = CNET_SCTP_STREAM_RESET_BAD_SEQUENCE;
+  } else if (s->reset_active || s->incoming_stream_change_pending) {
+    /* A successful Add Incoming consumes the Association's one retained
+     * RE-CONFIG request slot until its corresponding Add Outgoing completes. */
+    result = CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS;
+  } else if (count == 0u) {
+    result = CNET_SCTP_STREAM_RESET_NOTHING_TO_DO;
+  } else if (count >
+             CNET_SCTP_DATA_STREAMS - s->data.config.outbound_streams) {
+    result = CNET_SCTP_STREAM_RESET_DENIED;
+  } else {
+    status = start_local_add_outgoing(s, now, count, 1,
+        output, cap, written);
+    if (status != CNET_SCTP_ASSOC_OK) return status;
+    s->last_peer_reset_request = sequence;
+    ++s->expected_peer_reset_request;
+    memcpy(s->last_reset_response, output, *written);
+    s->last_reset_response_size = *written;
+    return CNET_SCTP_ASSOC_OK;
+  }
+
+  status = encode_reset_response(s, sequence, result,
+      response, &response_size);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (response_size > cap) return CNET_SCTP_ASSOC_CAPACITY;
+  if (sequence == s->expected_peer_reset_request &&
+      result != CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS) {
+    s->last_peer_reset_request = sequence;
+    ++s->expected_peer_reset_request;
+    memcpy(s->last_reset_response, response, response_size);
+    s->last_reset_response_size = response_size;
+    if (reset_result_success(result))
+      record_stream_change(s, 1, result);
+  }
+  memcpy(output, response, response_size);
+  *written = response_size;
   return CNET_SCTP_ASSOC_OK;
 }
 
@@ -1930,12 +2073,17 @@ static cnet_sctp_assoc_status handle_reconfig(cnet_sctp_assoc *s,
     }
   }
   if (add_outgoing_request || add_incoming_request) {
-    /* Add Incoming and the paired growth form require a corresponding local
-     * Add Outgoing request and are deliberately kept for the next slice. */
-    if (!add_outgoing_request || add_incoming_request || view.count != 1u)
+    /* The paired growth form owns two independently completing requests and
+     * remains a separate operation; single-direction forms are atomic here. */
+    if ((add_outgoing_request && add_incoming_request) || view.count != 1u)
       return CNET_SCTP_ASSOC_PROTOCOL;
-    status = handle_add_outgoing_request(&staged, add_outgoing_request,
-        output, cap, written);
+    if (add_outgoing_request) {
+      status = handle_add_outgoing_request(&staged, add_outgoing_request,
+          output, cap, written);
+    } else {
+      status = handle_add_incoming_request(&staged, now, add_incoming_request,
+          output, cap, written);
+    }
     if (status != CNET_SCTP_ASSOC_OK) return status;
     staged.last_time_ms = now;
     memcpy(s, &staged, sizeof(staged));
@@ -2853,8 +3001,9 @@ cnet_sctp_assoc_status cnet_sctp_assoc_advance(cnet_sctp_assoc *s,
         /* RFC 6525 does not count an "In progress" probe as a path error.
          * This fixed-memory prototype still bounds Owner-visible retries;
          * timeout completes only the reset operation, not the association. */
-        if (s->reconfig_kind == CNET_SCTP_RECONFIG_ADD_OUTGOING) {
-          status = finish_local_add_outgoing(
+        if (s->reconfig_kind == CNET_SCTP_RECONFIG_ADD_OUTGOING ||
+            s->reconfig_kind == CNET_SCTP_RECONFIG_ADD_INCOMING) {
+          status = finish_active_reconfig(
               s, CNET_SCTP_STREAM_RESET_TIMEOUT);
           if (status != CNET_SCTP_ASSOC_OK) return status;
         } else if (s->reset_has_paired_incoming) {
@@ -3131,6 +3280,27 @@ cnet_sctp_assoc_status cnet_sctp_assoc_add_outgoing_streams(
       CNET_SCTP_DATA_STREAMS - s->data.config.outbound_streams)
     return CNET_SCTP_ASSOC_CAPACITY;
   return start_local_add_outgoing(
+      s, now, stream_count, 0, out, cap, written);
+}
+
+cnet_sctp_assoc_status cnet_sctp_assoc_add_incoming_streams(
+    cnet_sctp_assoc *s, uint64_t now, uint16_t stream_count,
+    void *out, size_t cap, size_t *written) {
+  cnet_sctp_assoc_status status;
+  if (written) *written = 0u;
+  status = guard(s);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (!out || !written || stream_count == 0u)
+    return CNET_SCTP_ASSOC_INVALID;
+  if (s->state != CNET_SCTP_ASSOC_ESTABLISHED || !s->data_ready)
+    return CNET_SCTP_ASSOC_CLOSED_ERROR;
+  if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
+  if (!s->peer_reconfig_supported)
+    return CNET_SCTP_ASSOC_PROTOCOL;
+  if (stream_count >
+      CNET_SCTP_DATA_STREAMS - s->data.config.inbound_streams)
+    return CNET_SCTP_ASSOC_CAPACITY;
+  return start_local_add_incoming(
       s, now, stream_count, out, cap, written);
 }
 

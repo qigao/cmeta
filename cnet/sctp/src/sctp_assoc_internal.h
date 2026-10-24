@@ -126,7 +126,8 @@ typedef struct cnet_sctp_assoc_stream_change_event {
 typedef enum cnet_sctp_assoc_reconfig_kind {
   CNET_SCTP_RECONFIG_NONE = 0,
   CNET_SCTP_RECONFIG_STREAM_RESET = 1,
-  CNET_SCTP_RECONFIG_ADD_OUTGOING = 2
+  CNET_SCTP_RECONFIG_ADD_OUTGOING = 2,
+  CNET_SCTP_RECONFIG_ADD_INCOMING = 3
 } cnet_sctp_assoc_reconfig_kind;
 
 typedef struct cnet_sctp_assoc {
@@ -155,7 +156,9 @@ typedef struct cnet_sctp_assoc {
   uint8_t reset_outgoing_complete;
   uint8_t reset_paired_incoming_complete;
   uint8_t reset_retransmits;
+  uint8_t add_outgoing_is_reciprocal;
   uint16_t add_outgoing_streams;
+  uint16_t add_incoming_streams;
   uint16_t reset_streams;
   uint16_t reset_paired_incoming_streams;
   /* RFC 8831 DataChannel close is bidirectional. Fixed bitsets keep at most
@@ -292,6 +295,12 @@ cnet_sctp_assoc_status cnet_sctp_assoc_take_stream_reset(
  * CNET_SCTP_DATA_STREAMS. Newly requested SIDs remain unusable until a
  * positive peer response; completion is retained for take_stream_change(). */
 cnet_sctp_assoc_status cnet_sctp_assoc_add_outgoing_streams(
+    cnet_sctp_assoc *association, uint64_t now_ms, uint16_t stream_count,
+    void *output, size_t capacity, size_t *written);
+/* RFC 6525 Add Incoming Streams. Success is completed only by the peer's
+ * corresponding Add Outgoing request; a direct successful Response cannot
+ * safely make the requested receive SIDs usable. */
+cnet_sctp_assoc_status cnet_sctp_assoc_add_incoming_streams(
     cnet_sctp_assoc *association, uint64_t now_ms, uint16_t stream_count,
     void *output, size_t capacity, size_t *written);
 cnet_sctp_assoc_status cnet_sctp_assoc_take_stream_change(
