@@ -20,6 +20,14 @@ cmake_config_target(
   EXPORT_NAME
   Core)
 
+# Salts::ASN1 is an implementation-only DSO dependency of Core.  Keep it out
+# of Core's public link interface, while making the installed Linux SDK
+# relocatable: DT_RUNPATH on an executable is not used to resolve an indirect
+# dependency such as Core -> ASN1.
+if(UNIX AND NOT APPLE)
+  set_target_properties(${TARGET_NAME} PROPERTIES INSTALL_RPATH "$ORIGIN")
+endif()
+
 # Include directories
 target_include_directories(
   ${TARGET_NAME}
