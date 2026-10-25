@@ -284,6 +284,7 @@ cnet_sctp_session_status cnet_sctp_session_get_tx_usage(
   if (!session->association.data_ready) return CNET_SCTP_SESSION_CLOSED;
   data = &session->association.data;
   usage->generation = generation;
+  usage->association_forward_pending = data->forward_active ? 1u : 0u;
   if (data->pending.active && data->pending.stream_id == stream &&
       data->pending.ppid != CNET_SCTP_DCEP_PPID) {
     usage->has_pending_message = 1u;

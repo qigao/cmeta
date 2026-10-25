@@ -106,7 +106,10 @@ typedef struct cnet_sctp_session_event {
  * bytes. queued_bytes are copied but not yet emitted. retained_bytes count
  * emitted DATA tickets awaiting cumulative ACK/FORWARD progress, including
  * revocable gap_acked_bytes and abandoned_bytes as subsets, not additional
- * bytes. DCEP PPID50 is excluded. PPID56/57 wire placeholders count as a
+ * bytes. An emitted FORWARD-TSN transfers abandoned DATA into a separate
+ * retained association-level control packet (see association_forward_pending);
+ * zero retained_bytes alone is NOT proof that the forward barrier is retired.
+ * DCEP PPID50 is excluded. PPID56/57 wire placeholders count as a
  * byte here despite their zero logical application length. Neither this
  * snapshot nor its changes imply JavaScript buffered_amount or an exactly-
  * once per-message completion event. No borrowed output survives the call. */
@@ -118,6 +121,11 @@ typedef struct cnet_sctp_session_tx_usage {
   size_t abandoned_bytes;
   uint16_t retained_fragments;
   uint8_t has_pending_message;
+  /* ASSOCIATION-wide, not attributable to this SID alone. After abandoned
+   * DATA tickets transfer into a retained FORWARD-TSN control packet, their
+   * per-SID retained_bytes can be zero while the peer has NOT acknowledged
+   * the forward barrier. This conservative flag prevents false completion. */
+  uint8_t association_forward_pending;
 } cnet_sctp_session_tx_usage;
 
 typedef int (*cnet_sctp_session_owner_fn)(void *context);

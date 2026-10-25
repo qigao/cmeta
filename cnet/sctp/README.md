@@ -43,8 +43,13 @@ headers and exports.
 The new `cnet_sctp_session_get_tx_usage()` takes an explicit nonzero DCEP
 generation and snapshots only the active matching SID. It distinguishes
 copied, not-yet-emitted bytes from retained DATA tickets, as well as
-revocable gap-ACKed and abandoned subsets. Unlike a per-message terminal
-event, it performs NO retirement. The installed consumer delays TSN N,
+revocable gap-ACKed and abandoned subsets. On RFC3758 abandonment, the
+Owner can transfer retained DATA tickets into an association-level
+FORWARD-TSN packet: `retained_bytes` then drops to zero *before* the
+receiver has acknowledged the forward control. The snapshot exposes
+`association_forward_pending` to prohibit a false completion inference;
+this flag conservatively covers the entire association, not a single SID.
+Unlike a per-message terminal event, this query performs NO retirement. The installed consumer delays TSN N,
 gap-ACKs N+1, observes both tickets remain retained, and then requires
 cumulative SACK before clearing either. DCEP PPID50 bytes are excluded.
 These counts are not JavaScript buffered_amount and are not exactly-once

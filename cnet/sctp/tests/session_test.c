@@ -251,7 +251,8 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
       CNET_SCTP_SESSION_OK);
   assert(usage.generation == partial_a && usage.retained_bytes == 4u &&
       usage.retained_fragments == 1u && usage.abandoned_bytes == 0u &&
-      usage.gap_acked_bytes == 0u && usage.queued_bytes == 0u);
+      usage.gap_acked_bytes == 0u && usage.queued_bytes == 0u &&
+      !usage.association_forward_pending);
   /* The unrelated reliable SID must not inherit the PR send ticket. */
   assert(cnet_sctp_session_get_tx_usage(&a, 0u, reliable_a, &usage) ==
       CNET_SCTP_SESSION_OK && usage.retained_bytes == 0u);
@@ -262,10 +263,14 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   assert(forward_size != 0u && forward[12] == 194u);
   assert(cnet_sctp_session_get_tx_usage(&a, 2u, partial_a, &usage) ==
       CNET_SCTP_SESSION_OK);
-  /* Abandonment is not yet cumulative retirement: the old DATA ticket
-   * remains retained until the independent peer's FORWARD acknowledgement. */
-  assert(usage.retained_bytes == 4u && usage.abandoned_bytes == 4u &&
-      usage.retained_fragments == 1u && usage.gap_acked_bytes == 0u);
+  /* RFC3758 forward admission transactionally transfers the abandoned
+   * DATA ticket into ONE retained FORWARD-TSN control ticket. Per-SID DATA
+   * payload bytes become zero immediately, but the conservative
+   * association-wide flag MUST remain set until a real peer SACK arrives.
+   * Neither zero DATA bytes nor the abandonment event is ACK evidence. */
+  assert(usage.retained_bytes == 0u && usage.abandoned_bytes == 0u &&
+      usage.retained_fragments == 0u && usage.gap_acked_bytes == 0u &&
+      usage.association_forward_pending);
   assert(cnet_sctp_session_input(&b, deadline + 1u, forward, forward_size,
       sack, sizeof(sack), &sack_size) == CNET_SCTP_SESSION_OK);
   assert(sack_size != 0u);
@@ -275,7 +280,8 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   assert(cnet_sctp_session_get_tx_usage(&a, 2u, partial_a, &usage) ==
       CNET_SCTP_SESSION_OK);
   assert(usage.retained_bytes == 0u && usage.abandoned_bytes == 0u &&
-      usage.retained_fragments == 0u);
+      usage.retained_fragments == 0u &&
+      !usage.association_forward_pending);
   assert(cnet_sctp_session_poll(&a, deadline + 3u, &event,
       payload, sizeof(payload), response, sizeof(response), &response_size) ==
       CNET_SCTP_SESSION_OK);
