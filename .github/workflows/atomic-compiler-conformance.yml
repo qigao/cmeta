@@ -78,6 +78,7 @@ jobs:
         shell: bash
         run: |
           CC="${{ matrix.compiler }}" BUILD_ROOT="build/macro-${{ matrix.compiler }}" \
+            CMETA_LIBRARY="build/whole-${{ matrix.compiler }}/libcmeta_compiler.a" \
             bash tests/compiler/run_cmeta_macro_probes.sh
 
   native-cmeta-cstl-mixed:
@@ -148,6 +149,7 @@ jobs:
         run: |
           mkdir -p build/tcc-macros
           CC=tcc BUILD_ROOT=build/tcc-macros \
+            CMETA_LIBRARY=build/tcc-cmeta-cstl/libcmeta_compiler.a \
             bash tests/compiler/run_cmeta_macro_probes.sh \
               2>&1 | tee build/tcc-macros/build.log
       - name: Configure standalone C11 conformance
