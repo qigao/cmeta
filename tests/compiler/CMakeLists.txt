@@ -51,6 +51,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   # a replacement for the SALTS_THREAD_LOCAL storage-class contract.
   salts_add_atomic_conformance(salts_posix_tss_semantics_probe
     posix_tss_semantics_probe.c)
+  # Independent GNU __atomic intrinsic *storage* backend diagnostic only.
+  # This target is not a C11 _Atomic ABI replacement and is never installed.
+  salts_add_atomic_conformance(salts_intrinsic_atomic_conformance
+    intrinsic_atomic_conformance.c)
+  target_include_directories(salts_intrinsic_atomic_conformance PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../platform/include")
   salts_add_atomic_conformance(salts_platform_posix_thread_probe
     tcc_platform_thread_probe.c
     "${CMAKE_CURRENT_LIST_DIR}/../../platform/src/thread_posix.c")

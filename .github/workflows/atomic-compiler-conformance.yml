@@ -165,6 +165,31 @@ jobs:
           COMPILER_A=gcc COMPILER_B=tcc BUILD_ROOT=build/plugin-dso-tcc \
             bash tests/compiler/run_plugin_dso_smoke.sh \
               2>&1 | tee build/plugin-dso-tcc/build.log
+      - name: Compare pinned upstream c-threads catomics.h (diagnostic only)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet https://github.com/zelang-dev/c-threads.git "$RUNNER_TEMP/c-threads-reference"
+          git -C "$RUNNER_TEMP/c-threads-reference" checkout --detach d7cbefa0099044d6d834939290eb62e02ed8bb1b
+          mkdir -p build/catomics-upstream
+          failures=0
+          for cc in gcc clang tcc; do
+            if "$cc" -std=c11 -I"$RUNNER_TEMP/c-threads-reference/include" \
+                  tests/compiler/catomics_reference_probe.c \
+                  -o "build/catomics-upstream/probe-$cc" \
+                  >"build/catomics-upstream/$cc.log" 2>&1 &&
+               timeout 30s "build/catomics-upstream/probe-$cc" \
+                  >>"build/catomics-upstream/$cc.log" 2>&1; then
+              echo "$cc: upstream catomics reference PASS (not admission)"
+            else
+              echo "$cc: upstream catomics reference FAILED (diagnostic)"
+              failures=$((failures + 1))
+            fi
+            cat "build/catomics-upstream/$cc.log"
+          done
+          echo "upstream catomics reference failures: $failures"
+          test "$failures" -eq 0
       - name: Configure standalone C11 conformance
         run: cmake -S tests/compiler -B build/atomic-tcc -G Ninja -DCMAKE_C_COMPILER=tcc
       - name: Compile
@@ -187,6 +212,7 @@ jobs:
             build/tcc-cmeta-cstl/build.log
             build/tcc-cmeta-cstl/cmeta/*.log
             build/tcc-cmeta-cstl/cstl/*.log
+            build/catomics-upstream/*.log
             build/atomic-probe/diagnostics.log
             build/atomic-tcc/CMakeFiles/CMakeConfigureLog.yaml
             build/atomic-tcc/CMakeFiles/CMakeError.log

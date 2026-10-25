@@ -222,6 +222,45 @@ main-thread teardown before key deletion. It uses only POSIX pthreads (no
 GCC/Clang CTest and pinned-TCC diagnostics run the same test. A pass is **not**
 evidence that Salts supports emulated TLS or a new compiler in production.
 
+## Can we reuse c-threads atomic implementation?
+
+**Yes, as a reference and as an explicitly isolated experiment.**
+`zelang-dev/c-threads/include/catomics.h` mixes GNU `__atomic`
+intrinsics, legacy `__sync` fallbacks, Win32 intrinsics and architecture
+assembly. Those techniques are useful for a future finite, qualified
+native-atomic adapter, but the header cannot replace `<stdatomic.h>`
+throughout Salts. In particular, its storage declaration and some
+fallback `atomic_is_lock_free` paths differ from C11 object contracts.
+It cannot make the compiler's `__STDC_NO_ATOMICS__=1` capability declaration
+disappear, and moving a live native C11 atomic object into such storage by
+cast or memcpy is prohibited.
+
+Two independent experiments now test this distinction:
+
+1. `intrinsic_atomic_backend.h` is **test-only**: it uses typed,
+   naturally aligned 8/16/32/64-bit and pointer storage, checked memory orders,
+   native GNU `__atomic_load/store/exchange/compare_exchange/fetch_add`
+   operations, CAS expected-value writeback, lock-free observation and fences.
+   `intrinsic_atomic_conformance.c` checks scalar/invalid-order semantics,
+   multi-worker CAS contention, 64-bit RMW, and pre-join release/acquire
+   publication. No `_Atomic` ABI is shared, no public header changes, and
+   the code lives only under `tests/compiler`. GCC/Clang run it through
+   CTest; the pinned TCC diagnostic compiles and runs the same source directly.
+2. `catomics_reference_probe.c` is compiled in the experimental TCC
+   workflow against the **unchanged, externally fetched**
+   `zelang-dev/c-threads@d7cbefa0099044d6d834939290eb62e02ed8bb1b`
+   `include/catomics.h` with GCC, Clang and TCC. It checks a deliberately
+   narrow fetch-add/acquire-load/failed-CAS case, reporting failures
+   independently. This file does not ship a copy of that upstream header
+   or add `c-threads` to any target.
+
+These are **capability diagnostics, not a supported Salts backend**. A future
+real backend must establish object layout, alignment, lifetime, memory-order
+and ABI equivalence or expose a distinct opaque API; it must additionally
+pass ARM64 weak-memory, TSan, cross-toolchain and installed-SDK gates.
+Do not redefine `__STDC_NO_ATOMICS__` or enable this experimental backend in
+production to bypass a failing admission test.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:
