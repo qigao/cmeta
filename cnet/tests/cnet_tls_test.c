@@ -2459,4 +2459,38 @@ spec("CNet bounded TLS engine") {
     }
   }
 
+  group("mixed-curve ECDSA/SHA-512 certificate identity") {
+    const cnet_tls_protocol_version tls_versions[] = {
+        CNET_TLS_PROTOCOL_VERSION_1_2, CNET_TLS_PROTOCOL_VERSION_1_3};
+
+    it("rejects a valid P-384 to P-256 SHA-512 chain without fallback") {
+      size_t index;
+      for (index = 0u; index < sizeof(tls_versions) / sizeof(tls_versions[0]); ++index) {
+        cnet_tls_test_pair pair = {0};
+        check_equal(cnet_tls_test_fixture_pair_init(
+                        &pair, CNET_TLS_TEST_SHA512_MIXED_CA,
+                        CNET_TLS_TEST_SHA512_MIXED_LEAF,
+                        CNET_TLS_TEST_SHA512_MIXED_KEY, "localhost"), SALTS_OK);
+        check_equal(cnet_tls_state_set_protocol_range(&pair.client, tls_versions[index],
+                                                      tls_versions[index]), SALTS_OK);
+        check_equal(cnet_tls_state_set_protocol_range(&pair.server, tls_versions[index],
+                                                      tls_versions[index]), SALTS_OK);
+        check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
+        check_false(cnet_tls_state_handshake_complete(&pair.client));
+        cnet_tls_test_pair_destroy(&pair);
+      }
+    }
+
+    it("rejects an independently valid P-521 issuer without provider fallback") {
+      cnet_tls_test_pair pair = {0};
+      check_equal(cnet_tls_test_fixture_pair_init(
+                      &pair, CNET_TLS_TEST_UNSUPPORTED_P521_CA,
+                      CNET_TLS_TEST_UNSUPPORTED_P521_LEAF,
+                      CNET_TLS_TEST_SHA512_MIXED_KEY, "localhost"), SALTS_OK);
+      check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
+      check_false(cnet_tls_state_handshake_complete(&pair.client));
+      cnet_tls_test_pair_destroy(&pair);
+    }
+  }
+
 }
