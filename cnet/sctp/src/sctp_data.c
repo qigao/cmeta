@@ -1657,8 +1657,14 @@ cnet_sctp_data_status cnet_sctp_data_take_before_reset(cnet_sctp_data *d,
 
 cnet_sctp_data_status cnet_sctp_data_take_abandoned(cnet_sctp_data *d,
     cnet_sctp_data_abandon_event *event) {
-  cnet_sctp_data_status status = guard(d);
-  if (status != CNET_SCTP_DATA_OK) return status;
+  /* A failed T3/FORWARD retransmission budget sets closed=1, but does NOT
+   * discard this Owner-owned copied local-abandonment FIFO. Permit ONLY this
+   * read-only retrieval after local FAILED; all DATA send/advance/ingress
+   * APIs still reject closed TCBs through their ordinary guard(). */
+  if (!d || d->magic != DATA_MAGIC || !d->config.is_owner)
+    return CNET_SCTP_DATA_INVALID;
+  if (!d->config.is_owner(d->config.owner_context))
+    return CNET_SCTP_DATA_OWNER;
   if (!event) return CNET_SCTP_DATA_INVALID;
   if (d->abandon_event_count == 0u) return CNET_SCTP_DATA_EMPTY;
   *event = d->abandon_events[d->abandon_event_head];
