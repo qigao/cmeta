@@ -4055,19 +4055,43 @@ cnet_sctp_assoc_status cnet_sctp_assoc_send_bundle(cnet_sctp_assoc *s,
 cnet_sctp_assoc_status cnet_sctp_assoc_queue_message(cnet_sctp_assoc *s,
     uint64_t now, uint16_t stream, uint32_t ppid, int unordered,
     const void *payload, size_t n) {
+  const cnet_sctp_data_reliability reliable = {
+    CNET_SCTP_DATA_RELIABLE, 0u
+  };
+  return cnet_sctp_assoc_queue_message_pr(s, now, stream, ppid, unordered,
+      &reliable, payload, n);
+}
+
+cnet_sctp_assoc_status cnet_sctp_assoc_queue_message_pr(cnet_sctp_assoc *s,
+    uint64_t now, uint16_t stream, uint32_t ppid, int unordered,
+    const cnet_sctp_data_reliability *reliability,
+    const void *payload, size_t n) {
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
-  if (!payload) return CNET_SCTP_ASSOC_INVALID;
+  if (!reliability || !payload) return CNET_SCTP_ASSOC_INVALID;
   if (s->state != CNET_SCTP_ASSOC_ESTABLISHED || !s->data_ready)
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
   if (association_reset_blocks_data(s) ||
       (reset_blocked_streams(s) & reset_stream_bit(stream)) != 0u)
     return CNET_SCTP_ASSOC_BUSY;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
-  status = data_result(cnet_sctp_data_queue_message(&s->data, now,
-      stream, ppid, unordered, payload, n));
+  status = data_result(cnet_sctp_data_queue_message_pr(&s->data, now,
+      stream, ppid, unordered, reliability, payload, n));
   if (status == CNET_SCTP_ASSOC_OK) s->last_time_ms = now;
   return status;
+}
+
+cnet_sctp_assoc_status cnet_sctp_assoc_take_abandoned(cnet_sctp_assoc *s,
+    cnet_sctp_data_abandon_event *event) {
+  cnet_sctp_assoc_status status = guard(s);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (!event) return CNET_SCTP_ASSOC_INVALID;
+  if ((s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED) || !s->data_ready)
+    return CNET_SCTP_ASSOC_CLOSED_ERROR;
+  return data_result(cnet_sctp_data_take_abandoned(&s->data, event));
 }
 
 cnet_sctp_assoc_status cnet_sctp_assoc_pump_message(cnet_sctp_assoc *s,

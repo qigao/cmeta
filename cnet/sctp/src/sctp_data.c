@@ -15,7 +15,12 @@ enum {
   I_DATA_HEADER = 16
 };
 enum { DATA_B = 2, DATA_E = 1, DATA_U = 4 };
-enum { PR_NO_LOSS = 0, PR_FAST_LOSS = 1, PR_T3_LOSS = 2 };
+enum {
+  PR_NO_LOSS = 0,
+  PR_FAST_LOSS = 1,
+  PR_T3_LOSS = 2,
+  PR_PROBE_RETRANSMIT = 3
+};
 static const cnet_sctp_data_reliability RELIABLE_POLICY = {
   CNET_SCTP_DATA_RELIABLE, 0u
 };
@@ -53,6 +58,23 @@ static cnet_sctp_data_status guard(cnet_sctp_data *d) {
 static cnet_sctp_data_status clock_check(const cnet_sctp_data *d, uint64_t now) {
   return now < d->last_time_ms ? CNET_SCTP_DATA_CLOCK : CNET_SCTP_DATA_OK;
 }
+static int reliability_valid(const cnet_sctp_data *d,
+    const cnet_sctp_data_reliability *reliability) {
+  return reliability &&
+      reliability->mode >= CNET_SCTP_DATA_RELIABLE &&
+      reliability->mode <= CNET_SCTP_DATA_RELIABILITY_TIMED &&
+      (reliability->mode != CNET_SCTP_DATA_RELIABLE ||
+       reliability->value == 0u) &&
+      (reliability->mode == CNET_SCTP_DATA_RELIABLE ||
+       d->config.forward_tsn_supported) &&
+      (reliability->mode != CNET_SCTP_DATA_RELIABILITY_TIMED ||
+       reliability->value != 0u);
+}
+static int pr_retransmits_exhausted(const cnet_sctp_data_tx *tx) {
+  return tx->reliability_mode == CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
+      (uint64_t)tx->retransmits + tx->probe_retransmits >=
+          tx->reliability_value;
+}
 /* Retained gap-acknowledged tickets are not outstanding for T3/rwnd.
  * They still occupy their original bounded TX slots until cumulative ACK. */
 static cnet_sctp_data_tx *oldest_outstanding(cnet_sctp_data *d) {
@@ -89,6 +111,55 @@ static int has_retained_tx(const cnet_sctp_data *d) {
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
     if (d->tx[i].used) return 1;
   return 0;
+}
+static int same_tx_message(const cnet_sctp_data_tx *a,
+    const cnet_sctp_data_tx *b) {
+  return a->used && b->used &&
+      a->stream_id == b->stream_id &&
+      a->unordered == b->unordered &&
+      a->interleaved == b->interleaved &&
+      a->message_first_tsn == b->message_first_tsn;
+}
+static size_t active_pr_messages(const cnet_sctp_data *d) {
+  size_t count = 0u, i, j;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    const cnet_sctp_data_tx *tx = &d->tx[i];
+    int seen = 0;
+    if (!tx->used || tx->reliability_mode == CNET_SCTP_DATA_RELIABLE)
+      continue;
+    for (j = 0u; j < i; ++j)
+      if (same_tx_message(tx, &d->tx[j])) { seen = 1; break; }
+    if (!seen) ++count;
+  }
+  if (d->pending.active &&
+      d->pending.reliability.mode != CNET_SCTP_DATA_RELIABLE) {
+    int represented = 0;
+    if (d->pending.has_tsn) {
+      for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+        if (d->tx[i].used &&
+            d->tx[i].message_first_tsn == d->pending.first_tsn) {
+          represented = 1;
+          break;
+        }
+    }
+    if (!represented) ++count;
+  }
+  return count;
+}
+static int has_pr_event_capacity(const cnet_sctp_data *d) {
+  return (size_t)d->abandon_event_count + active_pr_messages(d) <
+      CNET_SCTP_DATA_TX_SLOTS;
+}
+static cnet_sctp_data_status push_abandon_event(cnet_sctp_data *d,
+    const cnet_sctp_data_abandon_event *event) {
+  size_t tail;
+  if (d->abandon_event_count >= CNET_SCTP_DATA_TX_SLOTS)
+    return CNET_SCTP_DATA_CAPACITY;
+  tail = ((size_t)d->abandon_event_head + d->abandon_event_count) %
+      CNET_SCTP_DATA_TX_SLOTS;
+  d->abandon_events[tail] = *event;
+  ++d->abandon_event_count;
+  return CNET_SCTP_DATA_OK;
 }
 static cnet_sctp_data_tx *find_retained(cnet_sctp_data *d, uint32_t tsn) {
   unsigned int i;
@@ -237,23 +308,19 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
     uint8_t flags,
     const uint8_t *payload, size_t n, void *output, size_t cap,
     size_t *written, int zero_probe,
-    const cnet_sctp_data_reliability *reliability) {
+    const cnet_sctp_data_reliability *reliability,
+    size_t message_size, uint32_t message_first_tsn,
+    uint64_t expires_at_ms) {
   cnet_sctp_data_tx *slot = NULL;
   uint8_t value[I_DATA_HEADER + CNET_SCTP_DATA_PAYLOAD_MAX];
   const size_t header_size = d->config.interleaving_supported ?
       I_DATA_HEADER : DATA_HEADER;
   size_t packet_bytes = 0u, i;
   cnet_sctp_data_status status;
-  if (n == 0u || n > CNET_SCTP_DATA_PAYLOAD_MAX || !reliability ||
-      reliability->mode < CNET_SCTP_DATA_RELIABLE ||
-      reliability->mode > CNET_SCTP_DATA_RELIABILITY_TIMED ||
-      (reliability->mode == CNET_SCTP_DATA_RELIABLE &&
-       reliability->value != 0u) ||
-      (reliability->mode != CNET_SCTP_DATA_RELIABLE &&
-       !d->config.forward_tsn_supported) ||
+  if (n == 0u || n > CNET_SCTP_DATA_PAYLOAD_MAX ||
+      message_size < n || !reliability_valid(d, reliability) ||
       (reliability->mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
-       (reliability->value == 0u ||
-        now > UINT64_MAX - reliability->value)))
+       expires_at_ms < now))
     return CNET_SCTP_DATA_INVALID;
   if (d->forward_active) return CNET_SCTP_DATA_CAPACITY;
   /* RFC 9260 6.1(B): one new packet may cross cwnd only while flight
@@ -308,12 +375,15 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
   slot->ssn = (uint16_t)message_id;
   slot->mid = message_id;
   slot->fsn = fsn;
+  slot->ppid = ppid;
+  slot->message_first_tsn = message_first_tsn;
+  slot->message_size = message_size;
   slot->unordered = (flags & DATA_U) != 0u;
   slot->interleaved = d->config.interleaving_supported;
   slot->reliability_mode = (uint8_t)reliability->mode;
   slot->reliability_value = reliability->value;
   slot->expires_at_ms = reliability->mode == CNET_SCTP_DATA_RELIABILITY_TIMED ?
-      now + reliability->value : 0u;
+      expires_at_ms : 0u;
   slot->abandoned = 0u;
   slot->used = 1u;
   d->in_flight += n;
@@ -341,15 +411,25 @@ cnet_sctp_data_status cnet_sctp_data_send_pr(cnet_sctp_data *d, uint64_t now,
   if (!payload || !output || !written || n == 0u ||
       stream >= d->config.outbound_streams) return CNET_SCTP_DATA_INVALID;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  if (!reliability_valid(d, reliability))
+    return CNET_SCTP_DATA_INVALID;
+  if (reliability->mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
+      now > UINT64_MAX - reliability->value)
+    return CNET_SCTP_DATA_INVALID;
   if (d->pending.active) return CNET_SCTP_DATA_CAPACITY;
   if (n > CNET_SCTP_DATA_PAYLOAD_MAX) return CNET_SCTP_DATA_CAPACITY;
+  if (reliability->mode != CNET_SCTP_DATA_RELIABLE &&
+      !has_pr_event_capacity(d)) return CNET_SCTP_DATA_CAPACITY;
   sequence = d->config.interleaving_supported ?
       (unordered ? d->tx_mid_unordered[stream] :
        d->tx_mid_ordered[stream]) :
       (unordered ? 0u : d->tx_ssn[stream]);
   status = send_frame(d, now, stream, sequence, 0u, ppid,
       (uint8_t)(DATA_B | DATA_E | (unordered ? DATA_U : 0u)),
-      (const uint8_t *)payload, n, output, cap, written, 0, reliability);
+      (const uint8_t *)payload, n, output, cap, written, 0, reliability,
+      n, d->next_tsn,
+      reliability->mode == CNET_SCTP_DATA_RELIABILITY_TIMED ?
+          now + reliability->value : 0u);
   if (status == CNET_SCTP_DATA_OK) {
     if (d->config.interleaving_supported) {
       if (unordered) ++d->tx_mid_unordered[stream];
@@ -426,16 +506,45 @@ cnet_sctp_data_status cnet_sctp_data_send_bundle(cnet_sctp_data *d,
   return CNET_SCTP_DATA_OK;
 }
 
+static void finish_pending_message(cnet_sctp_data *d) {
+  if (d->pending.interleaved) {
+    if (d->pending.unordered)
+      ++d->tx_mid_unordered[d->pending.stream_id];
+    else {
+      ++d->tx_mid_ordered[d->pending.stream_id];
+      ++d->tx_ssn[d->pending.stream_id];
+    }
+  } else if (!d->pending.unordered) {
+    ++d->tx_ssn[d->pending.stream_id];
+  }
+  memset(&d->pending, 0, sizeof(d->pending));
+}
+
 cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,
     uint64_t now, uint16_t stream, uint32_t ppid, int unordered,
+    const void *payload, size_t n) {
+  return cnet_sctp_data_queue_message_pr(d, now, stream, ppid, unordered,
+      &RELIABLE_POLICY, payload, n);
+}
+
+cnet_sctp_data_status cnet_sctp_data_queue_message_pr(cnet_sctp_data *d,
+    uint64_t now, uint16_t stream, uint32_t ppid, int unordered,
+    const cnet_sctp_data_reliability *reliability,
     const void *payload, size_t n) {
   cnet_sctp_data_status status = guard(d);
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!payload || stream >= d->config.outbound_streams || n == 0u)
     return CNET_SCTP_DATA_INVALID;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  if (!reliability_valid(d, reliability))
+    return CNET_SCTP_DATA_INVALID;
+  if (reliability->mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
+      now > UINT64_MAX - reliability->value)
+    return CNET_SCTP_DATA_INVALID;
   if (d->pending.active || n > CNET_SCTP_DATA_MESSAGE_MAX)
     return CNET_SCTP_DATA_CAPACITY;
+  if (reliability->mode != CNET_SCTP_DATA_RELIABLE &&
+      !has_pr_event_capacity(d)) return CNET_SCTP_DATA_CAPACITY;
   /* A queued COPY supplies bytes for a later probe. Direct send remains
    * backpressured at rwnd=0; no raw input pointer is retained. */
   if (d->peer_rwnd == 0u && !has_retained_tx(d) &&
@@ -451,6 +560,10 @@ cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,
       d->tx_mid_ordered[stream];
   d->pending.next_fsn = 0u;
   d->pending.ppid = ppid;
+  d->pending.reliability = *reliability;
+  d->pending.expires_at_ms =
+      reliability->mode == CNET_SCTP_DATA_RELIABILITY_TIMED ?
+          now + reliability->value : 0u;
   d->pending.unordered = unordered != 0;
   d->pending.interleaved = d->config.interleaving_supported;
   d->pending.active = 1u;
@@ -472,6 +585,11 @@ cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d,
   *written = 0u;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
   if (!d->pending.active) return CNET_SCTP_DATA_EMPTY;
+  /* A queued lifetime starts at admission, not at the next fragment pump.
+   * The Owner must publish the corresponding abandonment through advance(). */
+  if (d->pending.reliability.mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
+      now >= d->pending.expires_at_ms)
+    return CNET_SCTP_DATA_RETRANSMIT_PENDING;
   n = d->pending.size - d->pending.offset;
   if (n > CNET_SCTP_DATA_PAYLOAD_MAX) n = CNET_SCTP_DATA_PAYLOAD_MAX;
   flags = (uint8_t)((d->pending.offset == 0u ? DATA_B : 0u) |
@@ -481,25 +599,21 @@ cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d,
       d->pending.interleaved ? d->pending.mid : d->pending.ssn,
       d->pending.next_fsn, d->pending.ppid, flags,
       d->pending.bytes + d->pending.offset,
-      n, output, cap, written, 0, &RELIABLE_POLICY);
+      n, output, cap, written, 0, &d->pending.reliability,
+      d->pending.size,
+      d->pending.has_tsn ? d->pending.first_tsn : d->next_tsn,
+      d->pending.expires_at_ms);
   if (status != CNET_SCTP_DATA_OK) return status;
+  if (!d->pending.has_tsn) {
+    d->pending.first_tsn = d->next_tsn - 1u;
+    d->pending.has_tsn = 1u;
+  }
   d->pending.offset += n;
   ++d->pending.next_fsn;
-  if (d->pending.offset == d->pending.size) {
-    if (d->pending.interleaved) {
-      if (d->pending.unordered)
-        ++d->tx_mid_unordered[d->pending.stream_id];
-      else {
-        ++d->tx_mid_ordered[d->pending.stream_id];
-        ++d->tx_ssn[d->pending.stream_id];
-      }
-    } else if (!d->pending.unordered) {
-      ++d->tx_ssn[d->pending.stream_id];
-    }
+  if (d->pending.offset == d->pending.size)
     /* No message body survives successful admission of the final fragment.
      * Retransmit tickets own independent full-wire copies. */
-    memset(&d->pending, 0, sizeof(d->pending));
-  }
+    finish_pending_message(d);
   return CNET_SCTP_DATA_OK;
 }
 
@@ -1225,7 +1339,7 @@ int cnet_sctp_data_outbound_drained(const cnet_sctp_data *d) {
 int cnet_sctp_data_association_reset_ready(const cnet_sctp_data *d) {
   unsigned int i;
   if (!cnet_sctp_data_outbound_drained(d) || d->buffered_rx != 0u ||
-      d->rx_gaps != 0u)
+      d->rx_gaps != 0u || d->abandon_event_count != 0u)
     return 0;
   for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i)
     if (d->rx[i].used) return 0;
@@ -1242,6 +1356,9 @@ cnet_sctp_data_status cnet_sctp_data_reset_association(cnet_sctp_data *d,
   memset(d->tx, 0, sizeof(d->tx));
   memset(d->rx, 0, sizeof(d->rx));
   memset(&d->pending, 0, sizeof(d->pending));
+  memset(d->abandon_events, 0, sizeof(d->abandon_events));
+  d->abandon_event_head = 0u;
+  d->abandon_event_count = 0u;
   memset(d->tx_ssn, 0, sizeof(d->tx_ssn));
   memset(d->rx_ssn, 0, sizeof(d->rx_ssn));
   memset(d->rx_forward_ssn, 0, sizeof(d->rx_forward_ssn));
@@ -1512,6 +1629,21 @@ cnet_sctp_data_status cnet_sctp_data_take_before_reset(cnet_sctp_data *d,
   return take_message(d, stream_mask, last_tsn, meta, out, cap, written);
 }
 
+cnet_sctp_data_status cnet_sctp_data_take_abandoned(cnet_sctp_data *d,
+    cnet_sctp_data_abandon_event *event) {
+  cnet_sctp_data_status status = guard(d);
+  if (status != CNET_SCTP_DATA_OK) return status;
+  if (!event) return CNET_SCTP_DATA_INVALID;
+  if (d->abandon_event_count == 0u) return CNET_SCTP_DATA_EMPTY;
+  *event = d->abandon_events[d->abandon_event_head];
+  memset(&d->abandon_events[d->abandon_event_head], 0,
+      sizeof(d->abandon_events[d->abandon_event_head]));
+  d->abandon_event_head = (uint8_t)(
+      (d->abandon_event_head + 1u) % CNET_SCTP_DATA_TX_SLOTS);
+  --d->abandon_event_count;
+  return CNET_SCTP_DATA_OK;
+}
+
 /* RFC 9260 6.2: Owner explicitly emits a reopened-window SACK, not a
  * timer/callback. Capacity refusal must preserve all receive state. */
 cnet_sctp_data_status cnet_sctp_data_window_update(cnet_sctp_data *d,
@@ -1550,6 +1682,80 @@ static void recompute_flight(cnet_sctp_data *d) {
       d->in_flight += d->tx[i].user_size;
 }
 
+static int pending_matches_tx(const cnet_sctp_data_pending *pending,
+    const cnet_sctp_data_tx *tx) {
+  return pending->active && pending->has_tsn && tx->used &&
+      pending->stream_id == tx->stream_id &&
+      pending->unordered == tx->unordered &&
+      pending->interleaved == tx->interleaved &&
+      pending->first_tsn == tx->message_first_tsn;
+}
+
+/* RFC 3758 3.5 A3: one fragment reaching its PR policy abandons every
+ * assigned TSN in that user message. Any copied but unassigned suffix is
+ * canceled in the same transaction, and one bounded ULP record is retained. */
+static cnet_sctp_data_status abandon_tx_message(cnet_sctp_data *d,
+    const cnet_sctp_data_tx *key, cnet_sctp_data_abandon_reason reason,
+    uint32_t loss_tsn, int *loss_abandoned) {
+  cnet_sctp_data_abandon_event event = {0};
+  size_t i;
+  event.stream_id = key->stream_id;
+  event.ppid = key->ppid;
+  event.message_identifier = key->interleaved ? key->mid : key->ssn;
+  event.message_size = key->message_size;
+  event.first_tsn = key->message_first_tsn;
+  event.last_tsn = key->tsn;
+  event.reliability.mode =
+      (cnet_sctp_data_reliability_mode)key->reliability_mode;
+  event.reliability.value = key->reliability_value;
+  event.reason = reason;
+  event.unordered = key->unordered;
+  event.interleaved = key->interleaved;
+  event.has_tsn = 1u;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    const cnet_sctp_data_tx *tx = &d->tx[i];
+    if (!same_tx_message(key, tx)) continue;
+    if (ahead(tx->tsn, event.last_tsn)) event.last_tsn = tx->tsn;
+    if (tx->tsn == loss_tsn) *loss_abandoned = 1;
+  }
+  if (pending_matches_tx(&d->pending, key)) {
+    event.ppid = d->pending.ppid;
+    event.message_size = d->pending.size;
+    event.last_tsn = d->next_tsn - 1u;
+  }
+  if (push_abandon_event(d, &event) != CNET_SCTP_DATA_OK)
+    return CNET_SCTP_DATA_CAPACITY;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    cnet_sctp_data_tx *tx = &d->tx[i];
+    if (!same_tx_message(key, tx)) continue;
+    tx->abandoned = 1u;
+    tx->flight_accounted = 0u;
+    tx->pending_retransmit = 0u;
+  }
+  if (pending_matches_tx(&d->pending, key))
+    finish_pending_message(d);
+  return CNET_SCTP_DATA_OK;
+}
+
+static cnet_sctp_data_status abandon_unsent_pending(cnet_sctp_data *d) {
+  cnet_sctp_data_abandon_event event = {0};
+  event.stream_id = d->pending.stream_id;
+  event.ppid = d->pending.ppid;
+  event.message_identifier = d->pending.interleaved ?
+      d->pending.mid : d->pending.ssn;
+  event.message_size = d->pending.size;
+  event.reliability = d->pending.reliability;
+  event.reason = CNET_SCTP_DATA_ABANDON_TIMED;
+  event.unordered = d->pending.unordered;
+  event.interleaved = d->pending.interleaved;
+  if (push_abandon_event(d, &event) != CNET_SCTP_DATA_OK)
+    return CNET_SCTP_DATA_CAPACITY;
+  memset(&d->pending, 0, sizeof(d->pending));
+  d->probe_deadline_ms = 0u;
+  d->probe_interval_ms = 0u;
+  return CNET_SCTP_DATA_OK;
+}
+
 /* Mark due RFC 3758 records, then publish one cumulative FORWARD-TSN only
  * when every TSN from last_ack+1 is either abandoned or already Gap-ACKed.
  * The fixed stream array bounds the stream/SSN pairs and the copied packet
@@ -1573,18 +1779,20 @@ static cnet_sctp_data_status emit_forward_tsn(cnet_sctp_data *d,
   memcpy(&staged, d, sizeof(staged));
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
     cnet_sctp_data_tx *tx = &staged.tx[i];
+    cnet_sctp_data_abandon_reason reason;
     if (!tx->used || tx->abandoned ||
         tx->reliability_mode == CNET_SCTP_DATA_RELIABLE)
       continue;
     if ((tx->reliability_mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
          now >= tx->expires_at_ms) ||
         (loss_kind != PR_NO_LOSS && tx->tsn == loss_tsn &&
-         tx->reliability_mode == CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
-         tx->retransmits >= tx->reliability_value)) {
-      tx->abandoned = 1u;
-      tx->flight_accounted = 0u;
-      tx->pending_retransmit = 0u;
-      if (tx->tsn == loss_tsn) loss_abandoned = 1;
+         pr_retransmits_exhausted(tx))) {
+      reason = tx->reliability_mode == CNET_SCTP_DATA_RELIABILITY_TIMED ?
+          CNET_SCTP_DATA_ABANDON_TIMED :
+          CNET_SCTP_DATA_ABANDON_RETRANSMITS;
+      status = abandon_tx_message(&staged, tx, reason, loss_tsn,
+          &loss_abandoned);
+      if (status != CNET_SCTP_DATA_OK) return status;
     }
   }
   cursor = staged.last_ack + 1u;
@@ -1680,6 +1888,13 @@ static cnet_sctp_data_status emit_forward_tsn(cnet_sctp_data *d,
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
     if (staged.tx[i].used && !ahead(staged.tx[i].tsn, cumulative))
       memset(&staged.tx[i], 0, sizeof(staged.tx[i]));
+  if (staged.probe_active && !find_tx(&staged, staged.probe_tsn)) {
+    staged.probe_active = 0u;
+    staged.probe_tsn = 0u;
+    staged.probe_deadline_ms = 0u;
+    staged.probe_interval_ms = 0u;
+    staged.probe_unanswered = 0u;
+  }
   recompute_flight(&staged);
   staged.forward_active = 1u;
   staged.forward_cumulative_tsn = cumulative;
@@ -1704,6 +1919,14 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!out || !written) return CNET_SCTP_DATA_INVALID;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  if (d->pending.active && !d->pending.has_tsn &&
+      d->pending.reliability.mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
+      now >= d->pending.expires_at_ms) {
+    status = abandon_unsent_pending(d);
+    if (status != CNET_SCTP_DATA_OK) return status;
+    d->last_time_ms = now;
+    return CNET_SCTP_DATA_OK;
+  }
   if (d->forward_active) {
     if (now < d->forward_deadline_ms) {
       d->last_time_ms = now;
@@ -1741,6 +1964,16 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
       if (d->probe_active) {
         cnet_sctp_data_tx *probe = find_retained(d, d->probe_tsn);
         if (!probe) return CNET_SCTP_DATA_PROTOCOL;
+        if (pr_retransmits_exhausted(probe)) {
+          status = emit_forward_tsn(d, now, PR_PROBE_RETRANSMIT,
+              probe->tsn, out, cap, written);
+          if (status != CNET_SCTP_DATA_EMPTY) return status;
+          probe = find_retained(d, d->probe_tsn);
+          if (!probe || probe->abandoned) {
+            d->last_time_ms = now;
+            return CNET_SCTP_DATA_OK;
+          }
+        }
         /* If NO SACK arrives across bounded retries, the peer may be
          * dead rather than persistently window-closed.  Responsive peers
          * reset this counter on every accepted SACK, even with rwnd=0. */
@@ -1754,6 +1987,8 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
         /* Retried zero-window probes are Karn-ambiguous without consuming
          * ordinary loss/error retransmission budget. */
         probe->probe_retransmitted = 1u;
+        if (probe->probe_retransmits != UINT32_MAX)
+          ++probe->probe_retransmits;
         ++d->probe_unanswered;
         d->probe_interval_ms = interval;
         d->probe_deadline_ms = now + interval;
@@ -1769,26 +2004,22 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
             d->pending.interleaved ? d->pending.mid : d->pending.ssn,
             d->pending.next_fsn, d->pending.ppid, flags,
             d->pending.bytes + d->pending.offset,
-            1u, out, cap, written, 1, &RELIABLE_POLICY);
+            1u, out, cap, written, 1, &d->pending.reliability,
+            d->pending.size,
+            d->pending.has_tsn ? d->pending.first_tsn : d->next_tsn,
+            d->pending.expires_at_ms);
         if (status != CNET_SCTP_DATA_OK) return status;
+        if (!d->pending.has_tsn) {
+          d->pending.first_tsn = d->next_tsn - 1u;
+          d->pending.has_tsn = 1u;
+        }
         d->probe_tsn = d->next_tsn - 1u;
         d->probe_active = 1u;
         d->probe_unanswered = 0u;
         ++d->pending.offset;
         ++d->pending.next_fsn;
-        if (d->pending.offset == d->pending.size) {
-          if (d->pending.interleaved) {
-            if (d->pending.unordered)
-              ++d->tx_mid_unordered[d->pending.stream_id];
-            else {
-              ++d->tx_mid_ordered[d->pending.stream_id];
-              ++d->tx_ssn[d->pending.stream_id];
-            }
-          } else if (!d->pending.unordered) {
-            ++d->tx_ssn[d->pending.stream_id];
-          }
-          memset(&d->pending, 0, sizeof(d->pending));
-        }
+        if (d->pending.offset == d->pending.size)
+          finish_pending_message(d);
         d->probe_interval_ms = interval;
         d->probe_deadline_ms = now + interval;
         return CNET_SCTP_DATA_OK;
@@ -1819,9 +2050,7 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
         fast = slot;
     }
     if (fast) {
-      if (fast->reliability_mode ==
-              CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
-          fast->retransmits >= fast->reliability_value) {
+      if (pr_retransmits_exhausted(fast)) {
         status = emit_forward_tsn(d, now, PR_FAST_LOSS, fast->tsn,
             out, cap, written);
         if (status != CNET_SCTP_DATA_EMPTY) return status;
@@ -1883,9 +2112,7 @@ t3_due:
     d->last_time_ms = now;
     return CNET_SCTP_DATA_OK;
   }
-  if (oldest->reliability_mode ==
-          CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
-      oldest->retransmits >= oldest->reliability_value) {
+  if (pr_retransmits_exhausted(oldest)) {
     status = emit_forward_tsn(d, now, PR_T3_LOSS, oldest->tsn,
         out, cap, written);
     if (status != CNET_SCTP_DATA_EMPTY) return status;
@@ -1961,6 +2188,20 @@ cnet_sctp_data_status cnet_sctp_data_deadline(cnet_sctp_data *d,
       *deadline = d->last_time_ms;
     }
   }
+  /* An active zero-window probe owns retransmission timing instead of T3.
+   * Establish its deadline first, then allow an earlier PR-message lifetime
+   * below to preempt it. */
+  if (d->peer_rwnd == 0u && d->probe_deadline_ms &&
+      (d->probe_active || !has_retained_tx(d))) {
+    *has_deadline = 1;
+    *deadline = d->probe_deadline_ms;
+  }
+  if (d->pending.active &&
+      d->pending.reliability.mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
+      (!*has_deadline || d->pending.expires_at_ms < *deadline)) {
+    *has_deadline = 1;
+    *deadline = d->pending.expires_at_ms;
+  }
   {
     size_t i;
     for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
@@ -1972,11 +2213,6 @@ cnet_sctp_data_status cnet_sctp_data_deadline(cnet_sctp_data *d,
         *deadline = tx->expires_at_ms;
       }
     }
-  }
-  if (d->peer_rwnd == 0u && d->probe_deadline_ms &&
-      (d->probe_active || !has_retained_tx(d))) {
-    *has_deadline = 1;
-    *deadline = d->probe_deadline_ms;
   }
   /* A pending fast retransmission is runnable now under the existing Owner,
    * unless recovery cwnd actually prevents emission.  The application
@@ -1996,6 +2232,9 @@ cnet_sctp_data_status cnet_sctp_data_stop(cnet_sctp_data *d) {
   memset(d->tx, 0, sizeof(d->tx));
   memset(d->rx, 0, sizeof(d->rx));
   memset(&d->pending, 0, sizeof(d->pending));
+  memset(d->abandon_events, 0, sizeof(d->abandon_events));
+  d->abandon_event_head = 0u;
+  d->abandon_event_count = 0u;
   d->in_flight = 0u;
   d->t3_wait_ack = 0u;
   d->partial_bytes_acked = 0u;
