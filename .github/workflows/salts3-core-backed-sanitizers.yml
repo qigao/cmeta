@@ -1,0 +1,108 @@
+name: Salts 3.0 Core-backed original-source Sanitizers (Draft)
+
+# Instrument the *real installed* SaltsConfig package, not temporary SaltsM6.
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/salts3-core-backed-sanitizers.yml"
+      - "CMakeLists.txt"
+      - "cmake/SaltsCoreBackedProfile.cmake"
+      - "cmake/SaltsConfig.cmake.in"
+      - "cmake/ci/core-backed-original-tests/**"
+      - "cmeta/**"
+      - "component/**"
+      - "plugin/**"
+      - "component-runtime/**"
+      - "cflow/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  salts3-source-sanitizers:
+    name: Linux SaltsConfig 3.0 original 13 tests ${{ matrix.kind }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: asan-ubsan
+            flags: "-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1"
+          - kind: tsan
+            flags: "-fsanitize=thread -fno-omit-frame-pointer -g -O1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/salts-core
+          ref: a98fc58f24230a56c32f79ece3b656e79e0a1fb3
+          path: saltscore-candidate
+          persist-credentials: false
+      - name: Install exact native 0.1 fully instrumented Core shared owner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C saltscore-candidate rev-parse HEAD)" = a98fc58f24230a56c32f79ece3b656e79e0a1fb3
+          core="$RUNNER_TEMP/saltscore-3-${{ matrix.kind }}"
+          cmake -S saltscore-candidate -B build-core-${{ matrix.kind }} -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF \
+            "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_INSTALL_PREFIX=$core"
+          cmake --build build-core-${{ matrix.kind }} --parallel 2
+          cmake --install build-core-${{ matrix.kind }} --config RelWithDebInfo
+      - name: Install exact real SaltsConfig 3.0 CMeta Plugin ServiceHost CFlow
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$RUNNER_TEMP/saltscore-3-${{ matrix.kind }}"
+          salts="$RUNNER_TEMP/salts3-${{ matrix.kind }}"
+          cmake -S . -B build-salts3-${{ matrix.kind }} -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DSALTS_CORE_BACKED_PROFILE=ON \
+            -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_SHARED_LIBS=OFF \
+            "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_PREFIX_PATH=$core" "-DCMAKE_INSTALL_PREFIX=$salts"
+          cmake --build build-salts3-${{ matrix.kind }} --parallel 2
+          cmake --install build-salts3-${{ matrix.kind }} --config RelWithDebInfo
+          test -f "$salts/lib/cmake/Salts/SaltsTargets.cmake"
+          test ! -e "$salts/lib/libsalts.so"
+      - name: Compile all 13 original tests against installed Salts 3.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$RUNNER_TEMP/saltscore-3-${{ matrix.kind }}"
+          salts="$RUNNER_TEMP/salts3-${{ matrix.kind }}"
+          cmake -S cmake/ci/core-backed-original-tests \
+            -B build-original-${{ matrix.kind }} -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            "-DSALTS_SOURCE_ROOT=$GITHUB_WORKSPACE" \
+            "-DCMAKE_PREFIX_PATH=$salts;$core" \
+            "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
+          cmake --build build-original-${{ matrix.kind }} --parallel 2
+          test "$(ctest --test-dir build-original-${{ matrix.kind }} -N | sed -n 's/^Total Tests: //p')" = 13
+      - name: Repeat real 13-suite cancellation and DSO conformance under sanitizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$RUNNER_TEMP/saltscore-3-${{ matrix.kind }}"
+          export LD_LIBRARY_PATH="$core/lib:${LD_LIBRARY_PATH:-}"
+          if [[ '${{ matrix.kind }}' == 'asan-ubsan' ]]; then
+            export ASAN_OPTIONS='detect_leaks=1:halt_on_error=1:abort_on_error=1'
+            export UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1'
+          else
+            export TSAN_OPTIONS='halt_on_error=1:exitcode=66'
+          fi
+          ctest --test-dir build-original-${{ matrix.kind }} \
+            -C RelWithDebInfo --output-on-failure --no-tests=error \
+            --timeout 120 --repeat until-fail:3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: salts3-native-original-${{ matrix.kind }}-log
+          path: build-original-${{ matrix.kind }}/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore

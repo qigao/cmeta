@@ -83,3 +83,17 @@ installation prefixes are moved**, with old locations absent.
 The separate four-process installed consumer ABI and legacy Salts
 2.3 admission-rejection gates remain mandatory. This qualifies a
 reduced, unreleased Salts 3.0 ABI candidate, not a 2.3 upgrade.
+
+## Linux sanitizers on the real SaltsConfig
+
+A separate Linux workflow configures the exact imported **shared**
+SaltsCore 0.1 and **actual installed Salts 3.0 CMeta/ACE/CFlow**
+candidate under two independently instrumented modes:
+ASan+UBSan with LeakSanitizer, and TSan.
+
+The original 13 test sources and two real Provider DSO fixture
+binaries are instrumented with the same flags as both native SDKs.
+The workflow checks the exact 13 CTest registrations and repeats
+each original suite three times, failing on any sanitizer report.
+It does not substitute the earlier SaltsM6 test-only package,
+skip OS tests, suppress failures, or embed old Salts::Core.
