@@ -1,0 +1,66 @@
+name: C11 atomic compiler conformance
+
+on:
+  pull_request:
+    paths:
+      - 'tests/compiler/**'
+      - '.github/workflows/atomic-compiler-conformance.yml'
+  workflow_dispatch:
+
+jobs:
+  native-baseline:
+    name: Native atomic / ${{ matrix.compiler }} / ${{ matrix.config }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        config: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure standalone C11 conformance
+        run: >-
+          cmake -S tests/compiler -B build/atomic-${{ matrix.compiler }}
+          -G Ninja -DCMAKE_C_COMPILER=${{ matrix.compiler }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+      - name: Compile
+        run: cmake --build build/atomic-${{ matrix.compiler }} --parallel 2
+      - name: Execute real atomic tests
+        run: ctest --test-dir build/atomic-${{ matrix.compiler }} --output-on-failure
+
+  tcc-experimental:
+    name: TCC / pinned mob / experimental
+    runs-on: ubuntu-latest
+    # This job is evidence gathering only. TCC is NOT an admitted Salts SDK
+    # compiler until its native atomics, ABI, and concurrency are qualified.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pinned TinyCC (not the old distro release)
+        shell: bash
+        run: |
+          git clone https://github.com/TinyCC/tinycc.git "$RUNNER_TEMP/tinycc"
+          git -C "$RUNNER_TEMP/tinycc" checkout --detach e23dabed154a8495f3ac1ff3cc9d04fa1c207893
+          cd "$RUNNER_TEMP/tinycc"
+          ./configure --prefix="$RUNNER_TEMP/tcc-install"
+          make -j2
+          make install
+          echo "$RUNNER_TEMP/tcc-install/bin" >> "$GITHUB_PATH"
+      - name: Record exact compiler revision
+        run: tcc -v
+      - name: Configure standalone C11 conformance
+        run: cmake -S tests/compiler -B build/atomic-tcc -G Ninja -DCMAKE_C_COMPILER=tcc
+      - name: Compile
+        run: cmake --build build/atomic-tcc --parallel 2
+      - name: Execute real atomic tests
+        run: ctest --test-dir build/atomic-tcc --output-on-failure
+      - name: Preserve experimental diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcc-atomic-conformance-logs
+          if-no-files-found: ignore
+          path: |
+            build/atomic-tcc/CMakeFiles/CMakeConfigureLog.yaml
+            build/atomic-tcc/CMakeFiles/CMakeError.log
+            build/atomic-tcc/Testing/Temporary/LastTest.log
