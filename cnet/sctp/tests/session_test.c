@@ -777,8 +777,10 @@ static void peer_abort_retains_unread_confirmed_results(void) {
  * SACK must be latched for the ULP before DATA is destroyed, but a forged
  * out-of-range SACK before an otherwise valid ABORT must NOT create success. */
 static void peer_abort_prefix_sack_is_not_a_fake_ack(void) {
-  unsigned int admissible;
-  for (admissible = 0u; admissible < 2u; ++admissible) {
+  unsigned int scenario;
+  /* 0: invalid ordinary SACK; 1: valid ordinary SACK; 2: valid SACK
+   * bundled ahead of a reflected-tag ABORT. Only scenario 1 may ACK. */
+  for (scenario = 0u; scenario < 3u; ++scenario) {
     cnet_sctp_session a = {0}, b = {0};
     test_context ca = {0}, cb = {0};
     cnet_sctp_session_reliable_ack ack = {0};
@@ -792,7 +794,7 @@ static void peer_abort_prefix_sack_is_not_a_fake_ack(void) {
     size_t data_n = 0u, sack_n = 0u, bundle_n = 0u, reply_n = 0u;
     size_t reason_n = 0u;
     uint64_t ga = 0u, gb = 0u, ticket = 0u;
-    uint32_t unexpected;
+    uint32_t unexpected, original_ack;
 
     ready_pair(&a, &b, &ca, &cb);
     open_channel_with_policy(&a, &b, 6u, 0u, 0x80u, 0u, &ga, &gb);
@@ -811,7 +813,8 @@ static void peer_abort_prefix_sack_is_not_a_fake_ack(void) {
         chunks[0].value_size == 12u);
     memcpy(copied_sack, chunks[0].value, chunks[0].value_size);
     chunks[0].value = copied_sack;
-    if (!admissible) {
+    original_ack = a.association.data.last_ack;
+    if (scenario == 0u) {
       /* Beyond the original DATA send high-water mark. Framing and CRC
        * remain valid, but this SACK cannot confirm any local ticket. */
       unexpected = a.association.data.next_tsn + 100u;
@@ -821,10 +824,11 @@ static void peer_abort_prefix_sack_is_not_a_fake_ack(void) {
       copied_sack[3] = (uint8_t)unexpected;
     }
     chunks[1].type = 6u;
-    chunks[1].flags = 0u;
+    chunks[1].flags = (uint8_t)(scenario == 2u);
     chunks[1].value = cause;
     chunks[1].value_size = sizeof(cause);
-    assert(cnet_sctp_wire_encode(5001u, 5000u, a.association.local_tag,
+    assert(cnet_sctp_wire_encode(5001u, 5000u,
+        scenario == 2u ? a.association.peer_tag : a.association.local_tag,
         chunks, 2u, bundled, sizeof(bundled), &bundle_n) ==
         CNET_SCTP_WIRE_OK);
     assert(cnet_sctp_session_input(&a, 22u, bundled, bundle_n,
@@ -833,8 +837,11 @@ static void peer_abort_prefix_sack_is_not_a_fake_ack(void) {
     assert(cnet_sctp_session_take_peer_abort(&a, &abort_info,
         reason, sizeof(reason), &reason_n) == CNET_SCTP_SESSION_OK &&
         abort_info.has_tsn && abort_info.has_user_reason &&
-        reason_n == 4u && memcmp(reason, "sack", 4u) == 0);
-    if (admissible) {
+        reason_n == 4u && memcmp(reason, "sack", 4u) == 0 &&
+        (scenario == 1u ?
+            abort_info.last_acked_tsn != original_ack :
+            abort_info.last_acked_tsn == original_ack));
+    if (scenario == 1u) {
       assert(cnet_sctp_session_take_reliable_ack(&a, &ack) ==
           CNET_SCTP_SESSION_OK && ack.ticket == ticket &&
           ack.generation == ga && ack.stream_id == 0u);

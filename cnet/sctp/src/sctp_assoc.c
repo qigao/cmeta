@@ -3266,7 +3266,13 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
      * prefix-SACK progress is projected from an owned candidate, not by
      * mutating the live TCB or sending an ACK to the aborting peer. */
     record_peer_abort(s, &terminal_chunk);
-    if (s->data_ready && terminal_index != 0u)
+    /* RFC 9260 §8.5.1 B permits reflected-tag T=1 ABORT, but its packet
+     * verification tag is the PEER tag, not our ordinary LOCAL tag. Any
+     * preceding SACK in that reflected packet is not admitted as normal
+     * association traffic and MUST NOT credit a real DATA ticket. Still
+     * accept the terminal ABORT without inventing cumulative success. */
+    if (s->data_ready && terminal_index != 0u &&
+        (terminal_chunk.flags & 1u) == 0u)
       s->peer_abort_info.last_acked_tsn =
           preview_abort_prefix_last_ack(s, now, &preflight_decoder,
               terminal_index);
