@@ -781,7 +781,6 @@ static void peer_abort_prefix_sack_is_not_a_fake_ack(void) {
   for (admissible = 0u; admissible < 2u; ++admissible) {
     cnet_sctp_session a = {0}, b = {0};
     test_context ca = {0}, cb = {0};
-    cnet_sctp_session_event event = {0};
     cnet_sctp_session_reliable_ack ack = {0};
     cnet_sctp_session_peer_abort abort_info = {0};
     cnet_sctp_wire_header header = {0};
@@ -789,7 +788,7 @@ static void peer_abort_prefix_sack_is_not_a_fake_ack(void) {
     cnet_sctp_wire_chunk chunks[2] = {{0}};
     const uint8_t cause[] = {0u, 12u, 0u, 8u, 's', 'a', 'c', 'k'};
     uint8_t data[1200], sack[1200], bundled[1200], reply[1200];
-    uint8_t copied_sack[32], payload[32], reason[8] = {0};
+    uint8_t copied_sack[32], reason[8] = {0};
     size_t data_n = 0u, sack_n = 0u, bundle_n = 0u, reply_n = 0u;
     size_t reason_n = 0u;
     uint64_t ga = 0u, gb = 0u, ticket = 0u;
