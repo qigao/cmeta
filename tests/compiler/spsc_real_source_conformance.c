@@ -43,7 +43,7 @@ static uint64_t monotonic_ns(void) {
 static bool past_deadline(uint64_t start_ns) {
     const uint64_t now = monotonic_ns();
     return now == 0u || now < start_ns ||
-           now - start_ns >= UINT64_C(TIMEOUT_SECONDS) * UINT64_C(1000000000);
+           now - start_ns >= (uint64_t)TIMEOUT_SECONDS * UINT64_C(1000000000);
 }
 
 static uint32_t frame_checksum(uint64_t sequence) {
