@@ -66,3 +66,20 @@ graph, reconcile every downstream consumer, publish 3.0, or
 authorize mixed old/native DSOs. Full Unicode/IDNA/ASN1, FS/Process,
 nonquiescent unload, dependency closure and release/rollback policy
 are later gated engineering tasks. **PR stays Draft, no merge/release.**
+
+## Original source conformance on real SaltsConfig 3.0
+
+The independent `core-backed-original-tests` project now imports
+only the installed **real** `Salts 3.0` and `SaltsCore 0.1` CMake
+packages. It compiles original Configurator C11/C++17, ServiceHost
+generation/concurrency/C++, seven CFlow source test suites, and the
+strict PluginRegistry UTF-8 rejection fixture (13 tests total).
+The only additional DSOs are the original *test-only* Component
+Provider fixtures; no historical Salts Platform, Core, NativeIO,
+Concurrency, or CNet production sources are compiled.
+
+All 13 tests run on Linux, macOS, Windows before **and after both
+installation prefixes are moved**, with old locations absent.
+The separate four-process installed consumer ABI and legacy Salts
+2.3 admission-rejection gates remain mandatory. This qualifies a
+reduced, unreleased Salts 3.0 ABI candidate, not a 2.3 upgrade.

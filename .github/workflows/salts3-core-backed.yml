@@ -8,6 +8,7 @@ on:
       - "cmake/SaltsCoreBackedProfile.cmake"
       - "cmake/SaltsConfig.cmake.in"
       - "cmake/ci/core-backed-consumer/**"
+      - "cmake/ci/core-backed-original-tests/**"
       - "cmake/ci/core-backed-legacy-rejection/**"
       - "cmeta/**"
       - "component/**"
@@ -109,6 +110,30 @@ jobs:
           cmake --build build-profile-consumer --config Release --parallel 2
           ctest --test-dir build-profile-consumer -C Release \
             --output-on-failure --no-tests=error
+      - name: Run 13 original CMeta Plugin ServiceHost CFlow CTests on installed SaltsConfig
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$RUNNER_TEMP/saltscore-profile-sdk"
+          salts="$RUNNER_TEMP/salts3-profile-sdk"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            generator=(-G 'Visual Studio 18 2026' -A x64)
+            export PATH="$(cygpath -u "$salts")/bin:$(cygpath -u "$core")/bin:$PATH"
+          elif [[ "$RUNNER_OS" == macOS ]]; then
+            generator=(-G Ninja)
+            export DYLD_LIBRARY_PATH="$core/lib:${DYLD_LIBRARY_PATH:-}"
+          else
+            generator=(-G Ninja)
+            export LD_LIBRARY_PATH="$core/lib:${LD_LIBRARY_PATH:-}"
+          fi
+          cmake -S cmake/ci/core-backed-original-tests \
+            -B build-salts3-original "${generator[@]}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            "-DSALTS_SOURCE_ROOT=$GITHUB_WORKSPACE" \
+            "-DCMAKE_PREFIX_PATH=$salts;$core"
+          cmake --build build-salts3-original --config Release --parallel 2
+          ctest --test-dir build-salts3-original -C Release \
+            --output-on-failure --no-tests=error
       - name: Move both native SDKs and requalify new SaltsConfig consumer
         shell: bash
         run: |
@@ -143,6 +168,32 @@ jobs:
             --core-prefix "$moved_core" --salts-prefix "$moved_salts" \
             --build-dir build-profile-relocated \
             --report build-profile-relocated/owner-audit.json
+      - name: Rerun original 13 conformance tests after moving both SDK prefixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$RUNNER_TEMP/saltscore-profile-sdk-relocated"
+          salts="$RUNNER_TEMP/salts3-profile-sdk-relocated"
+          test ! -e "$RUNNER_TEMP/saltscore-profile-sdk"
+          test ! -e "$RUNNER_TEMP/salts3-profile-sdk"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            generator=(-G 'Visual Studio 18 2026' -A x64)
+            export PATH="$(cygpath -u "$salts")/bin:$(cygpath -u "$core")/bin:$PATH"
+          elif [[ "$RUNNER_OS" == macOS ]]; then
+            generator=(-G Ninja)
+            export DYLD_LIBRARY_PATH="$core/lib:${DYLD_LIBRARY_PATH:-}"
+          else
+            generator=(-G Ninja)
+            export LD_LIBRARY_PATH="$core/lib:${LD_LIBRARY_PATH:-}"
+          fi
+          cmake -S cmake/ci/core-backed-original-tests \
+            -B build-salts3-original-relocated "${generator[@]}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            "-DSALTS_SOURCE_ROOT=$GITHUB_WORKSPACE" \
+            "-DCMAKE_PREFIX_PATH=$salts;$core"
+          cmake --build build-salts3-original-relocated --config Release --parallel 2
+          ctest --test-dir build-salts3-original-relocated -C Release \
+            --output-on-failure --no-tests=error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
