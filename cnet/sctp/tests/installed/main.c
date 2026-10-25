@@ -9,9 +9,14 @@ typedef struct test_context {
   uint32_t tag;
   uint32_t tsn;
   uint32_t key;
+  int owner_admitted;
 } test_context;
 
-static int owned(void *context) { return context != NULL; }
+/* The installed consumer rejects non-Owner calls during a pending send. */
+static int owned(void *value) {
+  const test_context *context = (const test_context *)value;
+  return context != NULL && context->owner_admitted;
+}
 
 static int entropy(void *value, uint8_t *bytes, size_t size) {
   const test_context *context = (const test_context *)value;
@@ -84,7 +89,7 @@ static cnet_sctp_session_create_config session_config(uint16_t port,
 
 static int rejected_abi_contract(void) {
   test_context context = {
-      UINT32_C(0x11223344), UINT32_C(0x10203040), UINT32_C(0x13579bdf)};
+      UINT32_C(0x11223344), UINT32_C(0x10203040), UINT32_C(0x13579bdf), 1};
   cnet_sctp_session_create_config config = session_config(5000u, 1, &context);
   cnet_sctp_session *session = (cnet_sctp_session *)(uintptr_t)1u;
   if (cnet_sctp_session_create(&config, 0u, NULL) !=
@@ -122,9 +127,9 @@ static int deliver(cnet_sctp_session *receiver, cnet_sctp_session *sender,
 
 static int session_round_trip(void) {
   test_context client_context = {
-      UINT32_C(0x11223344), UINT32_C(0x10203040), UINT32_C(0x13579bdf)};
+      UINT32_C(0x11223344), UINT32_C(0x10203040), UINT32_C(0x13579bdf), 1};
   test_context server_context = {
-      UINT32_C(0x55667788), UINT32_C(0x50607080), UINT32_C(0x13579bdf)};
+      UINT32_C(0x55667788), UINT32_C(0x50607080), UINT32_C(0x13579bdf), 1};
   cnet_sctp_session_create_config client_config =
       session_config(5000u, 1, &client_context);
   cnet_sctp_session_create_config server_config =
@@ -236,6 +241,27 @@ static int session_round_trip(void) {
               CNET_SCTP_SESSION_OK ||
       cnet_sctp_session_queue_message(client, 28u, 0u, 1,
           "overlap", 7u) != CNET_SCTP_SESSION_CAPACITY)
+    goto cleanup;
+  /* Do not let an immediate send or a foreign Owner corrupt the copied
+   * pending 24 KiB record. Both rejection paths must be state-atomic.
+   * Once Owner access returns, the original queue must remain occupied. */
+  first_size = sizeof(first);
+  if (cnet_sctp_session_send(client, 28u, 0u, 1,
+          "intrude", 7u, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_CAPACITY ||
+      first_size != 0u)
+    goto cleanup;
+  client_context.owner_admitted = 0;
+  first_size = sizeof(first);
+  if (cnet_sctp_session_pump_message(client, 29u,
+          first, sizeof(first), &first_size) != CNET_SCTP_SESSION_OWNER ||
+      first_size != 0u ||
+      cnet_sctp_session_queue_message(client, 29u, 0u, 1,
+          "intrude", 7u) != CNET_SCTP_SESSION_OWNER)
+    goto cleanup;
+  client_context.owner_admitted = 1;
+  if (cnet_sctp_session_queue_message(client, 29u, 0u, 1,
+          "intrude", 7u) != CNET_SCTP_SESSION_CAPACITY)
     goto cleanup;
   /* The full message must have been copied before admission returns.
    * Poison the entire caller-owned input; reassembly must still return
