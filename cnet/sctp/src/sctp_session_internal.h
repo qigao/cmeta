@@ -27,7 +27,8 @@ typedef enum cnet_sctp_session_event_kind {
   CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN = 1,
   CNET_SCTP_SESSION_EVENT_MESSAGE = 2,
   CNET_SCTP_SESSION_EVENT_CHANNEL_CLOSED = 3,
-  CNET_SCTP_SESSION_EVENT_CHANNEL_CLOSE_FAILED = 4
+  CNET_SCTP_SESSION_EVENT_CHANNEL_CLOSE_FAILED = 4,
+  CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED = 5
 } cnet_sctp_session_event_kind;
 
 typedef struct cnet_sctp_session_event {
@@ -35,9 +36,18 @@ typedef struct cnet_sctp_session_event {
   uint16_t stream_id;
   uint64_t generation;
   size_t message_size;
+  uint32_t message_identifier;
+  uint32_t ppid;
+  uint32_t first_tsn;
+  uint32_t last_tsn;
+  cnet_sctp_data_reliability reliability;
+  cnet_sctp_data_abandon_reason abandon_reason;
   uint8_t binary;
   uint8_t locally_initiated;
   uint8_t incoming_reset;
+  uint8_t unordered;
+  uint8_t interleaved;
+  uint8_t has_tsn;
   cnet_sctp_assoc_stream_reset_result reset_result;
 } cnet_sctp_session_event;
 
@@ -87,10 +97,12 @@ cnet_sctp_session_status cnet_sctp_session_close_channel(
     void *packet, size_t capacity, size_t *written,
     uint64_t *generation);
 
-/* Pull one ULP event. DCEP messages are consumed internally. A peer OPEN may
- * also emit one reliable ordered ACK packet. If packet capacity is short, the
- * one-byte ACK obligation is retained and retried on the next poll. User DATA
- * is copied into message and never retained by this facade. */
+/* Pull one ULP event. DCEP messages are consumed internally. Abandoned
+ * partial-reliability messages are returned exactly once before later inbound
+ * messages. A peer OPEN may also emit one reliable ordered ACK packet. If
+ * packet capacity is short, the one-byte ACK obligation is retained and
+ * retried on the next poll. User DATA is copied into message and never
+ * retained by this facade. */
 cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
     uint64_t now_ms, cnet_sctp_session_event *event,
     void *message, size_t message_capacity,

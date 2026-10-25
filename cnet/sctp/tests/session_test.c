@@ -115,18 +115,19 @@ static void deliver(cnet_sctp_session *receiver, cnet_sctp_session *sender,
   assert(final_size == 0u);
 }
 
-static void open_channel(cnet_sctp_session *client,
+static void open_channel_with_policy(cnet_sctp_session *client,
     cnet_sctp_session *server, uint64_t now,
+    uint16_t stream, uint8_t type, uint32_t reliability,
     uint64_t *client_generation, uint64_t *server_generation) {
   cnet_sctp_session_event event = {0};
   uint8_t packet[1200], reply[1200], payload[512];
   size_t packet_size = 0u, reply_size = 0u;
-  assert(cnet_sctp_session_open_channel(client, now, 0u, 0x80u,
-      0u, 0u, "data", 4u, NULL, 0u,
+  assert(cnet_sctp_session_open_channel(client, now, stream, type,
+      0u, reliability, "data", 4u, NULL, 0u,
       packet, 1u, &packet_size) == CNET_SCTP_SESSION_CAPACITY);
-  assert(client->dcep.channels[0].state == 0u);
-  assert(cnet_sctp_session_open_channel(client, now, 0u, 0x80u,
-      0u, 0u, "data", 4u, NULL, 0u,
+  assert(client->dcep.channels[stream].state == 0u);
+  assert(cnet_sctp_session_open_channel(client, now, stream, type,
+      0u, reliability, "data", 4u, NULL, 0u,
       packet, sizeof(packet), &packet_size) == CNET_SCTP_SESSION_OK);
   deliver(server, client, now + 1u, packet, packet_size);
   assert(cnet_sctp_session_poll(server, now + 3u, &event,
@@ -142,6 +143,13 @@ static void open_channel(cnet_sctp_session *client,
   assert(event.kind == CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN &&
       event.locally_initiated && packet_size == 0u);
   *client_generation = event.generation;
+}
+
+static void open_channel(cnet_sctp_session *client,
+    cnet_sctp_session *server, uint64_t now,
+    uint64_t *client_generation, uint64_t *server_generation) {
+  open_channel_with_policy(client, server, now, 0u, 0x80u, 0u,
+      client_generation, server_generation);
 }
 
 static void session_open_message_reset_reuse(void) {
@@ -166,7 +174,8 @@ static void session_open_message_reset_reuse(void) {
       CNET_SCTP_SESSION_OK);
   assert(event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE && event.binary &&
       event.stream_id == 0u && event.generation == b_first &&
-      event.message_size == 3u && memcmp(payload, "one", 3u) == 0);
+      event.message_size == 3u && event.ppid == 53u && event.interleaved &&
+      memcmp(payload, "one", 3u) == 0);
 
   assert(cnet_sctp_session_close_channel(&a, 24u, 0u,
       packet, 1u, &packet_size, &close_generation) ==
@@ -213,8 +222,80 @@ static void session_open_message_reset_reuse(void) {
   assert(cnet_sctp_session_destroy(&b) == CNET_SCTP_SESSION_OK);
 }
 
+static void partial_loss_reports_abandonment_then_reliable_continues(void) {
+  cnet_sctp_session a = {0}, b = {0};
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_session_event event = {0};
+  uint8_t lost[1200], forward[1200], sack[1200], payload[32];
+  uint8_t reliable[1200], response[1200];
+  size_t lost_size = 0u, forward_size = 0u, sack_size = 0u;
+  size_t reliable_size = 0u, response_size = 0u;
+  uint64_t reliable_a = 0u, reliable_b = 0u;
+  uint64_t partial_a = 0u, partial_b = 0u;
+  uint64_t deadline = 0u;
+  int has_deadline = 0;
+
+  ready_pair(&a, &b, &ca, &cb);
+  open_channel_with_policy(&a, &b, 6u, 0u, 0x80u, 0u,
+      &reliable_a, &reliable_b);
+  open_channel_with_policy(&a, &b, 14u, 2u, 0x01u, 0u,
+      &partial_a, &partial_b);
+
+  /* Drop the admitted maxRetransmits=0 message. The first T3 expiry must
+   * publish FORWARD-TSN and an exactly-once Owner event, not retransmit DATA. */
+  assert(cnet_sctp_session_send(&a, 22u, 2u, 1, "drop", 4u,
+      lost, sizeof(lost), &lost_size) == CNET_SCTP_SESSION_OK);
+  assert(lost_size != 0u);
+  assert(cnet_sctp_session_next_deadline(&a, &deadline, &has_deadline) ==
+      CNET_SCTP_SESSION_OK && has_deadline && deadline > 22u);
+  assert(cnet_sctp_session_advance(&a, deadline, forward, sizeof(forward),
+      &forward_size) == CNET_SCTP_SESSION_OK);
+  assert(forward_size != 0u && forward[12] == 194u);
+  assert(cnet_sctp_session_input(&b, deadline + 1u, forward, forward_size,
+      sack, sizeof(sack), &sack_size) == CNET_SCTP_SESSION_OK);
+  assert(sack_size != 0u);
+  assert(cnet_sctp_session_input(&a, deadline + 2u, sack, sack_size,
+      response, sizeof(response), &response_size) == CNET_SCTP_SESSION_OK);
+  assert(response_size == 0u);
+  assert(cnet_sctp_session_poll(&a, deadline + 3u, &event,
+      payload, sizeof(payload), response, sizeof(response), &response_size) ==
+      CNET_SCTP_SESSION_OK);
+  assert(event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED &&
+      event.stream_id == 2u && event.generation == partial_a &&
+      event.message_size == 4u && event.message_identifier == 1u &&
+      event.ppid == 53u && event.binary &&
+      event.first_tsn == event.last_tsn && event.has_tsn &&
+      !event.unordered && event.interleaved && event.locally_initiated &&
+      event.reliability.mode == CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
+      event.reliability.value == 0u &&
+      event.abandon_reason == CNET_SCTP_DATA_ABANDON_RETRANSMITS);
+  assert(cnet_sctp_session_poll(&a, deadline + 4u, &event,
+      payload, sizeof(payload), response, sizeof(response), &response_size) ==
+      CNET_SCTP_SESSION_EMPTY);
+
+  /* The same association must remain usable for a later reliable channel. */
+  assert(cnet_sctp_session_send(&a, deadline + 5u, 0u, 0,
+      "after", 5u, reliable, sizeof(reliable), &reliable_size) ==
+      CNET_SCTP_SESSION_OK);
+  deliver(&b, &a, deadline + 6u, reliable, reliable_size);
+  assert(cnet_sctp_session_poll(&b, deadline + 8u, &event,
+      payload, sizeof(payload), response, sizeof(response), &response_size) ==
+      CNET_SCTP_SESSION_OK);
+  assert(event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE && !event.binary &&
+      event.stream_id == 0u && event.generation == reliable_b &&
+      event.message_size == 5u && event.ppid == 51u && event.interleaved &&
+      memcmp(payload, "after", 5u) == 0);
+
+  assert(partial_b != 0u && reliable_a != 0u);
+  assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy(&b) == CNET_SCTP_SESSION_OK);
+}
+
 int main(void) {
   session_open_message_reset_reuse();
+  partial_loss_reports_abandonment_then_reliable_continues();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }

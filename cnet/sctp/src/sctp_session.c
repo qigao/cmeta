@@ -234,6 +234,7 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
     void *message, size_t message_capacity,
     void *packet, size_t packet_capacity, size_t *packet_size) {
   cnet_sctp_assoc_stream_reset_event reset;
+  cnet_sctp_data_abandon_event abandoned;
   cnet_sctp_data_message metadata;
   cnet_sctp_webrtc_payload payload;
   uint8_t ack[1];
@@ -248,6 +249,32 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
   if (session->pending_dcep_ack != 0u)
     return send_pending_ack(session, now_ms, event, packet,
         packet_capacity, packet_size);
+
+  /* Deliver abandonment before reset completion can retire the DCEP record
+   * that owns its generation. The DATA layer reserves this fixed event slot
+   * at admission, so no allocation or callback is needed here. */
+  as = cnet_sctp_assoc_take_abandoned(&session->association, &abandoned);
+  if (as == CNET_SCTP_ASSOC_OK) {
+    ds = cnet_sctp_dcep_generation(&session->dcep, abandoned.stream_id,
+        &event->generation);
+    if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
+    event->kind = CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED;
+    event->stream_id = abandoned.stream_id;
+    event->message_size = abandoned.message_size;
+    event->message_identifier = abandoned.message_identifier;
+    event->ppid = abandoned.ppid;
+    event->first_tsn = abandoned.first_tsn;
+    event->last_tsn = abandoned.last_tsn;
+    event->reliability = abandoned.reliability;
+    event->abandon_reason = abandoned.reason;
+    event->unordered = abandoned.unordered;
+    event->interleaved = abandoned.interleaved;
+    event->has_tsn = abandoned.has_tsn;
+    event->binary = abandoned.ppid == 53u || abandoned.ppid == 57u;
+    event->locally_initiated = 1u;
+    return CNET_SCTP_SESSION_OK;
+  }
+  if (as != CNET_SCTP_ASSOC_EMPTY) return map_assoc(as);
 
   while ((as = cnet_sctp_assoc_take_stream_reset(&session->association,
               &reset)) == CNET_SCTP_ASSOC_OK) {
@@ -325,7 +352,11 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
   event->kind = CNET_SCTP_SESSION_EVENT_MESSAGE;
   event->stream_id = metadata.stream_id;
   event->message_size = payload.logical_size;
+  event->message_identifier = metadata.message_identifier;
+  event->ppid = metadata.ppid;
   event->binary = payload.binary;
+  event->unordered = metadata.unordered;
+  event->interleaved = metadata.interleaved;
   event->locally_initiated =
       session->dcep.channels[metadata.stream_id].locally_initiated;
   return CNET_SCTP_SESSION_OK;
