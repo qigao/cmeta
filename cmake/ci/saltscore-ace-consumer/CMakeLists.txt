@@ -56,11 +56,11 @@ endforeach()
 add_executable(m6_installed_cflow_c cflow_consumer.c)
 target_compile_features(m6_installed_cflow_c PRIVATE c_std_11)
 target_link_libraries(m6_installed_cflow_c PRIVATE
-  Salts::CFlow SaltsCore::NativeIO SaltsCore::Platform)
+  Salts::CFlow SaltsCore::Core SaltsCore::NativeIO SaltsCore::Platform)
 add_test(NAME sdk.m6.cflow_c11 COMMAND m6_installed_cflow_c)
 
 add_executable(m6_installed_cflow_cpp cflow_consumer.cpp)
 target_compile_features(m6_installed_cflow_cpp PRIVATE cxx_std_17)
 target_link_libraries(m6_installed_cflow_cpp PRIVATE
-  Salts::CFlow SaltsCore::NativeIO SaltsCore::Platform)
+  Salts::CFlow SaltsCore::Core SaltsCore::NativeIO SaltsCore::Platform)
 add_test(NAME sdk.m6.cflow_cpp17 COMMAND m6_installed_cflow_cpp)
