@@ -48,3 +48,19 @@ echo '== TCC driver / TCC peer =='
 "$CC_NATIVE" -pthread "${link_flags[@]}" "$out/driver_tcc.o" "$out/peer_tcc.o" \
     -latomic -o "$out/tcc_driver_tcc_peer"
 timeout 30s "$out/tcc_driver_tcc_peer"
+
+echo '== TCC native linker / TCC driver and TCC peer =='
+if "$TCC" "$out/driver_tcc.o" "$out/peer_tcc.o" -lpthread -latomic \
+      -o "$out/tcc_native_link" >"$out/tcc_native_link.log" 2>&1; then
+    timeout 30s "$out/tcc_native_link"
+else
+    echo 'TCC native linker on multi-TU atomic probe: FAILED (diagnostic)'
+    cat "$out/tcc_native_link.log"
+fi
+
+echo '== TCC compile and run the real Salts::Platform POSIX threading backend =='
+"$TCC" -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
+    -Iplatform/include platform/src/thread_posix.c \
+    tests/compiler/tcc_platform_thread_probe.c -lpthread \
+    -o "$out/tcc_platform_thread_probe"
+timeout 30s "$out/tcc_platform_thread_probe"

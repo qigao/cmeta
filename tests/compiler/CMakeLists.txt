@@ -42,3 +42,14 @@ target_include_directories(salts_atomic_contract_conformance PRIVATE
 # Real same-compiler baseline for the independent mixed GCC/TCC ABI probes.
 salts_add_atomic_conformance(salts_atomic_abi_same_compiler
   atomic_abi_driver.c atomic_abi_peer.c)
+
+# Qualify actual POSIX Platform threading primitives without the full SDK.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  salts_add_atomic_conformance(salts_platform_posix_thread_probe
+    tcc_platform_thread_probe.c
+    "${CMAKE_CURRENT_LIST_DIR}/../../platform/src/thread_posix.c")
+  target_include_directories(salts_platform_posix_thread_probe PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../platform/include")
+  target_compile_definitions(salts_platform_posix_thread_probe PRIVATE
+    _DEFAULT_SOURCE=1 _POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700)
+endif()

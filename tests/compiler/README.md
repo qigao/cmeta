@@ -85,6 +85,20 @@ a limited implementation, not permission to build Salts with TCC. In particular,
 upstream TinyCC `include/tccdefs.h` explicitly defines
 `__STDC_NO_ATOMICS__=1`, which Salts must continue to reject.
 
+## Salts::Platform threading smoke (Linux only)
+
+The isolated `tcc_platform_thread_probe.c` links the actual
+`platform/src/thread_posix.c` implementation, not a copy or a third-party
+replacement. It tests a timed condition wait, thread create/join, thread
+identity token, POSIX once, mutex lifecycle and RW locks. GCC and Clang
+execute it as a standalone CTest baseline.
+
+The TinyCC diagnostic compiles and links the same production Platform source
+directly with TCC's own linker, without the full Salts/vcpkg dependency graph.
+The result is separately reported from atomics. TinyCC also explicitly defines
+`__STDC_NO_THREADS__=1`; the test does not override this or otherwise
+reinterpret thread feature admission.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:
