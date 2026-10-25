@@ -25,13 +25,15 @@ typedef enum cnet_sctp_dcep_status {
   CNET_SCTP_DCEP_PROTOCOL = -4,
   CNET_SCTP_DCEP_UNSUPPORTED = -5,
   CNET_SCTP_DCEP_BUSY = -6,
-  CNET_SCTP_DCEP_CLOSED = -7
+  CNET_SCTP_DCEP_CLOSED = -7,
+  CNET_SCTP_DCEP_STALE = -8
 } cnet_sctp_dcep_status;
 
 typedef int (*cnet_sctp_dcep_owner_fn)(void *ctx);
 typedef struct cnet_sctp_dcep_channel {
   uint16_t sid, priority;
   uint32_t reliability;
+  uint64_t generation; /* nonzero lifetime token; changes on every reuse */
   uint8_t channel_type; /* reliable, max-retransmit, or timed; ordered/U bit */
   uint8_t state; /* 0 free, 1 local WAIT_ACK, 2 open, 3 ACK_PENDING, 4 closing */
   uint8_t locally_initiated; /* never accept ACK for a peer-opened stream */
@@ -45,6 +47,7 @@ typedef struct cnet_sctp_dcep {
   cnet_sctp_dcep_channel channels[CNET_SCTP_DCEP_STREAMS];
   uint16_t streams;
   uint8_t is_dtls_client, stopped;
+  uint64_t next_generation;
   uint32_t magic;
   cnet_sctp_dcep_owner_fn is_owner;
   void *context;
@@ -66,6 +69,15 @@ cnet_sctp_dcep_status cnet_sctp_dcep_open(cnet_sctp_dcep *d,
     const void *label, size_t label_length,
     const void *protocol, size_t protocol_length,
     void *output, size_t capacity, size_t *written);
+
+/* Owner-only transaction helpers for the future ULP facade. generation()
+ * snapshots the current SID lifetime. open_cancel() rolls back only a local
+ * OPEN that is still WAIT_ACK and whose exact bytes were not admitted by the
+ * Association; it cannot close an acknowledged or peer-created channel. */
+cnet_sctp_dcep_status cnet_sctp_dcep_generation(cnet_sctp_dcep *d,
+    uint16_t stream, uint64_t *generation);
+cnet_sctp_dcep_status cnet_sctp_dcep_open_cancel(cnet_sctp_dcep *d,
+    uint16_t stream, uint64_t generation);
 
 /* Complete wire OPEN/ACK only; OPEN on an occupied or wrong-parity SID
  * rejects with no ACK and requires a reply buffer. A successful OPEN returns
@@ -98,13 +110,15 @@ cnet_sctp_dcep_status cnet_sctp_dcep_user_data_received(cnet_sctp_dcep *d,
 /* Coordinate RFC 8831 channel close with the Association's reciprocal RFC
  * 6525 reset events. close_begin() makes the SID immediately unavailable for
  * new sends but preserves the channel record while in-flight user DATA drains.
- * Report each local-direction reset result with close_reset_result(); the SID
- * becomes reusable only after both outgoing and incoming directions succeed.
- * A failed direction remains closing and may be retried by the ULP. */
+ * close_begin() returns the exact nonzero channel generation. Report each
+ * local-direction reset result with that token; a delayed result from an old
+ * SID lifetime returns STALE and cannot retire a later channel. The SID becomes
+ * reusable only after both outgoing and incoming directions succeed. A failed
+ * direction remains closing and may be retried by the ULP. */
 cnet_sctp_dcep_status cnet_sctp_dcep_close_begin(cnet_sctp_dcep *d,
-    uint16_t stream);
+    uint16_t stream, uint64_t *generation);
 cnet_sctp_dcep_status cnet_sctp_dcep_close_reset_result(cnet_sctp_dcep *d,
-    uint16_t stream, int incoming, int succeeded);
+    uint16_t stream, uint64_t generation, int incoming, int succeeded);
 int cnet_sctp_dcep_ready(const cnet_sctp_dcep *d, uint16_t stream);
 cnet_sctp_dcep_status cnet_sctp_dcep_stop(cnet_sctp_dcep *d);
 

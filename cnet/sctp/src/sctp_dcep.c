@@ -25,6 +25,13 @@ static cnet_sctp_dcep_status guard(cnet_sctp_dcep *d) {
   return d->stopped ? CNET_SCTP_DCEP_CLOSED : CNET_SCTP_DCEP_OK;
 }
 
+static uint64_t next_generation(cnet_sctp_dcep *d) {
+  uint64_t generation = d->next_generation++;
+  if (generation == 0u) generation = d->next_generation++;
+  if (d->next_generation == 0u) d->next_generation = 1u;
+  return generation;
+}
+
 /* Strict UTF-8: reject overlong forms, isolated continuation code points,
  * UTF-16 surrogate ranges and values beyond Unicode scalar U+10FFFF. */
 static int valid_utf8(const uint8_t *s, size_t n) {
@@ -79,6 +86,7 @@ cnet_sctp_dcep_status cnet_sctp_dcep_init(cnet_sctp_dcep *d,
   d->is_dtls_client = (uint8_t)is_dtls_client;
   d->is_owner = is_owner;
   d->context = context;
+  d->next_generation = 1u;
   d->magic = DCEP_MAGIC;
   return CNET_SCTP_DCEP_OK;
 }
@@ -124,6 +132,7 @@ cnet_sctp_dcep_status cnet_sctp_dcep_open(cnet_sctp_dcep *d,
   channel->priority = priority;
   channel->reliability =
       (type == 0x00u || type == 0x80u) ? 0u : reliability;
+  channel->generation = next_generation(d);
   channel->label_size = label_len;
   channel->protocol_size = proto_len;
   if (label_len) memcpy(channel->label, label, label_len);
@@ -131,6 +140,34 @@ cnet_sctp_dcep_status cnet_sctp_dcep_open(cnet_sctp_dcep *d,
   channel->state = 1u;
   channel->locally_initiated = 1u;
   *written = n;
+  return CNET_SCTP_DCEP_OK;
+}
+
+cnet_sctp_dcep_status cnet_sctp_dcep_generation(cnet_sctp_dcep *d,
+    uint16_t sid, uint64_t *generation) {
+  cnet_sctp_dcep_status status = guard(d);
+  const cnet_sctp_dcep_channel *channel;
+  if (status != CNET_SCTP_DCEP_OK) return status;
+  if (!generation || sid >= d->streams) return CNET_SCTP_DCEP_INVALID;
+  channel = &d->channels[sid];
+  if (channel->state == 0u || channel->generation == 0u)
+    return CNET_SCTP_DCEP_PROTOCOL;
+  *generation = channel->generation;
+  return CNET_SCTP_DCEP_OK;
+}
+
+cnet_sctp_dcep_status cnet_sctp_dcep_open_cancel(cnet_sctp_dcep *d,
+    uint16_t sid, uint64_t generation) {
+  cnet_sctp_dcep_status status = guard(d);
+  cnet_sctp_dcep_channel *channel;
+  if (status != CNET_SCTP_DCEP_OK) return status;
+  if (sid >= d->streams || generation == 0u)
+    return CNET_SCTP_DCEP_INVALID;
+  channel = &d->channels[sid];
+  if (channel->generation != generation) return CNET_SCTP_DCEP_STALE;
+  if (!channel->locally_initiated || channel->state != 1u)
+    return CNET_SCTP_DCEP_BUSY;
+  memset(channel, 0, sizeof(*channel));
   return CNET_SCTP_DCEP_OK;
 }
 
@@ -184,6 +221,7 @@ cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
   channel->priority = rd16(bytes + 2u);
   channel->reliability = (bytes[1] == 0x00u || bytes[1] == 0x80u) ?
       0u : rd32(bytes + 4u);
+  channel->generation = next_generation(d);
   channel->label_size = label_len;
   channel->protocol_size = proto_len;
   if (label_len) memcpy(channel->label, bytes + 12u, label_len);
@@ -263,11 +301,11 @@ cnet_sctp_dcep_status cnet_sctp_dcep_user_data_received(cnet_sctp_dcep *d,
 }
 
 cnet_sctp_dcep_status cnet_sctp_dcep_close_begin(cnet_sctp_dcep *d,
-    uint16_t sid) {
+    uint16_t sid, uint64_t *generation) {
   cnet_sctp_dcep_status status = guard(d);
   cnet_sctp_dcep_channel *channel;
   if (status != CNET_SCTP_DCEP_OK) return status;
-  if (sid >= d->streams) return CNET_SCTP_DCEP_INVALID;
+  if (!generation || sid >= d->streams) return CNET_SCTP_DCEP_INVALID;
   channel = &d->channels[sid];
   if (channel->state == 0u) return CNET_SCTP_DCEP_PROTOCOL;
   /* A peer-opened channel is not usable until its ACK has been admitted.
@@ -277,18 +315,21 @@ cnet_sctp_dcep_status cnet_sctp_dcep_close_begin(cnet_sctp_dcep *d,
   channel->state = 4u;
   channel->reset_outgoing_complete = 0u;
   channel->reset_incoming_complete = 0u;
+  *generation = channel->generation;
   return CNET_SCTP_DCEP_OK;
 }
 
 cnet_sctp_dcep_status cnet_sctp_dcep_close_reset_result(cnet_sctp_dcep *d,
-    uint16_t sid, int incoming, int succeeded) {
+    uint16_t sid, uint64_t generation, int incoming, int succeeded) {
   cnet_sctp_dcep_status status = guard(d);
   cnet_sctp_dcep_channel *channel;
   if (status != CNET_SCTP_DCEP_OK) return status;
-  if (sid >= d->streams || (incoming != 0 && incoming != 1) ||
+  if (sid >= d->streams || generation == 0u ||
+      (incoming != 0 && incoming != 1) ||
       (succeeded != 0 && succeeded != 1))
     return CNET_SCTP_DCEP_INVALID;
   channel = &d->channels[sid];
+  if (channel->generation != generation) return CNET_SCTP_DCEP_STALE;
   if (channel->state != 4u) return CNET_SCTP_DCEP_PROTOCOL;
   /* A denial/timeout is observable as incomplete close. Preserve any other
    * successfully reset direction so the ULP can retry only this direction. */

@@ -22,6 +22,21 @@ add_library(cnet_sctp_dcep_proto STATIC src/sctp_dcep.c)
 
 # Stateless RFC8831 PPID 51/53/56/57 adapter, no external transport or SDK.
 add_library(cnet_sctp_webrtc_proto STATIC src/sctp_webrtc.c)
+
+# Private M3 ULP owner: Association + DCEP + PPID transactions. It remains
+# deliberately absent from install/export until the full #1181 gates pass.
+add_library(cnet_sctp_session_proto STATIC src/sctp_session.c)
+target_include_directories(cnet_sctp_session_proto PRIVATE src)
+target_link_libraries(cnet_sctp_session_proto PUBLIC
+  cnet_sctp_assoc_proto cnet_sctp_dcep_proto cnet_sctp_webrtc_proto)
+set_target_properties(cnet_sctp_session_proto PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+if(MSVC)
+  target_compile_options(cnet_sctp_session_proto PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_session_proto PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+endif()
 target_include_directories(cnet_sctp_webrtc_proto PRIVATE src)
 set_target_properties(cnet_sctp_webrtc_proto PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -275,6 +290,19 @@ if(BUILD_TESTING)
     target_compile_options(cnet_sctp_dcep_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
   add_test(NAME cnet_sctp_dcep_test COMMAND cnet_sctp_dcep_test)
+
+  add_executable(cnet_sctp_session_test tests/session_test.c)
+  target_link_libraries(cnet_sctp_session_test PRIVATE cnet_sctp_session_proto)
+  target_include_directories(cnet_sctp_session_test PRIVATE src)
+  set_target_properties(cnet_sctp_session_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  if(MSVC)
+    target_compile_options(cnet_sctp_session_test PRIVATE /W4 /WX)
+  else()
+    target_compile_options(cnet_sctp_session_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME cnet_sctp_session_test COMMAND cnet_sctp_session_test)
 
 
 endif()
