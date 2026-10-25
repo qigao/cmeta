@@ -2,7 +2,6 @@
 #include "cnet_transport.h"
 #include "cnet_uri.h"
 #include <cnet/ipc.h>
-#include <cstl/deque.h>
 #include <limits.h>
 #include <salts/native_ipc.h>
 #include <stdlib.h>
@@ -16,8 +15,66 @@
   #include <unistd.h>
 #endif
 
+/* One owner; fixed-capacity accepted-handle FIFO, not a reflection/CSTL container.
+ * No allocation after listener init. The queue owns accepted handles until
+ * the caller takes them or stop drains and closes them. */
+typedef struct cnet_ipc_ready_queue {
+  cnet_ipc_accepted *items;
+  size_t capacity;
+  size_t front;
+  size_t count;
+} cnet_ipc_ready_queue;
+
+static int cnet_ipc_queue_init(cnet_ipc_ready_queue *q, size_t capacity) {
+  if (q == NULL || capacity == 0u) return SALTS_EINVAL;
+  if (capacity > SIZE_MAX / sizeof(cnet_ipc_accepted)) return SALTS_ERANGE;
+  q->items = (cnet_ipc_accepted *)calloc(capacity, sizeof(*q->items));
+  if (q->items == NULL) return SALTS_ENOMEM;
+  q->capacity = capacity;
+  q->front = 0u;
+  q->count = 0u;
+  return SALTS_OK;
+}
+
+static void cnet_ipc_queue_destroy(cnet_ipc_ready_queue *q) {
+  if (q == NULL) return;
+  /* Callers close all owned native handles before invoking destroy. */
+  free(q->items);
+  *q = (cnet_ipc_ready_queue){0};
+}
+
+static size_t cnet_ipc_queue_size(const cnet_ipc_ready_queue *q) {
+  return q != NULL ? q->count : 0u;
+}
+
+static bool cnet_ipc_queue_empty(const cnet_ipc_ready_queue *q) {
+  return cnet_ipc_queue_size(q) == 0u;
+}
+
+static int cnet_ipc_queue_push(cnet_ipc_ready_queue *q,
+                               const cnet_ipc_accepted *accepted) {
+  size_t slot;
+  if (q == NULL || accepted == NULL || q->items == NULL) return SALTS_EINVAL;
+  if (q->count == q->capacity) return SALTS_ENOBUFS;
+  slot = q->front + q->count;
+  if (slot >= q->capacity) slot -= q->capacity;
+  q->items[slot] = *accepted;
+  ++q->count;
+  return SALTS_OK;
+}
+
+static int cnet_ipc_queue_pop(cnet_ipc_ready_queue *q, cnet_ipc_accepted *out) {
+  if (q == NULL || out == NULL || q->items == NULL) return SALTS_EINVAL;
+  if (q->count == 0u) return SALTS_ENOENT;
+  *out = q->items[q->front];
+  q->items[q->front] = (cnet_ipc_accepted){0};
+  if (++q->front == q->capacity) q->front = 0u;
+  --q->count;
+  return SALTS_OK;
+}
+
 typedef struct cnet_ipc_listener_impl {
-  deque_t ready;
+  cnet_ipc_ready_queue ready;
   size_t accept_capacity;
   size_t child_capacity;
   int progress_status;
@@ -54,20 +111,6 @@ int cnet_ipc_accepted_close(cnet_ipc_accepted *accepted) {
 #endif
 }
 
-static int cnet_ipc_queue_status(stl_status status) {
-  switch (status) {
-  case STL_OK:
-    return SALTS_OK;
-  case STL_OUT_OF_MEMORY:
-    return SALTS_ENOMEM;
-  case STL_CAPACITY_EXCEEDED:
-    return SALTS_ENOBUFS;
-  case STL_EMPTY:
-    return SALTS_ENOENT;
-  default:
-    return SALTS_EPROTO;
-  }
-}
 
 #if defined(_WIN32)
 static void cnet_ipc_accept_terminal(void *user, const cmeta_ipc_completion *completion,
@@ -76,7 +119,7 @@ static void cnet_ipc_accept_terminal(void *user, const cmeta_ipc_completion *com
   int status = SALTS_OK;
   if (cmeta_ipc_pipe_endpoint_valid(&endpoint)) {
     cnet_ipc_accepted accepted = {endpoint.handle, CNET_IPC_RESOURCE_PIPE};
-    if (!impl->stopping) status = cnet_ipc_queue_status(deque_push_back(&impl->ready, &accepted));
+    if (!impl->stopping) status = cnet_ipc_queue_push(&impl->ready, &accepted);
     if (impl->stopping || status != SALTS_OK) {
       const int close_status = cnet_ipc_accepted_close(&accepted);
       if (status == SALTS_OK) status = close_status;
@@ -133,11 +176,7 @@ int cnet_ipc_listener_init(cnet_ipc_listener *listener, const cnet_ipc_listener_
 #endif
   impl->accept_capacity = config->accept_capacity;
   impl->child_capacity = config->child_capacity;
-  status =
-      cnet_ipc_queue_status(deque_init_bytes(&impl->ready, sizeof(cnet_ipc_accepted),
-                                             _Alignof(cnet_ipc_accepted), config->child_capacity));
-  if (status != SALTS_OK) goto fail;
-  status = cnet_ipc_queue_status(deque_reserve(&impl->ready, config->child_capacity));
+  status = cnet_ipc_queue_init(&impl->ready, config->child_capacity);
   if (status != SALTS_OK) goto fail;
 #if defined(_WIN32)
   {
@@ -189,7 +228,7 @@ fail:
 #else
   if (impl->socket_value >= 0) (void)close(impl->socket_value);
 #endif
-  deque_raw_destroy_storage(&impl->ready);
+  cnet_ipc_queue_destroy(&impl->ready);
   free(impl);
   (void)cnet_module_shutdown();
   return status;
@@ -212,7 +251,7 @@ int cnet_ipc_listener_advance(cnet_ipc_listener *listener, size_t max_events, si
     if (!cmeta_ipc_pipe_server_get_stats(&impl->server, &stats)) status = SALTS_EPROTO;
     else {
       size_t active = stats.active_requests;
-      const size_t ready = deque_size(&impl->ready);
+      const size_t ready = cnet_ipc_queue_size(&impl->ready);
       for (size_t count = 0u; count < max_events && active < impl->accept_capacity &&
                               active < impl->child_capacity - ready;
            ++count, ++active) {
@@ -224,7 +263,7 @@ int cnet_ipc_listener_advance(cnet_ipc_listener *listener, size_t max_events, si
   }
 #else
   while (!impl->stopping && *out_events < max_events &&
-         deque_size(&impl->ready) < impl->child_capacity) {
+         cnet_ipc_queue_size(&impl->ready) < impl->child_capacity) {
     int descriptor = accept(impl->socket_value, NULL, NULL);
     cnet_ipc_accepted accepted;
     if (descriptor < 0) {
@@ -234,7 +273,7 @@ int cnet_ipc_listener_advance(cnet_ipc_listener *listener, size_t max_events, si
     accepted = (cnet_ipc_accepted){(uintptr_t)descriptor, CNET_IPC_RESOURCE_SOCKET};
     status = cnet_ipc_nonblocking(descriptor);
     if (status == SALTS_OK)
-      status = cnet_ipc_queue_status(deque_push_back(&impl->ready, &accepted));
+      status = cnet_ipc_queue_push(&impl->ready, &accepted);
     if (status != SALTS_OK) {
       (void)cnet_ipc_accepted_close(&accepted);
       break;
@@ -255,7 +294,7 @@ int cnet_ipc_listener_accept_detached(cnet_ipc_listener *listener,
   if (out_accepted->kind != CNET_IPC_RESOURCE_NONE) return SALTS_EALREADY;
   if (impl->advancing) return SALTS_EBUSY;
   if (impl->stopping) return SALTS_ESHUTDOWN;
-  return cnet_ipc_queue_status(deque_pop_front(&impl->ready, out_accepted));
+  return cnet_ipc_queue_pop(&impl->ready, out_accepted);
 }
 
 int cnet_ipc_listener_wait_sources(const cnet_ipc_listener *listener,
@@ -277,9 +316,9 @@ int cnet_ipc_listener_wait_sources(const cnet_ipc_listener *listener,
     if (status != SALTS_OK) return status;
   }
 #else
-  if (!impl->stopping && deque_size(&impl->ready) < impl->child_capacity) count = 1u;
+  if (!impl->stopping && cnet_ipc_queue_size(&impl->ready) < impl->child_capacity) count = 1u;
 #endif
-  *out_ready = *out_ready || !deque_empty(&impl->ready);
+  *out_ready = *out_ready || !cnet_ipc_queue_empty(&impl->ready);
   *out_count = count;
   if (count > capacity) return SALTS_ENOBUFS;
   for (size_t index = 0; index < count; ++index) {
@@ -301,9 +340,9 @@ int cnet_ipc_listener_stop(cnet_ipc_listener *listener, bool *out_stopped) {
   if (impl == NULL || out_stopped == NULL) return SALTS_EINVAL;
   if (impl->advancing) return SALTS_EBUSY;
   impl->stopping = true;
-  while (!deque_empty(&impl->ready)) {
+  while (!cnet_ipc_queue_empty(&impl->ready)) {
     cnet_ipc_accepted accepted = {0};
-    status = cnet_ipc_queue_status(deque_pop_front(&impl->ready, &accepted));
+    status = cnet_ipc_queue_pop(&impl->ready, &accepted);
     if (status != SALTS_OK) return status;
     status = cnet_ipc_accepted_close(&accepted);
     if (status != SALTS_OK && impl->stop_status == SALTS_OK) impl->stop_status = status;
@@ -340,7 +379,7 @@ int cnet_ipc_listener_destroy(cnet_ipc_listener *listener) {
   }
   free(impl->wait_handles);
 #endif
-  deque_raw_destroy_storage(&impl->ready);
+  cnet_ipc_queue_destroy(&impl->ready);
   free(impl);
   listener->impl = NULL;
   return cnet_module_shutdown();
