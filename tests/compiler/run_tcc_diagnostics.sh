@@ -63,6 +63,11 @@ echo '== TCC _Thread_local syntax and pthread isolation, without feature macro o
     "$source/tcc_tls_probe.c" -lpthread -o "$out/tcc_tls_probe"
 timeout 30s "$out/tcc_tls_probe"
 
+echo '== independent pthread_once + TSS first use and cleanup (c-threads reference) =='
+"$TCC" -std=c11 "$source/posix_tss_semantics_probe.c" -lpthread \
+    -o "$out/tcc_posix_tss_probe"
+timeout 30s "$out/tcc_posix_tss_probe"
+
 echo '== default Salts::Platform header admission and actual POSIX source =='
 if "$TCC" -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
        -Iplatform/include platform/src/thread_posix.c \
