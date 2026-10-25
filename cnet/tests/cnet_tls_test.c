@@ -2404,4 +2404,47 @@ spec("CNet bounded TLS engine") {
     }
   }
 
+  group("RSA-3072 certificate identity") {
+    const cnet_tls_protocol_version tls_versions[] = {
+        CNET_TLS_PROTOCOL_VERSION_1_2, CNET_TLS_PROTOCOL_VERSION_1_3};
+    const char *tls_version_names[] = {"TLSv1.2", "TLSv1.3"};
+
+    it("authenticates RSA-3072/SHA-256 and transfers TLS 1.2/1.3 application data") {
+      static const unsigned char payload[] = "CNet RSA3072 verified payload";
+      size_t index;
+      for (index = 0u; index < sizeof(tls_versions) / sizeof(tls_versions[0]); ++index) {
+        cnet_tls_test_pair pair = {0};
+        char negotiated[16] = {0};
+        size_t negotiated_len = 0u;
+        check_equal(cnet_tls_test_fixture_pair_init(
+                        &pair, CNET_TLS_TEST_RSA3072_CA, CNET_TLS_TEST_RSA3072_LEAF,
+                        CNET_TLS_TEST_RSA3072_KEY, "localhost"), SALTS_OK);
+        check_equal(cnet_tls_state_set_protocol_range(&pair.client, tls_versions[index],
+                                                      tls_versions[index]), SALTS_OK);
+        check_equal(cnet_tls_state_set_protocol_range(&pair.server, tls_versions[index],
+                                                      tls_versions[index]), SALTS_OK);
+        check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+        check_equal(cnet_tls_state_negotiated_version(
+                        &pair.client, negotiated, sizeof(negotiated), &negotiated_len), SALTS_OK);
+        check_equal(strcmp(negotiated, tls_version_names[index]), 0);
+        check_equal(negotiated_len, strlen(tls_version_names[index]));
+        check_equal(cnet_tls_test_round_trip(
+                        &pair.client, &pair.server, payload, sizeof(payload) - 1u), SALTS_OK);
+        cnet_tls_test_pair_destroy(&pair);
+      }
+    }
+
+    it("rejects an RSASSA-PSS-signed X.509 leaf without provider fallback") {
+      cnet_tls_server server = {0};
+      cnet_tls_server_config config = {
+          .size = sizeof(config),
+          .cert_file = CNET_TLS_TEST_RSA3072_PSS_LEAF,
+          .key_file = CNET_TLS_TEST_RSA3072_KEY,
+          .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
+      check_equal(cnet_tls_server_init(&server, &config), SALTS_EIO);
+      check_null(server.impl);
+      check_equal(cnet_tls_server_destroy(&server), SALTS_OK);
+    }
+  }
+
 }
