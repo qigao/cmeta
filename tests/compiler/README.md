@@ -409,6 +409,14 @@ retirement; those still exercise the real Disruptor atomics. Every
 worker/publisher polls only with a bounded monotonic deadline and
 all threads are joined before destroying the queue.
 
+In addition to ordinary native CTest, the dedicated compiler workflow
+repeats each real SPSC/Disruptor test five times under GCC/Clang
+in both Debug and Release configurations. The pinned TinyCC
+experimental diagnostic independently runs the 4×4 MPMC test five
+times. Repeat runs raise the chance of exposing timing-sensitive
+faults, but do **not** substitute race instrumentation or
+weak-memory/ARM64 conformance.
+
 This is a strictly isolated Linux qualification. TinyCC uses a
 private `SALTS_THREAD_LOCAL=_Thread_local` compile definition for
 the otherwise-unchanged Platform source, never an ABI or installed

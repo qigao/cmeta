@@ -27,6 +27,11 @@ jobs:
         run: cmake --build build/atomic-${{ matrix.compiler }} --parallel 2
       - name: Execute real atomic tests
         run: ctest --test-dir build/atomic-${{ matrix.compiler }} --output-on-failure
+      - name: Repeat real SPSC and Disruptor contention tests five times
+        run: >-
+          ctest --test-dir build/atomic-${{ matrix.compiler }}
+          -R 'salts_(spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source)'
+          --repeat until-fail:5 --output-on-failure
 
   native-interop:
     name: Native GCC/Clang cross-compiler atomic ABI

@@ -96,7 +96,10 @@ echo '== unmodified opaque Disruptor / 4 publishers + 4 workers exact-once (diag
     concurrency/src/disruptor.c platform/src/thread_posix.c \
     "$source/disruptor_mpmc_real_source.c" -lpthread \
     -o "$out/tcc_disruptor_mpmc_real_source"
-timeout 40s "$out/tcc_disruptor_mpmc_real_source"
+for repeat in 1 2 3 4 5; do
+    echo "TCC 4x4 Disruptor MPMC contention repetition $repeat/5"
+    timeout 40s "$out/tcc_disruptor_mpmc_real_source"
+done
 
 echo '== default Salts::Platform header admission and actual POSIX source =='
 if "$TCC" -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
