@@ -1,0 +1,57 @@
+name: CNet invalid-CA X.509 oracle
+
+on:
+  pull_request:
+    paths:
+      - "cnet/tests/fixtures/invalid-ca-*.pem"
+      - "cnet/tests/cnet_tls_test.c"
+      - "cnet/tests/package_config/strategy/**"
+      - "cnet/X509_COMPATIBILITY_MATRIX.md"
+      - ".github/workflows/cnet-invalid-ca-x509-oracle.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  openssl-reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the invalid intermediate is the only broken chain role
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixtures=cnet/tests/fixtures
+          root="$fixtures/invalid-ca-root-cert.pem"
+          issuer="$fixtures/invalid-ca-issuer-cert.pem"
+          leaf="$fixtures/invalid-ca-server-cert.pem"
+          key="$fixtures/invalid-ca-server-key.pem"
+
+          openssl verify -x509_strict -CAfile "$root" "$root"
+          # The issuer is a valid server end entity under the root. It is not
+          # permitted to act as an intermediate CA.
+          openssl verify -x509_strict -purpose sslserver \
+            -CAfile "$root" "$issuer"
+          openssl x509 -in "$issuer" -noout -text | grep -Fq 'CA:FALSE'
+          openssl x509 -in "$issuer" -noout -text | grep -Fq 'Digital Signature'
+          if openssl x509 -in "$issuer" -noout -text | grep -Fq 'Certificate Sign'; then
+            echo 'invalid issuer unexpectedly permits certificate signing' >&2
+            exit 1
+          fi
+
+          openssl x509 -in "$leaf" -noout -checkhost localhost
+          openssl x509 -in "$leaf" -noout -checkip 127.0.0.1
+          openssl pkey -in "$key" -pubout -outform DER > leaf-key-public.der
+          openssl x509 -in "$leaf" -pubkey -noout |
+            openssl pkey -pubin -outform DER > leaf-cert-public.der
+          cmp leaf-key-public.der leaf-cert-public.der
+
+          if openssl verify -x509_strict -purpose sslserver \
+            -CAfile "$root" -untrusted "$issuer" "$leaf" \
+            > invalid-ca.log 2>&1; then
+            echo 'CA:FALSE issuer unexpectedly validated as an intermediate' >&2
+            exit 1
+          fi
+          grep -Fq 'invalid CA certificate' invalid-ca.log
+          grep -Fq 'key usage does not include certificate signing' invalid-ca.log

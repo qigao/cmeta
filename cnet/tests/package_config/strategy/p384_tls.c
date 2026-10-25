@@ -227,12 +227,13 @@ static int require_server_config_rejected(const char *cert_file,
 
 int main(int argc, char **argv)
 {
-  if (argc != 19) {
+  if (argc != 22) {
     fprintf(stderr,
             "usage: %s CA CERT KEY WRONG_CA EXPIRED TAMPERED "
             "CHAIN_CA CHAIN_FULL CHAIN_LEAF CHAIN_KEY MALFORMED "
             "MISMATCHED_KEY UNSUPPORTED_CERT UNSUPPORTED_KEY "
-            "RSA3072_CA RSA3072_CERT RSA3072_KEY RSA3072_PSS_CERT\n",
+            "RSA3072_CA RSA3072_CERT RSA3072_KEY RSA3072_PSS_CERT "
+            "INVALID_CA_ROOT INVALID_CA_FULLCHAIN INVALID_CA_KEY\n",
             argv[0]);
     return 2;
   }
@@ -253,6 +254,7 @@ int main(int argc, char **argv)
   if (require_server_config_rejected(argv[18], argv[17],
                                      "unsupported RSASSA-PSS certificate signature"))
     return 1;
+  if (run_case(argv[19], argv[20], argv[21], "localhost", true)) return 1;
   puts("installed C11 CNet X.509 TLS matrix: PASS");
   return 0;
 }
