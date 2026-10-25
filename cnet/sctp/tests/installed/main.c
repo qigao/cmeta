@@ -1621,6 +1621,162 @@ cleanup:
   return result;
 }
 
+
+/* Public installed-headers-only receipt for a verified peer SCTP ABORT.
+ * Distinguish its one-shot bounded Cause-12 reason from LOCAL retry-budget
+ * exhaustion and from application ACK. No internal SCTP TCB is imported. */
+static int session_peer_abort_reason(void) {
+  test_context cc = {UINT32_C(0x11223344), UINT32_C(0x10203040),
+      UINT32_C(0x13579bdf), 1};
+  test_context sc = {UINT32_C(0x55667788), UINT32_C(0x50607080),
+      UINT32_C(0x13579bdf), 1};
+  cnet_sctp_session_create_config cfg = session_config(5000u, 1, &cc);
+  cnet_sctp_session_create_config peer = session_config(5001u, 0, &sc);
+  cnet_sctp_session *client = NULL, *server = NULL;
+  cnet_sctp_session_event event = {0};
+  cnet_sctp_session_terminal_failure terminal = {0};
+  cnet_sctp_session_peer_abort abort_info = {0};
+  cnet_sctp_session_reliable_ack ack = {0};
+  const uint8_t cause[] = {0u, 12u, 0u, 8u, 'h', 'a', 'l', 't'};
+  const cnet_sctp_wire_chunk chunk = {6u, 0u, cause, sizeof(cause)};
+  uint8_t first[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t second[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t third[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t fourth[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t msg[32], small[3] = {0}, reason[8] = {0};
+  size_t nf = 0u, ns = 0u, nt = 0u, nq = 0u, reason_size = 0u;
+  uint64_t generation = 0u, ticket = 0u;
+  uint32_t sent_tsn = 0u;
+  int stage = 0, result = 47;
+
+  if (cnet_sctp_session_create(&cfg, 0u, &client) !=
+          CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_create(&peer, 0u, &server) !=
+          CNET_SCTP_SESSION_OK)
+    goto cleanup;
+  stage = 1;
+  if (cnet_sctp_session_start(client, 1u, first, sizeof(first), &nf) !=
+          CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(server, 2u, first, nf,
+          second, sizeof(second), &ns) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(client, 3u, second, ns,
+          third, sizeof(third), &nt) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(server, 4u, third, nt,
+          fourth, sizeof(fourth), &nq) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(client, 5u, fourth, nq,
+          first, sizeof(first), &nf) != CNET_SCTP_SESSION_OK || nf != 0u)
+    goto cleanup;
+  stage = 2;
+  nf = 0u;
+  if (cnet_sctp_session_open_channel(client, 6u, 0u,
+          CNET_SCTP_SESSION_CHANNEL_RELIABLE_ORDERED, 0u, 0u,
+          "abort", 5u, NULL, 0u, first, sizeof(first),
+          &nf) != CNET_SCTP_SESSION_OK || nf == 0u ||
+      deliver(server, client, 7u, first, nf) != 0 ||
+      cnet_sctp_session_poll(server, 9u, &event,
+          msg, sizeof(msg), second, sizeof(second),
+          &ns) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.stream_id != 0u || ns == 0u ||
+      deliver(client, server, 10u, second, ns) != 0 ||
+      cnet_sctp_session_poll(client, 12u, &event,
+          msg, sizeof(msg), first, sizeof(first),
+          &nf) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.stream_id != 0u || event.generation == 0u)
+    goto cleanup;
+  generation = event.generation;
+  stage = 3;
+  nf = 0u;
+  if (cnet_sctp_session_send_reliable_tracked(client, 13u,
+          0u, generation, 1, "unacked", 7u,
+          first, sizeof(first), &nf, &ticket) !=
+          CNET_SCTP_SESSION_OK || nf < 20u || ticket == 0u)
+    goto cleanup;
+  sent_tsn = ((uint32_t)first[16] << 24u) |
+      ((uint32_t)first[17] << 16u) |
+      ((uint32_t)first[18] << 8u) | (uint32_t)first[19];
+  /* A validly framed ABORT with the WRONG verification tag must not
+   * terminate a live association or disclose/consume any peer event. */
+  if (cnet_sctp_wire_encode(5001u, 5000u, cc.tag + 1u, &chunk,
+          1u, second, sizeof(second), &ns) != CNET_SCTP_WIRE_OK)
+    goto cleanup;
+  nt = sizeof(third);
+  if (cnet_sctp_session_input(client, 14u, second, ns,
+          third, sizeof(third), &nt) != CNET_SCTP_SESSION_PROTOCOL ||
+      nt != 0u ||
+      cnet_sctp_session_take_peer_abort(client, &abort_info,
+          reason, sizeof(reason), &reason_size) !=
+          CNET_SCTP_SESSION_EMPTY ||
+      abort_info.has_tsn || reason_size != 0u ||
+      cnet_sctp_session_take_terminal_failure(client, &terminal) !=
+          CNET_SCTP_SESSION_EMPTY)
+    goto cleanup;
+  stage = 4;
+  if (cnet_sctp_wire_encode(5001u, 5000u, cc.tag, &chunk,
+          1u, second, sizeof(second), &ns) != CNET_SCTP_WIRE_OK)
+    goto cleanup;
+  nt = sizeof(third);
+  if (cnet_sctp_session_input(client, 15u, second, ns,
+          third, sizeof(third), &nt) != CNET_SCTP_SESSION_OK ||
+      nt != 0u ||
+      cnet_sctp_session_take_terminal_failure(client, &terminal) !=
+          CNET_SCTP_SESSION_EMPTY ||
+      cnet_sctp_session_take_reliable_ack(client, &ack) !=
+          CNET_SCTP_SESSION_CLOSED)
+    goto cleanup;
+  /* Owner rejection and insufficient output are both failure-atomic. */
+  stage = 5;
+  cc.owner_admitted = 0;
+  reason_size = sizeof(reason);
+  if (cnet_sctp_session_take_peer_abort(client, &abort_info,
+          reason, sizeof(reason), &reason_size) !=
+          CNET_SCTP_SESSION_OWNER ||
+      reason_size != 0u || abort_info.has_tsn)
+    goto cleanup;
+  cc.owner_admitted = 1;
+  reason_size = sizeof(small);
+  if (cnet_sctp_session_take_peer_abort(client, &abort_info,
+          small, sizeof(small), &reason_size) !=
+          CNET_SCTP_SESSION_CAPACITY ||
+      reason_size != 0u || abort_info.has_user_reason)
+    goto cleanup;
+  stage = 6;
+  reason_size = 0u;
+  if (cnet_sctp_session_take_peer_abort(client, &abort_info,
+          reason, sizeof(reason), &reason_size) !=
+          CNET_SCTP_SESSION_OK ||
+      !abort_info.has_tsn || !abort_info.has_user_reason ||
+      abort_info.last_sent_tsn != sent_tsn ||
+      reason_size != 4u || memcmp(reason, "halt", 4u) != 0)
+    goto cleanup;
+  reason_size = sizeof(reason);
+  if (cnet_sctp_session_take_peer_abort(client, &abort_info,
+          reason, sizeof(reason), &reason_size) !=
+          CNET_SCTP_SESSION_EMPTY ||
+      reason_size != 0u || abort_info.has_user_reason ||
+      abort_info.has_tsn)
+    goto cleanup;
+  result = 0;
+cleanup:
+  if (result != 0)
+    fprintf(stderr, "installed peer ABORT fixture failed at stage %d\n",
+            stage);
+  if (client) {
+    if (cnet_sctp_session_stop(client) != CNET_SCTP_SESSION_OK ||
+        !cnet_sctp_session_drained(client) ||
+        cnet_sctp_session_destroy(client) != CNET_SCTP_SESSION_OK)
+      result = 48;
+  }
+  if (server) {
+    if (cnet_sctp_session_stop(server) != CNET_SCTP_SESSION_OK ||
+        !cnet_sctp_session_drained(server) ||
+        cnet_sctp_session_destroy(server) != CNET_SCTP_SESSION_OK)
+      result = 49;
+  }
+  return result;
+}
+
 int main(void) {
   const uint8_t payload[] = {1u, 2u, 3u};
   const cnet_sctp_wire_chunk chunk = {0u, 0u, payload, sizeof(payload)};
@@ -1658,5 +1814,9 @@ int main(void) {
     const int reliable_failure = session_terminal_retry_failure(0);
     if (reliable_failure != 0) return reliable_failure;
   }
-  return session_terminal_retry_failure(1);
+  {
+    const int terminal_forward = session_terminal_retry_failure(1);
+    if (terminal_forward != 0) return terminal_forward;
+  }
+  return session_peer_abort_reason();
 }
