@@ -127,7 +127,8 @@ typedef enum cnet_sctp_assoc_reconfig_kind {
   CNET_SCTP_RECONFIG_NONE = 0,
   CNET_SCTP_RECONFIG_STREAM_RESET = 1,
   CNET_SCTP_RECONFIG_ADD_OUTGOING = 2,
-  CNET_SCTP_RECONFIG_ADD_INCOMING = 3
+  CNET_SCTP_RECONFIG_ADD_INCOMING = 3,
+  CNET_SCTP_RECONFIG_ADD_STREAMS = 4
 } cnet_sctp_assoc_reconfig_kind;
 
 typedef struct cnet_sctp_assoc {
@@ -156,7 +157,10 @@ typedef struct cnet_sctp_assoc {
   uint8_t reset_outgoing_complete;
   uint8_t reset_paired_incoming_complete;
   uint8_t reset_retransmits;
+  uint8_t reset_needs_initial_publish;
   uint8_t add_outgoing_is_reciprocal;
+  uint8_t add_outgoing_is_paired;
+  uint8_t add_paired_result;
   uint16_t add_outgoing_streams;
   uint16_t add_incoming_streams;
   uint16_t reset_streams;
@@ -302,6 +306,12 @@ cnet_sctp_assoc_status cnet_sctp_assoc_add_outgoing_streams(
  * safely make the requested receive SIDs usable. */
 cnet_sctp_assoc_status cnet_sctp_assoc_add_incoming_streams(
     cnet_sctp_assoc *association, uint64_t now_ms, uint16_t stream_count,
+    void *output, size_t capacity, size_t *written);
+/* RFC 6525 paired Add Outgoing + Add Incoming request. Both non-zero halves
+ * share one packet/timer/retry budget and produce one final count snapshot. */
+cnet_sctp_assoc_status cnet_sctp_assoc_add_streams(
+    cnet_sctp_assoc *association, uint64_t now_ms,
+    uint16_t incoming_stream_count, uint16_t outgoing_stream_count,
     void *output, size_t capacity, size_t *written);
 cnet_sctp_assoc_status cnet_sctp_assoc_take_stream_change(
     cnet_sctp_assoc *association,
