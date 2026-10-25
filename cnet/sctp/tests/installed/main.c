@@ -1195,6 +1195,204 @@ cleanup:
   return result;
 }
 
+
+/* Installed-headers-only end-to-end proof that a LOCAL PR-SCTP
+ * MESSAGE_ABANDONED is not a PEER cumulative-progress receipt. Retain the
+ * second result across a real bilateral RFC6525 close/reopen on the SAME SID.
+ * Never include or introspect a private Association/DATA/DCEP structure. */
+static int session_forward_progress(void) {
+  test_context cc = {UINT32_C(0x11223344), UINT32_C(0x10203040),
+      UINT32_C(0x13579bdf), 1};
+  test_context sc = {UINT32_C(0x55667788), UINT32_C(0x50607080),
+      UINT32_C(0x13579bdf), 1};
+  cnet_sctp_session_create_config cconf = session_config(5000u, 1, &cc);
+  cnet_sctp_session_create_config sconf = session_config(5001u, 0, &sc);
+  cnet_sctp_session *client = NULL, *server = NULL;
+  cnet_sctp_session_event event = {0};
+  cnet_sctp_session_forward_progress progress = {0};
+  uint8_t first[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t second[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t third[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t fourth[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t message[128];
+  size_t nf = 0u, ns = 0u, nt = 0u, nq = 0u;
+  uint64_t old_generation = 0u, new_generation = 0u;
+  uint64_t peer_generation = 0u, close_generation = 0u, deadline = 0u;
+  uint32_t original_tsn = 0u;
+  int has_deadline = 0, stage = 0, result = 40;
+
+  if (cnet_sctp_session_create(&cconf, 0u, &client) !=
+          CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_create(&sconf, 0u, &server) !=
+          CNET_SCTP_SESSION_OK)
+    goto cleanup;
+  stage = 1;
+  if (cnet_sctp_session_start(client, 1u, first, sizeof(first),
+          &nf) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(server, 2u, first, nf, second,
+          sizeof(second), &ns) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(client, 3u, second, ns, third,
+          sizeof(third), &nt) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(server, 4u, third, nt, fourth,
+          sizeof(fourth), &nq) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(client, 5u, fourth, nq, first,
+          sizeof(first), &nf) != CNET_SCTP_SESSION_OK || nf != 0u)
+    goto cleanup;
+  stage = 2;
+  nf = 0u;
+  if (cnet_sctp_session_open_channel(client, 6u, 2u,
+          CNET_SCTP_SESSION_CHANNEL_RETRANSMIT_ORDERED, 0u, 0u,
+          "pr", 2u, NULL, 0u, first, sizeof(first), &nf) !=
+          CNET_SCTP_SESSION_OK || nf == 0u ||
+      deliver(server, client, 7u, first, nf) != 0 ||
+      cnet_sctp_session_poll(server, 9u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &ns) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.stream_id != 2u || event.generation == 0u || ns == 0u)
+    goto cleanup;
+  peer_generation = event.generation;
+  if (deliver(client, server, 10u, second, ns) != 0 ||
+      cnet_sctp_session_poll(client, 12u, &event,
+          message, sizeof(message), first, sizeof(first),
+          &nf) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.stream_id != 2u || event.generation == 0u)
+    goto cleanup;
+  old_generation = event.generation;
+
+  stage = 3;
+  nf = 0u;
+  if (cnet_sctp_session_send(client, 13u, 2u, 1,
+          "lost", 4u, first, sizeof(first), &nf) !=
+          CNET_SCTP_SESSION_OK || nf == 0u ||
+      cnet_sctp_session_next_deadline(client, &deadline,
+          &has_deadline) != CNET_SCTP_SESSION_OK ||
+      !has_deadline || deadline <= 13u ||
+      cnet_sctp_session_take_forward_progress(client, &progress) !=
+          CNET_SCTP_SESSION_EMPTY || progress.generation != 0u)
+    goto cleanup;
+  /* Withhold the actual admitted DATA; the real Owner must expire RTX0
+   * and send negotiated RFC3758/RFC8260 forward control, not retry DATA. */
+  stage = 4;
+  nf = 0u;
+  if (cnet_sctp_session_advance(client, deadline, first,
+          sizeof(first), &nf) != CNET_SCTP_SESSION_OK ||
+      nf == 0u || (first[12u] != 192u && first[12u] != 194u) ||
+      cnet_sctp_session_poll(client, deadline, &event,
+          message, sizeof(message), second, sizeof(second),
+          &ns) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED ||
+      event.stream_id != 2u || event.generation != old_generation ||
+      !event.has_tsn || event.message_size != 4u ||
+      event.first_tsn != event.last_tsn)
+    goto cleanup;
+  original_tsn = event.last_tsn;
+  if (cnet_sctp_session_take_forward_progress(client, &progress) !=
+          CNET_SCTP_SESSION_EMPTY || progress.last_tsn != 0u ||
+      cnet_sctp_session_poll(client, deadline, &event,
+          message, sizeof(message), second, sizeof(second),
+          &ns) != CNET_SCTP_SESSION_EMPTY)
+    goto cleanup;
+
+  stage = 5;
+  ns = 0u;
+  if (cnet_sctp_session_input(server, deadline + 1u, first, nf, second,
+          sizeof(second), &ns) != CNET_SCTP_SESSION_OK || ns == 0u ||
+      cnet_sctp_session_input(client, deadline + 2u, second, ns, third,
+          sizeof(third), &nt) != CNET_SCTP_SESSION_OK || nt != 0u)
+    goto cleanup;
+
+  /* Deliberately leave the already cumulative-ACK-qualified progress
+   * result unread, then retire and reopen its DCEP SID generation. */
+  stage = 6;
+  nf = 0u;
+  if (cnet_sctp_session_close_channel(client, deadline + 3u, 2u,
+          first, sizeof(first), &nf,
+          &close_generation) != CNET_SCTP_SESSION_OK ||
+      close_generation != old_generation || nf == 0u ||
+      cnet_sctp_session_input(server, deadline + 4u, first, nf,
+          second, sizeof(second), &ns) != CNET_SCTP_SESSION_OK ||
+      ns == 0u ||
+      cnet_sctp_session_poll(server, deadline + 5u, &event,
+          message, sizeof(message), fourth, sizeof(fourth),
+          &nq) != CNET_SCTP_SESSION_EMPTY ||
+      cnet_sctp_session_input(client, deadline + 6u, second, ns,
+          third, sizeof(third), &nt) != CNET_SCTP_SESSION_OK ||
+      nt == 0u ||
+      cnet_sctp_session_poll(client, deadline + 7u, &event,
+          message, sizeof(message), fourth, sizeof(fourth),
+          &nq) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_CLOSED ||
+      event.generation != old_generation ||
+      cnet_sctp_session_input(server, deadline + 8u, third, nt,
+          fourth, sizeof(fourth), &nq) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_poll(server, deadline + 9u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &ns) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_CLOSED ||
+      event.generation != peer_generation)
+    goto cleanup;
+
+  stage = 7;
+  nf = 0u;
+  if (cnet_sctp_session_open_channel(client, deadline + 10u, 2u,
+          CNET_SCTP_SESSION_CHANNEL_RELIABLE_ORDERED, 0u, 0u,
+          "fresh", 5u, NULL, 0u, first, sizeof(first), &nf) !=
+          CNET_SCTP_SESSION_OK || nf == 0u ||
+      deliver(server, client, deadline + 11u, first, nf) != 0 ||
+      cnet_sctp_session_poll(server, deadline + 13u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &ns) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.generation == peer_generation || event.stream_id != 2u ||
+      ns == 0u ||
+      deliver(client, server, deadline + 14u, second, ns) != 0 ||
+      cnet_sctp_session_poll(client, deadline + 16u, &event,
+          message, sizeof(message), fourth, sizeof(fourth),
+          &nq) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.generation == old_generation || event.stream_id != 2u)
+    goto cleanup;
+  new_generation = event.generation;
+
+  stage = 8;
+  if (cnet_sctp_session_take_forward_progress(client, &progress) !=
+          CNET_SCTP_SESSION_OK ||
+      progress.generation != old_generation ||
+      progress.generation == new_generation ||
+      progress.stream_id != 2u || progress.message_size != 4u ||
+      progress.first_tsn != original_tsn ||
+      progress.last_tsn != original_tsn || progress.ppid != 53u ||
+      progress.reliability.mode != CNET_SCTP_SESSION_RETRANSMITS ||
+      progress.reliability.value != 0u ||
+      progress.abandon_reason != CNET_SCTP_SESSION_ABANDON_RETRANSMITS ||
+      !progress.binary || progress.unordered ||
+      cnet_sctp_session_take_forward_progress(client, &progress) !=
+          CNET_SCTP_SESSION_EMPTY ||
+      progress.generation != 0u)
+    goto cleanup;
+  result = 0;
+
+cleanup:
+  if (result != 0)
+    fprintf(stderr, "installed forward progress fixture failed at stage %d\n",
+            stage);
+  if (client) {
+    if (cnet_sctp_session_stop(client) != CNET_SCTP_SESSION_OK ||
+        !cnet_sctp_session_drained(client) ||
+        cnet_sctp_session_destroy(client) != CNET_SCTP_SESSION_OK)
+      result = 41;
+  }
+  if (server) {
+    if (cnet_sctp_session_stop(server) != CNET_SCTP_SESSION_OK ||
+        !cnet_sctp_session_drained(server) ||
+        cnet_sctp_session_destroy(server) != CNET_SCTP_SESSION_OK)
+      result = 42;
+  }
+  return result;
+}
+
 int main(void) {
   const uint8_t payload[] = {1u, 2u, 3u};
   const cnet_sctp_wire_chunk chunk = {0u, 0u, payload, sizeof(payload)};
@@ -1220,5 +1418,9 @@ int main(void) {
     return 6;
   if (cnet_sctp_wire_next_chunk(&decoder, &received) != CNET_SCTP_WIRE_END)
     return 7;
-  return session_round_trip();
+  {
+    const int roundtrip = session_round_trip();
+    if (roundtrip != 0) return roundtrip;
+  }
+  return session_forward_progress();
 }
