@@ -44,3 +44,16 @@ provider. The test does not call the old monolithic Salts runtime.
 The Core pin is now `38512062`, which requires the physical
 Windows ABI-suffixed `-0.1` DLL names as well as the ELF/Mach-O loader IDs.
 This is a test-only Configurator graph, not ServiceHost/PluginRegistry rollout.
+
+## M6.2 — real PluginRegistry and ServiceHost acceptance
+
+Original Salts `plugin/`, `component-plugin/` and
+`component-runtime/` CMake targets now build against installed
+SaltsCore #24 (`80394167`) with explicit
+`SALTS_PLUGIN_USE_SALTSCORE` qualification. Production Salts retains
+its original vstr/Salts::Core owner until coordinated migration.
+
+Original ServiceHost generation tests run against two genuine Plugin
+Provider DSOs, and a separate path gate probes overlong UTF-8,
+surrogates, out-of-range and truncated paths without weakening
+CMETA_PLUGIN_PATH_MAX. No runtime fallback or legacy binary is linked.

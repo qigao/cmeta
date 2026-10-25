@@ -15,6 +15,7 @@ set(BUILD_TESTS OFF)
 set(BUILD_EXAMPLES OFF)
 set(BUILD_BENCHMARKS OFF)
 set(CMETA_BUILD_NATIVE_THUNKS OFF)
+set(SALTS_PLUGIN_USE_SALTSCORE ON)
 set(SALTS_NATIVE_SOVERSION "2.3")
 include("${SALTS_SOURCE_ROOT}/cmake/CmakeUtils.cmake")
 find_package(SaltsCore 0.1 CONFIG REQUIRED)
@@ -28,19 +29,13 @@ foreach(_owner IN ITEMS Core Platform)
   endif()
 endforeach()
 
-# Exact production CMeta and ComponentABI targets; not compatibility aliases.
+# Exact original production CMake targets (not copies or shims).
+add_subdirectory("${SALTS_SOURCE_ROOT}/tinytest" "${PROJECT_BINARY_DIR}/tinytest")
 add_subdirectory("${SALTS_SOURCE_ROOT}/cmeta" "${PROJECT_BINARY_DIR}/cmeta")
 add_subdirectory("${SALTS_SOURCE_ROOT}/component" "${PROJECT_BINARY_DIR}/component")
-
-# Original production Configurator C11 implementation. ServiceHost/Plugin
-# Registry remain a later coordinated cutover.
-add_library(salts_m6_configurator STATIC
-  "${SALTS_SOURCE_ROOT}/component-runtime/src/configurator.c"
-  "${SALTS_SOURCE_ROOT}/component-runtime/src/configurator_abi.c")
-target_include_directories(salts_m6_configurator PUBLIC
-  "${SALTS_SOURCE_ROOT}/component-runtime/include")
-target_compile_features(salts_m6_configurator PUBLIC c_std_11)
-target_link_libraries(salts_m6_configurator PUBLIC Salts::ComponentABI)
+add_subdirectory("${SALTS_SOURCE_ROOT}/plugin" "${PROJECT_BINARY_DIR}/plugin")
+add_subdirectory("${SALTS_SOURCE_ROOT}/component-plugin" "${PROJECT_BINARY_DIR}/component-plugin")
+add_subdirectory("${SALTS_SOURCE_ROOT}/component-runtime" "${PROJECT_BINARY_DIR}/component-runtime")
 
 add_library(salts_m6_ace_provider SHARED ace_provider.c)
 target_compile_features(salts_m6_ace_provider PRIVATE c_std_11)
@@ -56,7 +51,7 @@ target_include_directories(salts_m6_consumer_c PRIVATE
   "${SALTS_SOURCE_ROOT}/component-runtime/tests")
 target_compile_features(salts_m6_consumer_c PRIVATE c_std_11)
 target_link_libraries(salts_m6_consumer_c PRIVATE
-  salts_m6_configurator salts_m6_ace_provider
+  Salts::Configurator salts_m6_ace_provider
   SaltsCore::Core SaltsCore::Platform)
 set_target_properties(salts_m6_consumer_c PROPERTIES
   C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -64,7 +59,7 @@ set_target_properties(salts_m6_consumer_c PROPERTIES
 add_executable(salts_m6_consumer_cpp consumer.cpp)
 target_compile_features(salts_m6_consumer_cpp PRIVATE cxx_std_17)
 target_link_libraries(salts_m6_consumer_cpp PRIVATE
-  salts_m6_configurator salts_m6_ace_provider
+  Salts::Configurator salts_m6_ace_provider
   SaltsCore::Core SaltsCore::Platform)
 set_target_properties(salts_m6_consumer_cpp PROPERTIES
   CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
@@ -87,3 +82,44 @@ endforeach()
 enable_testing()
 add_test(NAME salts.m6.cmeta_ace_c11 COMMAND salts_m6_consumer_c)
 add_test(NAME salts.m6.cmeta_ace_cpp17 COMMAND salts_m6_consumer_cpp)
+
+# Real original Provider DSO fixtures, loaded through PluginRegistry.
+add_library(salts_m6_host_primary SHARED
+  "${SALTS_SOURCE_ROOT}/component-runtime/tests/fixture_component_provider.c")
+add_library(salts_m6_host_secondary SHARED
+  "${SALTS_SOURCE_ROOT}/component-runtime/tests/fixture_component_provider_secondary.c")
+foreach(_fixture IN ITEMS salts_m6_host_primary salts_m6_host_secondary)
+  target_compile_features(${_fixture} PRIVATE c_std_11)
+  target_link_libraries(${_fixture} PRIVATE
+    Salts::ComponentProviderABI Salts::PluginABI)
+  set_target_properties(${_fixture} PROPERTIES
+    C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+endforeach()
+
+add_executable(salts_m6_service_host_generation
+  "${SALTS_SOURCE_ROOT}/component-runtime/tests/service_host_generation_test.c")
+target_include_directories(salts_m6_service_host_generation PRIVATE
+  "${SALTS_SOURCE_ROOT}/component-runtime/tests")
+target_compile_features(salts_m6_service_host_generation PRIVATE c_std_11)
+target_link_libraries(salts_m6_service_host_generation PRIVATE
+  Salts::ServiceHost Salts::TinyTest)
+set_target_properties(salts_m6_service_host_generation PROPERTIES
+  C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+target_compile_definitions(salts_m6_service_host_generation PRIVATE
+  "COMPONENT_PROVIDER_PLUGIN_PATH=\"$<TARGET_FILE:salts_m6_host_primary>\""
+  "COMPONENT_PROVIDER_SECONDARY_PLUGIN_PATH=\"$<TARGET_FILE:salts_m6_host_secondary>\"")
+add_dependencies(salts_m6_service_host_generation
+  salts_m6_host_primary salts_m6_host_secondary)
+add_test(NAME salts.m6.service_host_generation COMMAND salts_m6_service_host_generation)
+set_tests_properties(salts.m6.service_host_generation PROPERTIES TIMEOUT 65)
+
+add_executable(salts_m6_service_host_cpp
+  "${SALTS_SOURCE_ROOT}/component-runtime/tests/service_host_scope_cpp_test.cpp")
+target_compile_features(salts_m6_service_host_cpp PRIVATE cxx_std_17)
+target_link_libraries(salts_m6_service_host_cpp PRIVATE Salts::ServiceHost)
+add_test(NAME salts.m6.service_host_cpp COMMAND salts_m6_service_host_cpp)
+
+add_executable(salts_m6_plugin_path utf8_plugin_path_test.c)
+target_compile_features(salts_m6_plugin_path PRIVATE c_std_11)
+target_link_libraries(salts_m6_plugin_path PRIVATE Salts::Plugin)
+add_test(NAME salts.m6.plugin_utf8_path COMMAND salts_m6_plugin_path)
