@@ -3,6 +3,8 @@
 #include <cflow/status.h>
 #include <cmeta/cmeta.h>
 #include <salts/native_io.h>
+#include <salts/thread.h>
+#include <salts/error_codes.h>
 #include <salts_core/runtime_abi.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,12 +15,17 @@
 
 int main(void) {
   cflow_graph graph = {0};
+  native_io_backend backend = {0};
   const cmeta_type_desc *type;
   salts_core_runtime_abi_0_1_required();
   CHECK(salts_core_runtime_abi_version() == SALTS_CORE_RUNTIME_ABI_VERSION);
   CHECK(strcmp(cflow_status_string(CFLOW_STATUS_OK), "ok") == 0);
   CHECK(cflow_status_result_is_ok((cflow_status_result){CFLOW_STATUS_OK}));
   CHECK(!native_io_endpoint_valid((native_io_endpoint){0}));
+  /* Force a real NativeIO dynamic import, rather than merely including a
+   * static-inline handle validator that permits --as-needed elision. */
+  CHECK(native_io_backend_init(&backend, NULL) == SALTS_EINVAL);
+  CHECK(backend.impl == NULL && cmeta_thread_current_token() != NULL);
   cflow_graph_init(&graph, &cmeta_type_int);
   type = cflow_graph_input_type(&graph);
   CHECK(type != NULL && cmeta_type_equal(type, &cmeta_type_int));

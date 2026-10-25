@@ -41,9 +41,15 @@ def main() -> int:
         images = {
             "core": find_library(core, "core", osname),
             "platform": find_library(core, "platform", osname),
+            "native_io": find_library(core, "native_io", osname),
+            "concurrency": find_library(core, "concurrency", osname),
             "installed_provider": m6 / ("bin" if osname == "windows" else "lib") / plugin_name,
             "external_c": find_build_image(build, "m6_installed_c", osname, True),
             "external_cpp": find_build_image(build, "m6_installed_cpp", osname, True),
+            "external_cflow_c": find_build_image(
+                build, "m6_installed_cflow_c", osname, True),
+            "external_cflow_cpp": find_build_image(
+                build, "m6_installed_cflow_cpp", osname, True),
         }
         for name, path in images.items():
             if not path.is_file():
@@ -61,18 +67,27 @@ def main() -> int:
             "salts_core_runtime_abi_0_1_required": "core",
             "salts_core_utf8_valid": "core",
             "cmeta_thread_current_token": "platform",
+            "cmeta_readiness_backend_supported": "platform",
+            "cmeta_readiness_reactor_init_kind": "platform",
+            "native_io_backend_init": "native_io",
+            "cmeta_deadline_queue_init": "concurrency",
         }
         for symbol, owner in expected.items():
             actual = [name for name in images if symbol in exported[name]]
             if actual != [owner]:
                 errors.append(f"{symbol}: expected sole {owner}, defined in {actual}")
-        for consumer in ("external_c", "external_cpp"):
-            if not {"core", "platform"}.issubset(imports[consumer]):
+        for consumer in ("external_c", "external_cpp",
+                         "external_cflow_c", "external_cflow_cpp"):
+            required = ({"core", "platform", "native_io"}
+                        if consumer.startswith("external_cflow") else
+                        {"core", "platform"})
+            if not required.issubset(imports[consumer]):
                 errors.append(
-                    f"{consumer}: missing imported Core/Platform: {sorted(imports[consumer])}"
+                    f"{consumer}: missing imported shared foundation "
+                    f"{sorted(required)}; actual {sorted(imports[consumer])}"
                 )
         ids = {owner: native_abi_identity(images[owner], owner, osname)
-               for owner in ("core", "platform")}
+               for owner in ("core", "platform", "native_io", "concurrency")}
         report.update({
             "artifacts": {
                 name: {"path": str(path), "sha256": sha256(path),

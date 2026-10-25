@@ -131,3 +131,19 @@ ACE Pipes/Filters suites are repeated in the scoped Linux ASan/UBSan
 with LeakSanitizer and TSan gates. No test is skipped to qualify
 migration, and production CFlow remains unchanged unless explicitly
 opted in by the isolated qualification build.
+
+## M6.7 final-image native-owner audit
+
+The relocated package scanner now includes **both standalone CFlow C11/
+C++17 executables**, the NativeIO/Concurrency/Platform/Core shared
+runtime binaries and the installed real Plugin DSO. The CFlow consumers
+invoke `native_io_backend_init()` on a deliberately invalid config
+(`SALTS_EINVAL`) and query `cmeta_thread_current_token()` to force
+direct dynamic NativeIO and Platform imports rather than allowing linker
+`--as-needed` to elide dependencies behind header-only checks.
+
+ELF/Mach-O/PE scans require exact native 0.1 identities, one definition
+each of `native_io_backend_init`, `cmeta_readiness_reactor_init_kind`,
+`cmeta_readiness_backend_supported`, `cmeta_deadline_queue_init`
+and the existing memory/thread ABI functions, and the appropriate
+direct dynamic imports from the external CFlow executables.
