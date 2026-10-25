@@ -16,6 +16,12 @@
     } \
 } while (0)
 
+#ifdef SALTS_PROBE_DIAG
+#define MARK(stage) do { fprintf(stderr, "intrinsic stage: %s\n", stage); fflush(stderr); } while (0)
+#else
+#define MARK(stage) ((void)0)
+#endif
+
 enum { WORKERS = 6, ROUNDS = 7000 };
 static salts_probe_u32 gate, ready, published[WORKERS], count;
 static salts_probe_u64 sum;
@@ -35,12 +41,14 @@ static int scalar_tests(void) {
     void *pout = &items[1], *pexpected = &items[2];
     bool swapped = true, lock_free = false;
 
+    MARK("scalar init 8/16/32/64/pointer");
     CHECK(salts_probe_u8_init(&b8, 11u) == SALTS_OK);
     CHECK(salts_probe_u16_init(&b16, 77u) == SALTS_OK);
     CHECK(salts_probe_u32_init(&b32, 321u) == SALTS_OK);
     CHECK(salts_probe_u64_init(&b64, UINT64_C(0x100000001)) == SALTS_OK);
     CHECK(salts_probe_ptr_init(&ptr, &items[0]) == SALTS_OK);
 
+    MARK("scalar fetch-add all widths");
     CHECK(salts_probe_u8_fetch_add(&b8, 2u, SALTS_PROBE_RELAXED, &u8out) == SALTS_OK);
     CHECK(u8out == 11u);
     CHECK(salts_probe_u16_fetch_add(&b16, 2u, SALTS_PROBE_RELAXED, &u16out) == SALTS_OK);
@@ -50,12 +58,14 @@ static int scalar_tests(void) {
     CHECK(salts_probe_u64_fetch_add(&b64, UINT64_C(0x100000001),
         SALTS_PROBE_RELAXED, &u64out) == SALTS_OK);
     CHECK(u64out == UINT64_C(0x100000001));
+    MARK("scalar load all widths");
     CHECK(salts_probe_u8_load(&b8, SALTS_PROBE_ACQUIRE, &u8out) == SALTS_OK && u8out == 13u);
     CHECK(salts_probe_u16_load(&b16, SALTS_PROBE_ACQUIRE, &u16out) == SALTS_OK && u16out == 79u);
     CHECK(salts_probe_u32_load(&b32, SALTS_PROBE_ACQUIRE, &u32out) == SALTS_OK && u32out == 323u);
     CHECK(salts_probe_u64_load(&b64, SALTS_PROBE_ACQUIRE, &u64out) == SALTS_OK &&
         u64out == UINT64_C(0x200000002));
 
+    MARK("pointer CAS");
     CHECK(salts_probe_ptr_cas(&ptr, &pexpected, &items[1],
         SALTS_PROBE_ACQ_REL, SALTS_PROBE_ACQUIRE, &swapped) == SALTS_OK);
     CHECK(!swapped && pexpected == &items[0]);
@@ -64,10 +74,12 @@ static int scalar_tests(void) {
     CHECK(swapped);
     CHECK(salts_probe_ptr_load(&ptr, SALTS_PROBE_ACQUIRE, &pout) == SALTS_OK &&
         pout == &items[1]);
+    MARK("is_lock_free");
     CHECK(salts_probe_u64_is_lock_free(&b64, &lock_free) == SALTS_OK);
     (void)lock_free; /* Correct atomics need not be lock-free. */
 
     /* Validation failures must not touch caller outputs or live storage. */
+    MARK("invalid-order validation");
     u32out = 211u;
     CHECK(salts_probe_u32_load(&b32, SALTS_PROBE_RELEASE, &u32out) == SALTS_EINVAL);
     CHECK(u32out == 211u);
@@ -87,8 +99,11 @@ static int scalar_tests(void) {
     CHECK(u32out == 99u);
     CHECK(salts_probe_u64_store(&b64, 7u, SALTS_PROBE_RELEASE) == SALTS_OK);
     CHECK(salts_probe_u64_load(&b64, SALTS_PROBE_ACQUIRE, &u64out) == SALTS_OK && u64out == 7u);
+    MARK("thread fence");
     salts_probe_thread_fence(SALTS_PROBE_SEQ_CST);
+    MARK("signal fence");
     salts_probe_signal_fence(SALTS_PROBE_SEQ_CST);
+    MARK("scalar complete");
     return 0;
 }
 
@@ -117,6 +132,7 @@ static void *worker(void *ctx) {
 }
 
 static int threaded_tests(void) {
+    MARK("threaded start");
     pthread_t threads[WORKERS];
     uint32_t observed = 0, total = 0;
     uint64_t sum_observed = 0;
@@ -145,9 +161,11 @@ static int threaded_tests(void) {
     for (unsigned i = 0; i < WORKERS; ++i)
         CHECK(pthread_join(threads[i], NULL) == 0);
     CHECK(salts_probe_u32_load(&count, SALTS_PROBE_RELAXED, &total) == SALTS_OK);
+    MARK("threaded CAS result");
     CHECK(total == WORKERS * ROUNDS);
     CHECK(salts_probe_u64_load(&sum, SALTS_PROBE_RELAXED, &sum_observed) == SALTS_OK);
     CHECK(sum_observed == UINT64_C(0x100000001) * WORKERS * ROUNDS);
+    MARK("threaded complete");
     return 0;
 }
 
