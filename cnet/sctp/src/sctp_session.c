@@ -158,28 +158,32 @@ cnet_sctp_session_status cnet_sctp_session_start(cnet_sctp_session *session,
  * input commits. Holding an ACK until application consumption must remain
  * safe across DCEP SID reset/reuse and subsequent TSN-space progression.
  * An input failure cannot consume tickets or fabricate ACK events. */
-static void latch_reliable_cumulative_ack(cnet_sctp_session *session) {
+/* A validated cumulative SACK is the sole source of these success receipts.
+ * On peer ABORT, Association may have already freed DATA but retains its
+ * pre-ABORT cumulative snapshot. Never infer a success from ABORT alone. */
+static void latch_cumulative_progress(cnet_sctp_session *session,
+    uint32_t cumulative) {
   size_t i;
-  const cnet_sctp_data *data;
-  if (!session->association.data_ready) return;
-  data = &session->association.data;
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
     cnet_sctp_session_reliable_track *tracked = &session->tracked[i];
     if (tracked->used && tracked->fully_emitted &&
         !tracked->cumul_acked &&
-        (uint32_t)(data->last_ack - tracked->ack.tsn) <
+        (uint32_t)(cumulative - tracked->ack.tsn) <
             UINT32_C(0x80000000))
       tracked->cumul_acked = 1u;
   }
-  /* Latch only validated cumulative progress, never a revocable Gap SACK
-   * or merely emitted FORWARD-TSN. Preserve result through TSN wrap. */
+  /* A revocable Gap SACK never confirms a pending FORWARD barrier. */
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
     cnet_sctp_session_forward_track *track = &session->forward_tracks[i];
     if (track->used && !track->cumul_confirmed &&
-        (uint32_t)(data->last_ack - track->result.last_tsn) <
+        (uint32_t)(cumulative - track->result.last_tsn) <
             UINT32_C(0x80000000))
       track->cumul_confirmed = 1u;
   }
+}
+static void latch_reliable_cumulative_ack(cnet_sctp_session *session) {
+  if (!session->association.data_ready) return;
+  latch_cumulative_progress(session, session->association.data.last_ack);
 }
 cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
     uint64_t now_ms, const void *packet, size_t packet_size,
@@ -190,8 +194,21 @@ cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
   as = cnet_sctp_assoc_input(&session->association, now_ms,
       (const uint8_t *)packet, packet_size, (uint8_t *)reply, capacity,
       written);
-  if (as == CNET_SCTP_ASSOC_OK)
-    latch_reliable_cumulative_ack(session);
+  if (as == CNET_SCTP_ASSOC_OK) {
+    if (session->association.state == CNET_SCTP_ASSOC_FAILED &&
+        session->association.peer_abort_pending &&
+        !session->association.data_ready) {
+      /* A valid SACK before peer ABORT may cumulatively confirm existing
+       * original-generation tickets even though DATA is now destroyed.
+       * Unacknowledged tickets remain unconfirmed, NOT locally exhausted. */
+      session->peer_abort_seen = 1u;
+      if (session->association.peer_abort_info.has_tsn)
+        latch_cumulative_progress(session,
+            session->association.peer_abort_info.last_acked_tsn);
+    } else {
+      latch_reliable_cumulative_ack(session);
+    }
+  }
   return map_assoc(as);
 }
 
@@ -432,7 +449,10 @@ cnet_sctp_session_status cnet_sctp_session_take_forward_progress(
   memset(progress, 0, sizeof(*progress));
   status = guard(session);
   if (status != CNET_SCTP_SESSION_OK) return status;
-  if (!session->association.data_ready) return CNET_SCTP_SESSION_CLOSED;
+  /* A later peer ABORT discards DATA but not confirmed copied ULP results.
+   * Do not synthesize a new result for unconfirmed FORWARD control. */
+  if (!session->association.data_ready && !session->peer_abort_seen)
+    return CNET_SCTP_SESSION_CLOSED;
   for (index = 0u; index < CNET_SCTP_DATA_TX_SLOTS; ++index) {
     cnet_sctp_session_forward_track *track =
         &session->forward_tracks[index];
@@ -453,7 +473,10 @@ cnet_sctp_session_status cnet_sctp_session_take_reliable_ack(
   memset(ack, 0, sizeof(*ack));
   status = guard(session);
   if (status != CNET_SCTP_SESSION_OK) return status;
-  if (!session->association.data_ready) return CNET_SCTP_SESSION_CLOSED;
+  /* Retain already-cumulatively-ACKed original-generation receipts
+   * across peer ABORT until Owner consumption or explicit abortive stop. */
+  if (!session->association.data_ready && !session->peer_abort_seen)
+    return CNET_SCTP_SESSION_CLOSED;
   for (index = 0u; index < CNET_SCTP_DATA_TX_SLOTS; ++index) {
     cnet_sctp_session_reliable_track *candidate = &session->tracked[index];
     if (!candidate->used || !candidate->cumul_acked) continue;
@@ -947,6 +970,7 @@ cnet_sctp_session_status cnet_sctp_session_stop(cnet_sctp_session *session) {
   if (as != CNET_SCTP_ASSOC_OK) return map_assoc(as);
   session->pending_dcep_ack = 0u;
   session->terminal_retry_exhausted = 0u;
+  session->peer_abort_seen = 0u;
   memset(session->tracked, 0, sizeof(session->tracked));
   memset(session->forward_tracks, 0, sizeof(session->forward_tracks));
   memset(session->closing_generation, 0, sizeof(session->closing_generation));

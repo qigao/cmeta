@@ -36,6 +36,7 @@ typedef struct cnet_sctp_session {
   cnet_sctp_session_forward_track forward_tracks[CNET_SCTP_DATA_TX_SLOTS];
   uint64_t next_tracked_ticket;
   uint8_t terminal_retry_exhausted; /* set ONLY by genuine advance EXPIRED */
+  uint8_t peer_abort_seen; /* valid after peer ABORT until explicit stop */
   uint64_t closing_generation[CNET_SCTP_DCEP_STREAMS];
   uint16_t pending_dcep_ack;
   uint32_t magic;

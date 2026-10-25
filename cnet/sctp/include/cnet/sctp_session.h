@@ -132,7 +132,10 @@ typedef struct cnet_sctp_session_tx_usage {
 
 /* Cumulative-ACK receipt for a tracked reliable message. For a fragmented
  * message tsn is the LAST fragment TSN, and only that final cumulative ACK
- * admits the exactly-once receipt. NOT PR-SCTP, cancel, peer delivery,
+ * admits the exactly-once receipt. Already-confirmed receipts remain
+ * Owner-readable after a later peer ABORT destroys DATA. A valid cumulative
+ * SACK preceding ABORT in the same packet may also confirm a ticket, whereas
+ * ABORT by itself never does. NOT PR-SCTP, cancel, peer delivery,
  * JS buffered_amount or complete generic terminal events. */
 typedef struct cnet_sctp_session_reliable_ack {
   uint64_t generation;
@@ -148,7 +151,9 @@ typedef struct cnet_sctp_session_reliable_ack {
  * MESSAGE_ABANDONED carrying DATA TSNs. This result does NOT prove remote
  * application delivery nor whether peer progress came from FORWARD-TSN or
  * late original DATA. SID, original generation and TSN range are immutable
- * across RFC6525 reset/reuse. A full 16-slot result table makes poll()
+ * across RFC6525 reset/reuse. Confirmed results remain Owner-readable
+ * after later peer ABORT, independently of the one-shot ABORT reason.
+ * A full 16-slot result table makes poll()
  * return CAPACITY BEFORE consuming the next abandonment. */
 typedef struct cnet_sctp_session_forward_progress {
   uint64_t generation;
