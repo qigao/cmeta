@@ -11,6 +11,7 @@
  * invoke init concurrently; an initialized association rejects repeated init.
  */
 #define CNET_SCTP_ASSOC_MAX_PACKET 1200u
+#define CNET_SCTP_ASSOC_MAX_INGRESS_PACKET 1280u
 /* Whole-packet ingress is <=1200: 12 common + 4 ABORT + 4 Cause header. */
 #define CNET_SCTP_ASSOC_MAX_ABORT_REASON (CNET_SCTP_ASSOC_MAX_PACKET - 20u)
 #define CNET_SCTP_ASSOC_MAC_BYTES 32u

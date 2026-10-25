@@ -1337,6 +1337,8 @@ cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now,
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!packet || !out || !written) return CNET_SCTP_DATA_INVALID;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  if (packet_size > CNET_SCTP_DATA_INGRESS_MTU)
+    return CNET_SCTP_DATA_CAPACITY;
   if (cnet_sctp_wire_decode(packet, packet_size, &header, &parser) !=
       CNET_SCTP_WIRE_OK ||
       header.source_port != d->config.remote_port ||
@@ -1357,11 +1359,12 @@ cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now,
   }
   /* RFC 9260 6.9: receive multiple DATA chunks and at most one
    * leading SACK. The sender need not bundle; the receiver must process
-   * legal bundling. Keep the existing 1200-byte private path MTU.
+   * legal bundling. Peer ingress is bounded independently from the
+   * conservative 1200-byte local egress MTU.
    * Every chunk is validated on a bounded state snapshot, including the
    * later fragments; an invalid final chunk or too-small SACK output
    * cannot partially admit any preceding DATA or settle TX tickets. */
-  if (packet_size > CNET_SCTP_DATA_MTU)
+  if (packet_size > CNET_SCTP_DATA_INGRESS_MTU)
     return CNET_SCTP_DATA_CAPACITY;
   {
     cnet_sctp_data staged;

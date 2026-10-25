@@ -14,13 +14,16 @@
  * separate mandatory gates before browser compatibility.
  */
 #define CNET_SCTP_DATA_MTU 1200u
+/* WebRTC peers commonly deliver a 1280-byte SCTP packet after DTLS removes
+ * its record framing. Keep local egress/congestion accounting at the existing
+ * conservative 1200-byte MTU, but admit that bounded peer ingress size. */
+#define CNET_SCTP_DATA_INGRESS_MTU 1280u
 /* Local sender fragmentation stays conservative at 1024 bytes. A peer using
- * the full path MTU can legally place 1172 bytes in a legacy DATA chunk
- * (1200 - common header 12 - Chunk header 4 - DATA value header 12).
- * Receive storage must admit that wire-valid maximum; I-DATA's larger header
- * naturally limits its peer payload to 1168 bytes at the same MTU. */
+ * the ingress maximum can place 1252 bytes in a legacy DATA chunk
+ * (1280 - common header 12 - Chunk header 4 - DATA value header 12).
+ * I-DATA's larger header naturally limits its peer payload to 1248 bytes. */
 #define CNET_SCTP_DATA_PAYLOAD_MAX 1024u
-#define CNET_SCTP_DATA_RX_PAYLOAD_MAX 1172u
+#define CNET_SCTP_DATA_RX_PAYLOAD_MAX 1252u
 #define CNET_SCTP_DATA_MESSAGE_MAX 24576u /* 24 KiB, >16 KiB WebRTC gate */
 #define CNET_SCTP_DATA_TX_SLOTS 16u
 #define CNET_SCTP_DATA_BUNDLE_MAX 4u
@@ -191,7 +194,8 @@ cnet_sctp_data_status cnet_sctp_data_send_pr(cnet_sctp_data *d,
     size_t *written);
 
 /* Input: one or more DATA chunks, optionally preceded by one SACK, on
- * a CRC-checked packet bounded to the private 1200-byte path MTU. Bundles
+ * a CRC-checked packet bounded to the private 1280-byte peer-ingress limit.
+ * Local egress remains bounded by CNET_SCTP_DATA_MTU. Bundles
  * commit atomically after all semantic and response-capacity checks;
  * DATA returns one final cumulative SACK. No application callback runs. */
 /* One fragmented user message may be queued at a time. A copied, bounded
