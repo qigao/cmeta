@@ -130,6 +130,12 @@ add_test(NAME salts.m6.plugin_utf8_path COMMAND salts_m6_plugin_path)
 
 # Test-only installable extracted ACE package; never pretend this is the
 # existing Salts 2.3 SDK or production SaltsConfig.cmake.
+# Install actual dynamic Plugin Provider fixtures; the independent
+# clean-prefix consumer must load the installed copies, not build-tree files.
+install(TARGETS salts_m6_host_primary salts_m6_host_secondary
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 include(CMakePackageConfigHelpers)
 set(_m6_package_dir "${CMAKE_INSTALL_LIBDIR}/cmake/SaltsM6")
 configure_package_config_file(

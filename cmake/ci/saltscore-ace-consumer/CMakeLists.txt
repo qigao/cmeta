@@ -16,7 +16,21 @@ endforeach()
 if(NOT TARGET SaltsCore::Core OR NOT TARGET SaltsCore::Platform)
   message(FATAL_ERROR "Missing real imported SaltsCore shared owners")
 endif()
+# Resolve the installed provider path from SaltsM6_DIR, not source/build paths.
+get_filename_component(_m6_installed_prefix "${SaltsM6_DIR}/../../.." ABSOLUTE)
+if(WIN32)
+  set(_m6_provider "${_m6_installed_prefix}/bin/salts_m6_host_primary.dll")
+else()
+  set(_m6_provider "${_m6_installed_prefix}/lib/libsalts_m6_host_primary${CMAKE_SHARED_LIBRARY_SUFFIX}")
+endif()
+if(NOT EXISTS "${_m6_provider}")
+  message(FATAL_ERROR "Missing truly installed M6 Provider DSO: ${_m6_provider}")
+endif()
+file(TO_CMAKE_PATH "${_m6_provider}" _m6_provider)
+
 add_executable(m6_installed_c consumer.c)
+target_compile_definitions(m6_installed_c PRIVATE
+  "SALTS_M6_INSTALLED_PROVIDER=\"${_m6_provider}\"")
 target_compile_features(m6_installed_c PRIVATE c_std_11)
 target_link_libraries(m6_installed_c PRIVATE
   Salts::ServiceHost Salts::Plugin SaltsCore::Core SaltsCore::Platform)

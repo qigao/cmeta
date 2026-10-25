@@ -82,3 +82,14 @@ all original generation, strict UTF-8 and C11/C++17 tests are repeated
 three times with fail-on-report, without suppressions. This does not
 duplicate expensive GmSSL/vcpkg CNet provider CI on unrelated changes.
 Passing ordinary CTest is not a substitute for both sanitizer results.
+
+## Installed Provider DSO lifecycle conformance
+
+SaltsM6 also installs its real original Provider fixture DSOs. A separate
+installed C11 executable derives the absolute Provider path from the
+resolved `SaltsM6_DIR` and refuses missing files. It uses the installed
+PluginRegistry to load, start, acquire a live lease, verify the manifest,
+request stop, reject premature unload with `CMETA_PLUGIN_BUSY`, release,
+observe quiescence, unload and destroy. No build-tree Provider references or
+fallback loaders are admitted. This extends the clean-prefix proof beyond
+headers/ABI calls to real DSO lifecycle at the installed path.
