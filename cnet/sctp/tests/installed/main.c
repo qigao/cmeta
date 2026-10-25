@@ -136,6 +136,7 @@ static int session_round_trip(void) {
       session_config(5001u, 0, &server_context);
   cnet_sctp_session *client = NULL, *server = NULL;
   cnet_sctp_session_event event = {0};
+  cnet_sctp_session_tx_usage tx_usage = {0};
   uint8_t first[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t second[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t third[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
@@ -252,7 +253,13 @@ static int session_round_trip(void) {
           maximum, CNET_SCTP_SESSION_MAX_MESSAGE_BYTES) !=
               CNET_SCTP_SESSION_OK ||
       cnet_sctp_session_queue_message(client, 28u, 0u, 1,
-          "overlap", 7u) != CNET_SCTP_SESSION_CAPACITY)
+          "overlap", 7u) != CNET_SCTP_SESSION_CAPACITY ||
+      cnet_sctp_session_get_tx_usage(client, 0u,
+          client_old_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
+      tx_usage.generation != client_old_generation ||
+      tx_usage.queued_bytes != CNET_SCTP_SESSION_MAX_MESSAGE_BYTES ||
+      !tx_usage.has_pending_message || tx_usage.retained_bytes != 0u ||
+      tx_usage.retained_fragments != 0u)
     goto cleanup;
   /* Do not let an immediate send or a foreign Owner corrupt the copied
    * pending 24 KiB record. Both rejection paths must be state-atomic.
@@ -273,7 +280,11 @@ static int session_round_trip(void) {
       /* Neither an unadmitted stop nor destroy may free/revoke the
        * queued copy, provider callbacks or the opaque Session handle. */
       cnet_sctp_session_stop(client) != CNET_SCTP_SESSION_OWNER ||
-      cnet_sctp_session_destroy(client) != CNET_SCTP_SESSION_OWNER)
+      cnet_sctp_session_destroy(client) != CNET_SCTP_SESSION_OWNER ||
+      cnet_sctp_session_get_tx_usage(client, 0u,
+          client_old_generation, &tx_usage) != CNET_SCTP_SESSION_OWNER ||
+      tx_usage.generation != 0u || tx_usage.queued_bytes != 0u ||
+      tx_usage.retained_bytes != 0u)
     goto cleanup;
   client_context.owner_admitted = 1;
   if (cnet_sctp_session_queue_message(client, 29u, 0u, 1,
@@ -315,6 +326,11 @@ static int session_round_trip(void) {
   for (i = 0u; i < CNET_SCTP_SESSION_MAX_MESSAGE_BYTES; ++i)
     if (message[i] != (uint8_t)(maximum[i] ^ 0xffu))
       goto cleanup;
+  if (cnet_sctp_session_get_tx_usage(client, 0u,
+          client_old_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
+      tx_usage.has_pending_message || tx_usage.queued_bytes != 0u ||
+      tx_usage.retained_bytes != 0u || tx_usage.retained_fragments != 0u)
+    goto cleanup;
 
   /* A TIMED message may expire while it is still wholly in the
    * Owner-owned pending queue, BEFORE the first DATA TSN is allocated.
@@ -511,6 +527,14 @@ static int session_round_trip(void) {
       event.generation == client_old_generation)
     goto cleanup;
   client_new_generation = event.generation;
+  if (cnet_sctp_session_get_tx_usage(client, 0u,
+          client_old_generation, &tx_usage) != CNET_SCTP_SESSION_STALE ||
+      tx_usage.generation != 0u || tx_usage.retained_bytes != 0u ||
+      cnet_sctp_session_get_tx_usage(client, 0u,
+          client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
+      tx_usage.generation != client_new_generation ||
+      tx_usage.queued_bytes != 0u || tx_usage.retained_bytes != 0u)
+    goto cleanup;
 
   /* Replay a *real* old wire packet after the same SID is reopened.
    * A duplicate ACK is allowed, but old payload must NOT be surfaced as
@@ -569,6 +593,11 @@ static int session_round_trip(void) {
           &third_size) != CNET_SCTP_SESSION_OK ||
       third_size == 0u)
     goto cleanup;
+  if (cnet_sctp_session_get_tx_usage(client, 0u,
+          client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
+      tx_usage.retained_bytes != 18u || tx_usage.retained_fragments != 2u ||
+      tx_usage.gap_acked_bytes != 0u || tx_usage.abandoned_bytes != 0u)
+    goto cleanup;
   second_size = 0u;
   if (cnet_sctp_session_input(server, now_ms + 549u,
           third, third_size, second, sizeof(second),
@@ -590,6 +619,11 @@ static int session_round_trip(void) {
           second, second_size, first, sizeof(first),
           &first_size) != CNET_SCTP_SESSION_OK ||
       first_size != 0u)
+    goto cleanup;
+  if (cnet_sctp_session_get_tx_usage(client, 0u,
+          client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
+      tx_usage.retained_bytes != 18u || tx_usage.gap_acked_bytes != 9u ||
+      tx_usage.retained_fragments != 2u)
     goto cleanup;
   close_generation = 0u;
   fourth_size = 0u;
@@ -628,6 +662,11 @@ static int session_round_trip(void) {
           second, second_size, first, sizeof(first),
           &first_size) != CNET_SCTP_SESSION_OK ||
       first_size != 0u)
+    goto cleanup;
+  if (cnet_sctp_session_get_tx_usage(client, 0u,
+          client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
+      tx_usage.retained_bytes != 0u || tx_usage.gap_acked_bytes != 0u ||
+      tx_usage.retained_fragments != 0u)
     goto cleanup;
   fourth_size = 0u;
   if (cnet_sctp_session_close_channel(client, now_ms + 554u, 0u,

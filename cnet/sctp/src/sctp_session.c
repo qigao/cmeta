@@ -262,6 +262,45 @@ cnet_sctp_session_status cnet_sctp_session_pump_message(
       now_ms, packet, capacity, written));
 }
 
+/* Read-only, Owner-admitted, DCEP generation-fenced DATA ticket snapshot.
+ * Gap ACKs must stay retained here until real cumulative settlement. */
+cnet_sctp_session_status cnet_sctp_session_get_tx_usage(
+    cnet_sctp_session *session, uint16_t stream,
+    uint64_t expected_generation, cnet_sctp_session_tx_usage *usage) {
+  cnet_sctp_session_status status;
+  cnet_sctp_dcep_status ds;
+  const cnet_sctp_data *data;
+  uint64_t generation = 0u;
+  size_t i;
+  if (!usage) return CNET_SCTP_SESSION_INVALID;
+  memset(usage, 0, sizeof(*usage));
+  status = guard(session);
+  if (status != CNET_SCTP_SESSION_OK) return status;
+  if (!expected_generation || stream >= session->dcep.streams)
+    return CNET_SCTP_SESSION_INVALID;
+  ds = cnet_sctp_dcep_generation(&session->dcep, stream, &generation);
+  if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
+  if (generation != expected_generation) return CNET_SCTP_SESSION_STALE;
+  if (!session->association.data_ready) return CNET_SCTP_SESSION_CLOSED;
+  data = &session->association.data;
+  usage->generation = generation;
+  if (data->pending.active && data->pending.stream_id == stream &&
+      data->pending.ppid != CNET_SCTP_DCEP_PPID) {
+    usage->has_pending_message = 1u;
+    usage->queued_bytes = data->pending.size - data->pending.offset;
+  }
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    const cnet_sctp_data_tx *tx = &data->tx[i];
+    if (!tx->used || tx->stream_id != stream ||
+        tx->ppid == CNET_SCTP_DCEP_PPID) continue;
+    usage->retained_bytes += tx->user_size;
+    ++usage->retained_fragments;
+    if (tx->gap_acked) usage->gap_acked_bytes += tx->user_size;
+    if (tx->abandoned) usage->abandoned_bytes += tx->user_size;
+  }
+  return CNET_SCTP_SESSION_OK;
+}
+
 cnet_sctp_session_status cnet_sctp_session_close_channel(
     cnet_sctp_session *session, uint64_t now_ms, uint16_t stream,
     void *packet, size_t capacity, size_t *written,

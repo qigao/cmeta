@@ -102,6 +102,24 @@ typedef struct cnet_sctp_session_event {
   cnet_sctp_session_reset_result reset_result;
 } cnet_sctp_session_event;
 
+/* Owner-only generation-fenced snapshot of SCTP application wire-payload
+ * bytes. queued_bytes are copied but not yet emitted. retained_bytes count
+ * emitted DATA tickets awaiting cumulative ACK/FORWARD progress, including
+ * revocable gap_acked_bytes and abandoned_bytes as subsets, not additional
+ * bytes. DCEP PPID50 is excluded. PPID56/57 wire placeholders count as a
+ * byte here despite their zero logical application length. Neither this
+ * snapshot nor its changes imply JavaScript buffered_amount or an exactly-
+ * once per-message completion event. No borrowed output survives the call. */
+typedef struct cnet_sctp_session_tx_usage {
+  uint64_t generation;
+  size_t queued_bytes;
+  size_t retained_bytes;
+  size_t gap_acked_bytes;
+  size_t abandoned_bytes;
+  uint16_t retained_fragments;
+  uint8_t has_pending_message;
+} cnet_sctp_session_tx_usage;
+
 typedef int (*cnet_sctp_session_owner_fn)(void *context);
 typedef int (*cnet_sctp_session_entropy_fn)(void *context,
     uint8_t *destination, size_t destination_size);
@@ -201,6 +219,13 @@ cnet_sctp_session_status cnet_sctp_session_queue_message(
 cnet_sctp_session_status cnet_sctp_session_pump_message(
     cnet_sctp_session *session, uint64_t now_ms,
     void *packet, size_t capacity, size_t *written);
+
+/* Only the exact active DCEP generation may read a SID's TX usage. Stale
+ * generations return STALE and clear *usage; free SIDs return PROTOCOL.
+ * No ticket is settled and no new timer/callback is created by this query. */
+cnet_sctp_session_status cnet_sctp_session_get_tx_usage(
+    cnet_sctp_session *session, uint16_t stream,
+    uint64_t expected_generation, cnet_sctp_session_tx_usage *usage);
 
 cnet_sctp_session_status cnet_sctp_session_close_channel(
     cnet_sctp_session *session, uint64_t now_ms, uint16_t stream,
