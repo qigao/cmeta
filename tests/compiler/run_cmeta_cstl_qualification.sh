@@ -24,7 +24,12 @@ sources_from_cmake() {
         inside {
             item=$0
             gsub(/[[:space:]]/, "", item)
-            if (item ~ /^src\/[A-Za-z0-9_-]+\.c$/) print item
+            if (item ~ /^src\/[A-Za-z0-9_-]+\.c\)$/) {
+                sub(/\)$/, "", item)
+                print item
+                finished=1
+                exit
+            } else if (item ~ /^src\/[A-Za-z0-9_-]+\.c$/) print item
             else if (length(item)) {
                 print "Unsupported production source list entry: " item > "/dev/stderr"
                 exit 2
