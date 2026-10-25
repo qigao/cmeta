@@ -7,8 +7,8 @@ endif()
 
 find_package(Threads REQUIRED)
 
-function(salts_add_atomic_conformance target file)
-  add_executable(${target} "${file}")
+function(salts_add_atomic_conformance target)
+  add_executable(${target} ${ARGN})
   # CMake identifies TinyCC but does not publish a c_std_11 feature table.
   # Let the compiler and the source-level C11 guards reject unsupported syntax;
   # do not claim feature support or enable an atomic fallback here.
@@ -38,3 +38,7 @@ salts_add_atomic_conformance(
 target_include_directories(salts_atomic_contract_conformance PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/../../concurrency/include"
   "${CMAKE_CURRENT_LIST_DIR}/../../platform/include")
+
+# Real same-compiler baseline for the independent mixed GCC/TCC ABI probes.
+salts_add_atomic_conformance(salts_atomic_abi_same_compiler
+  atomic_abi_driver.c atomic_abi_peer.c)

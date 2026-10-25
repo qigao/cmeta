@@ -28,6 +28,26 @@ jobs:
       - name: Execute real atomic tests
         run: ctest --test-dir build/atomic-${{ matrix.compiler }} --output-on-failure
 
+  native-interop:
+    name: Native GCC/Clang cross-compiler atomic ABI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exercise both native mixed-compiler directions under contention
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/atomic-interop
+          src=tests/compiler
+          gcc -std=c11 -O2 -pthread -c "$src/atomic_abi_driver.c" -o build/atomic-interop/driver_gcc.o
+          clang -std=c11 -O2 -pthread -c "$src/atomic_abi_peer.c" -o build/atomic-interop/peer_clang.o
+          gcc -pthread build/atomic-interop/driver_gcc.o build/atomic-interop/peer_clang.o -latomic -o build/atomic-interop/gcc_driver_clang_peer
+          timeout 30s build/atomic-interop/gcc_driver_clang_peer
+          clang -std=c11 -O2 -pthread -c "$src/atomic_abi_driver.c" -o build/atomic-interop/driver_clang.o
+          gcc -std=c11 -O2 -pthread -c "$src/atomic_abi_peer.c" -o build/atomic-interop/peer_gcc.o
+          gcc -pthread build/atomic-interop/driver_clang.o build/atomic-interop/peer_gcc.o -latomic -o build/atomic-interop/clang_driver_gcc_peer
+          timeout 30s build/atomic-interop/clang_driver_gcc_peer
+
   tcc-experimental:
     name: TCC / pinned mob / experimental
     runs-on: ubuntu-latest
@@ -48,13 +68,12 @@ jobs:
           echo "$RUNNER_TEMP/tcc-install/bin" >> "$GITHUB_PATH"
       - name: Record exact compiler revision
         run: tcc -v
-      - name: Diagnostic atomic implementation probe (not admission)
+      - name: Diagnostic TCC atomics and mixed-compiler ABI (not admission)
         continue-on-error: true
         shell: bash
         run: |
           mkdir -p build/atomic-probe
-          tcc -std=c11 tests/compiler/tcc_atomic_probe.c -o build/atomic-probe/tcc_atomic_probe
-          build/atomic-probe/tcc_atomic_probe
+          bash tests/compiler/run_tcc_diagnostics.sh 2>&1 | tee build/atomic-probe/diagnostics.log
       - name: Configure standalone C11 conformance
         run: cmake -S tests/compiler -B build/atomic-tcc -G Ninja -DCMAKE_C_COMPILER=tcc
       - name: Compile
@@ -68,6 +87,7 @@ jobs:
           name: tcc-atomic-conformance-logs
           if-no-files-found: ignore
           path: |
+            build/atomic-probe/diagnostics.log
             build/atomic-tcc/CMakeFiles/CMakeConfigureLog.yaml
             build/atomic-tcc/CMakeFiles/CMakeError.log
             build/atomic-tcc/Testing/Temporary/LastTest.log

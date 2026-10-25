@@ -51,6 +51,32 @@ pass/fail assertion: GCC and Clang have produced different byte-vs-element
 increments. Only unambiguous byte-pointer arithmetic and typed-pointer CAS are
 asserted.
 
+## Cross-translation-unit atomic ABI diagnostics
+
+`atomic_abi.h`, `atomic_abi_driver.c` and `atomic_abi_peer.c` establish a
+**diagnostic-only**, fixed shared layout for 32-bit, 64-bit and pointer atomic
+fields. Before touching the shared object, both translation units independently
+report struct size, alignment, field offsets, atomic sizes and alignments. The
+driver rejects mismatches before atomic access.
+
+When compatible, the probe checks cross-compiler pointer CAS, competing 32-bit
+CAS increments and 64-bit fetch-add, plus release/acquire publication **before**
+`pthread_join`. The pthread test is Linux/POSIX only; a bounded timeout
+prevents an unknown compiler bug from hanging CI.
+
+The standalone CMake suite runs the **same-compiler** GCC/Clang baseline. The
+experimental TCC workflow runs this separately in three directions:
+
+- GCC driver + TCC peer;
+- TCC driver + GCC peer;
+- TCC driver + TCC peer.
+
+The local diagnostic entrypoint is `bash tests/compiler/run_tcc_diagnostics.sh`
+(with a pinned TinyCC binary and `gcc` on PATH). Its results are evidence of
+a limited implementation, not permission to build Salts with TCC. In particular,
+upstream TinyCC `include/tccdefs.h` explicitly defines
+`__STDC_NO_ATOMICS__=1`, which Salts must continue to reject.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:
