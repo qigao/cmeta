@@ -116,13 +116,14 @@ static void test_malformed_and_unsupported(void) {
   assert(cnet_sctp_init_params_preflight(NULL, 20u, 1, NULL) == CNET_SCTP_INIT_PARAMS_INVALID);
 }
 
-static void test_supported_reconfig_negotiation(void) {
+static void test_supported_extension_negotiation(void) {
   uint8_t p[512] = {0};
   cnet_sctp_init_param_view out = {0};
   size_t n = append(p, 16u, 0x8008u, 0u);
   assert(cnet_sctp_init_params_preflight(p, n, 0, &out) ==
       CNET_SCTP_INIT_PARAMS_OK);
-  assert(!out.supports_reconfig && out.skipped_count == 1u);
+  assert(!out.supports_reconfig && !out.supports_forward_tsn &&
+      out.skipped_count == 1u);
 
   memset(p, 0, sizeof(p));
   n = append(p, 16u, 0x8008u, 1u);
@@ -137,11 +138,20 @@ static void test_supported_reconfig_negotiation(void) {
       p, n, 0, CNET_SCTP_INIT_PARAMS_MALFORMED);
 
   memset(p, 0, sizeof(p));
-  n = append(p, 16u, 0x8008u, 1u);
-  p[20u] = 192u; /* peer supports FORWARD-TSN, not RE-CONFIG */
+  n = append(p, 16u, 0xc000u, 0u);
   assert(cnet_sctp_init_params_preflight(p, n, 0, &out) ==
       CNET_SCTP_INIT_PARAMS_OK);
-  assert(!out.supports_reconfig && out.skipped_count == 1u);
+  assert(!out.supports_reconfig && out.supports_forward_tsn &&
+      out.skipped_count == 0u);
+
+  n = append(p, n, 0xc000u, 0u);
+  assert_failure_does_not_expose_borrowed_cookie(
+      p, n, 0, CNET_SCTP_INIT_PARAMS_MALFORMED);
+
+  memset(p, 0, sizeof(p));
+  n = append(p, 16u, 0xc000u, 1u);
+  assert_failure_does_not_expose_borrowed_cookie(
+      p, n, 0, CNET_SCTP_INIT_PARAMS_MALFORMED);
 }
 
 static void test_received_unrecognized_parameter(void) {
@@ -224,7 +234,7 @@ int main(void) {
   test_report_capacity_and_cookie();
   test_received_unrecognized_parameter();
   test_malformed_and_unsupported();
-  test_supported_reconfig_negotiation();
+  test_supported_extension_negotiation();
   test_capacity_and_mutations();
   puts("C11 SCTP RFC9260 TLV action/report/abort-intent parser: PASS");
   return 0;

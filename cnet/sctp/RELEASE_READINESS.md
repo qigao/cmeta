@@ -1,7 +1,7 @@
 # Release readiness — RFC-first C11 SCTP (#1281)
 
 **Initial preflight: 2026-10-13. Feature-checkpoint update: 2026-10-17. Decision: NO-GO for public or production SCTP.**
-This is a release *preflight record*, not permission to merge Draft [PR #1281](https://github.com/qigao/salts/pull/1281), create a tag, publish a package, or replace TurboMedia's usrsctp. PR #1281 is the clean current-master successor to historical research PR #1182. All SCTP work remains original C11, with no Rust/C++ SCTP engine, bridge, or runtime fallback.
+This is a release *preflight record*, not permission to create a tag, publish a package, or replace TurboMedia's usrsctp. Private research [PR #1281](https://github.com/qigao/salts/pull/1281) has merged to `master`, but no opaque session SDK or production integration was published. All SCTP work remains original C11, with no Rust/C++ SCTP engine, bridge, or runtime fallback.
 
 ## Version and immutable source authority
 
@@ -24,7 +24,7 @@ Release governance is already tracked in [Salts #1081](https://github.com/qigao/
 | M0 RFC and legal provenance | RFC matrix and C11-only module; known GmSSL Apache-2.0 provider for tests | **PARTIAL** — final release source/license/dependency audit open |
 | M1 C11 wire + installed consumer | Strict Chunk framing, CRC32C, INIT TLVs; independent `CNetSctpPrototype::Wire` installed C11 consumer | **PARTIAL** — production opaque session ABI and Salts SDK export absent |
 | M2 SCTP core | Owner-driven INIT/COOKIE/T1, HMAC-SM3, entropy/key rotation, bounded DATA/SACK/T3/Fast Recovery and zero-window recovery; SHUTDOWN/T2 with pending DATA and ULP RX drain; atomic bundled DATA/leading SACK receive; optional absolute T5 shutdown guard with ABORT-on-expiry and late-ACK preemption | **PARTIAL** — complete congestion/PMTU, restart, full ABORT/error-cause and peer-race behavior, full RFC wire surface and real Provider Owner integration remain open |
-| M3 WebRTC extensions | Private PPID/DCEP OPEN/ACK, ordered/unordered streams, 24 KiB DATA fragmentation, and a bounded negotiated RFC 6525 slice with deferred `In progress` receive processing, local/peer Incoming and paired reset scheduling, RFC 8831 reciprocal close, single-direction and paired stream growth, quiescent SSN/TSN association reset, its 30-second local-request floor, simultaneous-reset collision recovery, timeout/retry and reuse tests | **PARTIAL** — PR-SCTP/FORWARD-TSN, remaining cross-parameter collisions, ULP channel-state coordination, I-DATA interleaving, negotiated limits and browser interop remain blocked |
+| M3 WebRTC extensions | Private PPID/DCEP OPEN/ACK, ordered/unordered streams, 24 KiB DATA fragmentation, dedicated RFC 3758 negotiation with bounded timed/max-retransmit FORWARD-TSN, and a bounded negotiated RFC 6525 slice with deferred `In progress` receive processing, local/peer Incoming and paired reset scheduling, RFC 8831 reciprocal close, single-direction and paired stream growth, quiescent SSN/TSN association reset, its 30-second local-request floor, simultaneous-reset collision recovery, timeout/retry and reuse tests | **PARTIAL** — fragmented PR messages/events, remaining cross-parameter collisions, ULP channel-state coordination, I-DATA/I-FORWARD-TSN interleaving, negotiated limits and browser interop remain blocked |
 | M4 independent interoperability | No real GmSSL SCTP-over-DTLS + independent browser/libwebrtc peer proof | **BLOCKED** |
 | M5 ownership, sanitizers and SDK | Linux/Windows/macOS standalone C11, source ASan/UBSan, pinned-GmSSL Cookie-MAC, and effective-source TSan for private Owner handoff + test-DSO callback/drain/dlclose all green at exact HEAD `1ebec510a7928864a74307a98aaa18a310abd0de` ([CNet C11 #39705821651](https://github.com/qigao/salts/actions/runs/39705821651)); Salts CI selected Android/iOS Release checks pass ([#39705821753](https://github.com/qigao/salts/actions/runs/39705821753)) | **PARTIAL** — production CNet Owner/DTLS Generation drain and real DTLS Provider unload race remain open; Android/iOS builds did not install/qualify the new SCTP session SDK; Linux arm64 and six-RID installed ABI checks remain open |
 | M6 review/cutover | No independent protocol review or explicit release/cutover approval | **BLOCKED** |
@@ -46,21 +46,21 @@ Acceptance should test this actual bridge with real DTLS records and the product
 
 ### A. Salts.Native 2.3.0 — existing product
 
-Can be prepared **without #1181** only through existing [release epic #1081](https://github.com/qigao/salts/issues/1081), [ABI gate #1018](https://github.com/qigao/salts/issues/1018), and exact approved candidate release workflow. The 2.3.0 tag does not currently exist in the checked repository. Before stable publication, choose an authoritative reviewed source that includes all required once ABI, ACE/CNet changes, satisfy six-RID installed SDK and published-byte downstream/TSan gates, and explicitly obtain release approval. **Do not include the SCTP Draft source in this baseline** or infer its PR CI qualifies it.
+Can be prepared **without #1181** only through existing [release epic #1081](https://github.com/qigao/salts/issues/1081), [ABI gate #1018](https://github.com/qigao/salts/issues/1018), and exact approved candidate release workflow. The 2.3.0 tag does not currently exist in the checked repository. Before stable publication, choose an authoritative reviewed source that includes all required once ABI, ACE/CNet changes, satisfy six-RID installed SDK and published-byte downstream/TSan gates, and explicitly obtain release approval. The merged private SCTP sources are not an exported feature and their scoped CI does not qualify this release lane.
 
 Separate known cross-repo qualification: [#1177](https://github.com/qigao/salts/issues/1177) tracks the rc.15 release-SDK TSan async-logging instrumentation visibility issue; diagnose it without suppressions. [#1160](https://github.com/qigao/salts/issues/1160) is another explicitly segregated GmSSL RFC8998 staged release lane, not automatically part of #1181 or 2.3.0.
 
 ### B. RFC-first CNet SCTP / TurboMedia DataChannel
 
-**NO-GO** for any public Salts SDK, release tag, or TurboMedia cutover today. Continue on [Draft #1281](https://github.com/qigao/salts/pull/1281) and [TurboMedia #227](https://github.com/qigao/turbomedia/issues/227). When M0–M5 and independent browser/DTLS interoperability pass, review a **new, exact SHA-qualified integration candidate based on the approved Salts ABI graph**; reconcile ancestry and run full first-party sanitizer, six-RID *SCTP* installed consumers and immutable packages. Only M6 written approval can permit a public SCTP session ABI and exclusive usrsctp removal. No dual-backend release and no automatic runtime fallback.
+**NO-GO** for any public Salts SDK, release tag, or TurboMedia cutover today. Continue follow-up work from the merged private baseline and [TurboMedia #227](https://github.com/qigao/turbomedia/issues/227). When M0–M5 and independent browser/DTLS interoperability pass, review a **new, exact SHA-qualified integration candidate based on the approved Salts ABI graph**; reconcile ancestry and run full first-party sanitizer, six-RID *SCTP* installed consumers and immutable packages. Only M6 written approval can permit a public SCTP session ABI and exclusive usrsctp removal. No dual-backend release and no automatic runtime fallback.
 
 ## Release preparation checklist (no release action authorized)
 
-- [ ] Confirm approved Salts 2.3.0 source/ABI baseline under #1081; do not tag `master` or SCTP Draft opportunistically.
-- [x] Replay the isolated research snapshot onto the approved current master as Draft #1281 without changing production targets.
-- [ ] Requalify every new #1281 SHA; feature acceptance, installed SDK qualification and production integration remain separate gates.
+- [ ] Confirm approved Salts 2.3.0 source/ABI baseline under #1081; do not tag `master` opportunistically.
+- [x] Merge the isolated private research snapshot through #1281 without changing production targets.
+- [ ] Requalify every new SCTP follow-up SHA; feature acceptance, installed SDK qualification and production integration remain separate gates.
 - [ ] Complete RFC 9260 association, data plane, reliability, shutdown, restart/tie-tag and exception paths within bounded single Owner.
-- [ ] Complete WebRTC DCEP/PPID, PR-SCTP, locally initiated/all-stream/multi-SID Incoming Reset and complex-collision handling, ULP channel-state coordination, interleaving and independent browser GmSSL/DTLS tests with captured wire evidence.
+- [ ] Complete WebRTC DCEP/PPID-to-policy integration, fragmented PR-SCTP/events, complex RFC 6525 collision handling, ULP channel-state coordination, I-DATA/I-FORWARD-TSN interleaving and independent browser GmSSL/DTLS tests with captured wire evidence.
 - [ ] Integrate CNet Owner + DTLS Generation leases, callback terminal once/drain, cancel vs input/timer/close races and full-source TSan.
 - [ ] Qualify exact new SCTP installed C11 SDK for Linux x64/arm64, Windows x64, macOS arm64, Android arm64 and iOS arm64. Confirm no Rust/C++ SCTP runtime dependency.
 - [ ] Obtain independent implementation/security/license review and maintainer approval for M6; **do not merely tick the gate because CI is green**.
@@ -70,7 +70,7 @@ Separate known cross-repo qualification: [#1177](https://github.com/qigao/salts/
 
 **Documentation HEAD requalification (2026-10-19, `e173e70130f54ad4cd41efe2bc86211dea8adbff`):** [CNet SCTP C11 #39194373002](https://github.com/qigao/salts/actions/runs/39194373002) **SUCCESS 5/5** (Linux/macOS/Windows C11 Wire, source ASan/UBSan, pinned-GmSSL Cookie-MAC); [immutable build provenance #39194372998](https://github.com/qigao/salts/actions/runs/39194372998) **SUCCESS**; [Salts CI #39194372988](https://github.com/qigao/salts/actions/runs/39194372988) **SUCCESS** for selected checks including Android ARM64 Release and iOS ARM64 Release. Formal, package, benchmarks, installed ServiceHost ABI, six-RID ABI identity and SDK publication were **SKIPPED**; ACE candidate was **SKIPPED**. This documentation-only checkpoint does not close M0–M6 blockers, qualify an installed SCTP SDK, or authorize merge/release/cutover. Any subsequent HEAD still requires its own exact-commit validation.
 
-**Keep PR #1281 Open / Draft / DO NOT MERGE. No tag, NuGet push, GitHub Release or production source mutation from this document.**
+**PR #1281 is a merged private research baseline, not a release approval. No tag, NuGet push, GitHub Release or production cutover from this document.**
 
 ## M5 real-thread Owner lease / cancel checkpoint (2026-10-22)
 
@@ -99,7 +99,7 @@ DTLS Generation barrier, or effective-source TSan qualification of the
 third-party GmSSL implementation. Those, together with actual CNet Owner
 integration and concurrent cancel/input/timer/close stress, remain open M5
 gates. A passing scoped TSan run does not close the full M5 gate or authorize
-PR #1281 merge, release, publication, or production cutover.
+release, publication, or production cutover.
 
 ## Real dynamic Provider DSO callback/drain/dlclose (2026-10-22)
 

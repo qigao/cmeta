@@ -9,8 +9,9 @@
  * The one CNet Owner drives send, input, take, T3 and stop; no copied pointer
  * may outlive a call. The prototype supports bounded legacy DATA
  * fragmentation, RFC 9260 gap/duplicate SACKs and fixed path/stream ceilings.
- * PR-SCTP, interleaving, shutdown and complete RFC 7 cwnd
- * conformance remain separate mandatory gates before browser compatibility.
+ * RFC 3758 timed/max-retransmit abandonment uses negotiated FORWARD-TSN.
+ * Interleaving, shutdown and complete RFC 7 cwnd conformance remain separate
+ * mandatory gates before browser compatibility.
  */
 #define CNET_SCTP_DATA_MTU 1200u
 #define CNET_SCTP_DATA_PAYLOAD_MAX 1024u
@@ -38,6 +39,17 @@ typedef enum cnet_sctp_data_status {
 
 typedef int (*cnet_sctp_data_owner_fn)(void *context);
 
+typedef enum cnet_sctp_data_reliability_mode {
+  CNET_SCTP_DATA_RELIABLE = 0,
+  CNET_SCTP_DATA_RELIABILITY_RETRANSMITS = 1,
+  CNET_SCTP_DATA_RELIABILITY_TIMED = 2
+} cnet_sctp_data_reliability_mode;
+
+typedef struct cnet_sctp_data_reliability {
+  cnet_sctp_data_reliability_mode mode;
+  uint32_t value; /* retransmission count or lifetime in milliseconds */
+} cnet_sctp_data_reliability;
+
 typedef struct cnet_sctp_data_config {
   uint16_t local_port, remote_port;
   uint16_t outbound_streams, inbound_streams;
@@ -46,6 +58,7 @@ typedef struct cnet_sctp_data_config {
   uint32_t peer_receive_window;
   uint64_t t3_initial_ms, t3_max_ms;
   uint8_t max_retransmits;
+  uint8_t forward_tsn_supported;
   cnet_sctp_data_owner_fn is_owner;
   void *owner_context;
 } cnet_sctp_data_config;
@@ -66,6 +79,12 @@ typedef struct cnet_sctp_data_tx {
   uint8_t flight_accounted; /* actual transmitted and not gap-ACKed */
   uint8_t pending_retransmit; /* loss intent, never flight credit */
   uint8_t probe_retransmitted; /* suppress ambiguous zero-window RTT samples */
+  uint16_t stream_id, ssn;
+  uint8_t unordered;
+  uint8_t reliability_mode;
+  uint32_t reliability_value;
+  uint64_t expires_at_ms;
+  uint8_t abandoned;
   uint8_t used;
 } cnet_sctp_data_tx;
 
@@ -101,6 +120,8 @@ typedef struct cnet_sctp_data {
   cnet_sctp_data_rx rx[CNET_SCTP_DATA_RX_SLOTS];
   cnet_sctp_data_pending pending;
   uint16_t tx_ssn[CNET_SCTP_DATA_STREAMS], rx_ssn[CNET_SCTP_DATA_STREAMS];
+  uint16_t rx_forward_ssn[CNET_SCTP_DATA_STREAMS];
+  uint16_t rx_forward_streams;
   uint32_t next_tsn, last_ack, cumulative_rx, rx_gaps;
   uint32_t peer_rwnd, cwnd, ssthresh;
   uint32_t last_advertised_rwnd;
@@ -120,6 +141,12 @@ typedef struct cnet_sctp_data {
   uint8_t recovery_active;
   uint8_t rtt_valid;
   uint8_t closed;
+  uint8_t forward_active;
+  uint32_t forward_cumulative_tsn;
+  uint64_t forward_deadline_ms;
+  uint8_t forward_retransmits;
+  size_t forward_packet_size;
+  uint8_t forward_packet[CNET_SCTP_DATA_MTU];
   uint32_t magic;
 } cnet_sctp_data;
 
@@ -134,6 +161,11 @@ cnet_sctp_data_status cnet_sctp_data_init(cnet_sctp_data *d,
  */
 cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now_ms,
     uint16_t stream_id, uint32_t ppid, int unordered,
+    const void *bytes, size_t length, void *output, size_t output_capacity,
+    size_t *written);
+cnet_sctp_data_status cnet_sctp_data_send_pr(cnet_sctp_data *d,
+    uint64_t now_ms, uint16_t stream_id, uint32_t ppid, int unordered,
+    const cnet_sctp_data_reliability *reliability,
     const void *bytes, size_t length, void *output, size_t output_capacity,
     size_t *written);
 

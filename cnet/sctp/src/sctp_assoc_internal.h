@@ -160,6 +160,7 @@ typedef struct cnet_sctp_assoc {
   uint16_t peer_outbound_streams;
   uint16_t peer_inbound_streams;
   uint8_t peer_reconfig_supported;
+  uint8_t peer_forward_tsn_supported;
   uint8_t reset_active;
   uint8_t reconfig_kind;
   uint8_t reset_is_reciprocal;
@@ -258,6 +259,11 @@ cnet_sctp_assoc_status cnet_sctp_assoc_next_deadline(
  */
 cnet_sctp_assoc_status cnet_sctp_assoc_send_message(cnet_sctp_assoc *a,
     uint64_t now_ms, uint16_t stream_id, uint32_t ppid, int unordered,
+    const void *payload, size_t length, void *packet, size_t packet_capacity,
+    size_t *packet_bytes);
+cnet_sctp_assoc_status cnet_sctp_assoc_send_message_pr(cnet_sctp_assoc *a,
+    uint64_t now_ms, uint16_t stream_id, uint32_t ppid, int unordered,
+    const cnet_sctp_data_reliability *reliability,
     const void *payload, size_t length, void *packet, size_t packet_capacity,
     size_t *packet_bytes);
 cnet_sctp_assoc_status cnet_sctp_assoc_take_message(cnet_sctp_assoc *a,

@@ -12,6 +12,7 @@ enum {
   PARAM_SUPPORTED_ADDRESSES = 12,
   PARAM_ECN_CAPABLE = 0x8000,
   PARAM_SUPPORTED_EXTENSIONS = 0x8008,
+  PARAM_FORWARD_TSN_SUPPORTED = 0xC000,
   CHUNK_RECONFIG = 130
 };
 
@@ -24,6 +25,7 @@ cnet_sctp_init_param_status cnet_sctp_init_params_preflight(
     cnet_sctp_init_param_view *out) {
   cnet_sctp_init_param_view parsed = {0};
   int supported_extensions_seen = 0;
+  int forward_tsn_supported_seen = 0;
   size_t position = 16u;
   if (!out) return CNET_SCTP_INIT_PARAMS_INVALID;
   /* A failed preflight must also revoke any previously returned borrowed view. */
@@ -94,14 +96,24 @@ cnet_sctp_init_param_status cnet_sctp_init_params_preflight(
         if (length < 4u || supported_extensions_seen)
           return CNET_SCTP_INIT_PARAMS_MALFORMED;
         supported_extensions_seen = 1;
-        for (i = 4u; i < length; ++i)
+        for (i = 4u; i < length; ++i) {
           if (value[position + i] == CHUNK_RECONFIG)
             parsed.supports_reconfig = 1;
+        }
         /* A parameter without RE-CONFIG is still valid and must not be
          * confused with an absent/duplicate RE-CONFIG advertisement. */
         if (!parsed.supports_reconfig) ++parsed.skipped_count;
         break;
       }
+      case PARAM_FORWARD_TSN_SUPPORTED:
+        /* RFC 3758 3.1 uses its own empty INIT/INIT ACK parameter. It is
+         * not negotiated by listing Chunk Type 192 in RFC 5061's Supported
+         * Extensions parameter. */
+        if (length != 4u || forward_tsn_supported_seen)
+          return CNET_SCTP_INIT_PARAMS_MALFORMED;
+        forward_tsn_supported_seen = 1;
+        parsed.supports_forward_tsn = 1;
+        break;
       default: {
         const uint16_t action = (uint16_t)(type >> 14);
         if (action == 1u || action == 3u) {

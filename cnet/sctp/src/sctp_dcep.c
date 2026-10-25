@@ -61,7 +61,7 @@ static cnet_sctp_dcep_status validate_type(uint8_t channel, uint32_t reliability
       (void)reliability;
       return CNET_SCTP_DCEP_OK;
     case 0x01u: case 0x81u: case 0x02u: case 0x82u:
-      return CNET_SCTP_DCEP_UNSUPPORTED; /* PR-SCTP not implemented yet */
+      return CNET_SCTP_DCEP_OK;
     default: return CNET_SCTP_DCEP_PROTOCOL;
   }
 }
@@ -112,8 +112,9 @@ cnet_sctp_dcep_status cnet_sctp_dcep_open(cnet_sctp_dcep *d,
   bytes[0] = DCEP_OPEN;
   bytes[1] = type;
   wr16(bytes + 2u, priority);
-  /* Reliable OPEN must use 0, while received reliable params are ignored. */
-  wr32(bytes + 4u, 0u);
+  /* Reliable OPEN uses zero. PR channels preserve the full RFC 8832
+   * 32-bit reliability parameter for the negotiated RFC 3758 sender. */
+  wr32(bytes + 4u, (type == 0x00u || type == 0x80u) ? 0u : reliability);
   wr16(bytes + 8u, (uint16_t)label_len);
   wr16(bytes + 10u, (uint16_t)proto_len);
   if (label_len) memcpy(bytes + 12u, label, label_len);
@@ -121,7 +122,8 @@ cnet_sctp_dcep_status cnet_sctp_dcep_open(cnet_sctp_dcep *d,
   channel->sid = sid;
   channel->channel_type = type;
   channel->priority = priority;
-  channel->reliability = 0u;
+  channel->reliability =
+      (type == 0x00u || type == 0x80u) ? 0u : reliability;
   channel->label_size = label_len;
   channel->protocol_size = proto_len;
   if (label_len) memcpy(channel->label, label, label_len);
@@ -178,7 +180,8 @@ cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
   channel->sid = sid;
   channel->channel_type = bytes[1];
   channel->priority = rd16(bytes + 2u);
-  channel->reliability = 0u;
+  channel->reliability = (bytes[1] == 0x00u || bytes[1] == 0x80u) ?
+      0u : rd32(bytes + 4u);
   channel->label_size = label_len;
   channel->protocol_size = proto_len;
   if (label_len) memcpy(channel->label, bytes + 12u, label_len);
