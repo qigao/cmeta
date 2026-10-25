@@ -291,6 +291,68 @@ static int session_round_trip(void) {
     if (message[i] != (uint8_t)(maximum[i] ^ 0xffu))
       goto cleanup;
 
+  /* A TIMED message may expire while it is still wholly in the
+   * Owner-owned pending queue, BEFORE the first DATA TSN is allocated.
+   * The installed Session must report an abandonment without inventing a
+   * first TSN, clear the slot, and allow a new same-SID message afterward. */
+  now_ms += 8u;
+  first_size = 0u;
+  if (cnet_sctp_session_open_channel(client, now_ms, 2u,
+          CNET_SCTP_SESSION_CHANNEL_TIMED_ORDERED, 0u, 500u,
+          "expiry", 6u, NULL, 0u,
+          first, sizeof(first), &first_size) != CNET_SCTP_SESSION_OK ||
+      deliver(server, client, now_ms + 1u, first, first_size) != 0 ||
+      cnet_sctp_session_poll(server, now_ms + 3u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.stream_id != 2u || second_size == 0u ||
+      deliver(client, server, now_ms + 4u, second, second_size) != 0 ||
+      cnet_sctp_session_poll(client, now_ms + 6u, &event,
+          message, sizeof(message), first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.stream_id != 2u)
+    goto cleanup;
+  now_ms += 9u;
+  if (cnet_sctp_session_queue_message(client, now_ms, 2u, 1,
+          "expire", 6u) != CNET_SCTP_SESSION_OK)
+    goto cleanup;
+  first_size = sizeof(first);
+  if (cnet_sctp_session_pump_message(client, now_ms + 500u,
+          first, sizeof(first), &first_size) != CNET_SCTP_SESSION_BUSY ||
+      first_size != 0u)
+    goto cleanup;
+  first_size = sizeof(first);
+  if (cnet_sctp_session_advance(client, now_ms + 500u,
+          first, sizeof(first), &first_size) != CNET_SCTP_SESSION_OK ||
+      first_size != 0u ||
+      cnet_sctp_session_poll(client, now_ms + 501u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED ||
+      event.stream_id != 2u || event.has_tsn ||
+      event.message_size != 6u || !event.binary ||
+      event.reliability.mode != CNET_SCTP_SESSION_TIMED ||
+      event.reliability.value != 500u ||
+      event.abandon_reason != CNET_SCTP_SESSION_ABANDON_TIMED)
+    goto cleanup;
+  first_size = sizeof(first);
+  if (cnet_sctp_session_pump_message(client, now_ms + 502u,
+          first, sizeof(first), &first_size) != CNET_SCTP_SESSION_EMPTY ||
+      first_size != 0u ||
+      cnet_sctp_session_send(client, now_ms + 503u, 2u, 1,
+          "next", 4u, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      deliver(server, client, now_ms + 504u, first, first_size) != 0 ||
+      cnet_sctp_session_poll(server, now_ms + 506u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+      event.stream_id != 2u || event.message_size != 4u ||
+      memcmp(message, "next", 4u) != 0)
+    goto cleanup;
+
   result = 0;
 
 cleanup:
