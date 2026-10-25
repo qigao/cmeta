@@ -4,6 +4,7 @@
 #include <salts/configurator.h>
 #include <salts/component_runtime_abi.h>
 #include <salts_core/bytes.h>
+#include <salts_core/runtime_abi.h>
 #include <cmeta_buffer.h>
 #include <salts/thread.h>
 #include <stdint.h>
@@ -13,6 +14,7 @@
 extern mem_pool_t *salts_m6_provider_pool(void);
 extern const void *salts_m6_provider_thread_token(void);
 extern uint32_t salts_m6_provider_cmeta_epoch(void);
+extern uint32_t salts_m6_provider_core_epoch(void);
 extern int salts_m6_provider_component_admitted(void);
 extern mem_slice_t salts_m6_provider_make_slice(void);
 extern void salts_m6_provider_release(mem_slice_t *);
@@ -28,6 +30,14 @@ int main(void) {
   mem_buffer_t *buf = NULL;
   mem_slice_t local = {0};
   mem_slice_t remote = {0};
+  /* Calls from the executable and provider DSO must resolve the same 0.1
+   * link marker and concrete runtime layout (no legacy Salts shim). */
+  salts_core_runtime_abi_0_1_required();
+  REQUIRE(salts_core_runtime_abi_version() == SALTS_CORE_RUNTIME_ABI_VERSION);
+  REQUIRE(salts_m6_provider_core_epoch() == SALTS_CORE_RUNTIME_ABI_VERSION);
+  REQUIRE(salts_core_runtime_mem_pool_size() == sizeof(mem_pool_t));
+  REQUIRE(salts_core_runtime_mem_buffer_size() == sizeof(mem_buffer_t));
+  REQUIRE(salts_core_runtime_mem_slice_size() == sizeof(mem_slice_t));
   REQUIRE(salts_core_bytes_view_init(&view, "abc", 3u) == SALTS_CORE_OK);
   REQUIRE(view.len == 3u && memcmp(view.data, "abc", 3u) == 0);
   REQUIRE(cmeta_reflection_abi_version() == CMETA_REFLECTION_ABI_VERSION);

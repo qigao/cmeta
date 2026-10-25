@@ -45,6 +45,11 @@ def main() -> int:
         exports = {k: image_exports(v, platform, db) for k, v in images.items()}
         needed = {k: binary_dependencies(v, platform, db) for k, v in images.items()}
         ownership = {
+            "salts_core_runtime_abi_0_1_required": "core",
+            "salts_core_runtime_abi_version": "core",
+            "salts_core_runtime_mem_pool_size": "core",
+            "salts_core_runtime_mem_buffer_size": "core",
+            "salts_core_runtime_mem_slice_size": "core",
             "mem_global": "core",
             "mem_buffer_release": "core",
             "mem_slice_release": "core",
