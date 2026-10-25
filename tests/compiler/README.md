@@ -352,6 +352,47 @@ and completion, parked-worker wake-up, cancellation, sanitizer
 instrumentation and cross-platform/wide-memory-order testing.
 One publisher and one consumer are only the first execution gate.
 
+## Finite Native Atomic API: actual Disruptor needs
+
+A source inventory of the unchanged `concurrency/src/disruptor.c`
+(current branch) found 48 native atomic-operation call sites:
+
+| Operation | Calls | Primitive exposed by private adapter |
+| --- | ---: | --- |
+| `atomic_load_explicit` | 20 | typed load with order validation |
+| `atomic_store_explicit` | 16 | typed store with order validation |
+| `atomic_fetch_add_explicit` | 4 | typed add, including acq_rel zero-add |
+| `atomic_fetch_sub_explicit` | 2 | typed subtract |
+| `atomic_compare_exchange_weak_explicit` | 4 | typed weak CAS, expected writeback |
+| `atomic_compare_exchange_strong_explicit` | 2 | typed strong CAS, expected writeback |
+
+The private `intrinsic_atomic_backend.h` now supplies the exact
+finite operation families needed by this opaque component, without
+providing a catch-all `stdatomic.h` replacement. The diagnostic
+`intrinsic_atomic_conformance.c` exercises all 8/16/32/64-bit
+add/sub, acq_rel zero-add RMW, failed/weak-CAS semantics, bounded
+spurious retries, and six concurrently contending weak-CAS workers
+with 64-bit RMW and release/acquire publication.
+
+**Storage must remain independently owned by one backend.** Even if
+pointer size and alignment happen to match, the private intrinsic
+storage must not be reinterpreted as `_Atomic` through pointer casts,
+memcpy or a mixed TCC/GCC object alias. Disruptor's public opaque
+handle is a possible *future* migration boundary; SPSC's public
+`_Atomic size_t` fields are not. No Salts production code or installed
+SDK uses this experimental adapter.
+
+In the unchanged Disruptor, `reverse_gap_case()` additionally
+forces a 4→3→2→1 publication order (BROADCAST) and a 4→3→2→1
+worker completion order (WORKER_POOL). It verifies that the
+respective cursors cover the full contiguous range without needing
+an extra publisher to rescue publication or retirement, and that
+the next bounded slot becomes available.
+
+These tests prove only the specified x64/Linux executions. They do
+not substitute weak-memory litmus testing on ARM64, TSan, exact
+compiler/DSO unwind ABI, or complete installed SDK admission.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:

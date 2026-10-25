@@ -69,6 +69,42 @@ static int scalar_tests(void) {
     CHECK(salts_probe_u64_load(&b64, SALTS_PROBE_ACQUIRE, &u64out) == SALTS_OK &&
         u64out == UINT64_C(0x200000002));
 
+    MARK("fetch_sub and zero-delta read-modify-write");
+    CHECK(salts_probe_u8_fetch_sub(&b8, 2u, SALTS_PROBE_RELAXED, &u8out) == SALTS_OK);
+    CHECK(u8out == 13u);
+    CHECK(salts_probe_u16_fetch_sub(&b16, 2u, SALTS_PROBE_RELAXED, &u16out) == SALTS_OK);
+    CHECK(u16out == 79u);
+    CHECK(salts_probe_u32_fetch_sub(&b32, 2u, SALTS_PROBE_ACQ_REL, &u32out) == SALTS_OK);
+    CHECK(u32out == 323u);
+    CHECK(salts_probe_u64_fetch_sub(&b64, UINT64_C(0x100000001),
+        SALTS_PROBE_ACQ_REL, &u64out) == SALTS_OK);
+    CHECK(u64out == UINT64_C(0x200000002));
+    CHECK(salts_probe_u64_fetch_add(&b64, 0u, SALTS_PROBE_ACQ_REL, &u64out) == SALTS_OK);
+    CHECK(u64out == UINT64_C(0x100000001));
+    CHECK(salts_probe_u32_load(&b32, SALTS_PROBE_ACQUIRE, &u32out) == SALTS_OK);
+    CHECK(u32out == 321u);
+    CHECK(salts_probe_u64_load(&b64, SALTS_PROBE_ACQUIRE, &u64out) == SALTS_OK);
+    CHECK(u64out == UINT64_C(0x100000001));
+
+    MARK("weak CAS scalar order contract");
+    uint32_t weak_expected = 321u;
+    bool weak_swapped = false;
+    unsigned weak_attempts = 0u;
+    do {
+        CHECK(salts_probe_u32_cas_weak(&b32, &weak_expected, 323u,
+            SALTS_PROBE_ACQ_REL, SALTS_PROBE_ACQUIRE, &weak_swapped) == SALTS_OK);
+        CHECK(weak_expected == 321u);
+        ++weak_attempts;
+    } while (!weak_swapped && weak_attempts < 64u);
+    CHECK(weak_swapped);
+    CHECK(salts_probe_u32_load(&b32, SALTS_PROBE_ACQUIRE, &u32out) == SALTS_OK &&
+        u32out == 323u);
+    weak_expected = 333u;
+    weak_swapped = true;
+    CHECK(salts_probe_u32_cas_weak(&b32, &weak_expected, 31u,
+        SALTS_PROBE_ACQ_REL, SALTS_PROBE_ACQUIRE, &weak_swapped) == SALTS_OK);
+    CHECK(!weak_swapped && weak_expected == 323u);
+
     MARK("pointer CAS");
     CHECK(salts_probe_ptr_cas(&ptr, &pexpected, &items[1],
         SALTS_PROBE_ACQ_REL, SALTS_PROBE_ACQUIRE, &swapped) == SALTS_OK);
@@ -126,7 +162,7 @@ static void *worker(void *ctx) {
         bool swapped = false;
         do {
             (void)salts_probe_u32_load(&count, SALTS_PROBE_RELAXED, &expected);
-            (void)salts_probe_u32_cas(&count, &expected, expected + 1u,
+            (void)salts_probe_u32_cas_weak(&count, &expected, expected + 1u,
                   SALTS_PROBE_RELAXED, SALTS_PROBE_RELAXED, &swapped);
         } while (!swapped);
     }

@@ -116,6 +116,14 @@ static inline bool salts_probe_cas_orders_valid(salts_probe_order success,
                                             (int)success, (int)failure); \
         return SALTS_OK; \
     } \
+    static inline int name_##_cas_weak(name_ *p, type_ *expected, type_ desired, \
+            salts_probe_order success, salts_probe_order failure, bool *swapped) { \
+        if (!p || !expected || !swapped || !salts_probe_cas_orders_valid(success, failure)) \
+            return SALTS_EINVAL; \
+        *swapped = __atomic_compare_exchange(&p->storage, expected, &desired, 1, \
+                                            (int)success, (int)failure); \
+        return SALTS_OK; \
+    } \
     static inline int name_##_is_lock_free(name_ *p, bool *out) { \
         if (!p || !out) return SALTS_EINVAL; \
         *out = __atomic_is_lock_free(sizeof(p->storage), &p->storage); \
@@ -129,6 +137,12 @@ static inline bool salts_probe_cas_orders_valid(salts_probe_order success,
             salts_probe_order order, type_ *old) { \
         if (!p || !old || !salts_probe_order_valid(order)) return SALTS_EINVAL; \
         *old = __atomic_fetch_add(&p->storage, operand, (int)order); \
+        return SALTS_OK; \
+    } \
+    static inline int name_##_fetch_sub(name_ *p, type_ operand, \
+            salts_probe_order order, type_ *old) { \
+        if (!p || !old || !salts_probe_order_valid(order)) return SALTS_EINVAL; \
+        *old = __atomic_fetch_sub(&p->storage, operand, (int)order); \
         return SALTS_OK; \
     }
 
