@@ -74,7 +74,14 @@ static inline bool salts_probe_cas_orders_valid(salts_probe_order success,
 
 /* Every live access to storage is an intrinsic; validation failures must
  * preserve both storage and caller-owned outputs. In particular, a failed CAS
- * must write the observed value into *expected exactly as in C11. */
+ * must write the observed value into *expected exactly as in C11.
+ *
+ * On pinned TinyCC 0.9.28rc Linux x64, generic __atomic_load with a direct
+ * caller output pointer caused a deterministic SIGSEGV in the diagnostic
+ * test. A same-type local temporary (matching TinyCC's own stdatomic.h
+ * wrapper strategy) passed the tested widths, pointer CAS and contention.
+ * The workaround is diagnostic evidence, NOT an assertion of full ABI or
+ * C11 atomic compiler conformance. */
 #define SALTS_PROBE_INTRINSIC_TYPE(name_, type_) \
     typedef struct name_ { type_ storage; } name_; \
     static inline int name_##_init(name_ *p, type_ value) { \

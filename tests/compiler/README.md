@@ -254,6 +254,40 @@ Two independent experiments now test this distinction:
    independently. This file does not ship a copy of that upstream header
    or add `c-threads` to any target.
 
+### Verified direct comparison (Linux x64, 2026-10-26)
+
+The pinned upstream `catomics.h` **did not compile unchanged** under
+either Clang (incompatible atomic-bool/spinlock intrinsic operands) or
+TinyCC (`#error "stdatomic.h does not support your compiler"`). The narrow
+GCC direct-header probe passed. See
+[initial A/B evidence](https://github.com/qigao/salts/actions/runs/40228955216).
+
+The **separately implemented, private** GNU-intrinsic backend passed GCC
+and Clang CTest, plus pinned TinyCC run in
+[exact-head #40229725519](https://github.com/qigao/salts/actions/runs/40229725519).
+TinyCC required two implementation details:
+
+- Its own installed `<stdatomic.h>` declares
+  `atomic_thread_fence`, `atomic_signal_fence` and
+  `__atomic_is_lock_free` runtime entrypoints. Calling the generic GNU
+  fence spellings as external functions without those TinyCC mappings
+  failed to link; the diagnostic uses the exact TinyCC declarations
+  without changing `__STDC_NO_ATOMICS__`.
+- The TinyCC generic `__atomic_load` diagnostic crashed when writing
+  directly to an arbitrary caller output pointer. Loading into a
+  correctly typed *local temporary* and then copying to the caller
+  passed the scalar widths, pointer operations, concurrent CAS and
+  publication tests on the pinned Linux x64 runner. This is a narrow,
+  compiler-revision-specific observation, not a guarantee against
+  different optimization, architectures or lifetime conditions.
+
+The exact-head GCC/Clang suite remained green, as did the broader
+[Salts CI](https://github.com/qigao/salts/actions/runs/40229725509).
+The TCC job itself **remains failed** because Salts' normal
+`<salts/atomic.h>` gate correctly rejects the declared
+`__STDC_NO_ATOMICS__=1` compiler capability. Do not interpret the
+aggregate GitHub workflow success as admission.
+
 These are **capability diagnostics, not a supported Salts backend**. A future
 real backend must establish object layout, alignment, lifetime, memory-order
 and ABI equivalence or expose a distinct opaque API; it must additionally
