@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 typedef struct test_context {
@@ -166,6 +167,7 @@ static int session_round_trip(void) {
   cnet_sctp_wire_chunk sack_chunk = {0};
   cnet_sctp_session_status pump_status;
   int result = 20;
+  int cancel_stage = 0;
 
   if (cnet_sctp_session_create(&client_config, 0u, &client) !=
           CNET_SCTP_SESSION_OK ||
@@ -440,6 +442,7 @@ static int session_round_trip(void) {
    * NOT a DATA abandonment or fake FORWARD-TSN. A logical empty text
    * record must report size=0 (though PPID56 wire storage is one byte).
    * Repeated cancel is EMPTY; no SSN/TSN, packet or ULP event is created. */
+  cancel_stage = 110;
   if (cnet_sctp_session_queue_message(client, now_ms + 515u,
           2u, 0, NULL, 0u) != CNET_SCTP_SESSION_OK ||
       cnet_sctp_session_cancel_unsent_message(client, now_ms + 515u,
@@ -454,6 +457,7 @@ static int session_round_trip(void) {
           2u, timed_generation, &cancelled) != CNET_SCTP_SESSION_EMPTY ||
       cancelled.ticket != 0u || cancelled.generation != 0u)
     goto cleanup;
+  cancel_stage = 111;
   first_size = 0u;
   if (cnet_sctp_session_pump_message(client, now_ms + 515u,
           first, sizeof(first), &first_size) != CNET_SCTP_SESSION_EMPTY ||
@@ -917,6 +921,7 @@ static int session_round_trip(void) {
     goto cleanup;
   /* Once any DATA fragment has a TSN, cancellation becomes BUSY and
    * must not discard the pending suffix or already retained TX ticket. */
+  cancel_stage = 120;
   if (cnet_sctp_session_cancel_unsent_message(client, now_ms + 638u,
           0u, client_new_generation, &cancelled) !=
               CNET_SCTP_SESSION_BUSY ||
@@ -1071,6 +1076,7 @@ static int session_round_trip(void) {
    * Wrong generation and foreign Owner are failure-atomic. Success returns
    * the original nonzero receipt token and generation exactly once, and
    * must never later appear as a cumulative ACK. */
+  cancel_stage = 130;
   if (cnet_sctp_session_queue_reliable_tracked(client, now_ms + 657u,
           0u, client_new_generation, 1,
           "cancel-me", 9u, &cancelled_ticket) != CNET_SCTP_SESSION_OK ||
@@ -1080,12 +1086,14 @@ static int session_round_trip(void) {
               CNET_SCTP_SESSION_STALE ||
       cancelled.generation != 0u || cancelled.ticket != 0u)
     goto cleanup;
+  cancel_stage = 131;
   client_context.owner_admitted = 0;
   if (cnet_sctp_session_cancel_unsent_message(client, now_ms + 657u,
           0u, client_new_generation, &cancelled) !=
               CNET_SCTP_SESSION_OWNER ||
       cancelled.ticket != 0u || cancelled.generation != 0u)
     goto cleanup;
+  cancel_stage = 132;
   client_context.owner_admitted = 1;
   if (cnet_sctp_session_cancel_unsent_message(client, now_ms + 658u,
           0u, client_new_generation, &cancelled) !=
@@ -1111,6 +1119,7 @@ static int session_round_trip(void) {
 
   /* The cancelled token can never be reused, but its freed slot can
    * immediately admit the next legitimate reliable send on the same SID. */
+  cancel_stage = 133;
   first_size = 0u;
   if (cnet_sctp_session_send_reliable_tracked(client, now_ms + 660u,
           0u, client_new_generation, 1, "after", 5u,
@@ -1130,6 +1139,7 @@ static int session_round_trip(void) {
       acked.message_size != 5u)
     goto cleanup;
 
+  cancel_stage = 134;
   fourth_size = 0u;
   if (cnet_sctp_session_close_channel(client, now_ms + 665u, 0u,
           fourth, sizeof(fourth), &fourth_size,
@@ -1140,6 +1150,9 @@ static int session_round_trip(void) {
   result = 0;
 
 cleanup:
+  if (result != 0)
+    fprintf(stderr, "SCTP installed cancel fixture failed at stage %d\n",
+            cancel_stage);
   if (client) {
     if (cnet_sctp_session_stop(client) != CNET_SCTP_SESSION_OK ||
         !cnet_sctp_session_drained(client) ||
