@@ -88,8 +88,12 @@ jobs:
           if [[ "$RUNNER_OS" == Windows ]]; then
             generator=(-G 'Visual Studio 18 2026' -A x64)
             export PATH="$(cygpath -u "$m6_prefix")/bin:$(cygpath -u "$RUNNER_TEMP/saltscore-ace-sdk")/bin:$PATH"
+          elif [[ "$RUNNER_OS" == macOS ]]; then
+            generator=(-G Ninja)
+            export DYLD_LIBRARY_PATH="$RUNNER_TEMP/saltscore-ace-sdk/lib:${DYLD_LIBRARY_PATH:-}"
           else
             generator=(-G Ninja)
+            export LD_LIBRARY_PATH="$RUNNER_TEMP/saltscore-ace-sdk/lib:${LD_LIBRARY_PATH:-}"
           fi
           cmake -S cmake/ci/saltscore-ace-consumer -B build-m6-external \
             "${generator[@]}" -DCMAKE_BUILD_TYPE=Release \
