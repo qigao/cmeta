@@ -10,6 +10,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+/* Original Salts test fixture: actual Reflection, Interface projections,
+ * Component declarations, Provider callbacks and owned ObjectRef teardown. */
+#include "configurator_test_fixture.h"
 
 extern mem_pool_t *salts_m6_provider_pool(void);
 extern const void *salts_m6_provider_thread_token(void);
@@ -23,6 +26,52 @@ extern void salts_m6_provider_release(mem_slice_t *);
   fprintf(stderr, "Salts M6 C11 line %d: %s\n", __LINE__, #expr); \
   return __LINE__; \
 } } while (0)
+
+
+static int verify_nonempty_configurator_graph(void) {
+  unsigned sequence = 0u;
+  int configured_addend = 5;
+  test_provider_state logger, app;
+  salts_component_provider_binding providers[2];
+  salts_configurator_deployment deployments[2];
+  salts_configurator_instance instances[2];
+  salts_component_dependency dependencies[2];
+  size_t order[2] = {SIZE_MAX, SIZE_MAX};
+  salts_configurator_context context = SALTS_CONFIGURATOR_CONTEXT_INIT;
+  salts_configurator_service service = {0};
+  test_app borrowed_app = test_app_bind(NULL, NULL);
+
+  test_provider_state_init(&logger, 7, &sequence);
+  test_provider_state_init(&app, 0, &sequence);
+  providers[0] = TEST_PROVIDER_BINDING(TestLogger, &logger, test_logger_create);
+  providers[1] = TEST_PROVIDER_BINDING(TestApp, &app, test_app_create);
+  deployments[0] = TEST_DEPLOYMENT(&providers[0], NULL, NULL);
+  deployments[1] = TEST_DEPLOYMENT(&providers[1], &cmeta_data_int,
+                                   &configured_addend);
+
+  REQUIRE(salts_configurator_context_init(
+      &context, deployments, 2u, NULL, 0u, instances, 2u,
+      dependencies, 2u, order, 2u) == SALTS_COMPONENT_OK);
+  REQUIRE(salts_configurator_context_resolve(&context) == SALTS_COMPONENT_OK);
+  REQUIRE(order[0] == 0u && order[1] == 1u);
+  REQUIRE(salts_configurator_context_start(&context) == SALTS_COMPONENT_OK);
+  REQUIRE(context.state == SALTS_CONFIGURATOR_CONTEXT_ACTIVE);
+  REQUIRE(logger.sequence == 1u && app.sequence == 2u);
+  REQUIRE(app.value == 12);
+  REQUIRE(salts_configurator_context_find_service(
+      &context, test_app_interface(), &service) == SALTS_COMPONENT_OK);
+  REQUIRE(test_app_borrow_from_object(
+      service.object, service.interfaces, &borrowed_app) == CMETA_OK);
+  REQUIRE(test_app_value(&borrowed_app) == 12);
+  REQUIRE(salts_configurator_context_stop(&context) == SALTS_COMPONENT_OK);
+  REQUIRE(context.state == SALTS_CONFIGURATOR_CONTEXT_STOPPED);
+  REQUIRE(logger.deactivates == 1u && app.deactivates == 1u);
+  REQUIRE(logger.destroys == 1u && app.destroys == 1u);
+  REQUIRE(!logger.resource_live && !app.resource_live);
+  REQUIRE(logger.resource_acquires == 1u && logger.resource_releases == 1u);
+  REQUIRE(app.resource_acquires == 1u && app.resource_releases == 1u);
+  return 0;
+}
 
 int main(void) {
   salts_core_bytes_view view = {0};
@@ -38,6 +87,7 @@ int main(void) {
   REQUIRE(salts_core_runtime_mem_pool_size() == sizeof(mem_pool_t));
   REQUIRE(salts_core_runtime_mem_buffer_size() == sizeof(mem_buffer_t));
   REQUIRE(salts_core_runtime_mem_slice_size() == sizeof(mem_slice_t));
+  REQUIRE(verify_nonempty_configurator_graph() == 0);
   REQUIRE(salts_core_bytes_view_init(&view, "abc", 3u) == SALTS_CORE_OK);
   REQUIRE(view.len == 3u && memcmp(view.data, "abc", 3u) == 0);
   REQUIRE(cmeta_reflection_abi_version() == CMETA_REFLECTION_ABI_VERSION);

@@ -50,6 +50,10 @@ set_target_properties(salts_m6_ace_provider PROPERTIES
   WINDOWS_EXPORT_ALL_SYMBOLS ON C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 
 add_executable(salts_m6_consumer_c consumer.c)
+# Reuse Salts' actual canonical two-provider graph fixture. No synthetic
+# Provider description: logger -> configured application dependency.
+target_include_directories(salts_m6_consumer_c PRIVATE
+  "${SALTS_SOURCE_ROOT}/component-runtime/tests")
 target_compile_features(salts_m6_consumer_c PRIVATE c_std_11)
 target_link_libraries(salts_m6_consumer_c PRIVATE
   salts_m6_configurator salts_m6_ace_provider

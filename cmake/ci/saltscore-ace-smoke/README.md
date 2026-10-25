@@ -30,3 +30,17 @@ version 0.1 and independently assert memory pool, buffer and slice layouts.
 The final ELF/Mach-O/PE binary-owner audit also requires all these ABI
 symbols to be exported only by the real installed SaltsCore::Core image.
 This does not grant coexistence with original Salts::Core binary owners.
+
+## Real non-empty Configurator graph (M6.1)
+
+The original Salts `configurator_test_fixture.h` provides genuine CMeta
+Interface and Component declarations, configuration-bearing Provider
+bindings and owned ObjectRefs. The isolated C11 consumer now resolves a
+two-component Logger → App dependency graph, verifies deterministic
+activation order and typed Interface projection, reads the configured result
+(7 + 5 = 12) and proves one deactivate/destroy/resource release per
+provider. The test does not call the old monolithic Salts runtime.
+
+The Core pin is now `38512062`, which requires the physical
+Windows ABI-suffixed `-0.1` DLL names as well as the ELF/Mach-O loader IDs.
+This is a test-only Configurator graph, not ServiceHost/PluginRegistry rollout.
