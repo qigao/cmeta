@@ -74,6 +74,11 @@ jobs:
           set -euo pipefail
           CC="${{ matrix.compiler }}" BUILD_ROOT="build/whole-${{ matrix.compiler }}" \
             bash tests/compiler/run_cmeta_cstl_qualification.sh
+      - name: Exercise public CMeta and Plugin declaration macros
+        shell: bash
+        run: |
+          CC="${{ matrix.compiler }}" BUILD_ROOT="build/macro-${{ matrix.compiler }}" \
+            bash tests/compiler/run_cmeta_macro_probes.sh
 
   native-cmeta-cstl-mixed:
     name: GCC and Clang complete CMeta/CSTL mixed static archive ABI
@@ -137,6 +142,14 @@ jobs:
             EXTRA_LINK_FLAGS="-Wl,--no-eh-frame-hdr -Wl,-z,noexecstack" \
             bash tests/compiler/run_cmeta_cstl_mixed_abi.sh \
               2>&1 | tee build/mixed-tcc-gcc/build.log
+      - name: Diagnostic TCC CMeta/Plugin public declaration macros
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p build/tcc-macros
+          CC=tcc BUILD_ROOT=build/tcc-macros \
+            bash tests/compiler/run_cmeta_macro_probes.sh \
+              2>&1 | tee build/tcc-macros/build.log
       - name: Configure standalone C11 conformance
         run: cmake -S tests/compiler -B build/atomic-tcc -G Ninja -DCMAKE_C_COMPILER=tcc
       - name: Compile
@@ -152,6 +165,8 @@ jobs:
           path: |
             build/mixed-tcc-gcc/build.log
             build/mixed-tcc-gcc/*.log
+            build/tcc-macros/build.log
+            build/tcc-macros/*.log
             build/tcc-cmeta-cstl/build.log
             build/tcc-cmeta-cstl/cmeta/*.log
             build/tcc-cmeta-cstl/cstl/*.log

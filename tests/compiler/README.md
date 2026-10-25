@@ -148,6 +148,21 @@ CC=tcc BUILD_ROOT=build/compiler-tcc bash tests/compiler/run_cmeta_cstl_qualific
 Do not override `__STDC_NO_ATOMICS__`, change production C11/TLS
 admission logic, or import TurboWasm's Wasm atomic runtime as a workaround.
 
+## CMeta language and Plugin manifest macros
+
+`run_cmeta_macro_probes.sh` directly tests the public `cmeta_struct`,
+`cmeta_field`, `cmeta_enum`, `cmeta_require_field` declarations
+and their reflected metadata. It separately compiles, links and executes an
+**explicit empty Plugin manifest** through `CMETA_PLUGIN_DECLARE_EMPTY`.
+The Plugin probe reports `CMETA_SECTION_BACKEND` and
+`CMETA_PLUGIN_HAS_LINKER_EXPORTS`. That report does **not** qualify
+linker-section Plugin fragment discovery, DSO retention, Plugin Registry,
+ServiceHost, quiescence or unloading.
+
+These standalone executables deliberately avoid switching production
+compiler capabilities; GCC/Clang run as required baseline, and pinned TCC
+runs as an experimental-only diagnostic.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:
