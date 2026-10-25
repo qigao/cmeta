@@ -361,9 +361,114 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   assert(cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
 }
 
+
+/* Saturate the distinct Owner-held peer-progress table, not DATA's own
+ * abandonment FIFO. The 17th local event must remain in DATA until the
+ * application takes an existing cumulative-progress result. No false peer
+ * ACK, lost event, new worker, or dynamic queue growth is permitted. */
+static void bounded_forward_progress_preserves_local_events(void) {
+  cnet_sctp_session a = {0}, b = {0};
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_session_event event = {0};
+  cnet_sctp_session_forward_progress progress = {0};
+  uint8_t wire[1200], forward[1200], sack[1200], response[1200];
+  uint8_t message[32];
+  size_t wire_size = 0u, forward_size = 0u, sack_size = 0u;
+  size_t response_size = 0u;
+  uint64_t generation_a = 0u, generation_b = 0u;
+  uint64_t now_ms = 20u, deadline = 0u;
+  size_t i;
+  int has_deadline = 0;
+
+  ready_pair(&a, &b, &ca, &cb);
+  open_channel_with_policy(&a, &b, 6u, 2u, 0x01u, 0u,
+      &generation_a, &generation_b);
+  assert(generation_a != 0u && generation_b != 0u);
+
+  /* Each maxRetransmits=0 message is lost once; one Owner FORWARD and
+   * one independent peer SACK cumulatively advance the real TSN. */
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS + 1u; ++i) {
+    wire_size = 0u;
+    assert(cnet_sctp_session_send(&a, now_ms, 2u, 1,
+        "f", 1u, wire, sizeof(wire), &wire_size) ==
+        CNET_SCTP_SESSION_OK && wire_size != 0u);
+    assert(cnet_sctp_session_next_deadline(&a, &deadline,
+        &has_deadline) == CNET_SCTP_SESSION_OK &&
+        has_deadline && deadline > now_ms);
+    forward_size = 0u;
+    assert(cnet_sctp_session_advance(&a, deadline, forward,
+        sizeof(forward), &forward_size) == CNET_SCTP_SESSION_OK &&
+        forward_size != 0u && forward[12u] == 194u);
+    sack_size = 0u;
+    assert(cnet_sctp_session_input(&b, deadline + 1u,
+        forward, forward_size, sack, sizeof(sack),
+        &sack_size) == CNET_SCTP_SESSION_OK && sack_size != 0u);
+    response_size = 0u;
+    assert(cnet_sctp_session_input(&a, deadline + 2u,
+        sack, sack_size, response, sizeof(response),
+        &response_size) == CNET_SCTP_SESSION_OK && response_size == 0u);
+
+    if (i < CNET_SCTP_DATA_TX_SLOTS) {
+      assert(cnet_sctp_session_poll(&a, deadline + 3u, &event,
+          message, sizeof(message), response, sizeof(response),
+          &response_size) == CNET_SCTP_SESSION_OK &&
+          event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED &&
+          event.generation == generation_a && event.stream_id == 2u &&
+          event.has_tsn && event.message_size == 1u);
+    } else {
+      /* Poll must NOT pop or misattribute the 17th original event. */
+      assert(cnet_sctp_session_poll(&a, deadline + 3u, &event,
+          message, sizeof(message), response, sizeof(response),
+          &response_size) == CNET_SCTP_SESSION_CAPACITY &&
+          event.kind == CNET_SCTP_SESSION_EVENT_NONE);
+      assert(a.association.data.abandon_event_count == 1u);
+    }
+    now_ms = deadline + 6u;
+  }
+
+  /* The result remains untouched if the Owner is denied. */
+  ca.owner = 0;
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_OWNER && progress.generation == 0u);
+  ca.owner = 1;
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_OK &&
+      progress.generation == generation_a &&
+      progress.stream_id == 2u && progress.message_size == 1u &&
+      progress.first_tsn == progress.last_tsn);
+
+  /* One read frees one slot. The 17th local event is still available, with
+   * the same original generation and already validated cumulative progress. */
+  assert(cnet_sctp_session_poll(&a, now_ms, &event,
+      message, sizeof(message), response, sizeof(response),
+      &response_size) == CNET_SCTP_SESSION_OK &&
+      event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED &&
+      event.generation == generation_a && event.message_size == 1u &&
+      a.association.data.abandon_event_count == 0u);
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+        CNET_SCTP_SESSION_OK &&
+        progress.generation == generation_a &&
+        progress.stream_id == 2u && progress.message_size == 1u &&
+        progress.first_tsn == progress.last_tsn);
+  }
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_EMPTY && progress.generation == 0u);
+  assert(cnet_sctp_session_poll(&a, now_ms + 1u, &event,
+      message, sizeof(message), response, sizeof(response),
+      &response_size) == CNET_SCTP_SESSION_EMPTY);
+
+  assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_drained(&a) && cnet_sctp_session_drained(&b));
+  assert(cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+}
+
 int main(void) {
   session_open_message_reset_reuse();
   partial_loss_reports_abandonment_then_reliable_continues();
+  bounded_forward_progress_preserves_local_events();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }
