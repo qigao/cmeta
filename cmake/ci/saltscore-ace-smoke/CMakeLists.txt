@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(SaltsCoreSaltsM6Downstream VERSION 2.3.0 LANGUAGES C CXX)
+# Match the real Salts project contract: static CMeta/Plugin descriptors are
+# embedded into multiple native Provider DSOs, including under ASan/UBSan.
+# Never rely on non-PIC archives and never disable instrumented tests.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 include(CTest)
 include(GNUInstallDirs)
 if(NOT DEFINED SALTS_SOURCE_ROOT OR
