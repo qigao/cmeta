@@ -15,9 +15,16 @@ typedef struct cnet_sctp_session_config {
   uint8_t is_dtls_client;
 } cnet_sctp_session_config;
 
+typedef struct cnet_sctp_session_reliable_track {
+  cnet_sctp_session_reliable_ack ack;
+  uint8_t used;
+} cnet_sctp_session_reliable_track;
+
 typedef struct cnet_sctp_session {
   cnet_sctp_assoc association;
   cnet_sctp_dcep dcep;
+  cnet_sctp_session_reliable_track tracked[CNET_SCTP_DATA_TX_SLOTS];
+  uint64_t next_tracked_ticket;
   uint64_t closing_generation[CNET_SCTP_DCEP_STREAMS];
   uint16_t pending_dcep_ack;
   uint32_t magic;

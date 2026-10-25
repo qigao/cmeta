@@ -55,6 +55,18 @@ cumulative SACK before clearing either. DCEP PPID50 bytes are excluded.
 These counts are not JavaScript buffered_amount and are not exactly-once
 message completion notifications.
 
+A separate opt-in, reliable-only **single-packet** API
+`cnet_sctp_session_send_reliable_tracked()` returns a monotonic ticket after
+SCTP DATA admission. `cnet_sctp_session_take_reliable_ack()` reports that
+ticket exactly once only after a real cumulative ACK—not Gap ACK, send
+admission or receiver application delivery. At most 16 unread/outstanding
+tickets are retained in the opaque Session; a full table fails closed
+BEFORE sending. Receipts capture the original SID and DCEP generation even
+after an RFC6525 reset/reopen. Abortive stop explicitly discards them.
+This experimental ACK-only subset does **not** implement fragmented
+message completion, PR-SCTP abandonment, cancellation/terminal notifications
+or full buffered_amount. Those remain separate hard gates.
+
 This does **not** export the prototype through production `Salts::CNet`,
 replace usrsctp in TurboMedia or qualify a six-RID release.
 

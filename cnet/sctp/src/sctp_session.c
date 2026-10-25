@@ -232,6 +232,93 @@ cnet_sctp_session_status cnet_sctp_session_send(cnet_sctp_session *session,
  * single Owner-owned slot. No fragment/TSN can leave until pump_message()
  * is explicitly admitted. Reuse the exact DCEP policy projection used by
  * direct send; no reliable fallback on a partial-reliable channel. */
+/* Only reliably sent, single-fragment application DATA participates here.
+ * Reserve receipt space before committing an SCTP TSN; callbacks and borrowed
+ * input do not survive admission. Original DCEP generation is immutable. */
+cnet_sctp_session_status cnet_sctp_session_send_reliable_tracked(
+    cnet_sctp_session *session, uint64_t now_ms,
+    uint16_t stream, uint64_t expected_generation, int binary,
+    const void *message, size_t message_size,
+    void *packet, size_t capacity, size_t *written, uint64_t *ticket) {
+  cnet_sctp_session_status status;
+  cnet_sctp_dcep_status ds;
+  cnet_sctp_assoc_status as;
+  cnet_sctp_data_reliability reliability;
+  cnet_sctp_webrtc_payload payload;
+  cnet_sctp_session_reliable_track *slot = NULL;
+  uint64_t generation = 0u;
+  int unordered = 0;
+  size_t index;
+  if (written) *written = 0u;
+  if (ticket) *ticket = 0u;
+  status = guard(session);
+  if (status != CNET_SCTP_SESSION_OK) return status;
+  if (!ticket || !packet || !written || !expected_generation ||
+      stream >= session->dcep.streams)
+    return CNET_SCTP_SESSION_INVALID;
+  ds = cnet_sctp_dcep_generation(&session->dcep, stream, &generation);
+  if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
+  if (generation != expected_generation) return CNET_SCTP_SESSION_STALE;
+  ds = cnet_sctp_dcep_send_policy(&session->dcep, stream, &unordered,
+      &reliability);
+  if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
+  if (reliability.mode != CNET_SCTP_DATA_RELIABLE)
+    return CNET_SCTP_SESSION_PROTOCOL;
+  if (cnet_sctp_webrtc_prepare(binary, message, message_size, &payload) !=
+      CNET_SCTP_WEBRTC_OK) return CNET_SCTP_SESSION_INVALID;
+  if (session->next_tracked_ticket == UINT64_MAX)
+    return CNET_SCTP_SESSION_CAPACITY;
+  for (index = 0u; index < CNET_SCTP_DATA_TX_SLOTS; ++index)
+    if (!session->tracked[index].used) {
+      slot = &session->tracked[index];
+      break;
+    }
+  if (!slot) return CNET_SCTP_SESSION_CAPACITY;
+  as = cnet_sctp_assoc_send_message_pr(&session->association, now_ms,
+      stream, payload.ppid, unordered, &reliability,
+      payload.wire_bytes, payload.wire_size, packet, capacity, written);
+  if (as != CNET_SCTP_ASSOC_OK) return map_assoc(as);
+  slot->ack.generation = generation;
+  slot->ack.ticket = ++session->next_tracked_ticket;
+  slot->ack.stream_id = stream;
+  slot->ack.tsn = session->association.data.next_tsn - 1u;
+  slot->ack.ppid = payload.ppid;
+  slot->ack.message_size = payload.logical_size;
+  slot->ack.binary = payload.binary;
+  slot->used = 1u;
+  *ticket = slot->ack.ticket;
+  return CNET_SCTP_SESSION_OK;
+}
+
+/* Only the peer's actual cumulative SCTP acknowledgement can make a
+ * tracked RELIABLE packet eligible. A Gap ACK never does. Keep receipts
+ * until consumed, selecting the lowest admitted eligible ticket. */
+cnet_sctp_session_status cnet_sctp_session_take_reliable_ack(
+    cnet_sctp_session *session, cnet_sctp_session_reliable_ack *ack) {
+  cnet_sctp_session_status status;
+  cnet_sctp_session_reliable_track *found = NULL;
+  size_t index;
+  const cnet_sctp_data *data;
+  if (!ack) return CNET_SCTP_SESSION_INVALID;
+  memset(ack, 0, sizeof(*ack));
+  status = guard(session);
+  if (status != CNET_SCTP_SESSION_OK) return status;
+  if (!session->association.data_ready) return CNET_SCTP_SESSION_CLOSED;
+  data = &session->association.data;
+  for (index = 0u; index < CNET_SCTP_DATA_TX_SLOTS; ++index) {
+    cnet_sctp_session_reliable_track *candidate = &session->tracked[index];
+    if (!candidate->used ||
+        (uint32_t)(data->last_ack - candidate->ack.tsn) >=
+            UINT32_C(0x80000000)) continue;
+    if (!found || candidate->ack.ticket < found->ack.ticket)
+      found = candidate;
+  }
+  if (!found) return CNET_SCTP_SESSION_EMPTY;
+  *ack = found->ack;
+  memset(found, 0, sizeof(*found));
+  return CNET_SCTP_SESSION_OK;
+}
+
 cnet_sctp_session_status cnet_sctp_session_queue_message(
     cnet_sctp_session *session, uint64_t now_ms, uint16_t stream, int binary,
     const void *message, size_t message_size) {
@@ -498,6 +585,7 @@ cnet_sctp_session_status cnet_sctp_session_stop(cnet_sctp_session *session) {
   as = cnet_sctp_assoc_stop(&session->association);
   if (as != CNET_SCTP_ASSOC_OK) return map_assoc(as);
   session->pending_dcep_ack = 0u;
+  memset(session->tracked, 0, sizeof(session->tracked));
   memset(session->closing_generation, 0, sizeof(session->closing_generation));
   return CNET_SCTP_SESSION_OK;
 }
