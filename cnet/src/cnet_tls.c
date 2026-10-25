@@ -50,7 +50,8 @@ typedef enum cnet_tls_variant {
   CNET_TLS_VARIANT_1_2 = 1,
   CNET_TLS_VARIANT_1_3 = 2,
   CNET_TLS_VARIANT_SHANGMI_TLS13 = 3,
-  CNET_TLS_VARIANT_COUNT = 4
+  CNET_TLS_VARIANT_TLCP11 = 4,
+  CNET_TLS_VARIANT_COUNT = 5
 } cnet_tls_variant;
 
 struct cnet_tls_context {
@@ -254,6 +255,58 @@ static int cnet_tls_append_pem_cert_file(cnet_tls_der_bundle *bundle,
   memset(certificate, 0, sizeof(certificate));
   if (status == SALTS_OK && count == 0u) status = SALTS_EIO;
   if (out_count != NULL) *out_count = count;
+  return status;
+}
+
+static int cnet_tls_tlcp_certificate_roles_valid(const char *path) {
+  unsigned char certificate[CNET_TLS_CERT_MAX_BYTES];
+  FILE *file;
+  unsigned int role;
+  int status = SALTS_OK;
+
+  if (path == NULL) return SALTS_EINVAL;
+  file = fopen(path, "rb");
+  if (file == NULL) return SALTS_EIO;
+  for (role = 0u; role < 2u; ++role) {
+    const unsigned char *extensions = NULL;
+    size_t extensions_size = 0u;
+    const unsigned char *encoded_usage = NULL;
+    size_t encoded_usage_size = 0u;
+    const unsigned char *cursor;
+    size_t remaining;
+    size_t certificate_size = 0u;
+    int critical = 0;
+    int usage = 0;
+
+    status = cnet_tls_pem_seek_entry(file);
+    if (status != SALTS_OK ||
+        pem_read(file, "CERTIFICATE", certificate, &certificate_size,
+                 sizeof(certificate)) != 1 ||
+        certificate_size == 0u ||
+        x509_cert_get_exts(certificate, certificate_size,
+                           &extensions, &extensions_size) != 1 ||
+        x509_exts_get_ext_by_oid(extensions, extensions_size,
+                                 OID_ce_key_usage, &critical,
+                                 &encoded_usage, &encoded_usage_size) != 1) {
+      status = SALTS_EIO;
+      break;
+    }
+    cursor = encoded_usage;
+    remaining = encoded_usage_size;
+    if (x509_key_usage_from_der(&usage, &cursor, &remaining) != 1 ||
+        remaining != 0u ||
+        (role == 0u &&
+         ((usage & X509_KU_DIGITAL_SIGNATURE) == 0 ||
+          (usage & X509_KU_KEY_ENCIPHERMENT) != 0)) ||
+        (role == 1u &&
+         ((usage & X509_KU_KEY_ENCIPHERMENT) == 0 ||
+          (usage & X509_KU_DIGITAL_SIGNATURE) != 0))) {
+      status = SALTS_EIO;
+      break;
+    }
+  }
+  (void)fclose(file);
+  memset(certificate, 0, sizeof(certificate));
   return status;
 }
 
@@ -501,8 +554,9 @@ static int cnet_tls_alpn_copy(cnet_tls_context *context,
 }
 
 static int cnet_tls_variant_protocol(cnet_tls_variant variant) {
-  return variant == CNET_TLS_VARIANT_1_2 ? TLS_protocol_tls12
-                                         : TLS_protocol_tls13;
+  if (variant == CNET_TLS_VARIANT_1_2) return TLS_protocol_tls12;
+  if (variant == CNET_TLS_VARIANT_TLCP11) return TLS_protocol_tlcp;
+  return TLS_protocol_tls13;
 }
 
 static int cnet_tls_configure_variant(cnet_tls_context *context,
@@ -519,6 +573,7 @@ static int cnet_tls_configure_variant(cnet_tls_context *context,
       TLS_cipher_ecdhe_ecdsa_with_aes_128_gcm_sha256};
   static const int tls13_ciphers[] = {TLS_cipher_aes_128_gcm_sha256};
   static const int shangmi_ciphers[] = {TLS_cipher_sm4_gcm_sm3};
+  static const int tlcp_ciphers[] = {TLS_cipher_ecc_sm4_gcm_sm3};
   static const int shangmi_signatures[] = {TLS_sig_sm2sig_sm3};
   static const int shangmi_groups[] = {TLS_curve_sm2p256v1};
   static const int tls12_ciphers[] = {
@@ -564,6 +619,17 @@ static int cnet_tls_configure_variant(cnet_tls_context *context,
       return SALTS_EIO;
     ciphers = shangmi_ciphers;
     cipher_count = sizeof(shangmi_ciphers) / sizeof(shangmi_ciphers[0]);
+    signatures = shangmi_signatures;
+    signature_count = sizeof(shangmi_signatures) / sizeof(shangmi_signatures[0]);
+    selected_groups = shangmi_groups;
+    group_count = sizeof(shangmi_groups) / sizeof(shangmi_groups[0]);
+  } else if (variant == CNET_TLS_VARIANT_TLCP11) {
+    /* TLCP is an explicit protocol, not a TLS version range. Pin its modern
+     * AEAD suite and never admit the provider's CBC alternative. */
+    if (tls_ctx_set_strict_protocol(tls, TLS_protocol_tlcp) != 1)
+      return SALTS_EIO;
+    ciphers = tlcp_ciphers;
+    cipher_count = sizeof(tlcp_ciphers) / sizeof(tlcp_ciphers[0]);
     signatures = shangmi_signatures;
     signature_count = sizeof(shangmi_signatures) / sizeof(shangmi_signatures[0]);
     selected_groups = shangmi_groups;
@@ -615,9 +681,19 @@ static int cnet_tls_configure_variant(cnet_tls_context *context,
   }
 
   if (cert_file != NULL) {
-    if (tls_ctx_set_certificate_and_key(
-            tls, cert_file, key_file,
-            key_password != NULL ? key_password : "") != 1)
+    int certificate_result;
+    if (variant == CNET_TLS_VARIANT_TLCP11 && context->server) {
+      if (cnet_tls_tlcp_certificate_roles_valid(cert_file) != SALTS_OK)
+        return SALTS_EIO;
+      certificate_result = tls_ctx_set_tlcp_server_certificate_and_keys(
+          tls, cert_file, key_file,
+          key_password != NULL ? key_password : "");
+    } else {
+      certificate_result = tls_ctx_set_certificate_and_key(
+          tls, cert_file, key_file,
+          key_password != NULL ? key_password : "");
+    }
+    if (certificate_result != 1)
       return SALTS_EIO;
   }
 
@@ -687,7 +763,10 @@ static int cnet_tls_context_create_common(
     if (security_profile == CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 &&
         index != CNET_TLS_VARIANT_SHANGMI_TLS13) continue;
     if (security_profile == CNET_TLS_SECURITY_PROFILE_STANDARD &&
-        index == CNET_TLS_VARIANT_SHANGMI_TLS13) continue;
+        (index == CNET_TLS_VARIANT_SHANGMI_TLS13 ||
+         index == CNET_TLS_VARIANT_TLCP11)) continue;
+    if (security_profile == CNET_TLS_SECURITY_PROFILE_TLCP11 &&
+        index != CNET_TLS_VARIANT_TLCP11) continue;
     status = cnet_tls_configure_variant(
         context, (cnet_tls_variant)index, ca_file, ca_path, cert_file, key_file,
         key_password, client_auth);
@@ -723,8 +802,12 @@ int cnet_tls_client_context_create(const cnet_tls_client_config *config,
       ((config->cert_file == NULL) != (config->key_file == NULL)) ||
       (config->cert_file == NULL && config->key_password != NULL) ||
       (config->security_profile != CNET_TLS_SECURITY_PROFILE_STANDARD &&
-       config->security_profile != CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13))
+       config->security_profile != CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 &&
+       config->security_profile != CNET_TLS_SECURITY_PROFILE_TLCP11))
     return SALTS_EINVAL;
+  if (config->security_profile == CNET_TLS_SECURITY_PROFILE_TLCP11 &&
+      config->cert_file != NULL)
+    return SALTS_ENOTSUP;
 
   status = cnet_tls_context_create_common(
       false, true, config->ca_file, config->ca_path, config->cert_file,
@@ -796,8 +879,12 @@ int cnet_tls_server_init(cnet_tls_server *server,
       (config->client_auth == CNET_TLS_CLIENT_AUTH_NONE &&
        (config->ca_file != NULL || config->ca_path != NULL)) ||
       (config->security_profile != CNET_TLS_SECURITY_PROFILE_STANDARD &&
-       config->security_profile != CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13))
+       config->security_profile != CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 &&
+       config->security_profile != CNET_TLS_SECURITY_PROFILE_TLCP11))
     return SALTS_EINVAL;
+  if (config->security_profile == CNET_TLS_SECURITY_PROFILE_TLCP11 &&
+      config->client_auth == CNET_TLS_CLIENT_AUTH_REQUIRED)
+    return SALTS_ENOTSUP;
 
   status = cnet_tls_context_create_common(
       true, config->client_auth == CNET_TLS_CLIENT_AUTH_REQUIRED,
@@ -1105,6 +1192,8 @@ int cnet_tls_state_init(cnet_tls_state *state, cnet_tls_context *context,
   status = cnet_tls_engine_init_connection(
       state, context->security_profile == CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13
                  ? CNET_TLS_VARIANT_SHANGMI_TLS13
+             : context->security_profile == CNET_TLS_SECURITY_PROFILE_TLCP11
+                 ? CNET_TLS_VARIANT_TLCP11
                  : CNET_TLS_VARIANT_RANGE);
   if (status != SALTS_OK) {
     state->context = NULL;
@@ -1233,6 +1322,10 @@ static int cnet_tls_finish_handshake(cnet_tls_state *state,
       (engine->connection.protocol != TLS_protocol_tls13 ||
        engine->connection.cipher_suite != TLS_cipher_sm4_gcm_sm3))
     return SALTS_EPROTO;
+  if (state->context->security_profile == CNET_TLS_SECURITY_PROFILE_TLCP11 &&
+      (engine->connection.protocol != TLS_protocol_tlcp ||
+       engine->connection.cipher_suite != TLS_cipher_ecc_sm4_gcm_sm3))
+    return SALTS_EPROTO;
 
   if (state->context->verify_peer) {
     result = tls_get_verify_result(&engine->connection, &verify_result);
@@ -1333,6 +1426,12 @@ int cnet_tls_state_set_protocol_range(cnet_tls_state *state,
              maximum == CNET_TLS_PROTOCOL_VERSION_DEFAULT) ||
             (minimum == CNET_TLS_PROTOCOL_VERSION_1_3 &&
              maximum == CNET_TLS_PROTOCOL_VERSION_1_3))
+               ? SALTS_OK : SALTS_EINVAL;
+  }
+  if (state->context->security_profile == CNET_TLS_SECURITY_PROFILE_TLCP11) {
+    /* TLCP is not representable by the TLS 1.2/1.3 range enum. */
+    return minimum == CNET_TLS_PROTOCOL_VERSION_DEFAULT &&
+                   maximum == CNET_TLS_PROTOCOL_VERSION_DEFAULT
                ? SALTS_OK : SALTS_EINVAL;
   }
   status = cnet_tls_select_variant(minimum, maximum, &variant);
@@ -1668,6 +1767,8 @@ int cnet_tls_state_negotiated_version(const cnet_tls_state *state,
     name = "TLSv1.2";
   else if (protocol == TLS_protocol_tls13)
     name = "TLSv1.3";
+  else if (protocol == TLS_protocol_tlcp)
+    name = "TLCPv1.1";
   else
     return SALTS_EPROTO;
   return cnet_tls_state_copy_session_string(state, name, buffer, capacity,

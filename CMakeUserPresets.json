@@ -24,7 +24,7 @@
             },
             "environment": {
                 "VCPKG_CACHE_REPOSITORY_ROOT": "$penv{LOCALAPPDATA}/qigao/vcpkg-cache",
-                "RE2C_ROOT": "$env{PKG_ROOT}/re2c/windows-x64"
+                "RE2C_ROOT": "$penv{RE2C_ROOT}"
             }
         },
         {

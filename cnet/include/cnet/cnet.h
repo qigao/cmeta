@@ -353,18 +353,20 @@ typedef enum cnet_tls_client_auth {
 
 /** Immutable secure transport choice, fixed when client/server TLS context is created.
  * STANDARD preserves existing verified TLS 1.2-1.3 behavior; SHANGMI_TLS13
- * requires RFC 8998 TLS 1.3 with SM2/SM3/SM4-GCM, never a TLS/TLCP fallback.
- * TLCP is intentionally a different protocol and is not selected here.
+ * requires RFC 8998 TLS 1.3 with SM2/SM3/SM4-GCM. TLCP11 requires TLCP 1.1
+ * with ECC-SM2/SM4-GCM/SM3. The profiles never fall back to each other.
  */
 typedef enum cnet_tls_security_profile {
   CNET_TLS_SECURITY_PROFILE_STANDARD = 0,
-  CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 = 1
+  CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 = 1,
+  CNET_TLS_SECURITY_PROFILE_TLCP11 = 2
 } cnet_tls_security_profile;
 
 /**
  * Per-connection client policy. The configuration is consumed synchronously
  * by `cnet_connect()` and is not retained. Peer and hostname verification are
- * always enabled. NULL CA fields select the platform trust store.
+ * always enabled. NULL CA fields select the platform trust store. TLCP11
+ * client certificates are not qualified and return `SALTS_ENOTSUP`.
  */
 typedef struct cnet_tls_client_config {
   size_t size;
@@ -387,13 +389,20 @@ typedef struct cnet_tls_client_config {
 /** Configuration copied into a reusable server context during initialization. */
 typedef struct cnet_tls_server_config {
   size_t size;
-  /** Required PEM server certificate chain and private key. */
+  /** Required PEM server certificate chain and private key.
+   * For TLCP11, cert_file contains the signing certificate first, encryption
+   * certificate second, then issuer certificates. key_file contains the
+   * matching signing key first and encryption key second. Both keys use
+   * key_password. CNet validates the two KeyUsage roles and the provider
+   * independently verifies each certificate/private-key match.
+   */
   const char *cert_file;
   const char *key_file;
   const char *key_password;
   /** Required only when `client_auth` is REQUIRED. */
   const char *ca_file;
   const char *ca_path;
+  /** TLCP11 currently accepts NONE only; REQUIRED returns `SALTS_ENOTSUP`. */
   cnet_tls_client_auth client_auth;
   /** Optional server-preference ALPN list. */
   const char *const *alpn_protocols;
