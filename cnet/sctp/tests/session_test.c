@@ -591,12 +591,88 @@ static void reliable_retry_exhaustion_is_terminal_not_acked(void) {
   assert(cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
 }
 
+
+/* A FORWARD retransmission budget may expire before ULP polls the ORIGINAL
+ * PR-SCTP local abandonment. FAILED must preserve that bounded DATA event
+ * and require its generation-bound collection BEFORE terminal failure can
+ * report a result; no peer progress is fabricated for dropped FORWARDs. */
+static void unread_abandonment_after_failed_is_not_lost(void) {
+  cnet_sctp_session a = {0}, b = {0};
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_session_event local = {0};
+  cnet_sctp_session_terminal_failure failure = {0};
+  cnet_sctp_session_forward_progress progress = {0};
+  uint8_t lost[1200], forward[1200], retry[1200], output[1200], payload[32];
+  size_t lost_size = 0u, forward_size = 0u, retry_size = 0u;
+  size_t output_size = 0u;
+  uint64_t ga = 0u, gb = 0u, deadline = 0u;
+  int has_deadline = 0;
+
+  ready_pair(&a, &b, &ca, &cb);
+  open_channel_with_policy(&a, &b, 6u, 2u, 0x01u, 0u, &ga, &gb);
+  a.association.config.max_retransmits = 1u;
+  a.association.data.config.max_retransmits = 1u;
+  assert(cnet_sctp_session_send(&a, 20u, 2u, 1, "lost", 4u,
+      lost, sizeof(lost), &lost_size) == CNET_SCTP_SESSION_OK &&
+      lost_size != 0u);
+  assert(cnet_sctp_session_next_deadline(&a, &deadline,
+      &has_deadline) == CNET_SCTP_SESSION_OK && has_deadline);
+  assert(cnet_sctp_session_advance(&a, deadline, forward,
+      sizeof(forward), &forward_size) == CNET_SCTP_SESSION_OK &&
+      forward_size != 0u && forward[12u] == 194u);
+  /* Deliberately DO NOT poll MESSAGE_ABANDONED here. */
+  assert(a.association.data.abandon_event_count == 1u);
+  assert(cnet_sctp_session_next_deadline(&a, &deadline,
+      &has_deadline) == CNET_SCTP_SESSION_OK && has_deadline);
+  assert(cnet_sctp_session_advance(&a, deadline, retry,
+      sizeof(retry), &retry_size) == CNET_SCTP_SESSION_OK &&
+      retry_size == forward_size &&
+      memcmp(retry, forward, forward_size) == 0);
+  assert(cnet_sctp_session_next_deadline(&a, &deadline,
+      &has_deadline) == CNET_SCTP_SESSION_OK && has_deadline);
+  output_size = sizeof(output);
+  assert(cnet_sctp_session_advance(&a, deadline, output,
+      sizeof(output), &output_size) == CNET_SCTP_SESSION_TRANSPORT &&
+      output_size == 0u);
+  assert(a.association.state == CNET_SCTP_ASSOC_FAILED &&
+      a.association.data_ready &&
+      a.association.data.abandon_event_count == 1u);
+  /* Returning EMPTY here would let the consumer wrongly conclude all
+   * generation-bound terminal events have been settled. */
+  assert(cnet_sctp_session_take_terminal_failure(&a, &failure) ==
+      CNET_SCTP_SESSION_BUSY && failure.generation == 0u);
+  output_size = 0u;
+  assert(cnet_sctp_session_poll(&a, deadline, &local,
+      payload, sizeof(payload), output, sizeof(output),
+      &output_size) == CNET_SCTP_SESSION_OK &&
+      local.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED &&
+      local.stream_id == 2u && local.generation == ga &&
+      local.has_tsn && local.message_size == 4u &&
+      local.abandon_reason == CNET_SCTP_SESSION_ABANDON_RETRANSMITS &&
+      a.association.data.abandon_event_count == 0u);
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_EMPTY &&
+      cnet_sctp_session_take_terminal_failure(&a, &failure) ==
+      CNET_SCTP_SESSION_OK &&
+      failure.kind == CNET_SCTP_SESSION_TERMINAL_FORWARD_UNCONFIRMED &&
+      failure.generation == ga && failure.stream_id == 2u &&
+      failure.last_tsn == local.last_tsn &&
+      failure.message_size == 4u && failure.ticket == 0u &&
+      cnet_sctp_session_take_terminal_failure(&a, &failure) ==
+      CNET_SCTP_SESSION_EMPTY);
+  assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+}
+
 int main(void) {
   session_open_message_reset_reuse();
   partial_loss_reports_abandonment_then_reliable_continues();
   bounded_forward_progress_preserves_local_events();
   forward_retry_exhaustion_is_terminal_not_peer_progress();
   reliable_retry_exhaustion_is_terminal_not_acked();
+  unread_abandonment_after_failed_is_not_lost();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }
