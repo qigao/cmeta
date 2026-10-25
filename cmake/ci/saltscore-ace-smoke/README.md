@@ -71,3 +71,14 @@ Core ABI epoch and strict UTF-8 rejection. Any unexpected legacy
 
 This remains Draft / no ABI release promotion and does not delete
 old Salts binaries or authorize their coexistence with SaltsCore.
+
+## M6.4 — scoped real Plugin/ServiceHost sanitizers
+
+A separate Linux workflow instruments both the exact installed
+SaltsCore #24 shared foundation and the original production Salts
+CMeta/PluginRegistry/ServiceHost and dynamically loaded Provider DSOs.
+ASan/UBSan with LeakSanitizer and TSan are mutually exclusive builds;
+all original generation, strict UTF-8 and C11/C++17 tests are repeated
+three times with fail-on-report, without suppressions. This does not
+duplicate expensive GmSSL/vcpkg CNet provider CI on unrelated changes.
+Passing ordinary CTest is not a substitute for both sanitizer results.

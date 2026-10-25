@@ -1,0 +1,81 @@
+name: M6 extracted ACE native sanitizers
+
+# Separate from full Salts CI and real TLS/CNet provider gates. Qualifies only
+# original CMeta/PluginRegistry/ServiceHost on the installed Core shared owner.
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/saltscore-ace-sanitizers.yml"
+      - "cmake/ci/saltscore-ace-smoke/**"
+      - "plugin/src/**"
+      - "plugin/CMakeLists.txt"
+      - "component-runtime/src/**"
+      - "component-runtime/CMakeLists.txt"
+      - "component-runtime/tests/service_host_generation_test.c"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-m6-sanitizers:
+    name: Native ACE ${{ matrix.kind }} with real provider DSO
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: asan-ubsan
+            flags: "-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1"
+          - kind: tsan
+            flags: "-fsanitize=thread -fno-omit-frame-pointer -g -O1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/salts-core
+          ref: 80394167aebe3194958d2d19ca1e3dd59073b7c4
+          path: saltscore-candidate
+          persist-credentials: false
+      - name: Build exact instrumented shared Core 0.1 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C saltscore-candidate rev-parse HEAD)" = 80394167aebe3194958d2d19ca1e3dd59073b7c4
+          prefix="$RUNNER_TEMP/saltscore-m6-${{ matrix.kind }}"
+          cmake -S saltscore-candidate -B build-core-${{ matrix.kind }} \
+            -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF \
+            "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_INSTALL_PREFIX=$prefix"
+          cmake --build build-core-${{ matrix.kind }} --parallel 2
+          cmake --install build-core-${{ matrix.kind }} --config RelWithDebInfo
+      - name: Compile original Salts CMeta PluginRegistry ServiceHost and real providers
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$RUNNER_TEMP/saltscore-m6-${{ matrix.kind }}"
+          cmake -S cmake/ci/saltscore-ace-smoke \
+            -B build-ace-${{ matrix.kind }} -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=ON \
+            "-DSALTS_SOURCE_ROOT=$GITHUB_WORKSPACE" \
+            "-DCMAKE_PREFIX_PATH=$prefix" \
+            "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
+          cmake --build build-ace-${{ matrix.kind }} --parallel 2
+      - name: Exercise Plugin lease generation and UTF-8 error paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$RUNNER_TEMP/saltscore-m6-${{ matrix.kind }}"
+          export LD_LIBRARY_PATH="$prefix/lib:${LD_LIBRARY_PATH:-}"
+          if [[ '${{ matrix.kind }}' == 'asan-ubsan' ]]; then
+            export ASAN_OPTIONS='detect_leaks=1:halt_on_error=1:abort_on_error=1'
+            export UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1'
+          else
+            export TSAN_OPTIONS='halt_on_error=1:exitcode=66'
+          fi
+          ctest --test-dir build-ace-${{ matrix.kind }} \
+            -C RelWithDebInfo --output-on-failure --no-tests=error \
+            --timeout 120 --repeat until-fail:3 \
+            -R '^salts[.]m6[.](service_host_generation|plugin_utf8_path|cmeta_ace_c11|cmeta_ace_cpp17|service_host_cpp)$'
