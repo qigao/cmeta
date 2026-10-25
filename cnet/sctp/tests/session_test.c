@@ -218,8 +218,8 @@ static void session_open_message_reset_reuse(void) {
   assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK);
   assert(cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK);
   assert(cnet_sctp_session_drained(&a) && cnet_sctp_session_drained(&b));
-  assert(cnet_sctp_session_destroy(&a) == CNET_SCTP_SESSION_OK);
-  assert(cnet_sctp_session_destroy(&b) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
 }
 
 static void partial_loss_reports_abandonment_then_reliable_continues(void) {
@@ -266,9 +266,9 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
       event.ppid == 53u && event.binary &&
       event.first_tsn == event.last_tsn && event.has_tsn &&
       !event.unordered && event.interleaved && event.locally_initiated &&
-      event.reliability.mode == CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
+      event.reliability.mode == CNET_SCTP_SESSION_RETRANSMITS &&
       event.reliability.value == 0u &&
-      event.abandon_reason == CNET_SCTP_DATA_ABANDON_RETRANSMITS);
+      event.abandon_reason == CNET_SCTP_SESSION_ABANDON_RETRANSMITS);
   assert(cnet_sctp_session_poll(&a, deadline + 4u, &event,
       payload, sizeof(payload), response, sizeof(response), &response_size) ==
       CNET_SCTP_SESSION_EMPTY);
@@ -289,8 +289,8 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   assert(partial_b != 0u && reliable_a != 0u);
   assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK);
   assert(cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK);
-  assert(cnet_sctp_session_destroy(&a) == CNET_SCTP_SESSION_OK);
-  assert(cnet_sctp_session_destroy(&b) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
 }
 
 int main(void) {

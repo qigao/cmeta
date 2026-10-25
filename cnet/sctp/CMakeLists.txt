@@ -23,8 +23,8 @@ add_library(cnet_sctp_dcep_proto STATIC src/sctp_dcep.c)
 # Stateless RFC8831 PPID 51/53/56/57 adapter, no external transport or SDK.
 add_library(cnet_sctp_webrtc_proto STATIC src/sctp_webrtc.c)
 
-# Private M3 ULP owner: Association + DCEP + PPID transactions. It remains
-# deliberately absent from install/export until the full #1181 gates pass.
+# Private-layout M3 ULP test target. The separately compiled installed Session
+# target below exports the same behavior only through an opaque public handle.
 add_library(cnet_sctp_session_proto STATIC src/sctp_session.c)
 target_include_directories(cnet_sctp_session_proto PRIVATE src)
 target_link_libraries(cnet_sctp_session_proto PUBLIC
@@ -35,6 +35,34 @@ if(MSVC)
   target_compile_options(cnet_sctp_session_proto PRIVATE /W4 /WX)
 else()
   target_compile_options(cnet_sctp_session_proto PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+endif()
+
+# Installed opaque C11 Owner/session ABI. Internal Association, DATA, DCEP and
+# WebRTC layouts remain private implementation details of this static library.
+add_library(cnet_sctp_session STATIC
+  src/sctp_session.c
+  src/sctp_assoc.c
+  src/sctp_init_params.c
+  src/sctp_collision.c
+  src/sctp_data.c
+  src/sctp_dcep.c
+  src/sctp_webrtc.c)
+add_library(CNetSctpPrototype::Session ALIAS cnet_sctp_session)
+target_link_libraries(cnet_sctp_session PUBLIC cnet_sctp_wire)
+target_include_directories(cnet_sctp_session
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  PRIVATE src)
+set_target_properties(cnet_sctp_session PROPERTIES
+  EXPORT_NAME Session
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+  POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+  target_compile_options(cnet_sctp_session PRIVATE /W4 /WX)
+else()
+  target_compile_options(cnet_sctp_session PRIVATE
     -Wall -Wextra -Wpedantic -Werror)
 endif()
 target_include_directories(cnet_sctp_webrtc_proto PRIVATE src)
@@ -86,9 +114,13 @@ else()
   target_compile_options(cnet_sctp_wire PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
 
-install(TARGETS cnet_sctp_wire EXPORT CNetSctpPrototypeTargets
+install(TARGETS cnet_sctp_wire cnet_sctp_session
+  EXPORT CNetSctpPrototypeTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(FILES include/cnet/sctp_wire.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/cnet)
+install(FILES
+  include/cnet/sctp_wire.h
+  include/cnet/sctp_session.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/cnet)
 configure_package_config_file(
   cmake/CNetSctpPrototypeConfig.cmake.in
   ${CMAKE_CURRENT_BINARY_DIR}/CNetSctpPrototypeConfig.cmake
