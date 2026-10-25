@@ -237,6 +237,11 @@ static int session_round_trip(void) {
       cnet_sctp_session_queue_message(client, 28u, 0u, 1,
           "overlap", 7u) != CNET_SCTP_SESSION_CAPACITY)
     goto cleanup;
+  /* The full message must have been copied before admission returns.
+   * Poison the entire caller-owned input; reassembly must still return
+   * the ORIGINAL deterministic bytes, not these changed bytes. */
+  for (i = 0u; i < CNET_SCTP_SESSION_MAX_MESSAGE_BYTES; ++i)
+    maximum[i] = (uint8_t)(maximum[i] ^ 0xffu);
   for (i = 0u; i < 32u; ++i) {
     first_size = 0u;
     pump_status = cnet_sctp_session_pump_message(client, now_ms,
@@ -254,9 +259,11 @@ static int session_round_trip(void) {
           &second_size) != CNET_SCTP_SESSION_OK ||
       event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
       !event.binary || !event.unordered ||
-      event.message_size != CNET_SCTP_SESSION_MAX_MESSAGE_BYTES ||
-      memcmp(message, maximum, CNET_SCTP_SESSION_MAX_MESSAGE_BYTES) != 0)
+      event.message_size != CNET_SCTP_SESSION_MAX_MESSAGE_BYTES)
     goto cleanup;
+  for (i = 0u; i < CNET_SCTP_SESSION_MAX_MESSAGE_BYTES; ++i)
+    if (message[i] != (uint8_t)(maximum[i] ^ 0xffu))
+      goto cleanup;
 
   result = 0;
 
