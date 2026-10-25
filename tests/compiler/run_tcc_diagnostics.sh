@@ -101,6 +101,18 @@ for repeat in 1 2 3 4 5; do
     timeout 40s "$out/tcc_disruptor_mpmc_real_source"
 done
 
+echo '== parked worker publish wake-up and cancellation (diagnostic only) =='
+"$TCC" -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L \
+    -D_XOPEN_SOURCE=700 -DSALTS_THREAD_LOCAL=_Thread_local \
+    -Iconcurrency/include -Iutils/include -Iplatform/include \
+    concurrency/src/disruptor.c platform/src/thread_posix.c \
+    "$source/disruptor_parked_worker_conformance.c" -lpthread \
+    -o "$out/tcc_disruptor_parked_worker_conformance"
+for repeat in 1 2 3 4 5; do
+    echo "TCC parked worker notification / cancel repetition $repeat/5"
+    timeout 40s "$out/tcc_disruptor_parked_worker_conformance"
+done
+
 echo '== default Salts::Platform header admission and actual POSIX source =='
 if "$TCC" -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
        -Iplatform/include platform/src/thread_posix.c \

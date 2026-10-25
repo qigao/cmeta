@@ -426,6 +426,37 @@ aggregate workflow into a false claim of TCC compiler admission.
 More runs, memory-order litmus tests, TSan, cancellation/close
 races, parked-worker wakeups and ARM64 are still required.
 
+## Parked worker / wake and cancellation contract
+
+`disruptor_parked_worker_conformance.c` links actual
+`concurrency/src/disruptor.c` + actual POSIX Platform. The worker
+uses `disruptor_worker_claim_wait`, not a spin-only substitute.
+A counted `keep_running` callback publishes its 17th invocation
+using native release/acquire atomics. With 16 spin callbacks
+before worker-waiter admission in the current implementation,
+this handshake proves the worker has incremented
+`worker_waiters` and entered the mutex-protected park path
+before a producer starts publication or control-plane cancellation.
+The caller runs two scenarios: one publication must wake the
+parked worker automatically, and one explicit
+`keep_running=false` plus `disruptor_worker_wake_all`
+must wake it with no claimed record. The one-slot queue
+also proves completion retirement before slot reuse.
+This tests a *request to stop/wake*, **not** a Disruptor
+close API or the complete CFlow/ThreadPool shutdown contract.
+
+The native GCC/Clang CTest jobs and pinned TCC diagnostic
+each repeat the new parked-worker test five times, alongside
+the existing FIFO/MPMC tests.
+
+**Source sanitizers:** GCC ASan+UBSan is introduced as an
+independent required test job for real SPSC and Disruptor
+source, while source GCC TSan is initially explicitly
+experimental/non-blocking pending runner compatibility
+and review of race reports. A successful ordinary
+compiler workflow cannot be interpreted as TSan-qualified
+if that diagnostic job fails.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:

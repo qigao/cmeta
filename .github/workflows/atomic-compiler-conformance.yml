@@ -30,7 +30,7 @@ jobs:
       - name: Repeat real SPSC and Disruptor contention tests five times
         run: >-
           ctest --test-dir build/atomic-${{ matrix.compiler }}
-          -R 'salts_(spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source)'
+          -R 'salts_(spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance)'
           --repeat until-fail:5 --output-on-failure
 
   native-interop:
@@ -63,6 +63,59 @@ jobs:
             "$cc" -std=c11 -Icmeta/include -Icstl/include -Iplatform/include -c cstl/src/vec.c -o "build/atomic-interop/objects/${cc}-cstl-vec.o"
             "$cc" -std=c11 -Iasn1/include -c asn1/src/asn1.c -o "build/atomic-interop/objects/${cc}-asn1.o"
           done
+
+  native-asan-ubsan:
+    name: Native GCC ASan/UBSan / real Concurrency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure real native source with sanitizers
+        run: >-
+          cmake -S tests/compiler -B build/atomic-sanitized -G Ninja
+          -DCMAKE_C_COMPILER=gcc -DCMAKE_BUILD_TYPE=Debug
+          "-DCMAKE_C_FLAGS=-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer"
+          "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined"
+      - name: Build sanitizer targets
+        run: cmake --build build/atomic-sanitized --parallel 2
+      - name: Run bounded real Concurrency conformance
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: >-
+          ctest --test-dir build/atomic-sanitized
+          -R 'salts_(spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance)'
+          --output-on-failure
+
+  native-tsan-experimental:
+    name: GCC source TSan / runtime qualification
+    runs-on: ubuntu-latest
+    # First qualify the runner's TSan runtime and reports; never silently
+    # classify this diagnostic job as an accepted release-quality TSan gate.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure TSan source instrumentation
+        run: >-
+          cmake -S tests/compiler -B build/atomic-tsan -G Ninja
+          -DCMAKE_C_COMPILER=gcc -DCMAKE_BUILD_TYPE=Debug
+          "-DCMAKE_C_FLAGS=-O1 -g -fsanitize=thread -fno-omit-frame-pointer"
+          "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"
+      - name: Build instrumented real source
+        run: cmake --build build/atomic-tsan --parallel 2
+      - name: Run bounded thread-race tests (no skips)
+        env:
+          TSAN_OPTIONS: halt_on_error=1:history_size=7
+        run: >-
+          ctest --test-dir build/atomic-tsan
+          -R 'salts_(spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance)'
+          --output-on-failure
+      - name: Preserve failing or passing TSan runtime logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiler-native-tsan-diagnostics
+          if-no-files-found: ignore
+          path: build/atomic-tsan/Testing/Temporary/LastTest.log
 
   native-cmeta-cstl:
     name: Complete CMeta+CSTL / ${{ matrix.compiler }} / linked consumer
