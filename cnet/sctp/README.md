@@ -100,9 +100,23 @@ already transferred into the control packet. Only after genuine cumulative
 FORWARD retirement can it report EMPTY. This is NOT a new cancellation
 operation for already-sent messages.
 
-This is still a constrained reliable ACK subset: post-TSN cancellation,
-PR-SCTP wire abandonment, terminal failure and full buffered_amount
-remain separate hard gates.
+The narrowly scoped `cnet_sctp_session_take_terminal_failure()` result
+is enabled ONLY by an actual Owner `advance()` retransmission-budget
+EXPIRED transition to Association FAILED. It consumes unresolved explicitly
+tracked reliable tickets and already-polled PR local abandonment records
+whose peer cumulative progress was not confirmed, preserving their
+original SID, generation and ticket (if any). ACKed/forward-confirmed
+receipts remain SUCCESS through the existing separate take APIs.
+Only fully emitted reliable messages carry a valid final DATA TSN;
+queued/partially emitted messages never invent one. The two existing
+fixed 16-entry ledgers are reused, with no new heap, callback or worker.
+Abortive stop discards unread terminal and successful results.
+This limited terminal reason does NOT cover untracked messages, unpolled
+local abandonment events, peer ABORT, generic transport errors, post-TSN
+application cancellation, or `buffered_amount`. All remain separate gates.
+
+This remains an experimental reliable ACK / PR local-abandonment subset;
+general message termination semantics are NOT release-qualified.
 
 This does **not** export the prototype through production `Salts::CNet`,
 replace usrsctp in TurboMedia or qualify a six-RID release.

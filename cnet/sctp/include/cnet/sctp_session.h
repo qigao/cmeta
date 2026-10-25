@@ -160,6 +160,33 @@ typedef struct cnet_sctp_session_forward_progress {
   uint8_t binary, unordered, interleaved;
 } cnet_sctp_session_forward_progress;
 
+/* Exactly-once local transport failure after a REAL Owner retry-budget
+ * EXPIRED transition to Association FAILED. V1 covers unresolved explicitly
+ * tracked reliable sends and ALREADY POLLED local PR abandonments whose peer
+ * cumulative progress is unconfirmed. ACKed/confirmed results keep their
+ * separate SUCCESS APIs. Original SID/generation and ticket are immutable.
+ * Not for untracked messages, unpolled abandonment, peer ABORT or arbitrary
+ * post-TSN application cancellation; not remote application delivery. */
+typedef enum cnet_sctp_session_terminal_kind {
+  CNET_SCTP_SESSION_TERMINAL_RELIABLE_UNACKED = 1,
+  CNET_SCTP_SESSION_TERMINAL_FORWARD_UNCONFIRMED = 2
+} cnet_sctp_session_terminal_kind;
+typedef enum cnet_sctp_session_terminal_reason {
+  CNET_SCTP_SESSION_TERMINAL_LOCAL_RETRY_EXHAUSTED = 1
+} cnet_sctp_session_terminal_reason;
+typedef struct cnet_sctp_session_terminal_failure {
+  cnet_sctp_session_terminal_kind kind;
+  cnet_sctp_session_terminal_reason reason;
+  uint64_t generation;
+  uint64_t ticket; /* nonzero for explicitly tracked reliable sends */
+  uint16_t stream_id;
+  uint32_t last_tsn; /* meaningful iff has_final_tsn */
+  uint32_t ppid;
+  size_t message_size;
+  uint8_t binary;
+  uint8_t has_final_tsn;
+} cnet_sctp_session_terminal_failure;
+
 /* Synchronous result of a locally cancelled, wholly copied pending message
  * BEFORE its first DATA TSN. ticket is the original nonzero tracking token
  * only for queue_reliable_tracked(); untracked sends return ticket=0.
@@ -281,6 +308,13 @@ cnet_sctp_session_status cnet_sctp_session_take_reliable_ack(
 cnet_sctp_session_status cnet_sctp_session_take_forward_progress(
     cnet_sctp_session *session,
     cnet_sctp_session_forward_progress *progress);
+
+/* Owner-only, bounded terminal retry-exhaustion results. Returns EMPTY
+ * before a real failed Owner advance and after all terminal records are
+ * claimed. Never reclassifies an ACKed/peer-forward-confirmed success. */
+cnet_sctp_session_status cnet_sctp_session_take_terminal_failure(
+    cnet_sctp_session *session,
+    cnet_sctp_session_terminal_failure *failure);
 
 /* Opt-in copied, reliable message admission up to 24 KiB. One fixed receipt
  * is reserved BEFORE admitting the only pending Association message. Return

@@ -203,6 +203,9 @@ cnet_sctp_session_status cnet_sctp_session_advance(cnet_sctp_session *session,
       (uint8_t *)packet, capacity, written);
   if (as == CNET_SCTP_ASSOC_OK && written && *written)
     finish_tracked_reliable_fragments(session);
+  if (as == CNET_SCTP_ASSOC_EXPIRED &&
+      session->association.state == CNET_SCTP_ASSOC_FAILED)
+    session->terminal_retry_exhausted = 1u;
   return map_assoc(as);
 }
 
@@ -336,6 +339,57 @@ cnet_sctp_session_status cnet_sctp_session_send_reliable_tracked(
  * A revocable Gap ACK never marks an event. */
 /* A local abandoned result is separate from actual peer progress, which
  * the input Owner latches only after a validated cumulative SACK. */
+/* Consume only original-generation, non-ACKed, explicitly tracked messages
+ * after real retry-budget exhaustion. Success receipts are never failed;
+ * queued/partially emitted sends have no valid final DATA TSN. */
+cnet_sctp_session_status cnet_sctp_session_take_terminal_failure(
+    cnet_sctp_session *session,
+    cnet_sctp_session_terminal_failure *failure) {
+  cnet_sctp_session_status status;
+  cnet_sctp_session_reliable_track *oldest = NULL;
+  size_t i;
+  if (!failure) return CNET_SCTP_SESSION_INVALID;
+  memset(failure, 0, sizeof(*failure));
+  status = guard(session);
+  if (status != CNET_SCTP_SESSION_OK) return status;
+  if (!session->terminal_retry_exhausted) return CNET_SCTP_SESSION_EMPTY;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    cnet_sctp_session_reliable_track *item = &session->tracked[i];
+    if (!item->used || item->cumul_acked) continue;
+    if (!oldest || item->ack.ticket < oldest->ack.ticket) oldest = item;
+  }
+  if (oldest) {
+    failure->kind = CNET_SCTP_SESSION_TERMINAL_RELIABLE_UNACKED;
+    failure->reason = CNET_SCTP_SESSION_TERMINAL_LOCAL_RETRY_EXHAUSTED;
+    failure->generation = oldest->ack.generation;
+    failure->ticket = oldest->ack.ticket;
+    failure->stream_id = oldest->ack.stream_id;
+    failure->has_final_tsn = oldest->fully_emitted;
+    failure->last_tsn = oldest->fully_emitted ? oldest->ack.tsn : 0u;
+    failure->ppid = oldest->ack.ppid;
+    failure->message_size = oldest->ack.message_size;
+    failure->binary = oldest->ack.binary;
+    memset(oldest, 0, sizeof(*oldest));
+    return CNET_SCTP_SESSION_OK;
+  }
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    cnet_sctp_session_forward_track *item = &session->forward_tracks[i];
+    if (!item->used || item->cumul_confirmed) continue;
+    failure->kind = CNET_SCTP_SESSION_TERMINAL_FORWARD_UNCONFIRMED;
+    failure->reason = CNET_SCTP_SESSION_TERMINAL_LOCAL_RETRY_EXHAUSTED;
+    failure->generation = item->result.generation;
+    failure->stream_id = item->result.stream_id;
+    failure->last_tsn = item->result.last_tsn;
+    failure->has_final_tsn = 1u;
+    failure->ppid = item->result.ppid;
+    failure->message_size = item->result.message_size;
+    failure->binary = item->result.binary;
+    memset(item, 0, sizeof(*item));
+    return CNET_SCTP_SESSION_OK;
+  }
+  return CNET_SCTP_SESSION_EMPTY;
+}
+
 cnet_sctp_session_status cnet_sctp_session_take_forward_progress(
     cnet_sctp_session *session,
     cnet_sctp_session_forward_progress *progress) {
@@ -854,6 +908,7 @@ cnet_sctp_session_status cnet_sctp_session_stop(cnet_sctp_session *session) {
   as = cnet_sctp_assoc_stop(&session->association);
   if (as != CNET_SCTP_ASSOC_OK) return map_assoc(as);
   session->pending_dcep_ack = 0u;
+  session->terminal_retry_exhausted = 0u;
   memset(session->tracked, 0, sizeof(session->tracked));
   memset(session->forward_tracks, 0, sizeof(session->forward_tracks));
   memset(session->closing_generation, 0, sizeof(session->closing_generation));
