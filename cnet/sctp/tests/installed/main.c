@@ -777,11 +777,19 @@ static int session_round_trip(void) {
   }
   first_size = sizeof(first);
   next_batch_ticket = UINT64_C(1234);
+  fragment_ticket = UINT64_C(1234);
   if (cnet_sctp_session_send_reliable_tracked(client, now_ms + 625u,
           0u, client_new_generation, 1, "capacity", 8u,
           first, sizeof(first), &first_size, &next_batch_ticket) !=
               CNET_SCTP_SESSION_CAPACITY ||
       first_size != 0u || next_batch_ticket != 0u ||
+      /* An equally valid multi-fragment message must NOT reserve a
+       * copied queue or TSN when all ACK receipt slots remain occupied. */
+      cnet_sctp_session_queue_reliable_tracked(client, now_ms + 625u,
+          0u, client_new_generation, 1,
+          fragmented, sizeof(fragmented), &fragment_ticket) !=
+              CNET_SCTP_SESSION_CAPACITY ||
+      fragment_ticket != 0u ||
       cnet_sctp_session_take_reliable_ack(client, &acked) !=
           CNET_SCTP_SESSION_OK ||
       acked.ticket != first_batch_ticket ||
@@ -837,6 +845,26 @@ static int session_round_trip(void) {
       cnet_sctp_session_take_reliable_ack(client, &acked) !=
           CNET_SCTP_SESSION_EMPTY)
     goto cleanup;
+  /* A copied pending message also prevents concurrent tracked admission
+   * and direct packet sends. Rejections leave the original ticket, queue
+   * payload, stream sequence, and all SCTP output unchanged. */
+  reordered_ticket = UINT64_C(9876);
+  first_size = sizeof(first);
+  if (cnet_sctp_session_queue_reliable_tracked(client, now_ms + 635u,
+          0u, client_new_generation, 1, "intruder", 8u,
+          &reordered_ticket) != CNET_SCTP_SESSION_CAPACITY ||
+      reordered_ticket != 0u ||
+      cnet_sctp_session_send_reliable_tracked(client, now_ms + 635u,
+          0u, client_new_generation, 1, "intruder", 8u,
+          first, sizeof(first), &first_size,
+          &reordered_ticket) != CNET_SCTP_SESSION_CAPACITY ||
+      reordered_ticket != 0u || first_size != 0u ||
+      cnet_sctp_session_get_tx_usage(client, 0u,
+          client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
+      tx_usage.queued_bytes != sizeof(fragmented) ||
+      !tx_usage.has_pending_message)
+    goto cleanup;
+
   /* The successful queue call COPIED the input: mutate every source byte
    * before any packet is pumped, so a borrowed buffer cannot pass. */
   for (i = 0u; i < sizeof(fragmented); ++i)
