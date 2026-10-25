@@ -89,6 +89,48 @@ jobs:
             echo "ABI violation: old Salts 2.3 consumer admitted against 3.0" >&2
             exit 1
           fi
+      - name: Reject static Core old Platform and missing native Runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            generator=(-G 'Visual Studio 18 2026' -A x64)
+          else
+            generator=(-G Ninja)
+          fi
+          core="$RUNNER_TEMP/saltscore-profile-sdk"
+          salts="$RUNNER_TEMP/salts3-profile-sdk"
+          mock="$GITHUB_WORKSPACE/cmake/ci/core-backed-negative/mock-static"
+          if cmake -S . -B build-reject-static "${generator[@]}" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DSALTS_CORE_BACKED_PROFILE=ON -DBUILD_TESTS=OFF \
+              -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
+              "-DSaltsCore_DIR=$mock" > reject-static.log 2>&1; then
+            echo "ABI violation: static Foundation unexpectedly accepted" >&2
+            exit 1
+          fi
+          grep -F "SaltsCore::Core must be an imported" reject-static.log
+          if cmake -S cmake/ci/core-backed-negative/legacy-owner \
+              -B build-reject-legacy "${generator[@]}" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DSALTS_CORE_BACKED_PROFILE=ON -DBUILD_TESTS=OFF \
+              -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
+              "-DSALTS_SOURCE_ROOT=$GITHUB_WORKSPACE" \
+              "-DCMAKE_PREFIX_PATH=$core" > reject-legacy.log 2>&1; then
+            echo "ABI violation: old Platform target unexpectedly accepted" >&2
+            exit 1
+          fi
+          grep -F "Standalone ACE cannot import old state owners" reject-legacy.log
+          if cmake -S cmake/ci/core-backed-negative/missing-core \
+              -B build-reject-missing-core "${generator[@]}" \
+              "-DCMAKE_PREFIX_PATH=$salts" \
+              -DCMAKE_DISABLE_FIND_PACKAGE_SaltsCore=TRUE \
+              > reject-missing.log 2>&1; then
+            echo "ABI violation: Salts 3.0 succeeded without mandatory Core" >&2
+            exit 1
+          fi
+          grep -F "SaltsCore" reject-missing.log
+          echo "All three independent negative native-owner gates rejected correctly"
       - name: Qualify independently installed C11 C++17 plugin and CFlow
         shell: bash
         run: |

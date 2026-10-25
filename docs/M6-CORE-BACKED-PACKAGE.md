@@ -97,3 +97,25 @@ The workflow checks the exact 13 CTest registrations and repeats
 each original suite three times, failing on any sanitizer report.
 It does not substitute the earlier SaltsM6 test-only package,
 skip OS tests, suppress failures, or embed old Salts::Core.
+
+## Fail-closed negative ABI qualification
+
+Three additional independent CMake configurations must fail *for the
+expected reason*, on Linux/macOS/Windows:
+
+- A deliberately malformed `SaltsCore 0.1` package advertises one
+  `STATIC IMPORTED SaltsCore::Core`; the real Salts 3.0 profile must
+  reject it as not an imported **SHARED** native owner.
+- A test-only caller creates a legacy `Salts::Platform` before adding
+  the actual production Salts source tree; Plugin/ServiceHost refuses
+  the mixed old/new owner graph. No old Platform source is compiled.
+- An independent client discovers only real installed `Salts 3.0`
+  with discovery of `SaltsCore` disabled; `SaltsConfig` must reject
+  it because Core is a mandatory `find_dependency`.
+
+These tests capture CMake output and assert an owner-specific diagnostic,
+so an unrelated configure failure does not count as a successful
+negative ABI gate. The existing legacy `find_package(Salts 2.3 EXACT)`
+rejection also remains mandatory. Malformed packages and injected
+legacy target aliases exist **only in the negative test fixtures**;
+the actual released package candidate contains neither.
