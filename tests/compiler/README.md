@@ -119,6 +119,35 @@ the CMeta ACE runtime, a CNet stack or an installed SDK. Any failing
 translation unit makes the experimental diagnostic step fail without changing
 production compiler admission.
 
+## Complete CMeta/CSTL object and linked-consumer qualification
+
+`run_cmeta_cstl_qualification.sh` extracts the **canonical** source sets
+from the actual `cmeta/CMakeLists.txt` and `cstl/CMakeLists.txt` library
+declarations, fails if source counts change unexpectedly, and builds all
+19 CMeta and all 18 CSTL translation units. It records every compile
+failure, constructs separate complete static archives only if all 37
+objects compile, then links and runs an independent
+`cmeta_cstl_consumer.c` exercising CMeta identity, ABI and CSTL vector
+ownership/capacity rules.
+
+This is deliberately a standalone, static, **Linux** compiler qualification,
+not a substitute for Salts' canonical CMake build, DSO exports, PIC/visibility,
+CMeta ACE Plugin/Component linker sections, installed headers or SDK consumers.
+GCC and Clang are required baseline jobs; TCC is a separate, non-blocking
+experiment pinned to an exact compiler commit. A green main workflow does not
+make a red TCC experimental job qualified.
+
+Example:
+
+```sh
+CC=gcc BUILD_ROOT=build/compiler-gcc bash tests/compiler/run_cmeta_cstl_qualification.sh
+CC=clang BUILD_ROOT=build/compiler-clang bash tests/compiler/run_cmeta_cstl_qualification.sh
+CC=tcc BUILD_ROOT=build/compiler-tcc bash tests/compiler/run_cmeta_cstl_qualification.sh
+```
+
+Do not override `__STDC_NO_ATOMICS__`, change production C11/TLS
+admission logic, or import TurboWasm's Wasm atomic runtime as a workaround.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:

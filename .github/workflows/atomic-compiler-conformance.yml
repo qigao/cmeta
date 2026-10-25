@@ -59,6 +59,22 @@ jobs:
             "$cc" -std=c11 -Iasn1/include -c asn1/src/asn1.c -o "build/atomic-interop/objects/${cc}-asn1.o"
           done
 
+  native-cmeta-cstl:
+    name: Complete CMeta+CSTL / ${{ matrix.compiler }} / linked consumer
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build canonical CMeta/CSTL source sets and test linked consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          CC="${{ matrix.compiler }}" BUILD_ROOT="build/whole-${{ matrix.compiler }}" \
+            bash tests/compiler/run_cmeta_cstl_qualification.sh
+
   tcc-experimental:
     name: TCC / pinned mob / experimental
     runs-on: ubuntu-latest
@@ -85,6 +101,13 @@ jobs:
         run: |
           mkdir -p build/atomic-probe
           bash tests/compiler/run_tcc_diagnostics.sh 2>&1 | tee build/atomic-probe/diagnostics.log
+      - name: Diagnostic complete CMeta/CSTL source and linked consumer
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p build/tcc-cmeta-cstl
+          CC=tcc BUILD_ROOT=build/tcc-cmeta-cstl \
+            bash tests/compiler/run_cmeta_cstl_qualification.sh 2>&1 | tee build/tcc-cmeta-cstl/build.log
       - name: Configure standalone C11 conformance
         run: cmake -S tests/compiler -B build/atomic-tcc -G Ninja -DCMAKE_C_COMPILER=tcc
       - name: Compile
@@ -98,6 +121,9 @@ jobs:
           name: tcc-atomic-conformance-logs
           if-no-files-found: ignore
           path: |
+            build/tcc-cmeta-cstl/build.log
+            build/tcc-cmeta-cstl/cmeta/*.log
+            build/tcc-cmeta-cstl/cstl/*.log
             build/atomic-probe/diagnostics.log
             build/atomic-tcc/CMakeFiles/CMakeConfigureLog.yaml
             build/atomic-tcc/CMakeFiles/CMakeError.log
