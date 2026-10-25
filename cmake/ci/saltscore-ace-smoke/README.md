@@ -118,3 +118,16 @@ mem_buffer_release, mem_slice_release, cmeta_thread_current_token,
 salts_core_runtime_abi_0_1_required and salts_core_utf8_valid.
 Missing images/tools/symbols fail closed; upload one JSON per OS.
 This is NOT a release or switch of the old Salts package.
+
+## M6.7 — installed CFlow Graph and reactive ACE pipes
+
+The original `Salts::CFlow` target now belongs to the test-only
+`SaltsM6` export set. Independent installed C11/C++17 consumers
+exercise CFlow Graph/take/status and the actual SaltsCore NativeIO
+shared ABI without old Salts::Core/NativeIO/Concurrency owners.
+These external consumers also rerun after both SDK roots are moved.
+Source tests from unmodified CFlow status, stream-slice and reflected
+ACE Pipes/Filters suites are repeated in the scoped Linux ASan/UBSan
+with LeakSanitizer and TSan gates. No test is skipped to qualify
+migration, and production CFlow remains unchanged unless explicitly
+opted in by the isolated qualification build.

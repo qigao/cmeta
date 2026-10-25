@@ -3,7 +3,7 @@ project(SaltsM6IndependentInstalledSDK LANGUAGES C CXX)
 include(CTest)
 find_package(SaltsM6 CONFIG REQUIRED)
 foreach(_target IN ITEMS CMeta ComponentABI PluginABI Plugin
-                         ComponentProviderABI Configurator ServiceHost)
+                         ComponentProviderABI Configurator ServiceHost CFlow)
   if(NOT TARGET "Salts::${_target}")
     message(FATAL_ERROR "Missing original installed Salts::${_target}")
   endif()
@@ -40,3 +40,27 @@ target_compile_features(m6_installed_cpp PRIVATE cxx_std_17)
 target_link_libraries(m6_installed_cpp PRIVATE
   Salts::ServiceHost Salts::Plugin SaltsCore::Core SaltsCore::Platform)
 add_test(NAME sdk.m6.service_host_cpp17 COMMAND m6_installed_cpp)
+
+# A separate installed CFlow native consumer must import the same
+# NativeIO/Platform/Concurrency owner as the real ServiceHost.
+foreach(_foundation IN ITEMS NativeIO Concurrency)
+  if(NOT TARGET "SaltsCore::${_foundation}")
+    message(FATAL_ERROR "Installed SaltsM6 CFlow lacks ${_foundation}")
+  endif()
+  get_target_property(_foundation_type "SaltsCore::${_foundation}" TYPE)
+  if(NOT _foundation_type STREQUAL "SHARED_LIBRARY")
+    message(FATAL_ERROR "CFlow cannot embed a static ${_foundation} owner")
+  endif()
+endforeach()
+
+add_executable(m6_installed_cflow_c cflow_consumer.c)
+target_compile_features(m6_installed_cflow_c PRIVATE c_std_11)
+target_link_libraries(m6_installed_cflow_c PRIVATE
+  Salts::CFlow SaltsCore::NativeIO SaltsCore::Platform)
+add_test(NAME sdk.m6.cflow_c11 COMMAND m6_installed_cflow_c)
+
+add_executable(m6_installed_cflow_cpp cflow_consumer.cpp)
+target_compile_features(m6_installed_cflow_cpp PRIVATE cxx_std_17)
+target_link_libraries(m6_installed_cflow_cpp PRIVATE
+  Salts::CFlow SaltsCore::NativeIO SaltsCore::Platform)
+add_test(NAME sdk.m6.cflow_cpp17 COMMAND m6_installed_cflow_cpp)
