@@ -1,0 +1,64 @@
+name: M6 SaltsCore installed CMeta ACE downstream
+
+on:
+  pull_request:
+    paths:
+      - "cmake/ci/saltscore-ace-smoke/**"
+      - ".github/workflows/saltscore-ace-downstream.yml"
+      - "cmeta/**"
+      - "component/**"
+      - "component-runtime/src/configurator*"
+      - "component-runtime/include/salts/configurator.h"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ace-core-installed:
+    name: ${{ matrix.os }} original CMeta ACE on installed Core
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - name: Checkout original Salts sources
+        uses: actions/checkout@v4
+      - name: Checkout exact SaltsCore candidate
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/salts-core
+          ref: 63aa67e072218ffda5621080a593c4511e8fbe02
+          path: saltscore-candidate
+          persist-credentials: false
+      - name: Build installed Core and run isolated original Salts consumers
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C saltscore-candidate rev-parse HEAD)" = 63aa67e072218ffda5621080a593c4511e8fbe02
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            generator=(-G 'Visual Studio 18 2026' -A x64)
+          else
+            generator=(-G Ninja)
+          fi
+          prefix="$RUNNER_TEMP/saltscore-ace-sdk"
+          cmake -S saltscore-candidate -B build-m6-core "${generator[@]}" \
+            -DBUILD_TESTING=OFF "-DCMAKE_INSTALL_PREFIX=$prefix"
+          cmake --build build-m6-core --config Release --parallel 2
+          cmake --install build-m6-core --config Release
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            export PATH="$(cygpath -u "$prefix")/bin:$PATH"
+          elif [[ "$RUNNER_OS" == macOS ]]; then
+            export DYLD_LIBRARY_PATH="$prefix/lib:${DYLD_LIBRARY_PATH:-}"
+          else
+            export LD_LIBRARY_PATH="$prefix/lib:${LD_LIBRARY_PATH:-}"
+          fi
+          cmake -S cmake/ci/saltscore-ace-smoke -B build-m6-ace \
+            "${generator[@]}" "-DSALTS_SOURCE_ROOT=$GITHUB_WORKSPACE" \
+            "-DCMAKE_PREFIX_PATH=$prefix" -DBUILD_TESTING=ON
+          cmake --build build-m6-ace --config Release --parallel 2
+          ctest --test-dir build-m6-ace -C Release \
+            --output-on-failure --no-tests=error
+          test ! -e "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
