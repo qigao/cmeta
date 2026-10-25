@@ -12,6 +12,16 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* TinyCC's pinned stdatomic.h supplies ABI declarations for its own
+ * atomic_thread_fence/atomic_signal_fence runtime functions and the
+ * __atomic_is_lock_free function. TinyCC maps the GNU fence spellings to
+ * these runtime symbols. Including it here does NOT change or undefine
+ * TinyCC's __STDC_NO_ATOMICS__=1 feature declaration; these storage types
+ * remain private and distinct from native C11 _Atomic objects. */
+#if defined(__TINYC__)
+#include <stdatomic.h>
+#endif
+
 #if !defined(__TINYC__) && !defined(__GNUC__) && !defined(__clang__)
 #error "The private diagnostic backend requires GNU-style __atomic intrinsics"
 #endif
@@ -118,9 +128,17 @@ SALTS_PROBE_INTRINSIC_INTEGER(salts_probe_u64, uint64_t)
 SALTS_PROBE_INTRINSIC_TYPE(salts_probe_ptr, void *);
 
 static inline void salts_probe_thread_fence(salts_probe_order order) {
+#if defined(__TINYC__)
+    atomic_thread_fence((memory_order)order);
+#else
     __atomic_thread_fence((int)order);
+#endif
 }
 static inline void salts_probe_signal_fence(salts_probe_order order) {
+#if defined(__TINYC__)
+    atomic_signal_fence((memory_order)order);
+#else
     __atomic_signal_fence((int)order);
+#endif
 }
 #endif /* SALTS_COMPILER_INTRINSIC_ATOMIC_BACKEND_H */
