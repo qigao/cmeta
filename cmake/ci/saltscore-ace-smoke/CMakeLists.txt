@@ -123,3 +123,18 @@ add_executable(salts_m6_plugin_path utf8_plugin_path_test.c)
 target_compile_features(salts_m6_plugin_path PRIVATE c_std_11)
 target_link_libraries(salts_m6_plugin_path PRIVATE Salts::Plugin SaltsCore::Core)
 add_test(NAME salts.m6.plugin_utf8_path COMMAND salts_m6_plugin_path)
+
+# Test-only installable extracted ACE package; never pretend this is the
+# existing Salts 2.3 SDK or production SaltsConfig.cmake.
+include(CMakePackageConfigHelpers)
+set(_m6_package_dir "${CMAKE_INSTALL_LIBDIR}/cmake/SaltsM6")
+configure_package_config_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/SaltsM6Config.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/SaltsM6Config.cmake"
+  INSTALL_DESTINATION "${_m6_package_dir}")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/SaltsM6Config.cmake"
+  DESTINATION "${_m6_package_dir}")
+install(EXPORT SaltsTargets
+  FILE SaltsM6Targets.cmake
+  NAMESPACE Salts::
+  DESTINATION "${_m6_package_dir}")

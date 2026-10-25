@@ -57,3 +57,17 @@ Original ServiceHost generation tests run against two genuine Plugin
 Provider DSOs, and a separate path gate probes overlong UTF-8,
 surrogates, out-of-range and truncated paths without weakening
 CMETA_PLUGIN_PATH_MAX. No runtime fallback or legacy binary is linked.
+
+## M6.3 — independent installed `SaltsM6` qualification package
+
+The real original CMeta/ComponentABI/Plugin/ServiceHost targets are
+exported into a **test-only** package `SaltsM6`, not the production
+`SaltsConfig` package. Its generated CMake config requires the
+real installed `SaltsCore 0.1` owner. C11 and C++17 consumers now
+configure from an unrelated build directory using only these installed
+package files, invoke PluginRegistry/ServiceHost and verify the exact
+Core ABI epoch and strict UTF-8 rejection. Any unexpected legacy
+`Salts::Core/Platform/NativeIO/CNet` target fails configuration.
+
+This remains Draft / no ABI release promotion and does not delete
+old Salts binaries or authorize their coexistence with SaltsCore.

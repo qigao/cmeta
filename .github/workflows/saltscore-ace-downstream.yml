@@ -75,6 +75,26 @@ jobs:
             --build-dir build-m6-ace \
             --core-tools saltscore-candidate/tools \
             --report build-m6-ace/m6-abi-audit.json
+      - name: Install extracted M6 package and qualify external C11/C++17 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          m6_prefix="$RUNNER_TEMP/salts-m6-sdk"
+          cmake --install build-m6-ace --config Release --prefix "$m6_prefix"
+          test -f "$m6_prefix/lib/cmake/SaltsM6/SaltsM6Targets.cmake"
+          test ! -e "$m6_prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            generator=(-G 'Visual Studio 18 2026' -A x64)
+            export PATH="$(cygpath -u "$m6_prefix")/bin:$(cygpath -u "$RUNNER_TEMP/saltscore-ace-sdk")/bin:$PATH"
+          else
+            generator=(-G Ninja)
+          fi
+          cmake -S cmake/ci/saltscore-ace-consumer -B build-m6-external \
+            "${generator[@]}" -DCMAKE_BUILD_TYPE=Release \
+            "-DCMAKE_PREFIX_PATH=$m6_prefix;$RUNNER_TEMP/saltscore-ace-sdk"
+          cmake --build build-m6-external --config Release --parallel 2
+          ctest --test-dir build-m6-external -C Release \
+            --output-on-failure --no-tests=error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
