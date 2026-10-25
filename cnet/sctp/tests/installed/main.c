@@ -150,6 +150,10 @@ static int session_round_trip(void) {
   uint64_t now_ms = 29u, close_generation = 0u;
   uint64_t client_old_generation = 0u, server_old_generation = 0u;
   uint64_t client_new_generation = 0u, server_new_generation = 0u;
+  uint32_t gap_cum_ack = 0u;
+  cnet_sctp_wire_header sack_header = {0};
+  cnet_sctp_wire_decoder sack_decoder = {0};
+  cnet_sctp_wire_chunk sack_chunk = {0};
   cnet_sctp_session_status pump_status;
   int result = 20;
 
@@ -545,6 +549,91 @@ static int session_round_trip(void) {
       event.message_size != 14u ||
       memcmp(message, "new-generation", 14u) != 0 ||
       client_new_generation == client_old_generation)
+    goto cleanup;
+
+  /* Gap ACK is revocable and cannot retire a DATA ticket. Hold TSN N,
+   * deliver only N+1 and verify its real SACK contains a gap block while
+   * cumulative ACK stays behind N. RFC6525 close must remain BUSY even
+   * though that later fragment was acknowledged out of order. */
+  first_size = 0u;
+  if (cnet_sctp_session_send(client, now_ms + 547u, 0u, 1,
+          "first-gap", 9u, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      first_size == 0u || first_size > sizeof(stale_data))
+    goto cleanup;
+  stale_size = first_size;
+  memcpy(stale_data, first, stale_size);
+  third_size = 0u;
+  if (cnet_sctp_session_send(client, now_ms + 548u, 0u, 1,
+          "later-gap", 9u, third, sizeof(third),
+          &third_size) != CNET_SCTP_SESSION_OK ||
+      third_size == 0u)
+    goto cleanup;
+  second_size = 0u;
+  if (cnet_sctp_session_input(server, now_ms + 549u,
+          third, third_size, second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      second_size == 0u ||
+      cnet_sctp_wire_decode(second, second_size,
+          &sack_header, &sack_decoder) != CNET_SCTP_WIRE_OK ||
+      cnet_sctp_wire_next_chunk(&sack_decoder, &sack_chunk) !=
+          CNET_SCTP_WIRE_OK ||
+      sack_chunk.type != 3u || sack_chunk.value_size < 12u ||
+      (sack_chunk.value[8u] == 0u && sack_chunk.value[9u] == 0u))
+    goto cleanup;
+  gap_cum_ack = ((uint32_t)sack_chunk.value[0u] << 24u) |
+      ((uint32_t)sack_chunk.value[1u] << 16u) |
+      ((uint32_t)sack_chunk.value[2u] << 8u) |
+      (uint32_t)sack_chunk.value[3u];
+  first_size = 0u;
+  if (cnet_sctp_session_input(client, now_ms + 550u,
+          second, second_size, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      first_size != 0u)
+    goto cleanup;
+  close_generation = 0u;
+  fourth_size = 0u;
+  if (cnet_sctp_session_close_channel(client, now_ms + 551u, 0u,
+          fourth, sizeof(fourth), &fourth_size,
+          &close_generation) != CNET_SCTP_SESSION_BUSY ||
+      fourth_size != 0u || close_generation != 0u)
+    goto cleanup;
+
+  /* Deliver the originally delayed TSN. Only the subsequent cumulative
+   * SACK may release the earlier TX ticket and admit the real reset.
+   * The gap-ACKed later DATA must not be counted twice or falsely
+   * settle its unacknowledged predecessor. */
+  second_size = 0u;
+  if (cnet_sctp_session_input(server, now_ms + 552u,
+          stale_data, stale_size, second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      second_size == 0u ||
+      cnet_sctp_wire_decode(second, second_size,
+          &sack_header, &sack_decoder) != CNET_SCTP_WIRE_OK ||
+      cnet_sctp_wire_next_chunk(&sack_decoder, &sack_chunk) !=
+          CNET_SCTP_WIRE_OK ||
+      sack_chunk.type != 3u || sack_chunk.value_size < 12u)
+    goto cleanup;
+  {
+    const uint32_t final_cum_ack =
+        ((uint32_t)sack_chunk.value[0u] << 24u) |
+        ((uint32_t)sack_chunk.value[1u] << 16u) |
+        ((uint32_t)sack_chunk.value[2u] << 8u) |
+        (uint32_t)sack_chunk.value[3u];
+    if (final_cum_ack != gap_cum_ack + 2u)
+      goto cleanup;
+  }
+  first_size = 0u;
+  if (cnet_sctp_session_input(client, now_ms + 553u,
+          second, second_size, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      first_size != 0u)
+    goto cleanup;
+  fourth_size = 0u;
+  if (cnet_sctp_session_close_channel(client, now_ms + 554u, 0u,
+          fourth, sizeof(fourth), &fourth_size,
+          &close_generation) != CNET_SCTP_SESSION_OK ||
+      fourth_size == 0u || close_generation != client_new_generation)
     goto cleanup;
 
   result = 0;
