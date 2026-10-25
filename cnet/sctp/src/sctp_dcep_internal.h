@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "sctp_reliability_internal.h"
+
 /* RFC 8832 DCEP control plane. Private C11, no heap or external timer.
  * All DCEP packets MUST travel as reliable ordered SCTP DATA PPID=50 on
  * their selected SID. The Association has a private bounded reciprocal
@@ -75,6 +77,20 @@ cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
 /* Commit a peer-opened channel only after its DCEP ACK has been admitted to
  * the underlying SCTP send queue. This is not proof of network delivery. */
 cnet_sctp_dcep_status cnet_sctp_dcep_ack_admitted(cnet_sctp_dcep *d,
+    uint16_t stream);
+
+/* Translate the negotiated RFC 8832 channel type into the exact private
+ * RFC 3758 DATA policy. A locally opened channel may send before ACK, but
+ * RFC 8832 section 6 requires those early messages to remain ordered. */
+cnet_sctp_dcep_status cnet_sctp_dcep_send_policy(cnet_sctp_dcep *d,
+    uint16_t stream, int *unordered,
+    cnet_sctp_data_reliability *reliability);
+
+/* Record receipt of non-DCEP user DATA. For a locally initiated channel this
+ * completes the DCEP handshake just like ACK. Peer-opened DATA is valid while
+ * its ACK awaits admission, but the channel remains non-ready for local send;
+ * DATA on an unused stream is a protocol error. */
+cnet_sctp_dcep_status cnet_sctp_dcep_user_data_received(cnet_sctp_dcep *d,
     uint16_t stream);
 int cnet_sctp_dcep_ready(const cnet_sctp_dcep *d, uint16_t stream);
 cnet_sctp_dcep_status cnet_sctp_dcep_stop(cnet_sctp_dcep *d);

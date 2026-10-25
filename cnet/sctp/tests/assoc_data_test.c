@@ -354,6 +354,61 @@ static void post_handshake_dcep_wire(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+/* A negotiated DCEP channel is the single source of ordering/reliability
+ * policy for fragmented application DATA; the Association remains the
+ * owner of queueing, timers, FORWARD-TSN and abandonment records. */
+static void dcep_policy_drives_fragmented_pr_data(void) {
+  cnet_sctp_assoc a, b;
+  cnet_sctp_dcep client = {0};
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_data_reliability policy = {0};
+  cnet_sctp_data_abandon_event abandoned = {0};
+  uint8_t open[32], ack = 2u, payload[1500];
+  uint8_t first[1200], second[1200], forward[1200];
+  size_t open_n = 0u, reply_n = 0u, first_n = 0u, second_n = 0u;
+  size_t forward_n = 0u;
+  int unordered = 0;
+
+  ready_pair(&a, &b, &ca, &cb);
+  memset(payload, 0x6du, sizeof(payload));
+  assert(cnet_sctp_dcep_init(&client, a.data.config.outbound_streams,
+      1, admitted, &ca) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_open(&client, 0u, 0x81u, 0u, 0u,
+      NULL, 0u, NULL, 0u, open, sizeof(open), &open_n) ==
+      CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_input(&client, 0u, &ack, 1u,
+      NULL, 0u, &reply_n) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_send_policy(&client, 0u, &unordered, &policy) ==
+      CNET_SCTP_DCEP_OK && unordered &&
+      policy.mode == CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
+      policy.value == 0u);
+
+  assert(cnet_sctp_assoc_queue_message_pr(&a, 6u, 0u, 53u, unordered,
+      &policy, payload, sizeof(payload)) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_pump_message(&a, 7u, first, sizeof(first),
+      &first_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_pump_message(&a, 8u, second, sizeof(second),
+      &second_n) == CNET_SCTP_ASSOC_OK);
+  assert(first_n != 0u && second_n != 0u &&
+      a.data.tx[0].unordered && a.data.tx[1].unordered);
+  assert(cnet_sctp_assoc_advance(&a, 107u, forward, sizeof(forward),
+      &forward_n) == CNET_SCTP_ASSOC_OK && forward_n != 0u);
+  assert(cnet_sctp_assoc_take_abandoned(&a, &abandoned) ==
+      CNET_SCTP_ASSOC_OK);
+  assert(abandoned.stream_id == 0u && abandoned.ppid == 53u &&
+      abandoned.unordered && abandoned.message_size == sizeof(payload) &&
+      abandoned.last_tsn == abandoned.first_tsn + 1u &&
+      abandoned.reliability.mode ==
+          CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
+      abandoned.reliability.value == 0u);
+
+  assert(cnet_sctp_dcep_stop(&client) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 /* Post-handshake >16KiB stream delivery through the SAME Association,
  * with first fragment lost and repaired by Fast Retransmit after Gap SACKs. This is the
  * actual private INIT/COOKIE -> DATA fragment -> SACK -> take() path.
@@ -4769,6 +4824,7 @@ int main(void) {
   post_handshake_window_update();
   real_assoc_send_sack_and_t3();
   post_handshake_dcep_wire();
+  dcep_policy_drives_fragmented_pr_data();
   post_handshake_twenty_kib_fragments();
   post_handshake_webrtc_empty_ppids();
   puts("C11 SCTP post-COOKIE Association DATA/SACK/T3 stream test PASS");
