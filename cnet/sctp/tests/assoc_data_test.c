@@ -4649,21 +4649,27 @@ static void pr_sctp_timed_forward_tsn_roundtrip(void) {
   cnet_sctp_data_reliability timed = {
     CNET_SCTP_DATA_RELIABILITY_TIMED, 5u
   };
+  cnet_sctp_data_abandon_event abandoned = {0};
   cnet_sctp_data_message message = {0};
   cnet_sctp_wire_header header = {0};
   cnet_sctp_wire_decoder decoder = {0};
   cnet_sctp_wire_chunk chunk = {0};
-  uint8_t data[1200], forward[1200], sack[1200], payload[8];
+  uint8_t body[1500], data[1200], forward[1200], sack[1200], payload[8];
   size_t data_n = 0u, forward_n = 0u, sack_n = 0u, payload_n = 0u;
   uint64_t deadline = 0u;
   int has_deadline = 0;
 
   ready_pair(&a, &b, &ca, &cb);
+  memset(body, 0xa5, sizeof(body));
   assert(a.peer_forward_tsn_supported && b.peer_forward_tsn_supported &&
       a.data.config.forward_tsn_supported &&
       b.data.config.forward_tsn_supported);
-  assert(cnet_sctp_assoc_send_message_pr(&a, 6u, 1u, 53u, 0, &timed,
-      "lost", 4u, data, sizeof(data), &data_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_queue_message_pr(&a, 6u, 1u, 53u, 0, &timed,
+      body, sizeof(body)) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_pump_message(&a, 7u, data, sizeof(data),
+      &data_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_pump_message(&a, 8u, forward, sizeof(forward),
+      &forward_n) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
       CNET_SCTP_ASSOC_OK && has_deadline && deadline == 11u);
   memcpy(&before, &a, sizeof(before));
@@ -4672,6 +4678,16 @@ static void pr_sctp_timed_forward_tsn_roundtrip(void) {
   assert(forward_n == 0u && memcmp(&a, &before, sizeof(a)) == 0);
   assert(cnet_sctp_assoc_advance(&a, 11u, forward, sizeof(forward),
       &forward_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_take_abandoned(&a, &abandoned) ==
+      CNET_SCTP_ASSOC_OK && abandoned.stream_id == 1u &&
+      abandoned.ppid == 53u && abandoned.message_size == sizeof(body) &&
+      abandoned.message_identifier == 0u && abandoned.has_tsn &&
+      abandoned.last_tsn == abandoned.first_tsn + 1u &&
+      abandoned.reason == CNET_SCTP_DATA_ABANDON_TIMED &&
+      abandoned.reliability.mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
+      abandoned.reliability.value == 5u);
+  assert(cnet_sctp_assoc_take_abandoned(&a, &abandoned) ==
+      CNET_SCTP_ASSOC_EMPTY);
   assert(cnet_sctp_wire_decode(forward, forward_n, &header, &decoder) ==
       CNET_SCTP_WIRE_OK);
   assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&

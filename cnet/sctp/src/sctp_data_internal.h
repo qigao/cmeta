@@ -59,6 +59,27 @@ typedef struct cnet_sctp_data_reliability {
   uint32_t value; /* retransmission count or lifetime in milliseconds */
 } cnet_sctp_data_reliability;
 
+typedef enum cnet_sctp_data_abandon_reason {
+  CNET_SCTP_DATA_ABANDON_TIMED = 1,
+  CNET_SCTP_DATA_ABANDON_RETRANSMITS = 2
+} cnet_sctp_data_abandon_reason;
+
+/* Exactly one bounded Owner-pulled record is produced for an abandoned user
+ * message, even when the message owns several DATA/I-DATA TSNs. */
+typedef struct cnet_sctp_data_abandon_event {
+  uint16_t stream_id;
+  uint32_t ppid;
+  uint32_t message_identifier; /* SSN projection or negotiated MID */
+  size_t message_size;
+  uint32_t first_tsn;
+  uint32_t last_tsn;
+  cnet_sctp_data_reliability reliability;
+  cnet_sctp_data_abandon_reason reason;
+  uint8_t unordered;
+  uint8_t interleaved;
+  uint8_t has_tsn;
+} cnet_sctp_data_abandon_event;
+
 typedef struct cnet_sctp_data_config {
   uint16_t local_port, remote_port;
   uint16_t outbound_streams, inbound_streams;
@@ -80,6 +101,9 @@ typedef struct cnet_sctp_data_tx {
   uint32_t tsn;
   uint64_t first_sent_ms;
   uint8_t retransmits;
+  /* Zero-window retries count toward PR-SCTP's per-message policy without
+   * consuming the association's ordinary loss retransmission budget. */
+  uint32_t probe_retransmits;
   /* Gap ACK is revocable: retain the owned wire packet until cumulative ACK.
    * ack_counted prevents repeated gap/revoke/re-ACK from growing cwnd. */
   uint8_t gap_acked;
@@ -90,7 +114,9 @@ typedef struct cnet_sctp_data_tx {
   uint8_t pending_retransmit; /* loss intent, never flight credit */
   uint8_t probe_retransmitted; /* suppress ambiguous zero-window RTT samples */
   uint16_t stream_id, ssn;
-  uint32_t mid, fsn;
+  uint32_t mid, fsn, ppid;
+  uint32_t message_first_tsn;
+  size_t message_size;
   uint8_t unordered;
   uint8_t interleaved;
   uint8_t reliability_mode;
@@ -117,8 +143,12 @@ typedef struct cnet_sctp_data_pending {
   size_t size, offset;
   uint16_t stream_id, ssn;
   uint32_t ppid, mid, next_fsn;
+  uint32_t first_tsn;
+  cnet_sctp_data_reliability reliability;
+  uint64_t expires_at_ms;
   uint8_t unordered;
   uint8_t interleaved;
+  uint8_t has_tsn;
   uint8_t active;
 } cnet_sctp_data_pending;
 
@@ -135,6 +165,8 @@ typedef struct cnet_sctp_data {
   cnet_sctp_data_tx tx[CNET_SCTP_DATA_TX_SLOTS];
   cnet_sctp_data_rx rx[CNET_SCTP_DATA_RX_SLOTS];
   cnet_sctp_data_pending pending;
+  cnet_sctp_data_abandon_event abandon_events[CNET_SCTP_DATA_TX_SLOTS];
+  uint8_t abandon_event_head, abandon_event_count;
   uint16_t tx_ssn[CNET_SCTP_DATA_STREAMS], rx_ssn[CNET_SCTP_DATA_STREAMS];
   uint16_t rx_forward_ssn[CNET_SCTP_DATA_STREAMS];
   uint16_t rx_forward_streams;
@@ -227,8 +259,17 @@ cnet_sctp_data_status cnet_sctp_data_send_bundle(cnet_sctp_data *d,
 cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,
     uint64_t now_ms, uint16_t stream_id, uint32_t ppid, int unordered,
     const void *bytes, size_t length);
+cnet_sctp_data_status cnet_sctp_data_queue_message_pr(cnet_sctp_data *d,
+    uint64_t now_ms, uint16_t stream_id, uint32_t ppid, int unordered,
+    const cnet_sctp_data_reliability *reliability,
+    const void *bytes, size_t length);
 cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d, uint64_t now_ms,
     void *packet, size_t packet_capacity, size_t *packet_bytes);
+
+/* Takes one copied message-abandonment record. Insufficient event capacity
+ * is prevented at PR-message admission; explicit stop discards unread events. */
+cnet_sctp_data_status cnet_sctp_data_take_abandoned(cnet_sctp_data *d,
+    cnet_sctp_data_abandon_event *event);
 
 /* SHUTDOWN's cumulative ACK uses the same guarded SACK accounting.
  * Polling drain must see retained revocable Gap ACK tickets. */

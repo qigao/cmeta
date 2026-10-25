@@ -267,6 +267,268 @@ static void received_abandoned_sequence_remains_deliverable(void) {
       (b.rx_forward_streams & (UINT16_C(1) << 2u)) == 0u);
 }
 
+static void fragmented_timed_message_abandons_all_assigned_tsns(void) {
+  enum { MESSAGE_SIZE = 2500 };
+  int owned = 1;
+  cnet_sctp_data a = {0}, b = {0};
+  cnet_sctp_data_config ac = config(7300u, 7301u, 58u, 69u,
+      100u, 200u, &owned, 1);
+  cnet_sctp_data_config bc = config(7301u, 7300u, 69u, 58u,
+      200u, 100u, &owned, 1);
+  cnet_sctp_data_reliability timed = {
+    CNET_SCTP_DATA_RELIABILITY_TIMED, 5u
+  };
+  cnet_sctp_data_abandon_event event = {0};
+  cnet_sctp_data_message message = {0};
+  uint8_t payload[MESSAGE_SIZE], first[1200], second[1200], forward[1200];
+  uint8_t sack[1200], next[1200], received[16];
+  size_t first_n = 0u, second_n = 0u, forward_n = 0u, sack_n = 0u;
+  size_t next_n = 0u, received_n = 0u;
+  cnet_sctp_wire_chunk chunk;
+  unsigned int i;
+
+  for (i = 0u; i < MESSAGE_SIZE; ++i) payload[i] = (uint8_t)(i * 29u);
+  assert(cnet_sctp_data_init(&a, &ac, 0u) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_init(&b, &bc, 0u) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_queue_message_pr(&a, 1u, 1u, 53u, 0, &timed,
+      payload, sizeof(payload)) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_pump(&a, 2u, first, sizeof(first), &first_n) ==
+      CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_pump(&a, 3u, second, sizeof(second), &second_n) ==
+      CNET_SCTP_DATA_OK);
+  /* Lose the first fragment but Gap-ACK the second. A3 still requires both
+   * assigned TSNs and the copied unsent suffix to be abandoned together. */
+  assert(cnet_sctp_data_input(&b, 3u, second, second_n,
+      sack, sizeof(sack), &sack_n) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&a, 4u, sack, sack_n,
+      next, sizeof(next), &next_n) == CNET_SCTP_DATA_OK);
+  assert(a.pending.active && a.pending.offset == 2048u &&
+      a.tx[0].used && a.tx[1].used && a.tx[1].gap_acked);
+  assert(cnet_sctp_data_pump(&a, 6u, next, sizeof(next), &next_n) ==
+      CNET_SCTP_DATA_RETRANSMIT_PENDING);
+  assert(next_n == 0u && a.pending.active && a.pending.offset == 2048u &&
+      a.next_tsn == 102u);
+  assert(cnet_sctp_data_advance(&a, 6u, forward, 8u, &forward_n) ==
+      CNET_SCTP_DATA_CAPACITY);
+  assert(forward_n == 0u && a.pending.active &&
+      cnet_sctp_data_take_abandoned(&a, &event) == CNET_SCTP_DATA_EMPTY);
+  assert(cnet_sctp_data_advance(&a, 6u, forward, sizeof(forward),
+      &forward_n) == CNET_SCTP_DATA_OK);
+  chunk = one_chunk(forward, forward_n);
+  assert(chunk.type == 192u && chunk.value_size == 8u &&
+      chunk.value[3] == 101u && chunk.value[5] == 1u &&
+      chunk.value[7] == 0u);
+  assert(!a.pending.active && a.tx_ssn[1] == 1u);
+  assert(cnet_sctp_data_take_abandoned(&a, &event) == CNET_SCTP_DATA_OK);
+  assert(event.stream_id == 1u && event.ppid == 53u &&
+      event.message_identifier == 0u && event.message_size == MESSAGE_SIZE &&
+      event.first_tsn == 100u && event.last_tsn == 101u && event.has_tsn &&
+      !event.unordered && !event.interleaved &&
+      event.reason == CNET_SCTP_DATA_ABANDON_TIMED &&
+      event.reliability.mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
+      event.reliability.value == 5u);
+  assert(cnet_sctp_data_take_abandoned(&a, &event) == CNET_SCTP_DATA_EMPTY);
+  assert(cnet_sctp_data_input(&b, 7u, forward, forward_n,
+      sack, sizeof(sack), &sack_n) == CNET_SCTP_DATA_OK);
+  assert(b.buffered_rx == 0u && b.rx_ssn[1] == 1u);
+  assert(cnet_sctp_data_input(&a, 8u, sack, sack_n,
+      next, sizeof(next), &next_n) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_outbound_drained(&a));
+  assert(cnet_sctp_data_send(&a, 9u, 1u, 53u, 0, "next", 4u,
+      next, sizeof(next), &next_n) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&b, 10u, next, next_n,
+      sack, sizeof(sack), &sack_n) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_take(&b, &message, received, sizeof(received),
+      &received_n) == CNET_SCTP_DATA_OK);
+  assert(received_n == 4u && memcmp(received, "next", 4u) == 0 &&
+      message.stream_sequence == 1u);
+}
+
+static void unsent_timed_message_expires_with_event(void) {
+  int owned = 1;
+  cnet_sctp_data d = {0};
+  cnet_sctp_data_config c = config(7400u, 7401u, 59u, 70u,
+      100u, 200u, &owned, 1);
+  cnet_sctp_data_reliability timed = {
+    CNET_SCTP_DATA_RELIABILITY_TIMED, 5u
+  };
+  cnet_sctp_data_abandon_event event = {0};
+  uint8_t packet[1200];
+  size_t packet_n = 1u;
+  uint64_t deadline = 0u;
+  int has_deadline = 0;
+
+  assert(cnet_sctp_data_init(&d, &c, 0u) == CNET_SCTP_DATA_OK);
+  d.peer_rwnd = 0u;
+  assert(cnet_sctp_data_queue_message_pr(&d, 1u, 2u, 51u, 0, &timed,
+      "never-sent", 10u) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_deadline(&d, &deadline, &has_deadline) ==
+      CNET_SCTP_DATA_OK && has_deadline && deadline == 6u);
+  assert(cnet_sctp_data_pump(&d, 6u, packet, sizeof(packet), &packet_n) ==
+      CNET_SCTP_DATA_RETRANSMIT_PENDING);
+  assert(packet_n == 0u && d.pending.active && d.next_tsn == 100u &&
+      d.tx_ssn[2] == 0u);
+  assert(cnet_sctp_data_advance(&d, 6u, packet, sizeof(packet), &packet_n) ==
+      CNET_SCTP_DATA_OK);
+  assert(packet_n == 0u && !d.pending.active && d.next_tsn == 100u &&
+      d.tx_ssn[2] == 0u);
+  assert(cnet_sctp_data_take_abandoned(&d, &event) == CNET_SCTP_DATA_OK);
+  assert(event.stream_id == 2u && event.ppid == 51u &&
+      event.message_identifier == 0u && event.message_size == 10u &&
+      !event.has_tsn && event.reason == CNET_SCTP_DATA_ABANDON_TIMED);
+}
+
+static void fragmented_interleaved_message_uses_one_i_forward_event(void) {
+  enum { MESSAGE_SIZE = 2500 };
+  int owned = 1;
+  cnet_sctp_data a = {0}, b = {0};
+  cnet_sctp_data_config ac = config(7500u, 7501u, 60u, 71u,
+      100u, 200u, &owned, 1);
+  cnet_sctp_data_config bc = config(7501u, 7500u, 71u, 60u,
+      200u, 100u, &owned, 1);
+  cnet_sctp_data_reliability no_retry = {
+    CNET_SCTP_DATA_RELIABILITY_RETRANSMITS, 0u
+  };
+  cnet_sctp_data_abandon_event event = {0};
+  uint8_t payload[MESSAGE_SIZE], first[1200], second[1200], forward[1200];
+  uint8_t sack[1200], response[1200];
+  size_t first_n = 0u, second_n = 0u, forward_n = 0u, sack_n = 0u;
+  size_t response_n = 0u;
+  cnet_sctp_wire_chunk chunk;
+
+  memset(payload, 0x5a, sizeof(payload));
+  ac.interleaving_supported = 1u;
+  bc.interleaving_supported = 1u;
+  assert(cnet_sctp_data_init(&a, &ac, 0u) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_init(&b, &bc, 0u) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_queue_message_pr(&a, 1u, 2u, 53u, 1, &no_retry,
+      payload, sizeof(payload)) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_pump(&a, 2u, first, sizeof(first), &first_n) ==
+      CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_pump(&a, 3u, second, sizeof(second), &second_n) ==
+      CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&b, 3u, second, second_n,
+      sack, sizeof(sack), &sack_n) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_input(&a, 4u, sack, sack_n,
+      response, sizeof(response), &response_n) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_advance(&a, 102u, forward, sizeof(forward),
+      &forward_n) == CNET_SCTP_DATA_OK);
+  chunk = one_chunk(forward, forward_n);
+  assert(chunk.type == 194u && chunk.value_size == 12u &&
+      chunk.value[3] == 101u && chunk.value[5] == 2u &&
+      chunk.value[7] == 1u && chunk.value[11] == 0u);
+  assert(!a.pending.active && a.tx_mid_unordered[2] == 1u);
+  assert(cnet_sctp_data_take_abandoned(&a, &event) == CNET_SCTP_DATA_OK);
+  assert(event.stream_id == 2u && event.ppid == 53u &&
+      event.message_identifier == 0u && event.message_size == MESSAGE_SIZE &&
+      event.first_tsn == 100u && event.last_tsn == 101u &&
+      event.unordered && event.interleaved && event.has_tsn &&
+      event.reason == CNET_SCTP_DATA_ABANDON_RETRANSMITS &&
+      event.reliability.value == 0u);
+  assert(cnet_sctp_data_input(&b, 103u, forward, forward_n,
+      sack, sizeof(sack), &sack_n) == CNET_SCTP_DATA_OK);
+  assert(b.buffered_rx == 0u && b.rx_mid_unordered_floor[2] == 1u);
+}
+
+static void zero_window_probe_obeys_message_retransmit_policy(void) {
+  int owned = 1;
+  cnet_sctp_data d = {0}, one = {0};
+  cnet_sctp_data_config c = config(7450u, 7451u, 62u, 73u,
+      100u, 200u, &owned, 1);
+  cnet_sctp_data_reliability no_retry = {
+    CNET_SCTP_DATA_RELIABILITY_RETRANSMITS, 0u
+  };
+  cnet_sctp_data_reliability one_retry = {
+    CNET_SCTP_DATA_RELIABILITY_RETRANSMITS, 1u
+  };
+  cnet_sctp_data_abandon_event event = {0};
+  uint8_t packet[1200];
+  size_t packet_n = 0u;
+  cnet_sctp_wire_chunk chunk;
+
+  assert(cnet_sctp_data_init(&d, &c, 0u) == CNET_SCTP_DATA_OK);
+  d.peer_rwnd = 0u;
+  assert(cnet_sctp_data_queue_message_pr(&d, 1u, 2u, 53u, 0, &no_retry,
+      "two", 3u) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_advance(&d, 101u, packet, sizeof(packet), &packet_n) ==
+      CNET_SCTP_DATA_OK);
+  chunk = one_chunk(packet, packet_n);
+  assert(chunk.type == 0u && d.probe_active && d.pending.offset == 1u &&
+      d.probe_deadline_ms == 301u);
+  assert(cnet_sctp_data_advance(&d, 301u, packet, sizeof(packet), &packet_n) ==
+      CNET_SCTP_DATA_OK);
+  chunk = one_chunk(packet, packet_n);
+  assert(chunk.type == 192u && chunk.value_size == 8u &&
+      !d.probe_active && !d.pending.active);
+  assert(cnet_sctp_data_take_abandoned(&d, &event) == CNET_SCTP_DATA_OK);
+  assert(event.message_size == 3u && event.first_tsn == 100u &&
+      event.last_tsn == 100u &&
+      event.reason == CNET_SCTP_DATA_ABANDON_RETRANSMITS);
+
+  assert(cnet_sctp_data_init(&one, &c, 0u) == CNET_SCTP_DATA_OK);
+  one.peer_rwnd = 0u;
+  assert(cnet_sctp_data_queue_message_pr(&one, 1u, 2u, 53u, 0,
+      &one_retry, "two", 3u) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_advance(&one, 101u, packet, sizeof(packet),
+      &packet_n) == CNET_SCTP_DATA_OK);
+  assert(one.probe_active && one.tx[0].retransmits == 0u &&
+      one.tx[0].probe_retransmits == 0u);
+  assert(cnet_sctp_data_advance(&one, 301u, packet, sizeof(packet),
+      &packet_n) == CNET_SCTP_DATA_OK);
+  chunk = one_chunk(packet, packet_n);
+  assert(chunk.type == 0u && one.tx[0].retransmits == 0u &&
+      one.tx[0].probe_retransmits == 1u && one.probe_deadline_ms == 701u);
+  assert(cnet_sctp_data_advance(&one, 701u, packet, sizeof(packet),
+      &packet_n) == CNET_SCTP_DATA_OK);
+  chunk = one_chunk(packet, packet_n);
+  assert(chunk.type == 192u && !one.probe_active && !one.pending.active);
+  assert(cnet_sctp_data_take_abandoned(&one, &event) == CNET_SCTP_DATA_OK);
+  assert(event.message_size == 3u && event.first_tsn == 100u &&
+      event.last_tsn == 100u &&
+      event.reason == CNET_SCTP_DATA_ABANDON_RETRANSMITS);
+}
+
+static void abandonment_event_capacity_is_reserved_at_admission(void) {
+  int owned = 1;
+  cnet_sctp_data a = {0}, b = {0};
+  cnet_sctp_data_config ac = config(7600u, 7601u, 61u, 72u,
+      100u, 200u, &owned, 1);
+  cnet_sctp_data_config bc = config(7601u, 7600u, 72u, 61u,
+      200u, 100u, &owned, 1);
+  cnet_sctp_data_reliability timed = {
+    CNET_SCTP_DATA_RELIABILITY_TIMED, 1u
+  };
+  cnet_sctp_data_abandon_event event = {0};
+  uint8_t data[1200], forward[1200], sack[1200], response[1200];
+  size_t data_n = 0u, forward_n = 0u, sack_n = 0u, response_n = 0u;
+  uint64_t now = 1u;
+  unsigned int i;
+
+  assert(cnet_sctp_data_init(&a, &ac, 0u) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_init(&b, &bc, 0u) == CNET_SCTP_DATA_OK);
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    assert(cnet_sctp_data_send_pr(&a, now, 0u, 53u, 0, &timed,
+        "drop", 4u, data, sizeof(data), &data_n) == CNET_SCTP_DATA_OK);
+    assert(cnet_sctp_data_advance(&a, now + 1u, forward, sizeof(forward),
+        &forward_n) == CNET_SCTP_DATA_OK);
+    assert(cnet_sctp_data_input(&b, now + 2u, forward, forward_n,
+        sack, sizeof(sack), &sack_n) == CNET_SCTP_DATA_OK);
+    assert(cnet_sctp_data_input(&a, now + 3u, sack, sack_n,
+        response, sizeof(response), &response_n) == CNET_SCTP_DATA_OK);
+    now += 4u;
+  }
+  assert(a.abandon_event_count == CNET_SCTP_DATA_TX_SLOTS &&
+      cnet_sctp_data_outbound_drained(&a));
+  data_n = 9u;
+  assert(cnet_sctp_data_send_pr(&a, now, 0u, 53u, 0, &timed,
+      "full", 4u, data, sizeof(data), &data_n) == CNET_SCTP_DATA_CAPACITY);
+  assert(data_n == 0u && a.next_tsn == 116u && a.tx_ssn[0] == 16u);
+  assert(cnet_sctp_data_take_abandoned(&a, &event) == CNET_SCTP_DATA_OK &&
+      event.message_identifier == 0u);
+  assert(cnet_sctp_data_send_pr(&a, now, 0u, 53u, 0, &timed,
+      "room", 4u, data, sizeof(data), &data_n) == CNET_SCTP_DATA_OK);
+}
+
 static void negotiation_is_mandatory(void) {
   int owned = 1;
   cnet_sctp_data d = {0};
@@ -345,6 +607,11 @@ int main(void) {
   ordered_gap_releases_received_message();
   reliable_predecessor_does_not_resurrect_abandoned_data();
   received_abandoned_sequence_remains_deliverable();
+  fragmented_timed_message_abandons_all_assigned_tsns();
+  unsent_timed_message_expires_with_event();
+  zero_window_probe_obeys_message_retransmit_policy();
+  fragmented_interleaved_message_uses_one_i_forward_event();
+  abandonment_event_capacity_is_reserved_at_admission();
   negotiation_is_mandatory();
   forward_input_validation_is_atomic();
   puts("C11 RFC3758 PR-SCTP FORWARD-TSN bounded Owner path: PASS");
