@@ -451,8 +451,24 @@ cnet_sctp_session_status cnet_sctp_session_cancel_unsent_message(
   if (generation != expected_generation) return CNET_SCTP_SESSION_STALE;
   if (!session->association.data_ready) return CNET_SCTP_SESSION_CLOSED;
   pending = &session->association.data.pending;
-  if (!pending->active || pending->stream_id != stream)
-    return CNET_SCTP_SESSION_EMPTY;
+  if (!pending->active || pending->stream_id != stream) {
+    const cnet_sctp_data *data = &session->association.data;
+    size_t i;
+    /* A direct-send message may have no pending copy yet still own real
+     * unretired DATA TSNs. Refuse to misreport such a request as an empty,
+     * safely cancellable queue. Gap-ACKed tickets remain retained. */
+    for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+      const cnet_sctp_data_tx *tx = &data->tx[i];
+      if (tx->used && tx->stream_id == stream &&
+          tx->ppid != CNET_SCTP_DCEP_PPID)
+        return CNET_SCTP_SESSION_BUSY;
+    }
+    /* A FORWARD-TSN is association-owned, with no honest per-SID receipt.
+     * Conservatively block all SIDs while that control is in flight rather
+     * than call local abandonment a remote-confirmed cancellation. */
+    return data->forward_active ? CNET_SCTP_SESSION_BUSY :
+        CNET_SCTP_SESSION_EMPTY;
+  }
   if (pending->ppid == CNET_SCTP_DCEP_PPID)
     return CNET_SCTP_SESSION_PROTOCOL;
   if (pending->has_tsn || pending->offset)

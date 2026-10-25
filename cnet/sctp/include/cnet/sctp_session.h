@@ -273,8 +273,10 @@ cnet_sctp_session_status cnet_sctp_session_queue_reliable_tracked(
 /* Owner-only atomic cancel of a copied message BEFORE its first fragment.
  * Returns the original SID/generation, optional tracked ticket, logical
  * payload size and DCEP policy synchronously and exactly once. Repetition
- * yields EMPTY; wrong generation STALE; a sent DATA/zero-window probe is
- * BUSY; an already expired TIMED message remains on its separate
+ * yields EMPTY only when no pending or retained DATA/protocol-forward
+ * barrier remains; wrong generation STALE. A sent DATA/probe or any
+ * still-retained SID ticket is BUSY, as is a conservatively association-wide
+ * FORWARD-TSN barrier; an already expired TIMED message remains on its separate
  * advance()+MESSAGE_ABANDONED path. Cancel emits NO DATA/FORWARD/ACK,
  * never borrows user data, and releases any reserved reliable tracked slot.
  * Once a DATA TSN exists, safe protocol-level abandonment is a distinct,

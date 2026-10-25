@@ -79,7 +79,13 @@ slot are freed; repeated cancellation returns EMPTY. A partially sent
 message remains BUSY with all tickets intact. A TIMED message past its
 deadline belongs to the existing advance()/MESSAGE_ABANDONED path, not
 to cancellation. No FORWARD-TSN or ACK is fabricated. This synchronous
-result is NOT an asynchronous terminal-event queue.
+result is NOT an asynchronous terminal-event queue. With no pending copied
+record, the query conservatively reports BUSY for any unretired DATA TSN
+on the requested SID, including revocable gap ACK; a retained association
+FORWARD-TSN barrier also reports BUSY even if that SID's DATA tickets were
+already transferred into the control packet. Only after genuine cumulative
+FORWARD retirement can it report EMPTY. This is NOT a new cancellation
+operation for already-sent messages.
 
 This is still a constrained reliable ACK subset: post-TSN cancellation,
 PR-SCTP wire abandonment, terminal failure and full buffered_amount

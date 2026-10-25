@@ -248,11 +248,11 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   assert(cnet_sctp_session_send(&a, 22u, 2u, 1, "drop", 4u,
       lost, sizeof(lost), &lost_size) == CNET_SCTP_SESSION_OK);
   assert(lost_size != 0u);
-  /* A real PR-SCTP DATA TSN was already emitted. App-requested local
-   * pre-TSN cancel must NOT relabel it as a synchronous cancellation, even
-   * if the peer has not ACKed it; retain the original retransmit policy. */
+  /* A real PR-SCTP DATA TSN was already emitted, even though there is no
+   * remaining pending copy. Local pre-TSN cancellation must return BUSY,
+   * not EMPTY, and preserve the actual retransmission-budget policy. */
   assert(cnet_sctp_session_cancel_unsent_message(&a, 23u, 2u,
-      partial_a, &cancelled) == CNET_SCTP_SESSION_EMPTY);
+      partial_a, &cancelled) == CNET_SCTP_SESSION_BUSY);
   assert(cancelled.ticket == 0u && cancelled.generation == 0u);
   assert(cnet_sctp_session_get_tx_usage(&a, 2u, partial_a, &usage) ==
       CNET_SCTP_SESSION_OK);
@@ -278,6 +278,12 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   assert(usage.retained_bytes == 0u && usage.abandoned_bytes == 0u &&
       usage.retained_fragments == 0u && usage.gap_acked_bytes == 0u &&
       usage.association_forward_pending);
+  /* DATA slots have transferred into association-owned FORWARD control.
+   * Even with zero retained DATA bytes, refusal remains conservatively BUSY
+   * until the peer cumulatively ACKs the forward. */
+  assert(cnet_sctp_session_cancel_unsent_message(&a, deadline, 2u,
+      partial_a, &cancelled) == CNET_SCTP_SESSION_BUSY);
+  assert(cancelled.ticket == 0u && cancelled.generation == 0u);
   /* Abandonment is a LOCAL decision, visible exactly once before the peer
    * has ever received or acknowledged the FORWARD control. It is NOT yet
    * evidence that the remote TSN stream has advanced. */
@@ -307,6 +313,11 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   assert(usage.retained_bytes == 0u && usage.abandoned_bytes == 0u &&
       usage.retained_fragments == 0u &&
       !usage.association_forward_pending);
+  /* Once the forward barrier is genuinely retired, the strict pre-TSN
+   * pending-cancel query can distinguish absence from an in-flight send. */
+  assert(cnet_sctp_session_cancel_unsent_message(&a, deadline + 2u, 2u,
+      partial_a, &cancelled) == CNET_SCTP_SESSION_EMPTY);
+  assert(cancelled.ticket == 0u && cancelled.generation == 0u);
   /* The FORWARD SACK retires the control but MUST NOT re-emit the already
    * consumed local abandonment event, nor fabricate a cancellation. */
   assert(cnet_sctp_session_poll(&a, deadline + 4u, &event,
