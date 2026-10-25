@@ -17,9 +17,11 @@ enum {
   SCTP_TYPE_SHUTDOWN_ACK = 8,
   SCTP_TYPE_SHUTDOWN_COMPLETE = 14,
   SCTP_TYPE_RECONFIG = 130,
+  SCTP_TYPE_FORWARD_TSN = 192,
   SCTP_PARAM_COOKIE = 7,
   SCTP_PARAM_UNRECOGNIZED = 8,
   SCTP_PARAM_SUPPORTED_EXTENSIONS = 0x8008,
+  SCTP_PARAM_FORWARD_TSN_SUPPORTED = 0xC000,
   SCTP_ERROR_UNRECOGNIZED = 8,
   SCTP_PARAM_OUTGOING_RESET = 13,
   SCTP_PARAM_INCOMING_RESET = 14,
@@ -27,7 +29,7 @@ enum {
   SCTP_PARAM_RECONFIG_RESPONSE = 16,
   SCTP_PARAM_ADD_OUTGOING = 17,
   SCTP_PARAM_ADD_INCOMING = 18,
-  SCTP_INIT_VALUE_BYTES = 24
+  SCTP_INIT_VALUE_BYTES = 28
 };
 
 static uint16_t rd16(const uint8_t *p) {
@@ -298,7 +300,8 @@ static int valid_sack_shape(const cnet_sctp_wire_chunk *chunk) {
 static cnet_sctp_assoc_status data_prepare(const cnet_sctp_assoc *s,
     cnet_sctp_data *candidate, uint64_t now, uint32_t peer_tag,
     uint32_t peer_tsn, uint32_t peer_rwnd,
-    uint16_t peer_outbound, uint16_t peer_inbound) {
+    uint16_t peer_outbound, uint16_t peer_inbound,
+    int peer_forward_tsn_supported) {
   cnet_sctp_data_config cfg = {0};
   uint16_t outbound, inbound;
   cnet_sctp_data_status result;
@@ -323,6 +326,7 @@ static cnet_sctp_assoc_status data_prepare(const cnet_sctp_assoc *s,
   cfg.t3_initial_ms = s->config.t1_ms; /* private timer baseline until T3 config */
   cfg.t3_max_ms = s->config.t1_max_ms;
   cfg.max_retransmits = s->config.max_retransmits;
+  cfg.forward_tsn_supported = peer_forward_tsn_supported ? 1u : 0u;
   cfg.is_owner = s->config.is_owner;
   cfg.owner_context = s->config.provider_context;
   result = cnet_sctp_data_init(candidate, &cfg, now);
@@ -373,6 +377,10 @@ static void prepare_init(const cnet_sctp_assoc *s,
   wr16(value + 16u, SCTP_PARAM_SUPPORTED_EXTENSIONS);
   wr16(value + 18u, 5u);
   value[20u] = SCTP_TYPE_RECONFIG;
+  /* RFC 3758 3.1 negotiates FORWARD-TSN with a dedicated empty parameter,
+   * not through the RFC 5061 Supported Extensions chunk-type list. */
+  wr16(value + 24u, SCTP_PARAM_FORWARD_TSN_SUPPORTED);
+  wr16(value + 26u, 4u);
 }
 static int good_init_fields(const uint8_t *v, size_t len) {
   return len >= 16u && rd32(v) != 0u && rd32(v + 4u) >= 1500u &&
@@ -502,6 +510,9 @@ static int assoc_chunk_shape_valid(const cnet_sctp_wire_chunk *chunk) {
           parsed == CNET_SCTP_INIT_PARAMS_ABORT_REQUIRED;
     case 3u: /* SACK */
       return valid_sack_shape(chunk);
+    case SCTP_TYPE_FORWARD_TSN:
+      return chunk->value_size >= 4u &&
+          ((chunk->value_size - 4u) & 3u) == 0u;
     case SCTP_TYPE_ABORT:
       /* The T bit is verified with the packet Verification Tag. An ABORT
        * may contain any well-framed number of Error Cause TLVs. */
@@ -809,6 +820,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_start(cnet_sctp_assoc *s,
  * Critical: MAC provider must be a real cryptographic PRF before any release. */
 static cnet_sctp_assoc_status make_cookie(cnet_sctp_assoc *s,
     uint64_t now, const uint8_t *peer_init, int peer_reconfig_supported,
+    int peer_forward_tsn_supported,
     uint8_t cookie[CNET_SCTP_ASSOC_COOKIE_BYTES]) {
   memset(cookie, 0, CNET_SCTP_ASSOC_COOKIE_BYTES);
   cookie[0] = 'S'; cookie[1] = 'C'; cookie[2] = '1'; cookie[3] = '1';
@@ -827,6 +839,7 @@ static cnet_sctp_assoc_status make_cookie(cnet_sctp_assoc *s,
   wr16(cookie + 46, s->config.inbound_streams);
   wr64(cookie + 48, s->config.peer_binding);
   cookie[56] = peer_reconfig_supported ? 1u : 0u;
+  cookie[57] = peer_forward_tsn_supported ? 1u : 0u;
   s->in_progress = 1u;
   if (s->config.mac(s->config.provider_context, cookie,
         CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES,
@@ -853,7 +866,8 @@ static cnet_sctp_assoc_status verify_cookie(cnet_sctp_assoc *s,
       rd32(cookie + 40u) != s->config.receive_window ||
       rd16(cookie + 44u) != s->config.outbound_streams ||
       rd16(cookie + 46u) != s->config.inbound_streams ||
-      rd64(cookie + 48u) != s->config.peer_binding || cookie[56u] > 1u)
+      rd64(cookie + 48u) != s->config.peer_binding ||
+      cookie[56u] > 1u || cookie[57u] > 1u)
     return CNET_SCTP_ASSOC_AUTH;
   s->in_progress = 1u;
   mac_result = s->config.verify_mac(s->config.provider_context, cookie,
@@ -882,7 +896,7 @@ static cnet_sctp_assoc_status handle_init(cnet_sctp_assoc *s, uint64_t now,
     uint8_t *output, size_t cap, size_t *written) {
   enum {
     INIT_ACK_COOKIE_END = 16u + 4u + CNET_SCTP_ASSOC_COOKIE_BYTES,
-    INIT_ACK_BASE = INIT_ACK_COOKIE_END + 8u
+    INIT_ACK_BASE = INIT_ACK_COOKIE_END + 12u
   };
   uint8_t value[INIT_ACK_BASE + CNET_SCTP_INIT_REPORT_BYTES +
                 4u * CNET_SCTP_INIT_REPORT_MAX];
@@ -916,10 +930,10 @@ static cnet_sctp_assoc_status handle_init(cnet_sctp_assoc *s, uint64_t now,
     return CNET_SCTP_ASSOC_CAPACITY;
   memset(value, 0, sizeof(value));
   prepare_init(s, value);
-  /* prepare_init() placed Supported Extensions at offset 16. INIT ACK
-   * requires the State Cookie as well; keep the Cookie first and move the
-   * negotiated extension after it for a canonical, stable packet. */
-  memmove(value + INIT_ACK_COOKIE_END, value + 16u, 8u);
+  /* prepare_init() placed the two extension parameters at offset 16. INIT
+   * ACK requires the State Cookie as well; keep Cookie first and move the
+   * negotiation parameters after it for a canonical, stable packet. */
+  memmove(value + INIT_ACK_COOKIE_END, value + 16u, 12u);
   wr16(value + 16u, SCTP_PARAM_COOKIE);
   wr16(value + 18u, (uint16_t)(4u + CNET_SCTP_ASSOC_COOKIE_BYTES));
   {
@@ -932,7 +946,7 @@ static cnet_sctp_assoc_status handle_init(cnet_sctp_assoc *s, uint64_t now,
   /* If output cannot fit the full required response, do not even call
    * the signing provider; no incomplete signed INIT ACK may escape. */
   status = make_cookie(s, now, chunk->value, params.supports_reconfig,
-      value + 20u);
+      params.supports_forward_tsn, value + 20u);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   status = encode_one(s, rd32(chunk->value), SCTP_TYPE_INIT_ACK,
       value, value_size, scratch, sizeof(scratch), &size);
@@ -1009,6 +1023,8 @@ static cnet_sctp_assoc_status handle_init_ack(cnet_sctp_assoc *s,
     s->peer_outbound_streams = rd16(chunk->value + 8u);
     s->peer_inbound_streams = rd16(chunk->value + 10u);
     s->peer_reconfig_supported = params.supports_reconfig ? 1u : 0u;
+    s->peer_forward_tsn_supported =
+        params.supports_forward_tsn ? 1u : 0u;
     s->expected_peer_reset_request = s->peer_initial_tsn;
   }
   return status;
@@ -1059,7 +1075,7 @@ static cnet_sctp_assoc_status handle_cookie_echo(cnet_sctp_assoc *s,
   if (may_commit) {
     status = data_prepare(s, &candidate, now, peer_tag, peer_tsn,
         rd32(chunk->value + 36u), rd16(chunk->value + 32u),
-        rd16(chunk->value + 34u));
+        rd16(chunk->value + 34u), chunk->value[57u]);
     if (status != CNET_SCTP_ASSOC_OK) return status;
   }
   status = encode_one(s, peer_tag, SCTP_TYPE_COOKIE_ACK,
@@ -1078,6 +1094,7 @@ static cnet_sctp_assoc_status handle_cookie_echo(cnet_sctp_assoc *s,
     s->peer_outbound_streams = rd16(chunk->value + 32u);
     s->peer_inbound_streams = rd16(chunk->value + 34u);
     s->peer_reconfig_supported = chunk->value[56u];
+    s->peer_forward_tsn_supported = chunk->value[57u];
     s->expected_peer_reset_request = peer_tsn;
     s->state = CNET_SCTP_ASSOC_ESTABLISHED;
     s->deadline_ms = 0u;
@@ -1105,7 +1122,8 @@ static cnet_sctp_assoc_status handle_cookie_ack(cnet_sctp_assoc *s,
   if (!s->data_ready) {
     cnet_sctp_assoc_status prepared = data_prepare(s, &s->data, now,
         s->peer_tag, s->peer_initial_tsn, s->peer_receive_window,
-        s->peer_outbound_streams, s->peer_inbound_streams);
+        s->peer_outbound_streams, s->peer_inbound_streams,
+        s->peer_forward_tsn_supported);
     if (prepared != CNET_SCTP_ASSOC_OK) return prepared;
     s->data_ready = 1u;
     s->expected_peer_reset_request = s->peer_initial_tsn;
@@ -3300,6 +3318,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   switch (chunk.type) {
     case 0u: /* DATA */
     case 3u: /* SACK */
+    case SCTP_TYPE_FORWARD_TSN:
       if (!s->data_ready ||
           (header.chunk_count != 1u &&
            s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
@@ -3868,18 +3887,31 @@ cnet_sctp_assoc_status cnet_sctp_assoc_send_message(cnet_sctp_assoc *s,
     uint64_t now, uint16_t stream_id, uint32_t ppid, int unordered,
     const void *payload, size_t n, void *packet, size_t cap,
     size_t *written) {
+  const cnet_sctp_data_reliability reliable = {
+    CNET_SCTP_DATA_RELIABLE, 0u
+  };
+  return cnet_sctp_assoc_send_message_pr(s, now, stream_id, ppid, unordered,
+      &reliable, payload, n, packet, cap, written);
+}
+
+cnet_sctp_assoc_status cnet_sctp_assoc_send_message_pr(cnet_sctp_assoc *s,
+    uint64_t now, uint16_t stream_id, uint32_t ppid, int unordered,
+    const cnet_sctp_data_reliability *reliability,
+    const void *payload, size_t n, void *packet, size_t cap,
+    size_t *written) {
   if (written) *written = 0u;
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
-  if (!payload || !packet || !written) return CNET_SCTP_ASSOC_INVALID;
+  if (!reliability || !payload || !packet || !written)
+    return CNET_SCTP_ASSOC_INVALID;
   if (s->state != CNET_SCTP_ASSOC_ESTABLISHED || !s->data_ready)
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
   if (association_reset_blocks_data(s) ||
       (reset_blocked_streams(s) & reset_stream_bit(stream_id)) != 0u)
     return CNET_SCTP_ASSOC_BUSY;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
-  status = data_result(cnet_sctp_data_send(&s->data, now, stream_id,
-      ppid, unordered, payload, n, packet, cap, written));
+  status = data_result(cnet_sctp_data_send_pr(&s->data, now, stream_id,
+      ppid, unordered, reliability, payload, n, packet, cap, written));
   if (status == CNET_SCTP_ASSOC_OK) s->last_time_ms = now;
   return status;
 }

@@ -41,9 +41,11 @@ typedef struct cnet_sctp_init_param_view {
   size_t report_count;
   size_t report_wire_size; /* sum of padded TLVs within error cause / param */
   cnet_sctp_init_report reports[CNET_SCTP_INIT_REPORT_MAX];
-  /* RFC 5061 Supported Extensions (0x8008) advertised RE-CONFIG (130).
-   * The parameter itself is borrowed only during parsing; this bit is owned. */
+  /* RFC 5061 Supported Extensions (0x8008) and RFC 3758's dedicated
+   * Forward-TSN-Supported parameter (0xC000). The parameters are borrowed
+   * only during parsing; these negotiated capability bits are owned. */
   int supports_reconfig;
+  int supports_forward_tsn;
   int stopped_by_unknown;
 } cnet_sctp_init_param_view;
 

@@ -5,8 +5,17 @@
 
 /* C11-only fixed-capacity SCTP DATA/SACK sub-engine, no automatic I/O. */
 #define DATA_MAGIC UINT32_C(0x53444331)
-enum { CHUNK_DATA = 0, CHUNK_SACK = 3, DATA_HEADER = 12 };
+enum {
+  CHUNK_DATA = 0,
+  CHUNK_SACK = 3,
+  CHUNK_FORWARD_TSN = 192,
+  DATA_HEADER = 12
+};
 enum { DATA_B = 2, DATA_E = 1, DATA_U = 4 };
+enum { PR_NO_LOSS = 0, PR_FAST_LOSS = 1, PR_T3_LOSS = 2 };
+static const cnet_sctp_data_reliability RELIABLE_POLICY = {
+  CNET_SCTP_DATA_RELIABLE, 0u
+};
 
 static uint16_t rd16(const uint8_t *p) {
   return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
@@ -48,7 +57,7 @@ static cnet_sctp_data_tx *oldest_outstanding(cnet_sctp_data *d) {
   unsigned int i;
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
     cnet_sctp_data_tx *slot = &d->tx[i];
-    if (slot->used && !slot->gap_acked &&
+    if (slot->used && !slot->abandoned && !slot->gap_acked &&
         (!oldest || ahead(oldest->tsn, slot->tsn))) oldest = slot;
   }
   return oldest;
@@ -94,7 +103,8 @@ static size_t flight_bytes(const cnet_sctp_data *d) {
   size_t bytes = 0u;
   unsigned int i;
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
-    if (d->tx[i].used && d->tx[i].flight_accounted)
+    if (d->tx[i].used && !d->tx[i].abandoned &&
+        d->tx[i].flight_accounted)
       bytes += d->tx[i].packet_size - 12u;
   return bytes;
 }
@@ -192,6 +202,7 @@ cnet_sctp_data_status cnet_sctp_data_init(cnet_sctp_data *d,
       cfg->t3_initial_ms == 0u ||
       cfg->t3_max_ms < cfg->t3_initial_ms ||
       cfg->t3_max_ms > UINT64_MAX - now ||
+      cfg->forward_tsn_supported > 1u ||
       cfg->max_retransmits == 0u)
     return CNET_SCTP_DATA_INVALID;
   if (d->magic == DATA_MAGIC) return CNET_SCTP_DATA_CLOSED;
@@ -218,13 +229,24 @@ cnet_sctp_data_status cnet_sctp_data_init(cnet_sctp_data *d,
 static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
     uint16_t stream, uint16_t ssn, uint32_t ppid, uint8_t flags,
     const uint8_t *payload, size_t n, void *output, size_t cap,
-    size_t *written, int zero_probe) {
+    size_t *written, int zero_probe,
+    const cnet_sctp_data_reliability *reliability) {
   cnet_sctp_data_tx *slot = NULL;
   uint8_t value[DATA_HEADER + CNET_SCTP_DATA_PAYLOAD_MAX];
   size_t packet_bytes = 0u, i;
   cnet_sctp_data_status status;
-  if (n == 0u || n > CNET_SCTP_DATA_PAYLOAD_MAX)
+  if (n == 0u || n > CNET_SCTP_DATA_PAYLOAD_MAX || !reliability ||
+      reliability->mode < CNET_SCTP_DATA_RELIABLE ||
+      reliability->mode > CNET_SCTP_DATA_RELIABILITY_TIMED ||
+      (reliability->mode == CNET_SCTP_DATA_RELIABLE &&
+       reliability->value != 0u) ||
+      (reliability->mode != CNET_SCTP_DATA_RELIABLE &&
+       !d->config.forward_tsn_supported) ||
+      (reliability->mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
+       (reliability->value == 0u ||
+        now > UINT64_MAX - reliability->value)))
     return CNET_SCTP_DATA_INVALID;
+  if (d->forward_active) return CNET_SCTP_DATA_CAPACITY;
   /* RFC 9260 6.1(B): one new packet may cross cwnd only while flight
    * was below it. Each supported DATA chunk is <= CC_QUANTUM, so this
    * admits at most cwnd + CC_QUANTUM - 1 padded bytes, never another packet.
@@ -266,6 +288,14 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
   slot->flight_accounted = 1u;
   slot->pending_retransmit = 0u;
   slot->ack_counted = 0u;
+  slot->stream_id = stream;
+  slot->ssn = ssn;
+  slot->unordered = (flags & DATA_U) != 0u;
+  slot->reliability_mode = (uint8_t)reliability->mode;
+  slot->reliability_value = reliability->value;
+  slot->expires_at_ms = reliability->mode == CNET_SCTP_DATA_RELIABILITY_TIMED ?
+      now + reliability->value : 0u;
+  slot->abandoned = 0u;
   slot->used = 1u;
   d->in_flight += n;
   if (d->t3_deadline_ms == 0u) d->t3_deadline_ms = now + d->rto_ms;
@@ -276,6 +306,14 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
 
 cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now,
     uint16_t stream, uint32_t ppid, int unordered, const void *payload,
+    size_t n, void *output, size_t cap, size_t *written) {
+  return cnet_sctp_data_send_pr(d, now, stream, ppid, unordered,
+      &RELIABLE_POLICY, payload, n, output, cap, written);
+}
+
+cnet_sctp_data_status cnet_sctp_data_send_pr(cnet_sctp_data *d, uint64_t now,
+    uint16_t stream, uint32_t ppid, int unordered,
+    const cnet_sctp_data_reliability *reliability, const void *payload,
     size_t n, void *output, size_t cap, size_t *written) {
   if (written) *written = 0u;
   cnet_sctp_data_status status = guard(d);
@@ -289,7 +327,7 @@ cnet_sctp_data_status cnet_sctp_data_send(cnet_sctp_data *d, uint64_t now,
   seq = unordered ? 0u : d->tx_ssn[stream];
   status = send_frame(d, now, stream, seq, ppid,
       (uint8_t)(DATA_B | DATA_E | (unordered ? DATA_U : 0u)),
-      (const uint8_t *)payload, n, output, cap, written, 0);
+      (const uint8_t *)payload, n, output, cap, written, 0, reliability);
   if (status == CNET_SCTP_DATA_OK && !unordered) ++d->tx_ssn[stream];
   return status;
 }
@@ -404,7 +442,7 @@ cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d,
       (d->pending.unordered ? DATA_U : 0u));
   status = send_frame(d, now, d->pending.stream_id, d->pending.ssn,
       d->pending.ppid, flags, d->pending.bytes + d->pending.offset,
-      n, output, cap, written, 0);
+      n, output, cap, written, 0, &RELIABLE_POLICY);
   if (status != CNET_SCTP_DATA_OK) return status;
   d->pending.offset += n;
   if (d->pending.offset == d->pending.size) {
@@ -448,6 +486,184 @@ static cnet_sctp_data_status sack_packet(cnet_sctp_data *d,
     offset += 4u;
   }
   return encode_one(d, CHUNK_SACK, 0u, value, offset, out, cap, written);
+}
+
+static void discard_forwarded_partial_messages(cnet_sctp_data *d,
+    uint32_t cumulative) {
+  uint8_t complete[CNET_SCTP_DATA_RX_SLOTS] = {0};
+  size_t i, j;
+  /* First preserve every fully received B..E run. A FORWARD-TSN may advance
+   * across Gap-ACKed DATA; those complete messages still belong to the ULP. */
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
+    const cnet_sctp_data_rx *start = &d->rx[i];
+    size_t members[CNET_SCTP_DATA_RX_SLOTS];
+    size_t count;
+    uint32_t tsn;
+    if (!start->used || (start->flags & DATA_B) == 0u) continue;
+    tsn = start->tsn;
+    for (count = 0u; count < CNET_SCTP_DATA_RX_SLOTS; ++count, ++tsn) {
+      const cnet_sctp_data_rx *fragment = NULL;
+      size_t index = 0u;
+      for (j = 0u; j < CNET_SCTP_DATA_RX_SLOTS; ++j) {
+        if (d->rx[j].used && d->rx[j].tsn == tsn) {
+          fragment = &d->rx[j];
+          index = j;
+          break;
+        }
+      }
+      if (!fragment || fragment->stream_id != start->stream_id ||
+          fragment->ssn != start->ssn || fragment->ppid != start->ppid ||
+          fragment->unordered != start->unordered ||
+          (count != 0u && (fragment->flags & DATA_B) != 0u))
+        break;
+      members[count] = index;
+      if ((fragment->flags & DATA_E) != 0u) {
+        size_t member;
+        for (member = 0u; member <= count; ++member)
+          complete[members[member]] = 1u;
+        break;
+      }
+    }
+  }
+  /* If any retained fragment of an incomplete message lies at/below the
+   * forwarded point, the missing part can never arrive. Remove every
+   * retained fragment with the same message identity as one transaction. */
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
+    const cnet_sctp_data_rx key = d->rx[i];
+    if (!key.used || complete[i] || ahead(key.tsn, cumulative)) continue;
+    for (j = 0u; j < CNET_SCTP_DATA_RX_SLOTS; ++j) {
+      cnet_sctp_data_rx *fragment = &d->rx[j];
+      if (!fragment->used || complete[j] ||
+          fragment->stream_id != key.stream_id ||
+          fragment->ssn != key.ssn || fragment->ppid != key.ppid ||
+          fragment->unordered != key.unordered)
+        continue;
+      d->buffered_rx -= fragment->size;
+      memset(fragment, 0, sizeof(*fragment));
+    }
+  }
+}
+
+static int rx_message_complete(const cnet_sctp_data *d,
+    const cnet_sctp_data_rx *start) {
+  uint32_t tsn;
+  size_t count, i;
+  if (!start || !start->used || (start->flags & DATA_B) == 0u) return 0;
+  tsn = start->tsn;
+  for (count = 0u; count < CNET_SCTP_DATA_RX_SLOTS; ++count, ++tsn) {
+    const cnet_sctp_data_rx *fragment = NULL;
+    for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i)
+      if (d->rx[i].used && d->rx[i].tsn == tsn) {
+        fragment = &d->rx[i];
+        break;
+      }
+    if (!fragment || fragment->stream_id != start->stream_id ||
+        fragment->ssn != start->ssn || fragment->ppid != start->ppid ||
+        fragment->unordered != start->unordered ||
+        (count != 0u && (fragment->flags & DATA_B) != 0u))
+      return 0;
+    if ((fragment->flags & DATA_E) != 0u) return 1;
+  }
+  return 0;
+}
+
+/* Preserve already received ordered messages at/below the peer's skip
+ * ceiling. Select the nearest complete SSN for Owner-pulled delivery; once
+ * it is taken, this helper advances across the next missing range. */
+static void advance_forward_stream(cnet_sctp_data *d, uint16_t stream) {
+  const uint16_t bit = (uint16_t)(UINT16_C(1) << stream);
+  const uint16_t current = d->rx_ssn[stream];
+  const uint16_t ceiling = d->rx_forward_ssn[stream];
+  const uint16_t span = (uint16_t)(ceiling - current);
+  uint16_t nearest = 0u;
+  uint16_t nearest_delta = 0u;
+  size_t i;
+  int found = 0;
+  if ((d->rx_forward_streams & bit) == 0u) return;
+  if (span >= UINT16_C(0x8000)) {
+    d->rx_forward_streams &= (uint16_t)~bit;
+    return;
+  }
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
+    const cnet_sctp_data_rx *start = &d->rx[i];
+    uint16_t delta;
+    if (!start->used || start->unordered || start->stream_id != stream ||
+        (start->flags & DATA_B) == 0u || !rx_message_complete(d, start))
+      continue;
+    delta = (uint16_t)(start->ssn - current);
+    if (delta <= span && (!found || delta < nearest_delta)) {
+      found = 1;
+      nearest = start->ssn;
+      nearest_delta = delta;
+    }
+  }
+  if (found) {
+    d->rx_ssn[stream] = nearest;
+  } else {
+    d->rx_ssn[stream] = (uint16_t)(ceiling + 1u);
+    d->rx_forward_streams &= (uint16_t)~bit;
+  }
+}
+
+/* RFC 3758 3.6: advance the peer cumulative TSN and ordered-stream SSNs in
+ * one bounded transaction. Skipped partial messages are discarded before
+ * any ULP view can escape; output-capacity failure leaves the live TCB intact. */
+static cnet_sctp_data_status input_forward_tsn(cnet_sctp_data *d,
+    uint64_t now, const cnet_sctp_wire_chunk *ch, void *out, size_t cap,
+    size_t *written) {
+  cnet_sctp_data staged;
+  uint32_t cumulative;
+  size_t position;
+  cnet_sctp_data_status status;
+  if (!d->config.forward_tsn_supported || ch->value_size < 4u ||
+      ((ch->value_size - 4u) & 3u) != 0u)
+    return CNET_SCTP_DATA_PROTOCOL;
+  cumulative = rd32(ch->value);
+  memcpy(&staged, d, sizeof(staged));
+  if (cumulative - staged.cumulative_rx == UINT32_C(0x80000000))
+    return CNET_SCTP_DATA_PROTOCOL;
+  if (ahead(cumulative, staged.cumulative_rx)) {
+    const uint32_t distance = cumulative - staged.cumulative_rx;
+    staged.rx_gaps = distance >= 32u ? 0u : staged.rx_gaps >> distance;
+    staged.cumulative_rx = cumulative;
+    while ((staged.rx_gaps & 1u) != 0u) {
+      ++staged.cumulative_rx;
+      staged.rx_gaps >>= 1u;
+    }
+    discard_forwarded_partial_messages(&staged, staged.cumulative_rx);
+    for (position = 4u; position < ch->value_size; position += 4u) {
+      const uint16_t stream = rd16(ch->value + position);
+      const uint16_t ssn = rd16(ch->value + position + 2u);
+      const uint16_t bit = stream < CNET_SCTP_DATA_STREAMS ?
+          (uint16_t)(UINT16_C(1) << stream) : 0u;
+      if (stream >= staged.config.inbound_streams || bit == 0u)
+        return CNET_SCTP_DATA_PROTOCOL;
+      if ((staged.rx_forward_streams & bit) == 0u ||
+          (uint16_t)(ssn - staged.rx_forward_ssn[stream]) <
+              UINT16_C(0x8000)) {
+        staged.rx_forward_streams |= bit;
+        staged.rx_forward_ssn[stream] = ssn;
+      }
+      advance_forward_stream(&staged, stream);
+    }
+  } else {
+    /* Duplicate/old FORWARD-TSN is acknowledged but cannot rewind SSNs. */
+    for (position = 4u; position < ch->value_size; position += 4u) {
+      const uint16_t stream = rd16(ch->value + position);
+      const uint16_t bit = stream < CNET_SCTP_DATA_STREAMS ?
+          (uint16_t)(UINT16_C(1) << stream) : 0u;
+      if (stream >= staged.config.inbound_streams || bit == 0u)
+        return CNET_SCTP_DATA_PROTOCOL;
+    }
+  }
+  status = sack_packet(&staged, staged.cumulative_rx, staged.rx_gaps,
+      rx_available(&staged), 0, 0u, out, cap, written);
+  if (status != CNET_SCTP_DATA_OK) return status;
+  staged.last_advertised_rwnd = (uint32_t)rx_available(&staged);
+  staged.window_update_pending = 0u;
+  staged.last_time_ms = now;
+  memcpy(d, &staged, sizeof(*d));
+  return CNET_SCTP_DATA_OK;
 }
 
 static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
@@ -627,6 +843,12 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
       if (offset >= rd16(p) && offset <= rd16(p + 2u)) coverage[i] = 1u;
     }
     if (coverage[i] != 2u) ++retained_after;
+    if (slot->abandoned) {
+      /* RFC 3758 A2 treats abandonment as final acknowledgement for
+       * retransmission/congestion accounting. A later SACK may release the
+       * retained ticket, but cannot credit bytes or resurrect its flight. */
+      continue;
+    }
     if (coverage[i] == 2u && d->probe_active &&
         slot->tsn == d->probe_tsn) probe_cumul_acked = 1;
     if (coverage[i]) {
@@ -690,7 +912,7 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
       cnet_sctp_data_tx *slot = &d->tx[i];
       const int recovery_hole = d->recovery_active && progress != 0u &&
           blocks != 0u && ahead(cumulative + prev_end, slot->tsn);
-      if (slot->used && coverage[i] == 0u &&
+      if (slot->used && !slot->abandoned && coverage[i] == 0u &&
           (slot->gap_acked || recovery_hole ||
            (has_higher && ahead(highest_new, slot->tsn))) &&
           slot->missing_reports < 3u)
@@ -700,10 +922,15 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
     cnet_sctp_data_tx *slot = &d->tx[i];
     if (!slot->used) continue;
-    if (!coverage[i] && slot->missing_reports >= 3u &&
+    if (!slot->abandoned && !coverage[i] && slot->missing_reports >= 3u &&
         !slot->fast_retransmitted) slot->pending_retransmit = 1u;
     if (coverage[i] == 2u) {
       memset(slot, 0, sizeof(*slot));
+    } else if (slot->abandoned) {
+      slot->gap_acked = coverage[i];
+      slot->flight_accounted = 0u;
+      slot->pending_retransmit = 0u;
+      slot->missing_reports = 0u;
     } else {
       slot->gap_acked = coverage[i];
       slot->flight_accounted = coverage[i] == 0u;
@@ -724,6 +951,15 @@ static cnet_sctp_data_status input_sack(cnet_sctp_data *d, uint64_t now,
   }
   if (t3_acknowledged) d->t3_wait_ack = 0u;
   d->last_ack = cumulative;
+  if (d->forward_active &&
+      !ahead(d->forward_cumulative_tsn, cumulative)) {
+    d->forward_active = 0u;
+    d->forward_cumulative_tsn = 0u;
+    d->forward_deadline_ms = 0u;
+    d->forward_retransmits = 0u;
+    d->forward_packet_size = 0u;
+    memset(d->forward_packet, 0, sizeof(d->forward_packet));
+  }
   if (d->recovery_active && !ahead(d->recovery_exit_tsn, cumulative))
     d->recovery_active = 0u;
   d->peer_rwnd = peer_window;
@@ -782,7 +1018,8 @@ cnet_sctp_data_status cnet_sctp_data_shutdown_cumack(cnet_sctp_data *d,
 }
 int cnet_sctp_data_outbound_drained(const cnet_sctp_data *d) {
   unsigned int i;
-  if (!d || d->magic != DATA_MAGIC || d->pending.active) return 0;
+  if (!d || d->magic != DATA_MAGIC || d->pending.active ||
+      d->forward_active) return 0;
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
     if (d->tx[i].used) return 0;
   return 1;
@@ -809,6 +1046,8 @@ cnet_sctp_data_status cnet_sctp_data_reset_association(cnet_sctp_data *d,
   memset(&d->pending, 0, sizeof(d->pending));
   memset(d->tx_ssn, 0, sizeof(d->tx_ssn));
   memset(d->rx_ssn, 0, sizeof(d->rx_ssn));
+  memset(d->rx_forward_ssn, 0, sizeof(d->rx_forward_ssn));
+  d->rx_forward_streams = 0u;
   d->next_tsn = local_next_tsn;
   d->last_ack = local_next_tsn - 1u;
   d->cumulative_rx = peer_next_tsn - 1u;
@@ -853,8 +1092,12 @@ void cnet_sctp_data_reset_outbound_ssn(cnet_sctp_data *d,
 void cnet_sctp_data_reset_inbound_ssn(cnet_sctp_data *d,
     uint16_t stream_id) {
   if (d && d->magic == DATA_MAGIC &&
-      stream_id < d->config.inbound_streams)
+      stream_id < d->config.inbound_streams) {
     d->rx_ssn[stream_id] = 0u;
+    d->rx_forward_ssn[stream_id] = 0u;
+    d->rx_forward_streams &=
+        (uint16_t)~(uint16_t)(UINT16_C(1) << stream_id);
+  }
 }
 
 cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now,
@@ -880,6 +1123,8 @@ cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now,
       return input_data(d, now, &chunk, out, cap, written);
     if (chunk.type == CHUNK_SACK)
       return input_sack(d, now, &chunk);
+    if (chunk.type == CHUNK_FORWARD_TSN)
+      return input_forward_tsn(d, now, &chunk, out, cap, written);
     return CNET_SCTP_DATA_PROTOCOL;
   }
   /* RFC 9260 6.9: receive multiple DATA chunks and at most one
@@ -1003,7 +1248,10 @@ static cnet_sctp_data_status take_message(cnet_sctp_data *d,
       meta->size = copied;
       meta->unordered = unordered;
       *written = copied;
-      if (!unordered) ++d->rx_ssn[stream_id];
+      if (!unordered) {
+        ++d->rx_ssn[stream_id];
+        advance_forward_stream(d, stream_id);
+      }
       /* ULP released RX tickets: schedule an explicit SACK when a closed
        * advertised window has reopened by at least one full payload slot. */
       if (d->last_advertised_rwnd == 0u &&
@@ -1051,6 +1299,137 @@ cnet_sctp_data_status cnet_sctp_data_window_update(cnet_sctp_data *d,
   return CNET_SCTP_DATA_OK;
 }
 
+static cnet_sctp_data_tx *find_tx(cnet_sctp_data *d, uint32_t tsn) {
+  size_t i;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+    if (d->tx[i].used && d->tx[i].tsn == tsn) return &d->tx[i];
+  return NULL;
+}
+
+static void recompute_flight(cnet_sctp_data *d) {
+  size_t i;
+  d->in_flight = 0u;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+    if (d->tx[i].used && !d->tx[i].abandoned && !d->tx[i].gap_acked)
+      d->in_flight += d->tx[i].user_size;
+}
+
+/* Mark due RFC 3758 records, then publish one cumulative FORWARD-TSN only
+ * when every TSN from last_ack+1 is either abandoned or already Gap-ACKed.
+ * The fixed stream array bounds the stream/SSN pairs and the copied packet
+ * owns the retransmission ticket. */
+static cnet_sctp_data_status emit_forward_tsn(cnet_sctp_data *d,
+    uint64_t now, int loss_kind, uint32_t loss_tsn,
+    void *out, size_t cap, size_t *written) {
+  cnet_sctp_data staged;
+  uint8_t value[4u + 4u * CNET_SCTP_DATA_STREAMS] = {0};
+  uint16_t stream_ssn[CNET_SCTP_DATA_STREAMS] = {0};
+  uint16_t streams = 0u;
+  uint32_t cursor, cumulative;
+  size_t i, value_size = 4u, packet_size = 0u;
+  int abandoned_seen = 0;
+  int loss_abandoned = 0;
+  cnet_sctp_data_status status;
+  if (!d->config.forward_tsn_supported) return CNET_SCTP_DATA_EMPTY;
+  memcpy(&staged, d, sizeof(staged));
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    cnet_sctp_data_tx *tx = &staged.tx[i];
+    if (!tx->used || tx->abandoned ||
+        tx->reliability_mode == CNET_SCTP_DATA_RELIABLE)
+      continue;
+    if ((tx->reliability_mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
+         now >= tx->expires_at_ms) ||
+        (loss_kind != PR_NO_LOSS && tx->tsn == loss_tsn &&
+         tx->reliability_mode == CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
+         tx->retransmits >= tx->reliability_value)) {
+      tx->abandoned = 1u;
+      tx->flight_accounted = 0u;
+      tx->pending_retransmit = 0u;
+      if (tx->tsn == loss_tsn) loss_abandoned = 1;
+    }
+  }
+  cursor = staged.last_ack + 1u;
+  cumulative = staged.last_ack;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i, ++cursor) {
+    cnet_sctp_data_tx *tx = find_tx(&staged, cursor);
+    if (!tx || (!tx->abandoned && !tx->gap_acked)) break;
+    cumulative = cursor;
+    if (tx->abandoned) {
+      abandoned_seen = 1;
+      if (!tx->unordered) {
+        const uint16_t bit = (uint16_t)(UINT16_C(1) << tx->stream_id);
+        if ((streams & bit) == 0u ||
+            (uint16_t)(tx->ssn - stream_ssn[tx->stream_id]) <
+                UINT16_C(0x8000))
+          stream_ssn[tx->stream_id] = tx->ssn;
+        streams |= bit;
+      }
+    }
+  }
+  recompute_flight(&staged);
+  if (!abandoned_seen) {
+    memcpy(d, &staged, sizeof(*d));
+    return CNET_SCTP_DATA_EMPTY;
+  }
+  /* RFC 3758 F5: abandoning a chunk at a point where ordinary SCTP would
+   * mark it for fast/T3 retransmission keeps the corresponding congestion
+   * response. Stage it with the FORWARD-TSN so short output is atomic. */
+  if (loss_abandoned && loss_kind == PR_FAST_LOSS &&
+      !staged.recovery_active) {
+    staged.ssthresh = staged.cwnd / 2u;
+    if (staged.ssthresh < 4u * CNET_SCTP_DATA_MTU)
+      staged.ssthresh = 4u * CNET_SCTP_DATA_MTU;
+    staged.cwnd = staged.ssthresh;
+    staged.partial_bytes_acked = 0u;
+    staged.recovery_exit_tsn = staged.next_tsn - 1u;
+    staged.recovery_active = 1u;
+  } else if (loss_abandoned && loss_kind == PR_T3_LOSS) {
+    staged.ssthresh = staged.cwnd / 2u;
+    if (staged.ssthresh < 4u * CNET_SCTP_DATA_MTU)
+      staged.ssthresh = 4u * CNET_SCTP_DATA_MTU;
+    staged.cwnd = CNET_SCTP_DATA_MTU;
+    staged.recovery_active = 0u;
+    staged.partial_bytes_acked = 0u;
+    staged.rto_ms = staged.rto_ms > staged.config.t3_max_ms / 2u ?
+        staged.config.t3_max_ms : staged.rto_ms * 2u;
+    for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+      if (!staged.tx[i].used) continue;
+      staged.tx[i].missing_reports = 0u;
+      staged.tx[i].pending_retransmit = 0u;
+      staged.tx[i].fast_retransmitted = 0u;
+    }
+  }
+  wr32(value, cumulative);
+  for (i = 0u; i < CNET_SCTP_DATA_STREAMS; ++i) {
+    if ((streams & (uint16_t)(UINT16_C(1) << i)) == 0u) continue;
+    wr16(value + value_size, (uint16_t)i);
+    wr16(value + value_size + 2u, stream_ssn[i]);
+    value_size += 4u;
+  }
+  if (now > UINT64_MAX - staged.rto_ms) return CNET_SCTP_DATA_CLOCK;
+  status = encode_one(&staged, CHUNK_FORWARD_TSN, 0u, value, value_size,
+      staged.forward_packet, sizeof(staged.forward_packet), &packet_size);
+  if (status != CNET_SCTP_DATA_OK) return status;
+  if (packet_size > cap) return CNET_SCTP_DATA_CAPACITY;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+    if (staged.tx[i].used && !ahead(staged.tx[i].tsn, cumulative))
+      memset(&staged.tx[i], 0, sizeof(staged.tx[i]));
+  recompute_flight(&staged);
+  staged.forward_active = 1u;
+  staged.forward_cumulative_tsn = cumulative;
+  staged.forward_packet_size = packet_size;
+  staged.forward_deadline_ms = now + staged.rto_ms;
+  staged.forward_retransmits = 0u;
+  staged.t3_deadline_ms = oldest_outstanding(&staged) ?
+      now + staged.rto_ms : 0u;
+  staged.t3_wait_ack = 0u;
+  staged.last_time_ms = now;
+  memcpy(out, staged.forward_packet, packet_size);
+  *written = packet_size;
+  memcpy(d, &staged, sizeof(*d));
+  return CNET_SCTP_DATA_OK;
+}
+
 cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
     void *out, size_t cap, size_t *written) {
   if (written) *written = 0u;
@@ -1059,6 +1438,29 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!out || !written) return CNET_SCTP_DATA_INVALID;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  if (d->forward_active) {
+    if (now < d->forward_deadline_ms) {
+      d->last_time_ms = now;
+      return CNET_SCTP_DATA_OK;
+    }
+    if (d->forward_retransmits >= d->config.max_retransmits) {
+      d->closed = 1u;
+      return CNET_SCTP_DATA_EXPIRED;
+    }
+    if (d->forward_packet_size > cap) return CNET_SCTP_DATA_CAPACITY;
+    if (now > UINT64_MAX - d->rto_ms) return CNET_SCTP_DATA_CLOCK;
+    memcpy(out, d->forward_packet, d->forward_packet_size);
+    *written = d->forward_packet_size;
+    ++d->forward_retransmits;
+    d->forward_deadline_ms = now + d->rto_ms;
+    d->last_time_ms = now;
+    return CNET_SCTP_DATA_OK;
+  }
+  status = emit_forward_tsn(d, now, PR_NO_LOSS, 0u,
+      out, cap, written);
+  if (status == CNET_SCTP_DATA_OK || status == CNET_SCTP_DATA_CAPACITY ||
+      status == CNET_SCTP_DATA_CLOCK)
+    return status;
   /* RFC 9260 6.1(A): Owner-driven zero-window probing after one RTO,
    * exponentially bounded. No T3 cwnd reduction or retransmit-budget
    * consumption while the peer continues advertising rwnd=0. */
@@ -1099,7 +1501,7 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
             (d->pending.unordered ? DATA_U : 0u));
         status = send_frame(d, now, d->pending.stream_id, d->pending.ssn,
             d->pending.ppid, flags, d->pending.bytes + d->pending.offset,
-            1u, out, cap, written, 1);
+            1u, out, cap, written, 1, &RELIABLE_POLICY);
         if (status != CNET_SCTP_DATA_OK) return status;
         d->probe_tsn = d->next_tsn - 1u;
         d->probe_active = 1u;
@@ -1132,12 +1534,24 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
     unsigned int i;
     for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
       cnet_sctp_data_tx *slot = &d->tx[i];
-      if (slot->used && !slot->gap_acked && !slot->fast_retransmitted &&
+      if (slot->used && !slot->abandoned && !slot->gap_acked &&
+          !slot->fast_retransmitted &&
           slot->pending_retransmit &&
           (!fast || ahead(fast->tsn, slot->tsn)))
         fast = slot;
     }
     if (fast) {
+      if (fast->reliability_mode ==
+              CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
+          fast->retransmits >= fast->reliability_value) {
+        status = emit_forward_tsn(d, now, PR_FAST_LOSS, fast->tsn,
+            out, cap, written);
+        if (status != CNET_SCTP_DATA_EMPTY) return status;
+        if (fast->abandoned) {
+          d->last_time_ms = now;
+          return CNET_SCTP_DATA_OK;
+        }
+      }
       /* RFC 9260 7.2.4 permits the first fast retransmission to cross
        * the reduced cwnd, but subsequent retransmissions must wait until
        * the actual outstanding flight has drained to the new window.
@@ -1191,6 +1605,19 @@ t3_due:
     d->last_time_ms = now;
     return CNET_SCTP_DATA_OK;
   }
+  if (oldest->reliability_mode ==
+          CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
+      oldest->retransmits >= oldest->reliability_value) {
+    status = emit_forward_tsn(d, now, PR_T3_LOSS, oldest->tsn,
+        out, cap, written);
+    if (status != CNET_SCTP_DATA_EMPTY) return status;
+    oldest = oldest_outstanding(d);
+    if (!oldest) {
+      d->t3_deadline_ms = 0u;
+      d->last_time_ms = now;
+      return CNET_SCTP_DATA_OK;
+    }
+  }
   if (oldest->retransmits >= d->config.max_retransmits) {
     d->closed = 1u; /* terminal is observable, no background retry */
     return CNET_SCTP_DATA_EXPIRED;
@@ -1237,6 +1664,37 @@ cnet_sctp_data_status cnet_sctp_data_deadline(cnet_sctp_data *d,
   if (!deadline || !has_deadline) return CNET_SCTP_DATA_INVALID;
   *has_deadline = d->t3_deadline_ms != 0u;
   *deadline = d->t3_deadline_ms;
+  if (d->forward_active &&
+      (!*has_deadline || d->forward_deadline_ms < *deadline)) {
+    *has_deadline = 1;
+    *deadline = d->forward_deadline_ms;
+  }
+  if (!d->forward_active && d->config.forward_tsn_supported) {
+    uint32_t cursor = d->last_ack + 1u;
+    size_t i;
+    int abandoned = 0;
+    for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i, ++cursor) {
+      cnet_sctp_data_tx *tx = find_tx(d, cursor);
+      if (!tx || (!tx->abandoned && !tx->gap_acked)) break;
+      if (tx->abandoned) abandoned = 1;
+    }
+    if (abandoned && (!*has_deadline || d->last_time_ms < *deadline)) {
+      *has_deadline = 1;
+      *deadline = d->last_time_ms;
+    }
+  }
+  {
+    size_t i;
+    for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+      const cnet_sctp_data_tx *tx = &d->tx[i];
+      if (tx->used && !tx->abandoned &&
+          tx->reliability_mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
+          (!*has_deadline || tx->expires_at_ms < *deadline)) {
+        *has_deadline = 1;
+        *deadline = tx->expires_at_ms;
+      }
+    }
+  }
   if (d->peer_rwnd == 0u && d->probe_deadline_ms &&
       (d->probe_active || !has_retained_tx(d))) {
     *has_deadline = 1;
@@ -1265,6 +1723,8 @@ cnet_sctp_data_status cnet_sctp_data_stop(cnet_sctp_data *d) {
   d->partial_bytes_acked = 0u;
   d->buffered_rx = 0u;
   d->rx_gaps = 0u;
+  memset(d->rx_forward_ssn, 0, sizeof(d->rx_forward_ssn));
+  d->rx_forward_streams = 0u;
   d->last_advertised_rwnd = 0u;
   d->window_update_pending = 0u;
   d->t3_deadline_ms = 0u;
@@ -1272,6 +1732,12 @@ cnet_sctp_data_status cnet_sctp_data_stop(cnet_sctp_data *d) {
   d->probe_interval_ms = 0u;
   d->probe_active = 0u;
   d->probe_unanswered = 0u;
+  d->forward_active = 0u;
+  d->forward_cumulative_tsn = 0u;
+  d->forward_deadline_ms = 0u;
+  d->forward_retransmits = 0u;
+  d->forward_packet_size = 0u;
+  memset(d->forward_packet, 0, sizeof(d->forward_packet));
   d->closed = 1u;
   return CNET_SCTP_DATA_OK;
 }

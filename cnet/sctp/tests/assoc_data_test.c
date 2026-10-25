@@ -4562,7 +4562,54 @@ static void association_reset_response_preserves_unread_data(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void pr_sctp_timed_forward_tsn_roundtrip(void) {
+  cnet_sctp_assoc a, b, before;
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_data_reliability timed = {
+    CNET_SCTP_DATA_RELIABILITY_TIMED, 5u
+  };
+  cnet_sctp_data_message message = {0};
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  cnet_sctp_wire_chunk chunk = {0};
+  uint8_t data[1200], forward[1200], sack[1200], payload[8];
+  size_t data_n = 0u, forward_n = 0u, sack_n = 0u, payload_n = 0u;
+  uint64_t deadline = 0u;
+  int has_deadline = 0;
+
+  ready_pair(&a, &b, &ca, &cb);
+  assert(a.peer_forward_tsn_supported && b.peer_forward_tsn_supported &&
+      a.data.config.forward_tsn_supported &&
+      b.data.config.forward_tsn_supported);
+  assert(cnet_sctp_assoc_send_message_pr(&a, 6u, 1u, 53u, 0, &timed,
+      "lost", 4u, data, sizeof(data), &data_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
+      CNET_SCTP_ASSOC_OK && has_deadline && deadline == 11u);
+  memcpy(&before, &a, sizeof(before));
+  assert(cnet_sctp_assoc_advance(&a, 11u, forward, 8u, &forward_n) ==
+      CNET_SCTP_ASSOC_CAPACITY);
+  assert(forward_n == 0u && memcmp(&a, &before, sizeof(a)) == 0);
+  assert(cnet_sctp_assoc_advance(&a, 11u, forward, sizeof(forward),
+      &forward_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_wire_decode(forward, forward_n, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
+      chunk.type == 192u && chunk.value_size == 8u);
+  assert(cnet_sctp_assoc_input(&b, 12u, forward, forward_n,
+      sack, sizeof(sack), &sack_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_take_message(&b, &message, payload,
+      sizeof(payload), &payload_n) == CNET_SCTP_ASSOC_EMPTY);
+  assert(cnet_sctp_assoc_input(&a, 13u, sack, sack_n,
+      data, sizeof(data), &data_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_data_outbound_drained(&a.data));
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 int main(void) {
+  pr_sctp_timed_forward_tsn_roundtrip();
   association_reset_roundtrip_rebases_tsn_and_ssn();
   association_reset_collision_and_minimum_interval();
   association_reset_admission_and_backpressure_are_atomic();

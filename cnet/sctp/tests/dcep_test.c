@@ -96,9 +96,15 @@ static void unordered_and_negative(void) {
   assert(cnet_sctp_dcep_input(&server, 1u, ack, na,
       open, sizeof(open), &n) == CNET_SCTP_DCEP_OK);
   assert(cnet_sctp_dcep_ready(&server, 1u));
-  assert(cnet_sctp_dcep_open(&client, 2u, 0x01u, 0u, 2u,
+  assert(cnet_sctp_dcep_open(&client, 4u, 0x01u, 0u, 0x01020304u,
       NULL, 0u, NULL, 0u,
-      open, sizeof(open), &n) == CNET_SCTP_DCEP_UNSUPPORTED);
+      open, sizeof(open), &n) == CNET_SCTP_DCEP_OK);
+  assert(n == 12u && open[1] == 0x01u && open[4] == 1u &&
+      open[5] == 2u && open[6] == 3u && open[7] == 4u);
+  assert(cnet_sctp_dcep_input(&server, 4u, open, n,
+      ack, sizeof(ack), &na) == CNET_SCTP_DCEP_OK);
+  assert(na == 1u && server.channels[4].channel_type == 0x01u &&
+      server.channels[4].reliability == 0x01020304u);
   assert(cnet_sctp_dcep_open(&client, 2u, 0x00u, 0u, 0u,
       invalid_utf8, sizeof(invalid_utf8), NULL, 0u,
       open, sizeof(open), &n) == CNET_SCTP_DCEP_PROTOCOL);

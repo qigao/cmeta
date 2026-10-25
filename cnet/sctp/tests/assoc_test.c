@@ -211,7 +211,7 @@ static void init_ack_capacity_preserves_input_watermark(void) {
   setup(&a, &b, &ca, &cb);
   assert(cnet_sctp_assoc_start(&a, 10u, packet, sizeof(packet),
       &packet_n) == CNET_SCTP_ASSOC_OK);
-  assert(packet_n == 40u && b.state == CNET_SCTP_ASSOC_CLOSED);
+  assert(packet_n == 44u && b.state == CNET_SCTP_ASSOC_CLOSED);
   memcpy(&before, &b, sizeof(before));
   memset(output, 0xCC, sizeof(output));
   assert(cnet_sctp_assoc_input(&b, now, packet, packet_n, output, 8u,
@@ -251,7 +251,7 @@ static void normal_handshake(void) {
   assert(cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_CLOSED);
   assert(cnet_sctp_assoc_start(&a, 10u, wire_init, sizeof(wire_init), &n_init) ==
          CNET_SCTP_ASSOC_OK);
-  assert(n_init == 40u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
+  assert(n_init == 44u && cnet_sctp_assoc_state_get(&a) == CNET_SCTP_ASSOC_COOKIE_WAIT);
   retag_single_chunk_flags(wire_init, n_init, 0x80u); /* INIT */
   assert(cnet_sctp_assoc_next_deadline(&a, &deadline, &has_deadline) ==
          CNET_SCTP_ASSOC_OK);
@@ -261,7 +261,7 @@ static void normal_handshake(void) {
   assert(cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
   assert(cnet_sctp_assoc_input(&b, 20u, wire_init, n_init,
                                wire_ack, sizeof(wire_ack), &n_ack) == CNET_SCTP_ASSOC_OK);
-  assert(n_ack == 136u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
+  assert(n_ack == 140u && cnet_sctp_assoc_state_get(&b) == CNET_SCTP_ASSOC_CLOSED);
   retag_single_chunk_flags(wire_ack, n_ack, 0xA0u); /* INIT ACK */
   assert(cnet_sctp_assoc_input(&a, 30u, wire_ack, n_ack,
                                wire_echo, 4u, &n_echo) == CNET_SCTP_ASSOC_CAPACITY);
@@ -551,11 +551,11 @@ static void init_tlv_wire_gate(void) {
   assert(header.chunk_count == 1u && header.verification_tag == a.local_tag);
   assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK);
   assert(chunk.type == 2u && chunk.value_size >= 128u);
-  /* 120 bytes fixed INIT ACK + Cookie + Supported Extensions, followed by
-   * the required Unrecognized Parameter report. */
-  assert(chunk.value[120u] == 0u && chunk.value[121u] == 8u);
-  assert(chunk.value[122u] == 0u && chunk.value[123u] == 8u);
-  assert(chunk.value[124u] == 0x40u && chunk.value[125u] == 3u);
+  /* 124 bytes fixed INIT ACK + Cookie + both extension parameters, followed
+   * by the required Unrecognized Parameter report. */
+  assert(chunk.value[124u] == 0u && chunk.value[125u] == 8u);
+  assert(chunk.value[126u] == 0u && chunk.value[127u] == 8u);
+  assert(chunk.value[128u] == 0x40u && chunk.value[129u] == 3u);
   assert(cnet_sctp_assoc_input(&a, 3u, ack, ack_n, echo,
                                sizeof(echo), &echo_n) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_input(&b, 4u, echo, echo_n, confirm,

@@ -30,7 +30,7 @@ typedef int (*cnet_sctp_dcep_owner_fn)(void *ctx);
 typedef struct cnet_sctp_dcep_channel {
   uint16_t sid, priority;
   uint32_t reliability;
-  uint8_t channel_type; /* Only 0x00 and 0x80 admitted until PR-SCTP */
+  uint8_t channel_type; /* reliable, max-retransmit, or timed; ordered/U bit */
   uint8_t state; /* 0 free, 1 local WAIT_ACK, 2 open, 3 peer ACK_PENDING */
   uint8_t locally_initiated; /* never accept ACK for a peer-opened stream */
   uint8_t label[CNET_SCTP_DCEP_TEXT_MAX];
