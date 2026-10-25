@@ -138,6 +138,7 @@ static int session_round_trip(void) {
   cnet_sctp_session_event event = {0};
   cnet_sctp_session_tx_usage tx_usage = {0};
   cnet_sctp_session_reliable_ack acked = {0};
+  cnet_sctp_session_unsent_cancelled cancelled = {0};
   uint8_t first[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t second[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t third[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
@@ -155,6 +156,8 @@ static int session_round_trip(void) {
   uint64_t old_ticket = 0u, gap_ticket_a = 0u, gap_ticket_b = 0u;
   uint64_t first_batch_ticket = 0u, next_batch_ticket = 0u;
   uint64_t fragment_ticket = 0u, reordered_ticket = 0u;
+  uint64_t timed_generation = 0u, cancelled_ticket = 0u;
+  uint64_t post_cancel_ticket = 0u;
   uint32_t last_fragment_tsn = 0u, withheld_tsn = 0u;
   uint32_t reordered_last_tsn = 0u;
   uint32_t gap_cum_ack = 0u;
@@ -362,8 +365,9 @@ static int session_round_trip(void) {
           message, sizeof(message), first, sizeof(first),
           &first_size) != CNET_SCTP_SESSION_OK ||
       event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
-      event.stream_id != 2u)
+      event.stream_id != 2u || event.generation == 0u)
     goto cleanup;
+  timed_generation = event.generation;
   now_ms += 9u;
   if (cnet_sctp_session_queue_message(client, now_ms, 2u, 1,
           "expire", 6u) != CNET_SCTP_SESSION_OK)
@@ -430,6 +434,33 @@ static int session_round_trip(void) {
       event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
       event.stream_id != 2u || !event.binary || event.message_size != 0u ||
       event.ppid != 57u)
+    goto cleanup;
+
+  /* Untracked, pre-TSN TIMED cancellation is a synchronous outcome,
+   * NOT a DATA abandonment or fake FORWARD-TSN. A logical empty text
+   * record must report size=0 (though PPID56 wire storage is one byte).
+   * Repeated cancel is EMPTY; no SSN/TSN, packet or ULP event is created. */
+  if (cnet_sctp_session_queue_message(client, now_ms + 515u,
+          2u, 0, NULL, 0u) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_cancel_unsent_message(client, now_ms + 515u,
+          2u, timed_generation, &cancelled) != CNET_SCTP_SESSION_OK ||
+      cancelled.generation != timed_generation ||
+      cancelled.ticket != 0u || cancelled.stream_id != 2u ||
+      cancelled.ppid != 56u || cancelled.message_size != 0u ||
+      cancelled.binary || cancelled.unordered ||
+      cancelled.reliability.mode != CNET_SCTP_SESSION_TIMED ||
+      cancelled.reliability.value != 500u ||
+      cnet_sctp_session_cancel_unsent_message(client, now_ms + 515u,
+          2u, timed_generation, &cancelled) != CNET_SCTP_SESSION_EMPTY ||
+      cancelled.ticket != 0u || cancelled.generation != 0u)
+    goto cleanup;
+  first_size = 0u;
+  if (cnet_sctp_session_pump_message(client, now_ms + 515u,
+          first, sizeof(first), &first_size) != CNET_SCTP_SESSION_EMPTY ||
+      first_size != 0u ||
+      cnet_sctp_session_poll(client, now_ms + 515u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_EMPTY)
     goto cleanup;
 
   /* ACK-gated reset admission: receiving a DATA message is NOT proof
@@ -884,6 +915,16 @@ static int session_round_trip(void) {
           message, sizeof(message), second, sizeof(second),
           &second_size) != CNET_SCTP_SESSION_EMPTY)
     goto cleanup;
+  /* Once any DATA fragment has a TSN, cancellation becomes BUSY and
+   * must not discard the pending suffix or already retained TX ticket. */
+  if (cnet_sctp_session_cancel_unsent_message(client, now_ms + 638u,
+          0u, client_new_generation, &cancelled) !=
+              CNET_SCTP_SESSION_BUSY ||
+      cancelled.ticket != 0u || cancelled.generation != 0u ||
+      cnet_sctp_session_get_tx_usage(client, 0u,
+          client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
+      tx_usage.queued_bytes == 0u || tx_usage.retained_bytes == 0u)
+    goto cleanup;
   first_size = 0u;
   if (cnet_sctp_session_pump_message(client, now_ms + 640u,
           first, sizeof(first), &first_size) != CNET_SCTP_SESSION_OK ||
@@ -1026,8 +1067,71 @@ static int session_round_trip(void) {
           CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u)
     goto cleanup;
 
+  /* Tracked reliable queued message: cancel while NO DATA TSN exists.
+   * Wrong generation and foreign Owner are failure-atomic. Success returns
+   * the original nonzero receipt token and generation exactly once, and
+   * must never later appear as a cumulative ACK. */
+  if (cnet_sctp_session_queue_reliable_tracked(client, now_ms + 657u,
+          0u, client_new_generation, 1,
+          "cancel-me", 9u, &cancelled_ticket) != CNET_SCTP_SESSION_OK ||
+      cancelled_ticket == 0u ||
+      cnet_sctp_session_cancel_unsent_message(client, now_ms + 657u,
+          0u, client_old_generation, &cancelled) !=
+              CNET_SCTP_SESSION_STALE ||
+      cancelled.generation != 0u || cancelled.ticket != 0u)
+    goto cleanup;
+  client_context.owner_admitted = 0;
+  if (cnet_sctp_session_cancel_unsent_message(client, now_ms + 657u,
+          0u, client_new_generation, &cancelled) !=
+              CNET_SCTP_SESSION_OWNER ||
+      cancelled.ticket != 0u || cancelled.generation != 0u)
+    goto cleanup;
+  client_context.owner_admitted = 1;
+  if (cnet_sctp_session_cancel_unsent_message(client, now_ms + 658u,
+          0u, client_new_generation, &cancelled) !=
+              CNET_SCTP_SESSION_OK ||
+      cancelled.generation != client_new_generation ||
+      cancelled.ticket != cancelled_ticket ||
+      cancelled.stream_id != 0u || cancelled.ppid != 53u ||
+      cancelled.message_size != 9u || !cancelled.binary ||
+      !cancelled.unordered ||
+      cancelled.reliability.mode != CNET_SCTP_SESSION_RELIABLE ||
+      cancelled.reliability.value != 0u ||
+      cnet_sctp_session_cancel_unsent_message(client, now_ms + 658u,
+          0u, client_new_generation, &cancelled) !=
+              CNET_SCTP_SESSION_EMPTY ||
+      cancelled.ticket != 0u || cancelled.generation != 0u ||
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+              CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u ||
+      cnet_sctp_session_get_tx_usage(client, 0u,
+          client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
+      tx_usage.queued_bytes != 0u ||
+      tx_usage.has_pending_message || tx_usage.retained_bytes != 0u)
+    goto cleanup;
+
+  /* The cancelled token can never be reused, but its freed slot can
+   * immediately admit the next legitimate reliable send on the same SID. */
+  first_size = 0u;
+  if (cnet_sctp_session_send_reliable_tracked(client, now_ms + 660u,
+          0u, client_new_generation, 1, "after", 5u,
+          first, sizeof(first), &first_size, &post_cancel_ticket) !=
+              CNET_SCTP_SESSION_OK ||
+      post_cancel_ticket <= cancelled_ticket ||
+      deliver(server, client, now_ms + 661u, first, first_size) != 0 ||
+      cnet_sctp_session_poll(server, now_ms + 663u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+      event.message_size != 5u || memcmp(message, "after", 5u) != 0 ||
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_OK ||
+      acked.ticket != post_cancel_ticket ||
+      acked.generation != client_new_generation ||
+      acked.message_size != 5u)
+    goto cleanup;
+
   fourth_size = 0u;
-  if (cnet_sctp_session_close_channel(client, now_ms + 659u, 0u,
+  if (cnet_sctp_session_close_channel(client, now_ms + 665u, 0u,
           fourth, sizeof(fourth), &fourth_size,
           &close_generation) != CNET_SCTP_SESSION_OK ||
       fourth_size == 0u || close_generation != client_new_generation)
