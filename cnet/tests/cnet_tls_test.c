@@ -2402,6 +2402,18 @@ spec("CNet bounded TLS engine") {
       check_false(cnet_tls_state_handshake_complete(&pair.client));
       cnet_tls_test_pair_destroy(&pair);
     }
+
+    it("rejects a leaf signed by a CA:FALSE intermediate") {
+      cnet_tls_test_pair pair = {0};
+      check_equal(cnet_tls_test_fixture_pair_init(
+                      &pair, CNET_TLS_TEST_INVALID_CA_ROOT,
+                      CNET_TLS_TEST_INVALID_CA_FULLCHAIN,
+                      CNET_TLS_TEST_INVALID_CA_KEY, "localhost"), SALTS_OK);
+      check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
+      check_false(cnet_tls_state_handshake_complete(&pair.client));
+      check_false(cnet_tls_state_handshake_complete(&pair.server));
+      cnet_tls_test_pair_destroy(&pair);
+    }
   }
 
   group("RSA-3072 certificate identity") {

@@ -306,6 +306,19 @@ file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/p384-test-server-cert.pem
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/p384-test-server-key.pem" CNET_TLS_TEST_P384_KEY)
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/p384-test-expired-cert.pem" CNET_TLS_TEST_P384_EXPIRED)
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/p384-test-tampered-cert.pem" CNET_TLS_TEST_P384_TAMPERED)
+# #1222: a valid root and end-entity certificate are separated by an
+# intentionally non-CA issuer. The server presents leaf + issuer, while the
+# client trusts only the root, so chain construction must reject CA:FALSE and
+# the absent keyCertSign usage during the handshake.
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/invalid-ca-root-cert.pem" CNET_TLS_TEST_INVALID_CA_ROOT)
+file(READ "${CMAKE_CURRENT_LIST_DIR}/fixtures/invalid-ca-server-cert.pem" _cnet_invalid_ca_leaf)
+file(READ "${CMAKE_CURRENT_LIST_DIR}/fixtures/invalid-ca-issuer-cert.pem" _cnet_invalid_ca_issuer)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/invalid-ca-server-fullchain.pem"
+  "${_cnet_invalid_ca_leaf}${_cnet_invalid_ca_issuer}")
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_BINARY_DIR}/invalid-ca-server-fullchain.pem" CNET_TLS_TEST_INVALID_CA_FULLCHAIN)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/invalid-ca-server-key.pem" CNET_TLS_TEST_INVALID_CA_KEY)
+unset(_cnet_invalid_ca_leaf)
+unset(_cnet_invalid_ca_issuer)
 # #1222: deterministic RSA-3072 identity plus an independently generated
 # RSASSA-PSS-signed leaf that the pinned provider must reject fail-closed.
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/fixtures/rsa3072-test-root-cert.pem" CNET_TLS_TEST_RSA3072_CA)
@@ -325,6 +338,9 @@ target_compile_definitions(cnet_tls_test PRIVATE
   "CNET_TLS_TEST_P384_KEY=\"${CNET_TLS_TEST_P384_KEY}\""
   "CNET_TLS_TEST_P384_EXPIRED=\"${CNET_TLS_TEST_P384_EXPIRED}\""
   "CNET_TLS_TEST_P384_TAMPERED=\"${CNET_TLS_TEST_P384_TAMPERED}\""
+  "CNET_TLS_TEST_INVALID_CA_ROOT=\"${CNET_TLS_TEST_INVALID_CA_ROOT}\""
+  "CNET_TLS_TEST_INVALID_CA_FULLCHAIN=\"${CNET_TLS_TEST_INVALID_CA_FULLCHAIN}\""
+  "CNET_TLS_TEST_INVALID_CA_KEY=\"${CNET_TLS_TEST_INVALID_CA_KEY}\""
   "CNET_TLS_TEST_RSA3072_CA=\"${CNET_TLS_TEST_RSA3072_CA}\""
   "CNET_TLS_TEST_RSA3072_LEAF=\"${CNET_TLS_TEST_RSA3072_LEAF}\""
   "CNET_TLS_TEST_RSA3072_KEY=\"${CNET_TLS_TEST_RSA3072_KEY}\""
@@ -341,6 +357,9 @@ unset(CNET_TLS_TEST_P384_LEAF)
 unset(CNET_TLS_TEST_P384_KEY)
 unset(CNET_TLS_TEST_P384_EXPIRED)
 unset(CNET_TLS_TEST_P384_TAMPERED)
+unset(CNET_TLS_TEST_INVALID_CA_ROOT)
+unset(CNET_TLS_TEST_INVALID_CA_FULLCHAIN)
+unset(CNET_TLS_TEST_INVALID_CA_KEY)
 unset(CNET_TLS_TEST_RSA3072_CA)
 unset(CNET_TLS_TEST_RSA3072_LEAF)
 unset(CNET_TLS_TEST_RSA3072_KEY)

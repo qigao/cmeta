@@ -51,6 +51,10 @@ set(_x509_fixtures
   p384-chain-intermediate-cert.pem
   p384-chain-server-cert.pem
   p384-chain-server-key.pem
+  invalid-ca-root-cert.pem
+  invalid-ca-issuer-cert.pem
+  invalid-ca-server-cert.pem
+  invalid-ca-server-key.pem
   unsupported-ed25519-server-cert.pem
   unsupported-ed25519-server-key.pem
   rsa3072-test-root-cert.pem
@@ -71,11 +75,22 @@ file(READ
 file(WRITE
   "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-chain-server-fullchain.pem"
   "${_p384_chain_leaf}${_p384_chain_intermediate}")
+file(READ
+  "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/invalid-ca-server-cert.pem"
+  _invalid_ca_leaf)
+file(READ
+  "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/invalid-ca-issuer-cert.pem"
+  _invalid_ca_issuer)
+file(WRITE
+  "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/invalid-ca-server-fullchain.pem"
+  "${_invalid_ca_leaf}${_invalid_ca_issuer}")
 file(WRITE
   "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/malformed-server-cert.pem"
   "-----BEGIN CERTIFICATE-----\nMALFORMED-DER\n-----END CERTIFICATE-----\n")
 unset(_p384_chain_leaf)
 unset(_p384_chain_intermediate)
+unset(_invalid_ca_leaf)
+unset(_invalid_ca_issuer)
 add_test(NAME cnet_installed_p384_tls
   COMMAND cnet_installed_p384_tls
     "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/p384-test-root-cert.pem"
@@ -95,7 +110,10 @@ add_test(NAME cnet_installed_p384_tls
     "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/rsa3072-test-root-cert.pem"
     "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/rsa3072-test-server-cert.pem"
     "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/rsa3072-test-server-key.pem"
-    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/rsa3072-test-server-pss-cert.pem")
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/rsa3072-test-server-pss-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/invalid-ca-root-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/invalid-ca-server-fullchain.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/invalid-ca-server-key.pem")
 set_tests_properties(cnet_installed_p384_tls PROPERTIES TIMEOUT 90)
 
 # ELF DT_RUNPATH does not resolve indirect shared-library dependencies.

@@ -42,7 +42,8 @@ results, and this document does not make claims for them.
 | Expired leaf | Verified rejection through installed C11 SDK | Not yet verified | Not yet verified |
 | Not-yet-valid leaf | Not yet verified | Not yet verified | Not yet verified |
 | Tampered certificate signature/DER | Verified rejection through installed C11 SDK | Not yet verified separately | Verified malformed-certificate rejection |
-| Invalid CA constraints or unsupported OID | Not yet verified as a dedicated public CNet fixture | Not yet verified | Not yet verified |
+| Invalid CA constraints | Verified rejection through installed C11 SDK | Not yet verified | Not yet verified |
+| Unsupported certificate OID | Not yet verified as a dedicated public CNet fixture | Not yet verified | Not yet verified |
 | Root → intermediate → leaf full chain | Verified through installed C11 SDK | Not yet verified separately | Not yet verified separately |
 | Missing intermediate | Verified rejection through installed C11 SDK | Not yet verified | Not yet verified |
 

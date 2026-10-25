@@ -13,6 +13,7 @@ name: CNet installed P-384/SHA-384 ASan/UBSan
       - 'cnet/tests/CMakeLists.txt'
       - 'cnet/tests/cnet_tls_test.c'
       - 'cnet/tests/fixtures/p384-*.pem'
+      - 'cnet/tests/fixtures/invalid-ca-*.pem'
       - 'cnet/tests/fixtures/unsupported-ed25519-*.pem'
       - 'cnet/tests/package_config/strategy/**'
       - 'cnet/tests/verify_installed_cnet.cmake'
