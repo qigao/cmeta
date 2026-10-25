@@ -18,6 +18,10 @@
 #define CNET_SCTP_ASSOC_COOKIE_BYTES \
   (CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES + CNET_SCTP_ASSOC_MAC_BYTES)
 #define CNET_SCTP_ASSOC_ENTROPY_BYTES 8u
+/* RFC 6525 5.1.4 uses the IP MSL as the minimum interval between locally
+ * originated SSN/TSN Reset Requests. Retransmission keeps the original
+ * timestamp and therefore cannot extend this window. */
+#define CNET_SCTP_ASSOC_RESET_MIN_INTERVAL_MS UINT64_C(30000)
 
 typedef enum cnet_sctp_assoc_state {
   CNET_SCTP_ASSOC_CLOSED = 0,
@@ -186,6 +190,7 @@ typedef struct cnet_sctp_assoc {
   uint32_t reset_paired_incoming_request;
   uint64_t reset_deadline_ms;
   uint64_t reset_rto_ms;
+  uint64_t last_association_reset_request_ms;
   size_t reset_packet_size;
   uint8_t reset_packet[CNET_SCTP_ASSOC_MAX_PACKET];
   uint32_t last_peer_reset_request;
@@ -215,6 +220,7 @@ typedef struct cnet_sctp_assoc {
   uint8_t incoming_stream_change_pending;
   uint8_t outgoing_stream_change_pending;
   uint8_t association_reset_pending;
+  uint8_t association_reset_request_sent;
   cnet_sctp_assoc_stream_change_event incoming_stream_change;
   cnet_sctp_assoc_stream_change_event outgoing_stream_change;
   cnet_sctp_assoc_reset_event association_reset;
@@ -329,8 +335,10 @@ cnet_sctp_assoc_status cnet_sctp_assoc_take_stream_change(
     cnet_sctp_assoc *association,
     cnet_sctp_assoc_stream_change_event *event);
 /* RFC 6525 SSN/TSN reset. Admission requires both DATA directions to be
- * quiescent. New DATA/TSN assignment is frozen until the peer completes or
- * denies the request; completion is retained for take_association_reset(). */
+ * quiescent and at least CNET_SCTP_ASSOC_RESET_MIN_INTERVAL_MS since the
+ * preceding locally originated request. New DATA/TSN assignment is frozen
+ * until the peer completes or denies the request; completion is retained for
+ * take_association_reset(). */
 cnet_sctp_assoc_status cnet_sctp_assoc_reset_association(
     cnet_sctp_assoc *association, uint64_t now_ms,
     void *output, size_t capacity, size_t *written);

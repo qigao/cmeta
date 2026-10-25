@@ -4280,6 +4280,96 @@ static void association_reset_roundtrip_rebases_tsn_and_ssn(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void association_reset_collision_and_minimum_interval(void) {
+  cnet_sctp_assoc a, b, before;
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_assoc_reset_event event = {0};
+  uint8_t request_a[1200], request_b[1200];
+  uint8_t response_a[1200], response_b[1200], scratch[1200];
+  size_t request_a_n = 0u, request_b_n = 0u;
+  size_t response_a_n = 0u, response_b_n = 0u, scratch_n = 0u;
+  uint32_t a_sequence, b_sequence, a_next, b_next;
+  uint32_t a_cumulative, b_cumulative;
+
+  ready_pair(&a, &b, &ca, &cb);
+  a_sequence = a.next_reset_request;
+  b_sequence = b.next_reset_request;
+  a_next = a.data.next_tsn;
+  b_next = b.data.next_tsn;
+  a_cumulative = a.data.cumulative_rx;
+  b_cumulative = b.data.cumulative_rx;
+
+  assert(cnet_sctp_assoc_reset_association(&a, 6u,
+      request_a, sizeof(request_a), &request_a_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_reset_association(&b, 6u,
+      request_b, sizeof(request_b), &request_b_n) == CNET_SCTP_ASSOC_OK);
+  assert(a.last_association_reset_request_ms == 6u &&
+      b.last_association_reset_request_ms == 6u);
+
+  assert(cnet_sctp_assoc_input(&b, 7u, request_a, request_a_n,
+      response_b, sizeof(response_b), &response_b_n) == CNET_SCTP_ASSOC_OK);
+  assert_association_reset_response(response_b, response_b_n, a_sequence,
+      CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS,
+      b_next, b_cumulative + 1u + UINT32_C(0x80000000));
+  assert(cnet_sctp_assoc_input(&a, 7u, request_b, request_b_n,
+      response_a, sizeof(response_a), &response_a_n) == CNET_SCTP_ASSOC_OK);
+  assert_association_reset_response(response_a, response_a_n, b_sequence,
+      CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS,
+      a_next, a_cumulative + 1u + UINT32_C(0x80000000));
+  assert(a.expected_peer_reset_request == b_sequence + 1u &&
+      b.expected_peer_reset_request == a_sequence + 1u);
+
+  assert(cnet_sctp_assoc_input(&a, 8u, response_b, response_b_n,
+      scratch, sizeof(scratch), &scratch_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_input(&b, 8u, response_a, response_a_n,
+      scratch, sizeof(scratch), &scratch_n) == CNET_SCTP_ASSOC_OK);
+  assert(!a.reset_active && !b.reset_active &&
+      a.data.next_tsn == a_next && b.data.next_tsn == b_next &&
+      a.data.cumulative_rx == a_cumulative &&
+      b.data.cumulative_rx == b_cumulative);
+  assert(cnet_sctp_assoc_take_association_reset(&a, &event) ==
+      CNET_SCTP_ASSOC_OK && event.initiated_locally &&
+      event.result == CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS);
+  assert(cnet_sctp_assoc_take_association_reset(&b, &event) ==
+      CNET_SCTP_ASSOC_OK && event.initiated_locally &&
+      event.result == CNET_SCTP_STREAM_RESET_REQUEST_IN_PROGRESS);
+
+  assert(cnet_sctp_assoc_reset_association(&a,
+      6u + CNET_SCTP_ASSOC_RESET_MIN_INTERVAL_MS - 1u,
+      request_a, sizeof(request_a), &request_a_n) == CNET_SCTP_ASSOC_BUSY);
+  memcpy(&before, &a, sizeof(before));
+  assert(cnet_sctp_assoc_reset_association(&a,
+      6u + CNET_SCTP_ASSOC_RESET_MIN_INTERVAL_MS,
+      request_a, 1u, &request_a_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(request_a_n == 0u && memcmp(&a, &before, sizeof(a)) == 0);
+  assert(cnet_sctp_assoc_reset_association(&a,
+      6u + CNET_SCTP_ASSOC_RESET_MIN_INTERVAL_MS,
+      request_a, sizeof(request_a), &request_a_n) == CNET_SCTP_ASSOC_OK);
+  assert(a.last_association_reset_request_ms ==
+      6u + CNET_SCTP_ASSOC_RESET_MIN_INTERVAL_MS);
+  assert(cnet_sctp_assoc_input(&b,
+      7u + CNET_SCTP_ASSOC_RESET_MIN_INTERVAL_MS,
+      request_a, request_a_n, response_b, sizeof(response_b),
+      &response_b_n) == CNET_SCTP_ASSOC_OK);
+  assert_association_reset_response(response_b, response_b_n,
+      a_sequence + 1u, CNET_SCTP_STREAM_RESET_PERFORMED,
+      b_next, b_cumulative + 1u + UINT32_C(0x80000000));
+  assert(cnet_sctp_assoc_input(&a,
+      8u + CNET_SCTP_ASSOC_RESET_MIN_INTERVAL_MS,
+      response_b, response_b_n, scratch, sizeof(scratch),
+      &scratch_n) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_take_association_reset(&a, &event) ==
+      CNET_SCTP_ASSOC_OK && event.initiated_locally &&
+      event.result == CNET_SCTP_STREAM_RESET_PERFORMED);
+  assert(cnet_sctp_assoc_take_association_reset(&b, &event) ==
+      CNET_SCTP_ASSOC_OK && !event.initiated_locally &&
+      event.result == CNET_SCTP_STREAM_RESET_PERFORMED);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void association_reset_admission_and_backpressure_are_atomic(void) {
   cnet_sctp_assoc a, b, before;
   test_context ca = {0}, cb = {0};
@@ -4404,10 +4494,13 @@ static void association_reset_denial_shape_and_timeout_are_nonterminal(void) {
       request, sizeof(request), &request_n) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_advance(&a, 106u, scratch,
       sizeof(scratch), &scratch_n) == CNET_SCTP_ASSOC_OK && scratch_n != 0u);
+  assert(a.last_association_reset_request_ms == 6u);
   assert(cnet_sctp_assoc_advance(&a, 306u, scratch,
       sizeof(scratch), &scratch_n) == CNET_SCTP_ASSOC_OK && scratch_n != 0u);
+  assert(a.last_association_reset_request_ms == 6u);
   assert(cnet_sctp_assoc_advance(&a, 706u, scratch,
       sizeof(scratch), &scratch_n) == CNET_SCTP_ASSOC_OK && scratch_n != 0u);
+  assert(a.last_association_reset_request_ms == 6u);
   assert(cnet_sctp_assoc_advance(&a, 1106u, scratch,
       sizeof(scratch), &scratch_n) == CNET_SCTP_ASSOC_OK && scratch_n == 0u);
   assert(!a.reset_active && a.data.next_tsn == original_next);
@@ -4471,6 +4564,7 @@ static void association_reset_response_preserves_unread_data(void) {
 
 int main(void) {
   association_reset_roundtrip_rebases_tsn_and_ssn();
+  association_reset_collision_and_minimum_interval();
   association_reset_admission_and_backpressure_are_atomic();
   association_reset_denial_shape_and_timeout_are_nonterminal();
   association_reset_response_preserves_unread_data();

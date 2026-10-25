@@ -2052,6 +2052,10 @@ static cnet_sctp_assoc_status start_local_association_reset(
       s->awaiting_peer_reciprocal != 0u ||
       s->reciprocal_reset_failed != 0u)
     return CNET_SCTP_ASSOC_BUSY;
+  if (s->association_reset_request_sent &&
+      now - s->last_association_reset_request_ms <
+          CNET_SCTP_ASSOC_RESET_MIN_INTERVAL_MS)
+    return CNET_SCTP_ASSOC_BUSY;
   if (!cnet_sctp_data_association_reset_ready(&s->data))
     return CNET_SCTP_ASSOC_BUSY;
   if (now > UINT64_MAX - s->config.t1_ms)
@@ -2076,6 +2080,8 @@ static cnet_sctp_assoc_status start_local_association_reset(
   s->reset_retransmits = 0u;
   s->reset_rto_ms = s->config.t1_ms;
   s->reset_deadline_ms = now + s->reset_rto_ms;
+  s->last_association_reset_request_ms = now;
+  s->association_reset_request_sent = 1u;
   s->last_time_ms = now;
   return CNET_SCTP_ASSOC_OK;
 }
