@@ -1418,7 +1418,7 @@ static int session_terminal_retry_failure(int forward_case) {
   uint8_t payload[128];
   size_t nf = 0u, ns = 0u, nt = 0u, nq = 0u;
   uint16_t sid = forward_case ? 2u : 0u;
-  uint64_t generation = 0u, ticket = 0u, due = 0u;
+  uint64_t generation = 0u, ticket = 0u, due = 0u, confirmed_ticket = 0u;
   uint32_t abandoned_tsn = 0u;
   int has_due = 0, stage = 0, result = forward_case ? 43 : 44;
   cfg.max_retransmits = 1u;
@@ -1462,6 +1462,24 @@ static int session_terminal_retry_failure(int forward_case) {
     goto cleanup;
   generation = event.generation;
   stage = 3;
+  /* An earlier genuinely cumulatively ACKed reliable ticket must NEVER be
+   * reclassified as terminal failure when a later DATA attempt exhausts its
+   * retry budget. Keep this success receipt unread until AFTER failure. */
+  if (!forward_case) {
+    nf = 0u;
+    if (cnet_sctp_session_send_reliable_tracked(client, 15u, sid,
+            generation, 1, "good", 4u, first, sizeof(first),
+            &nf, &confirmed_ticket) != CNET_SCTP_SESSION_OK ||
+        confirmed_ticket == 0u || nf == 0u ||
+        deliver(server, client, 16u, first, nf) != 0 ||
+        cnet_sctp_session_poll(server, 18u, &event,
+            payload, sizeof(payload), second, sizeof(second),
+            &ns) != CNET_SCTP_SESSION_OK ||
+        event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+        event.stream_id != sid || event.message_size != 4u ||
+        memcmp(payload, "good", 4u) != 0)
+      goto cleanup;
+  }
   nf = 0u;
   if (forward_case) {
     if (cnet_sctp_session_send(client, 20u, sid, 1,
@@ -1536,10 +1554,23 @@ static int session_terminal_retry_failure(int forward_case) {
   if (cnet_sctp_session_take_terminal_failure(client, &failed) !=
           CNET_SCTP_SESSION_EMPTY || failed.generation != 0u ||
       cnet_sctp_session_take_forward_progress(client, &progress) !=
-          CNET_SCTP_SESSION_EMPTY ||
-      cnet_sctp_session_take_reliable_ack(client, &ack) !=
           CNET_SCTP_SESSION_EMPTY)
     goto cleanup;
+  if (forward_case) {
+    if (cnet_sctp_session_take_reliable_ack(client, &ack) !=
+            CNET_SCTP_SESSION_EMPTY)
+      goto cleanup;
+  } else {
+    if (cnet_sctp_session_take_reliable_ack(client, &ack) !=
+            CNET_SCTP_SESSION_OK ||
+        ack.ticket != confirmed_ticket ||
+        ack.ticket == ticket || ack.generation != generation ||
+        ack.stream_id != sid || ack.message_size != 4u ||
+        ack.ppid != 53u || !ack.binary ||
+        cnet_sctp_session_take_reliable_ack(client, &ack) !=
+            CNET_SCTP_SESSION_EMPTY || ack.ticket != 0u)
+      goto cleanup;
+  }
   result = 0;
 cleanup:
   if (result != 0)
