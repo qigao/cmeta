@@ -1525,9 +1525,11 @@ static int session_terminal_retry_failure(int forward_case) {
         nt != ns || memcmp(second, third, ns) != 0)
       goto cleanup;
   } else {
-    if (ns != nf || memcmp(first, second, ns) != 0 ||
-        cnet_sctp_session_take_reliable_ack(client, &ack) !=
-            CNET_SCTP_SESSION_EMPTY)
+    /* Preserve the earlier *real* cumulatively ACKed "good" receipt
+     * unread. Its presence must not be treated as a failure of the new
+     * "drop" DATA retransmission, nor may it be consumed before the later
+     * terminal-exhaustion classification is checked. */
+    if (ns != nf || memcmp(first, second, ns) != 0)
       goto cleanup;
   }
   stage = 5;
