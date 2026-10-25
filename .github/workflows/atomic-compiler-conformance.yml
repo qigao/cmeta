@@ -48,6 +48,13 @@ jobs:
           echo "$RUNNER_TEMP/tcc-install/bin" >> "$GITHUB_PATH"
       - name: Record exact compiler revision
         run: tcc -v
+      - name: Diagnostic atomic implementation probe (not admission)
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p build/atomic-probe
+          tcc -std=c11 tests/compiler/tcc_atomic_probe.c -o build/atomic-probe/tcc_atomic_probe
+          build/atomic-probe/tcc_atomic_probe
       - name: Configure standalone C11 conformance
         run: cmake -S tests/compiler -B build/atomic-tcc -G Ninja -DCMAKE_C_COMPILER=tcc
       - name: Compile
