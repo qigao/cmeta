@@ -150,21 +150,21 @@ static void receiver_reassembles_by_fsn_across_interleaved_tsns(void) {
       memcmp(payload, "leftright", 9u) == 0);
 }
 
-static void receiver_accepts_full_mtu_i_data_fragment(void) {
+static void receiver_accepts_web_rtc_1280_byte_i_data_fragment(void) {
   int owned = 1;
   cnet_sctp_data receiver = {0};
   cnet_sctp_data_config cfg = config(6501u, 6500u, 46u, 45u,
       200u, 100u, &owned);
   cnet_sctp_data_message message = {0};
-  uint8_t expected[1168u], packet[CNET_SCTP_DATA_MTU];
-  uint8_t sack[CNET_SCTP_DATA_MTU], payload[1168u];
+  uint8_t expected[1248u], packet[CNET_SCTP_DATA_INGRESS_MTU];
+  uint8_t sack[CNET_SCTP_DATA_MTU], payload[1248u];
   size_t packetn, sackn = 0u, payloadn = 0u, i;
   for (i = 0u; i < sizeof(expected); ++i)
     expected[i] = (uint8_t)(i * 17u + 3u);
   packetn = encode_i_data(&cfg, 100u, 0u, 0u, 53u,
       I_DATA_B | I_DATA_E, expected, sizeof(expected),
       packet, sizeof(packet));
-  assert(packetn == CNET_SCTP_DATA_MTU);
+  assert(packetn == CNET_SCTP_DATA_INGRESS_MTU);
   assert(cnet_sctp_data_init(&receiver, &cfg, 0u) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_input(&receiver, 1u, packet, packetn,
       sack, sizeof(sack), &sackn) == CNET_SCTP_DATA_OK);
@@ -351,7 +351,7 @@ static void wrong_family_and_invalid_fsn_fail_closed(void) {
 int main(void) {
   sender_uses_mid_fsn_and_i_data_only();
   receiver_reassembles_by_fsn_across_interleaved_tsns();
-  receiver_accepts_full_mtu_i_data_fragment();
+  receiver_accepts_web_rtc_1280_byte_i_data_fragment();
   partial_reliability_uses_i_forward_tsn();
   bundled_records_remain_i_data();
   ordered_skip_releases_later_mid();

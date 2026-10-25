@@ -229,11 +229,11 @@ static void data_reserved_i_and_unordered_ssn_are_ignored(void) {
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
 
-static void receiver_accepts_full_mtu_legacy_data_fragment(void) {
+static void receiver_accepts_web_rtc_1280_byte_legacy_data_fragment(void) {
   cnet_sctp_data a, b;
   test_owner oa = {0}, ob = {0};
   uint8_t value[12u + CNET_SCTP_DATA_RX_PAYLOAD_MAX] = {0};
-  uint8_t packet[CNET_SCTP_DATA_MTU], sack[CNET_SCTP_DATA_MTU];
+  uint8_t packet[CNET_SCTP_DATA_INGRESS_MTU], sack[CNET_SCTP_DATA_MTU];
   uint8_t message[CNET_SCTP_DATA_RX_PAYLOAD_MAX];
   cnet_sctp_wire_chunk chunk = {0};
   cnet_sctp_data_message meta = {0};
@@ -252,7 +252,7 @@ static void receiver_accepts_full_mtu_legacy_data_fragment(void) {
   assert(cnet_sctp_wire_encode(a.config.local_port, a.config.remote_port,
       b.config.local_tag, &chunk, 1u, packet, sizeof(packet), &packet_size) ==
       CNET_SCTP_WIRE_OK);
-  assert(packet_size == CNET_SCTP_DATA_MTU);
+  assert(packet_size == CNET_SCTP_DATA_INGRESS_MTU);
   assert(cnet_sctp_data_input(&b, 1u, packet, packet_size,
       sack, sizeof(sack), &sack_size) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_take(&b, &meta, message, sizeof(message),
@@ -1170,7 +1170,7 @@ static void output_count_zeroed_before_owner_guard(void) {
 int main(void) {
   output_count_zeroed_before_owner_guard();
   data_reserved_i_and_unordered_ssn_are_ignored();
-  receiver_accepts_full_mtu_legacy_data_fragment();
+  receiver_accepts_web_rtc_1280_byte_legacy_data_fragment();
   hand_authored_sack_rejections_preserve_t3();
   sack_duplicate_list_can_exceed_rx_slots();
   reorder_duplicate_sacks_require_distinct_loss_evidence();

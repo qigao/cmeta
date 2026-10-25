@@ -1631,6 +1631,48 @@ static void write32_test(uint8_t *p, uint32_t value) {
   p[3] = (uint8_t)value;
 }
 
+static void association_accepts_web_rtc_1280_byte_i_data(void) {
+  cnet_sctp_assoc a, b;
+  test_context ca = {0}, cb = {0};
+  uint8_t value[16u + 1248u] = {0};
+  uint8_t packet[CNET_SCTP_ASSOC_MAX_INGRESS_PACKET];
+  uint8_t sack[CNET_SCTP_ASSOC_MAX_PACKET];
+  uint8_t payload[1248u];
+  cnet_sctp_wire_chunk chunk = {0};
+  cnet_sctp_data_message message = {0};
+  size_t packet_n = 0u, sack_n = 0u, payload_n = 0u, i;
+
+  ready_pair(&a, &b, &ca, &cb);
+  assert(a.peer_interleaving_supported && b.peer_interleaving_supported);
+  write32_test(value, a.data.next_tsn);
+  write16_test(value + 4u, 0u);
+  write32_test(value + 8u, 0u);
+  write32_test(value + 12u, 53u);
+  for (i = 16u; i < sizeof(value); ++i)
+    value[i] = (uint8_t)(i * 29u + 7u);
+  chunk.type = 64u;
+  chunk.flags = 3u; /* B | E */
+  chunk.value = value;
+  chunk.value_size = sizeof(value);
+  assert(cnet_sctp_wire_encode(a.config.local_port, a.config.remote_port,
+      a.peer_tag, &chunk, 1u, packet, sizeof(packet), &packet_n) ==
+      CNET_SCTP_WIRE_OK);
+  assert(packet_n == CNET_SCTP_ASSOC_MAX_INGRESS_PACKET);
+  assert(cnet_sctp_assoc_input(&b, 6u, packet, packet_n,
+      sack, sizeof(sack), &sack_n) == CNET_SCTP_ASSOC_OK);
+  assert(sack_n != 0u);
+  assert(cnet_sctp_assoc_take_message(&b, &message, payload,
+      sizeof(payload), &payload_n) == CNET_SCTP_ASSOC_OK);
+  assert(message.interleaved && message.stream_id == 0u &&
+      message.message_identifier == 0u && message.ppid == 53u &&
+      payload_n == sizeof(payload) &&
+      memcmp(payload, value + 16u, sizeof(payload)) == 0);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static size_t encode_incoming_reset_request(const cnet_sctp_assoc *sender,
     uint32_t sequence, const uint16_t *streams, size_t stream_count,
     uint8_t *packet, size_t capacity) {
@@ -4650,6 +4692,7 @@ static void pr_sctp_timed_forward_tsn_roundtrip(void) {
 }
 
 int main(void) {
+  association_accepts_web_rtc_1280_byte_i_data();
   negotiated_interleaving_rejects_legacy_data_with_abort();
   pr_sctp_timed_forward_tsn_roundtrip();
   association_reset_roundtrip_rebases_tsn_and_ssn();
