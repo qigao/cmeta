@@ -150,14 +150,35 @@ cnet_sctp_session_status cnet_sctp_session_start(cnet_sctp_session *session,
       (uint8_t *)packet, capacity, written));
 }
 
+/* Latch cumulatively ACKed tracked reliable tickets when validated SCTP
+ * input commits. Holding an ACK until application consumption must remain
+ * safe across DCEP SID reset/reuse and subsequent TSN-space progression.
+ * An input failure cannot consume tickets or fabricate ACK events. */
+static void latch_reliable_cumulative_ack(cnet_sctp_session *session) {
+  size_t i;
+  const cnet_sctp_data *data;
+  if (!session->association.data_ready) return;
+  data = &session->association.data;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    cnet_sctp_session_reliable_track *tracked = &session->tracked[i];
+    if (tracked->used && !tracked->cumul_acked &&
+        (uint32_t)(data->last_ack - tracked->ack.tsn) <
+            UINT32_C(0x80000000))
+      tracked->cumul_acked = 1u;
+  }
+}
 cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
     uint64_t now_ms, const void *packet, size_t packet_size,
     void *reply, size_t capacity, size_t *written) {
   cnet_sctp_session_status status = guard(session);
+  cnet_sctp_assoc_status as;
   if (status != CNET_SCTP_SESSION_OK) return status;
-  return map_assoc(cnet_sctp_assoc_input(&session->association, now_ms,
+  as = cnet_sctp_assoc_input(&session->association, now_ms,
       (const uint8_t *)packet, packet_size, (uint8_t *)reply, capacity,
-      written));
+      written);
+  if (as == CNET_SCTP_ASSOC_OK)
+    latch_reliable_cumulative_ack(session);
+  return map_assoc(as);
 }
 
 cnet_sctp_session_status cnet_sctp_session_advance(cnet_sctp_session *session,
@@ -290,26 +311,23 @@ cnet_sctp_session_status cnet_sctp_session_send_reliable_tracked(
   return CNET_SCTP_SESSION_OK;
 }
 
-/* Only the peer's actual cumulative SCTP acknowledgement can make a
- * tracked RELIABLE packet eligible. A Gap ACK never does. Keep receipts
- * until consumed, selecting the lowest admitted eligible ticket. */
+/* Only the peer's validated cumulative SCTP acknowledgement can make a
+ * tracked RELIABLE packet eligible. Latch it at input commit, not at read
+ * time, so later TSN wrap/reset cannot erase an earlier completion.
+ * A revocable Gap ACK never marks an event. */
 cnet_sctp_session_status cnet_sctp_session_take_reliable_ack(
     cnet_sctp_session *session, cnet_sctp_session_reliable_ack *ack) {
   cnet_sctp_session_status status;
   cnet_sctp_session_reliable_track *found = NULL;
   size_t index;
-  const cnet_sctp_data *data;
   if (!ack) return CNET_SCTP_SESSION_INVALID;
   memset(ack, 0, sizeof(*ack));
   status = guard(session);
   if (status != CNET_SCTP_SESSION_OK) return status;
   if (!session->association.data_ready) return CNET_SCTP_SESSION_CLOSED;
-  data = &session->association.data;
   for (index = 0u; index < CNET_SCTP_DATA_TX_SLOTS; ++index) {
     cnet_sctp_session_reliable_track *candidate = &session->tracked[index];
-    if (!candidate->used ||
-        (uint32_t)(data->last_ack - candidate->ack.tsn) >=
-            UINT32_C(0x80000000)) continue;
+    if (!candidate->used || !candidate->cumul_acked) continue;
     if (!found || candidate->ack.ticket < found->ack.ticket)
       found = candidate;
   }

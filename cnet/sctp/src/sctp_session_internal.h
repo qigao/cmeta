@@ -17,6 +17,7 @@ typedef struct cnet_sctp_session_config {
 
 typedef struct cnet_sctp_session_reliable_track {
   cnet_sctp_session_reliable_ack ack;
+  uint8_t cumul_acked; /* validated irreversible cumulative SACK latched */
   uint8_t used;
 } cnet_sctp_session_reliable_track;
 
