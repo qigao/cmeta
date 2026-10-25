@@ -6,10 +6,15 @@ if(POLICY CMP0167)
   cmake_policy(SET CMP0167 OLD)
 endif()
 
-project(
-  Salts
-  VERSION 2.3.0
-  LANGUAGES C CXX)
+# This unreleased, deliberately reduced ABI profile is a new 3.0
+# package epoch; old 2.3 consumers must not silently load it.
+option(SALTS_CORE_BACKED_PROFILE
+  "Qualify the Core-backed CMeta/ACE/CFlow Salts 3.0 package (Draft)" OFF)
+if(SALTS_CORE_BACKED_PROFILE)
+  project(Salts VERSION 3.0.0 LANGUAGES C CXX)
+else()
+  project(Salts VERSION 2.3.0 LANGUAGES C CXX)
+endif()
 
 # CI cache preflight computes the exact vcpkg ABI graph using this release
 # preset, but must not configure production targets or build dependencies.
@@ -74,6 +79,13 @@ if(BUILD_TESTS)
 endif()
 
 find_package(Threads REQUIRED)
+
+if(SALTS_CORE_BACKED_PROFILE)
+  # Real SaltsConfig/SaltsTargets export, but only the extracted CMeta/ACE/CFlow
+  # surface. This branch is NOT a published replacement for Salts 2.3.
+  include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SaltsCoreBackedProfile.cmake")
+  return()
+endif()
 
 # Additional components
 add_subdirectory(tools)

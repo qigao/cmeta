@@ -169,10 +169,22 @@ target_include_directories(
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
 # CFlow remains independent of CNet; no CNet-to-Actor integration target.
-target_link_libraries(
-  ${TARGET_NAME}
-  PUBLIC Salts::CMeta Salts::NativeIO Salts::Platform
-  PRIVATE Salts::Concurrency)
+if(SALTS_CORE_BACKED_PROFILE)
+  foreach(_old IN ITEMS Core Platform Concurrency Coroutine NativeIO CNet)
+    if(TARGET Salts::${_old})
+      message(FATAL_ERROR "CFlow rejects duplicate old ${_old} binary owner")
+    endif()
+  endforeach()
+  target_link_libraries(
+    ${TARGET_NAME}
+    PUBLIC Salts::CMeta SaltsCore::NativeIO SaltsCore::Platform
+    PRIVATE SaltsCore::Concurrency)
+else()
+  target_link_libraries(
+    ${TARGET_NAME}
+    PUBLIC Salts::CMeta Salts::NativeIO Salts::Platform
+    PRIVATE Salts::Concurrency)
+endif()
 
 install(
   TARGETS ${TARGET_NAME}

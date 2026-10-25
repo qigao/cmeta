@@ -3,7 +3,12 @@
 #include "plugin_loader_internal.h"
 
 #include <salts/thread.h>
+#if defined(SALTS_CORE_BACKED_PROFILE) && SALTS_CORE_BACKED_PROFILE
+/* Unreleased 3.0 profile: strict UTF-8 is owned by installed shared Core. */
+#include <salts_core/utf8.h>
+#else
 #include <vstr.h>
+#endif
 
 #include <limits.h>
 #include <stdlib.h>
@@ -55,7 +60,11 @@ static bool bounded_utf8_path_valid(const char *path) {
         if (path[length] == '\0') {
             if (length == 0u)
                 return false;
+#if defined(SALTS_CORE_BACKED_PROFILE) && SALTS_CORE_BACKED_PROFILE
+            return salts_core_utf8_valid(path, length) != 0;
+#else
             return vstr_utf8_valid(vstr_from_buf(path, length)) != 0;
+#endif
         }
     }
     return false;

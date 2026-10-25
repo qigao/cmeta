@@ -25,9 +25,18 @@ target_compile_features(salts_service_host PUBLIC c_std_11)
 target_include_directories(salts_service_host PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-target_link_libraries(salts_service_host
-  PUBLIC Salts::Configurator Salts::ComponentProviderABI
-  PRIVATE Salts::Plugin Salts::Platform)
+if(SALTS_CORE_BACKED_PROFILE)
+  if(TARGET Salts::Platform)
+    message(FATAL_ERROR "ServiceHost rejects duplicate old Platform owner")
+  endif()
+  target_link_libraries(salts_service_host
+    PUBLIC Salts::Configurator Salts::ComponentProviderABI
+    PRIVATE Salts::Plugin SaltsCore::Platform)
+else()
+  target_link_libraries(salts_service_host
+    PUBLIC Salts::Configurator Salts::ComponentProviderABI
+    PRIVATE Salts::Plugin Salts::Platform)
+endif()
 
 install(TARGETS salts_configurator salts_service_host
   EXPORT SaltsTargets

@@ -1,0 +1,151 @@
+name: Salts 3.0 Core-backed package qualification (Draft)
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/salts3-core-backed.yml"
+      - "CMakeLists.txt"
+      - "cmake/SaltsCoreBackedProfile.cmake"
+      - "cmake/SaltsConfig.cmake.in"
+      - "cmake/ci/core-backed-consumer/**"
+      - "cmake/ci/core-backed-legacy-rejection/**"
+      - "cmeta/**"
+      - "component/**"
+      - "plugin/**"
+      - "component-plugin/**"
+      - "component-runtime/**"
+      - "cflow/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-backed-package:
+    name: ${{ matrix.os }} real SaltsConfig 3.0 no-legacy runtime
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - name: Checkout original Salts production target source
+        uses: actions/checkout@v4
+      - name: Checkout pinned fully qualified standalone Core
+        uses: actions/checkout@v4
+        with:
+          repository: qigao/salts-core
+          ref: a98fc58f24230a56c32f79ece3b656e79e0a1fb3
+          path: saltscore-candidate
+          persist-credentials: false
+      - name: Build and install exact native 0.1 shared owner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C saltscore-candidate rev-parse HEAD)" = \
+            a98fc58f24230a56c32f79ece3b656e79e0a1fb3
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            generator=(-G 'Visual Studio 18 2026' -A x64)
+          else
+            generator=(-G Ninja)
+          fi
+          core_prefix="$RUNNER_TEMP/saltscore-profile-sdk"
+          cmake -S saltscore-candidate -B build-standalone-core \
+            "${generator[@]}" -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF "-DCMAKE_INSTALL_PREFIX=$core_prefix"
+          cmake --build build-standalone-core --config Release --parallel 2
+          cmake --install build-standalone-core --config Release
+      - name: Build actual SaltsConfig 3.0 retained CMeta ACE CFlow package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            generator=(-G 'Visual Studio 18 2026' -A x64)
+          else
+            generator=(-G Ninja)
+          fi
+          core_prefix="$RUNNER_TEMP/saltscore-profile-sdk"
+          salts_prefix="$RUNNER_TEMP/salts3-profile-sdk"
+          cmake -S . -B build-salts3-package "${generator[@]}" \
+            -DCMAKE_BUILD_TYPE=Release -DSALTS_CORE_BACKED_PROFILE=ON \
+            -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_SHARED_LIBS=OFF \
+            -DSALTS_ENABLE_EPOLL_READINESS=OFF \
+            "-DCMAKE_PREFIX_PATH=$core_prefix" \
+            "-DCMAKE_INSTALL_PREFIX=$salts_prefix"
+          cmake --build build-salts3-package --config Release --parallel 2
+          cmake --install build-salts3-package --config Release
+          test -f "$salts_prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$salts_prefix/lib/cmake/Salts/SaltsConfigVersion.cmake"
+          # Old monolithic Salts binary is forbidden in this reduced profile.
+          test ! -e "$salts_prefix/lib/libsalts.so"
+          test ! -e "$salts_prefix/lib/salts.lib"
+          # 2.3 clients must not silently accept this ABI-incompatible package.
+          if cmake -S cmake/ci/core-backed-legacy-rejection -B build-legacy-rejection \
+              "${generator[@]}" \
+              "-DCMAKE_PREFIX_PATH=$salts_prefix;$core_prefix"; then
+            echo "ABI violation: old Salts 2.3 consumer admitted against 3.0" >&2
+            exit 1
+          fi
+      - name: Qualify independently installed C11 C++17 plugin and CFlow
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            generator=(-G 'Visual Studio 18 2026' -A x64)
+            export PATH="$(cygpath -u "$RUNNER_TEMP/salts3-profile-sdk")/bin:$(cygpath -u "$RUNNER_TEMP/saltscore-profile-sdk")/bin:$PATH"
+          elif [[ "$RUNNER_OS" == macOS ]]; then
+            generator=(-G Ninja)
+            export DYLD_LIBRARY_PATH="$RUNNER_TEMP/saltscore-profile-sdk/lib:${DYLD_LIBRARY_PATH:-}"
+          else
+            generator=(-G Ninja)
+            export LD_LIBRARY_PATH="$RUNNER_TEMP/saltscore-profile-sdk/lib:${LD_LIBRARY_PATH:-}"
+          fi
+          cmake -S cmake/ci/core-backed-consumer -B build-profile-consumer \
+            "${generator[@]}" -DCMAKE_BUILD_TYPE=Release \
+            "-DSALTS_FIXTURE_ROOT=$GITHUB_WORKSPACE" \
+            "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/salts3-profile-sdk;$RUNNER_TEMP/saltscore-profile-sdk"
+          cmake --build build-profile-consumer --config Release --parallel 2
+          ctest --test-dir build-profile-consumer -C Release \
+            --output-on-failure --no-tests=error
+      - name: Move both native SDKs and requalify new SaltsConfig consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$RUNNER_TEMP/saltscore-profile-sdk"
+          salts="$RUNNER_TEMP/salts3-profile-sdk"
+          moved_core="$RUNNER_TEMP/saltscore-profile-sdk-relocated"
+          moved_salts="$RUNNER_TEMP/salts3-profile-sdk-relocated"
+          test ! -e "$moved_core" && test ! -e "$moved_salts"
+          mv "$core" "$moved_core"
+          mv "$salts" "$moved_salts"
+          test ! -e "$core" && test ! -e "$salts"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            generator=(-G 'Visual Studio 18 2026' -A x64)
+            export PATH="$(cygpath -u "$moved_salts")/bin:$(cygpath -u "$moved_core")/bin:$PATH"
+          elif [[ "$RUNNER_OS" == macOS ]]; then
+            generator=(-G Ninja)
+            export DYLD_LIBRARY_PATH="$moved_core/lib:${DYLD_LIBRARY_PATH:-}"
+          else
+            generator=(-G Ninja)
+            export LD_LIBRARY_PATH="$moved_core/lib:${LD_LIBRARY_PATH:-}"
+          fi
+          cmake -S cmake/ci/core-backed-consumer -B build-profile-relocated \
+            "${generator[@]}" -DCMAKE_BUILD_TYPE=Release \
+            "-DSALTS_FIXTURE_ROOT=$GITHUB_WORKSPACE" \
+            "-DCMAKE_PREFIX_PATH=$moved_salts;$moved_core"
+          cmake --build build-profile-relocated --config Release --parallel 2
+          ctest --test-dir build-profile-relocated -C Release \
+            --output-on-failure --no-tests=error
+          python3 cmake/ci/core-backed-consumer/audit-profile.py \
+            --core-tools saltscore-candidate/tools \
+            --core-prefix "$moved_core" --salts-prefix "$moved_salts" \
+            --build-dir build-profile-relocated \
+            --report build-profile-relocated/owner-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: salts3-core-backed-abi-${{ matrix.os }}
+          path: build-profile-relocated/owner-audit.json
+          if-no-files-found: ignore
