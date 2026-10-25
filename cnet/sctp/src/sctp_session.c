@@ -423,6 +423,74 @@ cnet_sctp_session_status cnet_sctp_session_queue_reliable_tracked(
   return CNET_SCTP_SESSION_OK;
 }
 
+/* An all-local, pre-TSN terminal cancellation can return its exact result
+ * immediately and at most once, with the original generation and ticket.
+ * Copy metadata before the private DATA engine clears the 24 KiB message. */
+cnet_sctp_session_status cnet_sctp_session_cancel_unsent_message(
+    cnet_sctp_session *session, uint64_t now_ms,
+    uint16_t stream, uint64_t expected_generation,
+    cnet_sctp_session_unsent_cancelled *cancelled) {
+  cnet_sctp_session_status status;
+  cnet_sctp_dcep_status ds;
+  cnet_sctp_assoc_status as;
+  const cnet_sctp_data_pending *pending;
+  cnet_sctp_session_reliable_track *tracked = NULL;
+  cnet_sctp_data_reliability policy;
+  uint64_t generation = 0u, old_ticket = 0u;
+  uint32_t ppid;
+  size_t wire_size, i;
+  uint8_t unordered;
+  if (!cancelled) return CNET_SCTP_SESSION_INVALID;
+  memset(cancelled, 0, sizeof(*cancelled));
+  status = guard(session);
+  if (status != CNET_SCTP_SESSION_OK) return status;
+  if (!expected_generation || stream >= session->dcep.streams)
+    return CNET_SCTP_SESSION_INVALID;
+  ds = cnet_sctp_dcep_generation(&session->dcep, stream, &generation);
+  if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
+  if (generation != expected_generation) return CNET_SCTP_SESSION_STALE;
+  if (!session->association.data_ready) return CNET_SCTP_SESSION_CLOSED;
+  pending = &session->association.data.pending;
+  if (!pending->active || pending->stream_id != stream)
+    return CNET_SCTP_SESSION_EMPTY;
+  if (pending->ppid == CNET_SCTP_DCEP_PPID)
+    return CNET_SCTP_SESSION_PROTOCOL;
+  if (pending->has_tsn || pending->offset)
+    return CNET_SCTP_SESSION_BUSY;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    cnet_sctp_session_reliable_track *slot = &session->tracked[i];
+    if (!slot->used || !slot->queued || slot->fully_emitted ||
+        slot->ack.stream_id != stream || slot->ack.generation != generation)
+      continue;
+    if (tracked) return CNET_SCTP_SESSION_PROTOCOL;
+    tracked = slot;
+  }
+  /* A local cancellation must never claim a peer-visible DATA TSN. */
+  policy = pending->reliability;
+  ppid = pending->ppid;
+  wire_size = pending->size;
+  unordered = pending->unordered;
+  old_ticket = tracked ? tracked->ack.ticket : 0u;
+  as = cnet_sctp_assoc_cancel_unsent_message(&session->association,
+      now_ms, stream);
+  if (as != CNET_SCTP_ASSOC_OK) return map_assoc(as);
+  cancelled->generation = generation;
+  cancelled->ticket = old_ticket;
+  cancelled->stream_id = stream;
+  cancelled->ppid = ppid;
+  cancelled->message_size =
+      (ppid == CNET_SCTP_WEBRTC_EMPTY_TEXT_PPID ||
+       ppid == CNET_SCTP_WEBRTC_EMPTY_BINARY_PPID) ? 0u : wire_size;
+  cancelled->reliability.mode =
+      (cnet_sctp_session_reliability_mode)policy.mode;
+  cancelled->reliability.value = policy.value;
+  cancelled->binary = ppid == CNET_SCTP_WEBRTC_BINARY_PPID ||
+      ppid == CNET_SCTP_WEBRTC_EMPTY_BINARY_PPID;
+  cancelled->unordered = unordered;
+  if (tracked) memset(tracked, 0, sizeof(*tracked));
+  return CNET_SCTP_SESSION_OK;
+}
+
 cnet_sctp_session_status cnet_sctp_session_queue_message(
     cnet_sctp_session *session, uint64_t now_ms, uint16_t stream, int binary,
     const void *message, size_t message_size) {

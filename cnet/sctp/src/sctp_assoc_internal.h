@@ -293,6 +293,9 @@ cnet_sctp_assoc_status cnet_sctp_assoc_queue_message_pr(cnet_sctp_assoc *a,
     const void *payload, size_t length);
 cnet_sctp_assoc_status cnet_sctp_assoc_pump_message(cnet_sctp_assoc *a,
     uint64_t now_ms, void *output, size_t capacity, size_t *written);
+/* Cancel a queued unsent message, with Association state/time validation. */
+cnet_sctp_assoc_status cnet_sctp_assoc_cancel_unsent_message(
+    cnet_sctp_assoc *a, uint64_t now_ms, uint16_t stream_id);
 cnet_sctp_assoc_status cnet_sctp_assoc_take_abandoned(cnet_sctp_assoc *a,
     cnet_sctp_data_abandon_event *event);
 

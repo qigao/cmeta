@@ -70,8 +70,20 @@ receipt before copying a reliable message of up to 24 KiB. The Owner emits
 fragments with `pump_message()`, and `advance()` may send a final-byte
 zero-window probe. ACKs of EARLIER fragments cannot retire the full message:
 the last fragment must have a committed TSN and be cumulatively ACKed.
-This remains a reliable-only ACK subset: PR abandonment, cancellation,
-terminal failure and full buffered_amount remain separate hard gates.
+An additional, synchronous pre-TSN path
+`cnet_sctp_session_cancel_unsent_message()` cancels only a copied message
+that has emitted NO DATA/zero-window probe. It returns the original SID,
+generation, optional reliable tracked ticket, logical size and DCEP policy
+in a single exactly-once result. The copied queue and its reserved tracked
+slot are freed; repeated cancellation returns EMPTY. A partially sent
+message remains BUSY with all tickets intact. A TIMED message past its
+deadline belongs to the existing advance()/MESSAGE_ABANDONED path, not
+to cancellation. No FORWARD-TSN or ACK is fabricated. This synchronous
+result is NOT an asynchronous terminal-event queue.
+
+This is still a constrained reliable ACK subset: post-TSN cancellation,
+PR-SCTP wire abandonment, terminal failure and full buffered_amount
+remain separate hard gates.
 
 This does **not** export the prototype through production `Salts::CNet`,
 replace usrsctp in TurboMedia or qualify a six-RID release.

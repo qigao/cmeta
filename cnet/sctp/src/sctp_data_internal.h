@@ -257,6 +257,12 @@ cnet_sctp_data_status cnet_sctp_data_queue_message_pr(cnet_sctp_data *d,
 cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d, uint64_t now_ms,
     void *packet, size_t packet_capacity, size_t *packet_bytes);
 
+/* Owner-only synchronous pre-TSN cancellation. No fragment/probe may have
+ * left; an already expired TIMED record must be processed by advance().
+ * No new DATA, FORWARD-TSN or callback is created. */
+cnet_sctp_data_status cnet_sctp_data_cancel_unsent(
+    cnet_sctp_data *d, uint64_t now_ms, uint16_t stream_id);
+
 /* Takes one copied message-abandonment record. Insufficient event capacity
  * is prevented at PR-message admission; explicit stop discards unread events. */
 cnet_sctp_data_status cnet_sctp_data_take_abandoned(cnet_sctp_data *d,

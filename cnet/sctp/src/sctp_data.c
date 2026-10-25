@@ -575,6 +575,32 @@ cnet_sctp_data_status cnet_sctp_data_queue_message_pr(cnet_sctp_data *d,
   return CNET_SCTP_DATA_OK;
 }
 
+/* Remove only a copied message that has NO allocated DATA TSN. The sender
+ * has not consumed SSN/MID, so no RFC3758 FORWARD nor fictitious peer ACK
+ * is necessary. A previous DATA fragment/probe or due TIMED expiry must
+ * never be reclassified as a safe local cancellation. */
+cnet_sctp_data_status cnet_sctp_data_cancel_unsent(cnet_sctp_data *d,
+    uint64_t now, uint16_t stream_id) {
+  cnet_sctp_data_status status = guard(d);
+  if (status != CNET_SCTP_DATA_OK) return status;
+  if (stream_id >= d->config.outbound_streams)
+    return CNET_SCTP_DATA_INVALID;
+  if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  if (!d->pending.active || d->pending.stream_id != stream_id)
+    return CNET_SCTP_DATA_EMPTY;
+  if (d->pending.has_tsn || d->pending.offset != 0u ||
+      (d->pending.reliability.mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
+       now >= d->pending.expires_at_ms))
+    return CNET_SCTP_DATA_RETRANSMIT_PENDING;
+  memset(&d->pending, 0, sizeof(d->pending));
+  if (d->peer_rwnd == 0u && !d->probe_active && !has_retained_tx(d)) {
+    d->probe_deadline_ms = 0u;
+    d->probe_interval_ms = 0u;
+  }
+  d->last_time_ms = now;
+  return CNET_SCTP_DATA_OK;
+}
+
 cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d,
     uint64_t now, void *output, size_t cap, size_t *written) {
   cnet_sctp_data_status status = guard(d);

@@ -143,6 +143,21 @@ typedef struct cnet_sctp_session_reliable_ack {
   uint8_t binary;
 } cnet_sctp_session_reliable_ack;
 
+/* Synchronous result of a locally cancelled, wholly copied pending message
+ * BEFORE its first DATA TSN. ticket is the original nonzero tracking token
+ * only for queue_reliable_tracked(); untracked sends return ticket=0.
+ * No asynchronous ACK/PR abandonment is implied by this result. */
+typedef struct cnet_sctp_session_unsent_cancelled {
+  uint64_t generation;
+  uint64_t ticket;
+  uint16_t stream_id;
+  uint32_t ppid;
+  size_t message_size; /* logical size, not PPID56/57 wire placeholder */
+  cnet_sctp_session_reliability reliability;
+  uint8_t binary;
+  uint8_t unordered;
+} cnet_sctp_session_unsent_cancelled;
+
 typedef int (*cnet_sctp_session_owner_fn)(void *context);
 typedef int (*cnet_sctp_session_entropy_fn)(void *context,
     uint8_t *destination, size_t destination_size);
@@ -254,6 +269,20 @@ cnet_sctp_session_status cnet_sctp_session_queue_reliable_tracked(
     cnet_sctp_session *session, uint64_t now_ms,
     uint16_t stream, uint64_t expected_generation, int binary,
     const void *message, size_t message_size, uint64_t *ticket);
+
+/* Owner-only atomic cancel of a copied message BEFORE its first fragment.
+ * Returns the original SID/generation, optional tracked ticket, logical
+ * payload size and DCEP policy synchronously and exactly once. Repetition
+ * yields EMPTY; wrong generation STALE; a sent DATA/zero-window probe is
+ * BUSY; an already expired TIMED message remains on its separate
+ * advance()+MESSAGE_ABANDONED path. Cancel emits NO DATA/FORWARD/ACK,
+ * never borrows user data, and releases any reserved reliable tracked slot.
+ * Once a DATA TSN exists, safe protocol-level abandonment is a distinct,
+ * deliberately unsupported operation—not silently done by this API. */
+cnet_sctp_session_status cnet_sctp_session_cancel_unsent_message(
+    cnet_sctp_session *session, uint64_t now_ms,
+    uint16_t stream, uint64_t expected_generation,
+    cnet_sctp_session_unsent_cancelled *cancelled);
 
 /* queue_message owns a full copied user message before any SCTP TSN is
  * assigned; the caller may free the input immediately. The pending queue is
