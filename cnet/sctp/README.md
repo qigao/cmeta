@@ -2,7 +2,7 @@
 
 Independent RFC-first protocol workstream for [Salts #1181](https://github.com/qigao/salts/issues/1181) and upstream prerequisite for [TurboMedia #227](https://github.com/qigao/turbomedia/issues/227).
 
-**Research only. This is not a complete SCTP engine, not authenticated production transport and not WebRTC-interoperable yet.** No Rust/C++ protocol source, FFI or runtime is involved. No production CNet or TurboMedia target uses these objects.
+**Research only. This is not a complete SCTP engine or authenticated production transport.** Isolated public-Janus SCTP-over-DTLS experiments have demonstrated bounded interoperability, but full RFC8260 browser interoperability and installed production Owner/DTLS generation leases are not qualified. No Rust/C++ protocol source, FFI or runtime is involved. No production CNet or TurboMedia target uses these objects.
 
 ## Isolation and build
 
@@ -18,6 +18,27 @@ cmake -S cnet/sctp/tests/installed -B build-cnet-sctp-consumer \
 cmake --build build-cnet-sctp-consumer --config Release
 ctest --test-dir build-cnet-sctp-consumer -C Release --output-on-failure
 ```
+
+## Installed opaque Session: bounded messages
+
+The standalone, experimental `CNetSctpPrototype::Session` installed target
+exposes an opaque Owner-only handle. Its immediate
+`cnet_sctp_session_send()` emits one SCTP DATA/I-DATA packet and returns
+`CAPACITY` without accepting a multi-fragment message. For payloads up to
+`CNET_SCTP_SESSION_MAX_MESSAGE_BYTES` (24 KiB), use
+`cnet_sctp_session_queue_message()` to copy the whole message and then
+`cnet_sctp_session_pump_message()` on the Owner to emit one fragment per
+call. Only one unsent message is queued; a second returns `CAPACITY` without
+replacing it. Handle SACKs via `input()`, due retransmission/lifetime via
+`advance()`, and explicit congestion/receive-window backpressure before
+pumping again. The DCEP-negotiated ordered/unordered, retransmit/timed policy
+is preserved for every emitted fragment. Timed lifetime starts at queue
+admission. No background worker, I/O or borrowed application input is retained.
+
+The separate installed C11 consumer now verifies this two-fragment API path
+and its capacity rollback, using only installed headers and exported targets.
+This does **not** export the prototype through production `Salts::CNet`,
+replace usrsctp in TurboMedia or qualify a six-RID release.
 
 ## Implemented slices
 

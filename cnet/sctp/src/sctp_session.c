@@ -228,6 +228,40 @@ cnet_sctp_session_status cnet_sctp_session_send(cnet_sctp_session *session,
       payload.wire_bytes, payload.wire_size, packet, capacity, written));
 }
 
+/* The DATA sub-engine copies the entire bounded application message to a
+ * single Owner-owned slot. No fragment/TSN can leave until pump_message()
+ * is explicitly admitted. Reuse the exact DCEP policy projection used by
+ * direct send; no reliable fallback on a partial-reliable channel. */
+cnet_sctp_session_status cnet_sctp_session_queue_message(
+    cnet_sctp_session *session, uint64_t now_ms, uint16_t stream, int binary,
+    const void *message, size_t message_size) {
+  cnet_sctp_data_reliability reliability;
+  cnet_sctp_webrtc_payload payload;
+  int unordered = 0;
+  cnet_sctp_session_status status = guard(session);
+  cnet_sctp_dcep_status ds;
+  if (status != CNET_SCTP_SESSION_OK) return status;
+  ds = cnet_sctp_dcep_send_policy(&session->dcep, stream, &unordered,
+      &reliability);
+  if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
+  if (cnet_sctp_webrtc_prepare(binary, message, message_size, &payload) !=
+      CNET_SCTP_WEBRTC_OK)
+    return CNET_SCTP_SESSION_INVALID;
+  return map_assoc(cnet_sctp_assoc_queue_message_pr(&session->association,
+      now_ms, stream, payload.ppid, unordered, &reliability,
+      payload.wire_bytes, payload.wire_size));
+}
+
+cnet_sctp_session_status cnet_sctp_session_pump_message(
+    cnet_sctp_session *session, uint64_t now_ms,
+    void *packet, size_t capacity, size_t *written) {
+  cnet_sctp_session_status status = guard(session);
+  if (written) *written = 0u;
+  if (status != CNET_SCTP_SESSION_OK) return status;
+  return map_assoc(cnet_sctp_assoc_pump_message(&session->association,
+      now_ms, packet, capacity, written));
+}
+
 cnet_sctp_session_status cnet_sctp_session_close_channel(
     cnet_sctp_session *session, uint64_t now_ms, uint16_t stream,
     void *packet, size_t capacity, size_t *written,

@@ -133,7 +133,9 @@ static int session_round_trip(void) {
   uint8_t third[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t fourth[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t message[CNET_SCTP_SESSION_MAX_MESSAGE_BYTES];
+  uint8_t fragmented[2048];
   size_t first_size = 0u, second_size = 0u, third_size = 0u, fourth_size = 0u;
+  size_t i;
   int result = 20;
 
   if (cnet_sctp_session_create(&client_config, 0u, &client) !=
@@ -176,6 +178,43 @@ static int session_round_trip(void) {
       event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE || !event.binary ||
       event.message_size != 3u || memcmp(message, "sdk", 3u) != 0)
     goto cleanup;
+
+  /* Installed, opaque-only consumer: the single-packet API refuses an
+   * oversized message atomically. The bounded queue copies it and the
+   * explicit Owner pump emits two independently acknowledged fragments. */
+  for (i = 0u; i < sizeof(fragmented); ++i)
+    fragmented[i] = (uint8_t)((i * 37u + (i >> 3u)) & 0xffu);
+  first_size = sizeof(first);
+  if (cnet_sctp_session_send(client, 17u, 0u, 1,
+          fragmented, sizeof(fragmented),
+          first, sizeof(first), &first_size) != CNET_SCTP_SESSION_CAPACITY ||
+      first_size != 0u ||
+      cnet_sctp_session_queue_message(client, 18u, 0u, 1,
+          fragmented, sizeof(fragmented)) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_queue_message(client, 18u, 0u, 1,
+          fragmented, sizeof(fragmented)) != CNET_SCTP_SESSION_CAPACITY)
+    goto cleanup;
+  first_size = sizeof(first);
+  if (cnet_sctp_session_pump_message(client, 19u, first, 8u,
+          &first_size) != CNET_SCTP_SESSION_CAPACITY || first_size != 0u ||
+      cnet_sctp_session_pump_message(client, 19u, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      deliver(server, client, 20u, first, first_size) != 0 ||
+      cnet_sctp_session_poll(server, 22u, &event, message, sizeof(message),
+          second, sizeof(second), &second_size) != CNET_SCTP_SESSION_EMPTY)
+    goto cleanup;
+  if (cnet_sctp_session_pump_message(client, 23u, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      deliver(server, client, 24u, first, first_size) != 0 ||
+      cnet_sctp_session_poll(server, 26u, &event, message, sizeof(message),
+          second, sizeof(second), &second_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE || !event.binary ||
+      !event.unordered || event.message_size != sizeof(fragmented) ||
+      memcmp(message, fragmented, sizeof(fragmented)) != 0 ||
+      cnet_sctp_session_pump_message(client, 27u, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_EMPTY || first_size != 0u)
+    goto cleanup;
+
   result = 0;
 
 cleanup:

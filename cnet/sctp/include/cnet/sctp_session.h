@@ -163,11 +163,15 @@ cnet_sctp_session_status cnet_sctp_session_advance(cnet_sctp_session *session,
 cnet_sctp_session_status cnet_sctp_session_next_deadline(
     cnet_sctp_session *session, uint64_t *deadline_ms, int *has_deadline);
 
-/* open_channel emits reliable ordered DCEP OPEN. type is one of the channel
+/* open_channel emits reliably ordered DCEP OPEN. type is one of the channel
  * constants above; label/protocol are borrowed and individually bounded to
- * 128 bytes. send copies one text/binary message of at most MAX_MESSAGE_BYTES
- * into bounded transport storage. close_channel emits the bidirectional reset
- * and returns a nonzero generation that identifies this stream lifetime. */
+ * 128 bytes. send emits a SINGLE SCTP DATA/I-DATA packet immediately; it
+ * returns CAPACITY for messages requiring fragmentation without changing
+ * the stream's send state. For a message up to MAX_MESSAGE_BYTES, use the
+ * queue_message/pump_message pair below, which copies the entire input into
+ * one bounded, Owner-owned pending slot and emits one fragment per pump.
+ * close_channel emits a bidirectional reset and returns the generation
+ * that identifies the stream lifetime. */
 cnet_sctp_session_status cnet_sctp_session_open_channel(
     cnet_sctp_session *session, uint64_t now_ms, uint16_t stream,
     uint8_t type, uint16_t priority, uint32_t reliability,
@@ -178,6 +182,26 @@ cnet_sctp_session_status cnet_sctp_session_send(cnet_sctp_session *session,
     uint64_t now_ms, uint16_t stream, int binary,
     const void *message, size_t message_size,
     void *packet, size_t capacity, size_t *written);
+/* queue_message owns a full copied user message before any SCTP TSN is
+ * assigned; the caller may free the input immediately. The pending queue is
+ * bounded to ONE message per Association: a second queue returns CAPACITY
+ * without consuming bytes. DCEP OPEN/ACK and reliability policy must already
+ * admit the SID. No borrowed application input survives the call.
+ *
+ * pump_message emits AT MOST ONE DATA/I-DATA fragment. EMPTY means no queued
+ * bytes remain, CAPACITY means congestion/receive-window/buffer backpressure
+ * without consuming the pending fragment, and BUSY requires Owner advance()
+ * to service an earlier retransmission/reset. Caller must keep pumping after
+ * subsequent SACKs/Owner deadlines; there is no implicit worker or I/O.
+ * For timed policies the lifetime begins at queue admission, not pump time.
+ * Neither entry point changes production Salts::CNet or its backend. */
+cnet_sctp_session_status cnet_sctp_session_queue_message(
+    cnet_sctp_session *session, uint64_t now_ms, uint16_t stream, int binary,
+    const void *message, size_t message_size);
+cnet_sctp_session_status cnet_sctp_session_pump_message(
+    cnet_sctp_session *session, uint64_t now_ms,
+    void *packet, size_t capacity, size_t *written);
+
 cnet_sctp_session_status cnet_sctp_session_close_channel(
     cnet_sctp_session *session, uint64_t now_ms, uint16_t stream,
     void *packet, size_t capacity, size_t *written,
