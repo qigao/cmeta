@@ -154,6 +154,8 @@ static int session_round_trip(void) {
   uint64_t client_new_generation = 0u, server_new_generation = 0u;
   uint64_t old_ticket = 0u, gap_ticket_a = 0u, gap_ticket_b = 0u;
   uint64_t first_batch_ticket = 0u, next_batch_ticket = 0u;
+  uint64_t fragment_ticket = 0u;
+  uint32_t last_fragment_tsn = 0u;
   uint32_t gap_cum_ack = 0u;
   cnet_sctp_wire_header sack_header = {0};
   cnet_sctp_wire_decoder sack_decoder = {0};
@@ -815,8 +817,84 @@ static int session_round_trip(void) {
           CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u)
     goto cleanup;
 
+  /* A reliable, copied 2048-byte message produces TWO real DATA fragments
+   * and a SINGLE original-generation ACK receipt only when the final
+   * fragment has been cumulatively acknowledged. No first-fragment ACK
+   * (nor receipt reservation) is full-message delivery. */
+  if (cnet_sctp_session_queue_reliable_tracked(client, now_ms + 635u,
+          0u, client_old_generation, 1,
+          fragmented, sizeof(fragmented), &fragment_ticket) !=
+              CNET_SCTP_SESSION_STALE || fragment_ticket != 0u ||
+      cnet_sctp_session_queue_reliable_tracked(client, now_ms + 635u,
+          0u, client_new_generation, 1,
+          fragmented, sizeof(fragmented), &fragment_ticket) !=
+              CNET_SCTP_SESSION_OK || fragment_ticket == 0u ||
+      cnet_sctp_session_get_tx_usage(client, 0u,
+          client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
+      tx_usage.queued_bytes != sizeof(fragmented) ||
+      !tx_usage.has_pending_message ||
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_EMPTY)
+    goto cleanup;
+  /* The successful queue call COPIED the input: mutate every source byte
+   * before any packet is pumped, so a borrowed buffer cannot pass. */
+  for (i = 0u; i < sizeof(fragmented); ++i)
+    fragmented[i] ^= 0xffu;
+  first_size = 0u;
+  if (cnet_sctp_session_pump_message(client, now_ms + 636u,
+          first, sizeof(first), &first_size) != CNET_SCTP_SESSION_OK ||
+      first_size == 0u ||
+      deliver(server, client, now_ms + 637u, first, first_size) != 0 ||
+      cnet_sctp_session_get_tx_usage(client, 0u,
+          client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
+      tx_usage.queued_bytes == 0u ||
+      tx_usage.queued_bytes >= sizeof(fragmented) ||
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u ||
+      cnet_sctp_session_poll(server, now_ms + 639u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_EMPTY)
+    goto cleanup;
+  first_size = 0u;
+  if (cnet_sctp_session_pump_message(client, now_ms + 640u,
+          first, sizeof(first), &first_size) != CNET_SCTP_SESSION_OK ||
+      first_size == 0u ||
+      cnet_sctp_wire_decode(first, first_size,
+          &sack_header, &sack_decoder) != CNET_SCTP_WIRE_OK ||
+      cnet_sctp_wire_next_chunk(&sack_decoder, &sack_chunk) !=
+          CNET_SCTP_WIRE_OK ||
+      (sack_chunk.type != 0u && sack_chunk.type != 64u) ||
+      sack_chunk.value_size < 12u)
+    goto cleanup;
+  last_fragment_tsn = ((uint32_t)sack_chunk.value[0u] << 24u) |
+      ((uint32_t)sack_chunk.value[1u] << 16u) |
+      ((uint32_t)sack_chunk.value[2u] << 8u) |
+      (uint32_t)sack_chunk.value[3u];
+  if (deliver(server, client, now_ms + 641u, first, first_size) != 0 ||
+      cnet_sctp_session_poll(server, now_ms + 643u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+      event.stream_id != 0u || event.generation != server_new_generation ||
+      !event.binary || !event.unordered ||
+      event.message_size != sizeof(fragmented))
+    goto cleanup;
+  for (i = 0u; i < sizeof(fragmented); ++i)
+    if (message[i] != (uint8_t)((i * 37u + (i >> 3u)) & 0xffu))
+      goto cleanup;
+  if (cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_OK ||
+      acked.ticket != fragment_ticket ||
+      acked.generation != client_new_generation ||
+      acked.stream_id != 0u || acked.tsn != last_fragment_tsn ||
+      acked.ppid != 53u || !acked.binary ||
+      acked.message_size != sizeof(fragmented) ||
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u)
+    goto cleanup;
+
   fourth_size = 0u;
-  if (cnet_sctp_session_close_channel(client, now_ms + 634u, 0u,
+  if (cnet_sctp_session_close_channel(client, now_ms + 650u, 0u,
           fourth, sizeof(fourth), &fourth_size,
           &close_generation) != CNET_SCTP_SESSION_OK ||
       fourth_size == 0u || close_generation != client_new_generation)
