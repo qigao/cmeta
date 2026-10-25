@@ -52,6 +52,17 @@ static void inspect(const uint8_t *packet, size_t n,
   assert(cnet_sctp_wire_next_chunk(&decoder, value) == CNET_SCTP_WIRE_OK);
   assert(value->type == type);
 }
+
+static void wr16(uint8_t *p, uint16_t value) {
+  p[0] = (uint8_t)(value >> 8);
+  p[1] = (uint8_t)value;
+}
+static void wr32(uint8_t *p, uint32_t value) {
+  p[0] = (uint8_t)(value >> 24);
+  p[1] = (uint8_t)(value >> 16);
+  p[2] = (uint8_t)(value >> 8);
+  p[3] = (uint8_t)value;
+}
 static uint32_t rd32(const uint8_t *p) {
   return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
          ((uint32_t)p[2] << 8) | p[3];
@@ -216,6 +227,38 @@ static void data_reserved_i_and_unordered_ssn_are_ignored(void) {
       CNET_SCTP_DATA_EMPTY);
   assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
+}
+
+static void receiver_accepts_full_mtu_legacy_data_fragment(void) {
+  cnet_sctp_data a, b;
+  test_owner oa = {0}, ob = {0};
+  uint8_t value[12u + CNET_SCTP_DATA_RX_PAYLOAD_MAX] = {0};
+  uint8_t packet[CNET_SCTP_DATA_MTU], sack[CNET_SCTP_DATA_MTU];
+  uint8_t message[CNET_SCTP_DATA_RX_PAYLOAD_MAX];
+  cnet_sctp_wire_chunk chunk = {0};
+  cnet_sctp_data_message meta = {0};
+  size_t packet_size = 0u, sack_size = 0u, message_size = 0u, i;
+  pair_init(&a, &b, &oa, &ob, 100u, 300u);
+  wr32(value, 100u);
+  wr16(value + 4u, 0u);
+  wr16(value + 6u, 0u);
+  wr32(value + 8u, 53u);
+  for (i = 0u; i < CNET_SCTP_DATA_RX_PAYLOAD_MAX; ++i)
+    value[12u + i] = (uint8_t)(i * 29u + 5u);
+  chunk.type = 0u;
+  chunk.flags = 3u;
+  chunk.value = value;
+  chunk.value_size = sizeof(value);
+  assert(cnet_sctp_wire_encode(a.config.local_port, a.config.remote_port,
+      b.config.local_tag, &chunk, 1u, packet, sizeof(packet), &packet_size) ==
+      CNET_SCTP_WIRE_OK);
+  assert(packet_size == CNET_SCTP_DATA_MTU);
+  assert(cnet_sctp_data_input(&b, 1u, packet, packet_size,
+      sack, sizeof(sack), &sack_size) == CNET_SCTP_DATA_OK);
+  assert(cnet_sctp_data_take(&b, &meta, message, sizeof(message),
+      &message_size) == CNET_SCTP_DATA_OK);
+  assert(meta.ppid == 53u && message_size == CNET_SCTP_DATA_RX_PAYLOAD_MAX &&
+      memcmp(message, value + 12u, message_size) == 0);
 }
 
 static void unordered_priority_and_capacity(void) {
@@ -1127,6 +1170,7 @@ static void output_count_zeroed_before_owner_guard(void) {
 int main(void) {
   output_count_zeroed_before_owner_guard();
   data_reserved_i_and_unordered_ssn_are_ignored();
+  receiver_accepts_full_mtu_legacy_data_fragment();
   hand_authored_sack_rejections_preserve_t3();
   sack_duplicate_list_can_exceed_rx_slots();
   reorder_duplicate_sacks_require_distinct_loss_evidence();

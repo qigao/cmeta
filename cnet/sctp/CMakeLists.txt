@@ -212,6 +212,21 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME cnet_sctp_pr_sctp_test COMMAND cnet_sctp_pr_sctp_test)
 
+  add_executable(cnet_sctp_interleaving_test tests/interleaving_test.c)
+  target_link_libraries(cnet_sctp_interleaving_test PRIVATE
+    cnet_sctp_data_proto cnet_sctp_wire)
+  target_include_directories(cnet_sctp_interleaving_test PRIVATE src)
+  set_target_properties(cnet_sctp_interleaving_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  if(MSVC)
+    target_compile_options(cnet_sctp_interleaving_test PRIVATE /W4 /WX)
+  else()
+    target_compile_options(cnet_sctp_interleaving_test PRIVATE
+      -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME cnet_sctp_interleaving_test
+    COMMAND cnet_sctp_interleaving_test)
+
   add_executable(cnet_sctp_bundle_test tests/bundle_test.c)
   target_link_libraries(cnet_sctp_bundle_test PRIVATE cnet_sctp_data_proto)
   target_include_directories(cnet_sctp_bundle_test PRIVATE src)

@@ -18,6 +18,8 @@ enum {
   SCTP_TYPE_SHUTDOWN_COMPLETE = 14,
   SCTP_TYPE_RECONFIG = 130,
   SCTP_TYPE_FORWARD_TSN = 192,
+  SCTP_TYPE_I_DATA = 64,
+  SCTP_TYPE_I_FORWARD_TSN = 194,
   SCTP_PARAM_COOKIE = 7,
   SCTP_PARAM_UNRECOGNIZED = 8,
   SCTP_PARAM_SUPPORTED_EXTENSIONS = 0x8008,
@@ -301,7 +303,8 @@ static cnet_sctp_assoc_status data_prepare(const cnet_sctp_assoc *s,
     cnet_sctp_data *candidate, uint64_t now, uint32_t peer_tag,
     uint32_t peer_tsn, uint32_t peer_rwnd,
     uint16_t peer_outbound, uint16_t peer_inbound,
-    int peer_forward_tsn_supported) {
+    int peer_forward_tsn_supported, int peer_interleaving_supported,
+    int peer_i_forward_tsn_supported) {
   cnet_sctp_data_config cfg = {0};
   uint16_t outbound, inbound;
   cnet_sctp_data_status result;
@@ -326,7 +329,9 @@ static cnet_sctp_assoc_status data_prepare(const cnet_sctp_assoc *s,
   cfg.t3_initial_ms = s->config.t1_ms; /* private timer baseline until T3 config */
   cfg.t3_max_ms = s->config.t1_max_ms;
   cfg.max_retransmits = s->config.max_retransmits;
-  cfg.forward_tsn_supported = peer_forward_tsn_supported ? 1u : 0u;
+  cfg.interleaving_supported = peer_interleaving_supported ? 1u : 0u;
+  cfg.forward_tsn_supported = peer_forward_tsn_supported &&
+      (!peer_interleaving_supported || peer_i_forward_tsn_supported) ? 1u : 0u;
   cfg.is_owner = s->config.is_owner;
   cfg.owner_context = s->config.provider_context;
   result = cnet_sctp_data_init(candidate, &cfg, now);
@@ -375,8 +380,10 @@ static void prepare_init(const cnet_sctp_assoc *s,
   /* RFC 6525 5.1.1 / RFC 5061 4.2.7. Length excludes the three bytes
    * of zero padding needed to align the next INIT parameter. */
   wr16(value + 16u, SCTP_PARAM_SUPPORTED_EXTENSIONS);
-  wr16(value + 18u, 5u);
+  wr16(value + 18u, 7u);
   value[20u] = SCTP_TYPE_RECONFIG;
+  value[21u] = SCTP_TYPE_I_DATA;
+  value[22u] = SCTP_TYPE_I_FORWARD_TSN;
   /* RFC 3758 3.1 negotiates FORWARD-TSN with a dedicated empty parameter,
    * not through the RFC 5061 Supported Extensions chunk-type list. */
   wr16(value + 24u, SCTP_PARAM_FORWARD_TSN_SUPPORTED);
@@ -500,6 +507,9 @@ static int assoc_chunk_shape_valid(const cnet_sctp_wire_chunk *chunk) {
       /* RFC 9260 3.3.1: the high reserved bits are ignored and I=1
        * requests immediate acknowledgement. Both are legal on receive. */
       return chunk->value_size >= 13u;
+    case SCTP_TYPE_I_DATA:
+      /* RFC 8260 I-DATA has a 16-byte value header and non-empty user data. */
+      return chunk->value_size >= 17u;
     case SCTP_TYPE_INIT:
     case SCTP_TYPE_INIT_ACK:
       /* INIT/INIT ACK flags are sent as zero and ignored on receipt. */
@@ -513,6 +523,9 @@ static int assoc_chunk_shape_valid(const cnet_sctp_wire_chunk *chunk) {
     case SCTP_TYPE_FORWARD_TSN:
       return chunk->value_size >= 4u &&
           ((chunk->value_size - 4u) & 3u) == 0u;
+    case SCTP_TYPE_I_FORWARD_TSN:
+      return chunk->value_size >= 4u &&
+          (chunk->value_size - 4u) % 8u == 0u;
     case SCTP_TYPE_ABORT:
       /* The T bit is verified with the packet Verification Tag. An ABORT
        * may contain any well-framed number of Error Cause TLVs. */
@@ -553,6 +566,27 @@ static int assoc_packet_shape_preflight(
         !assoc_chunk_shape_valid(&chunk)) return 0;
   }
   return 1;
+}
+
+static int packet_violates_interleaving_mode(
+    const cnet_sctp_wire_decoder *decoded, size_t count,
+    int interleaving) {
+  cnet_sctp_wire_decoder cursor;
+  size_t i;
+  if (!decoded) return 0;
+  cursor = *decoded;
+  for (i = 0u; i < count; ++i) {
+    cnet_sctp_wire_chunk current;
+    if (cnet_sctp_wire_next_chunk(&cursor, &current) != CNET_SCTP_WIRE_OK)
+      return 0; /* framing is rejected by the ordinary preflight */
+    if ((interleaving &&
+         (current.type == SCTP_TYPE_FORWARD_TSN || current.type == 0u)) ||
+        (!interleaving &&
+         (current.type == SCTP_TYPE_I_FORWARD_TSN ||
+          current.type == SCTP_TYPE_I_DATA)))
+      return 1;
+  }
+  return 0;
 }
 /* HEARTBEAT and HEARTBEAT ACK carry exactly one Heartbeat Info TLV.
  * The final TLV may omit its own padding from Chunk Length. This validator is
@@ -658,7 +692,8 @@ static int assoc_abort_bundle_preflight(
       return 0;
     if (i == abort_index)
       return chunk.type == SCTP_TYPE_ABORT && assoc_chunk_shape_valid(&chunk);
-    if (chunk.type == 0u || chunk.type == SCTP_TYPE_INIT ||
+    if (chunk.type == 0u || chunk.type == SCTP_TYPE_I_DATA ||
+        chunk.type == SCTP_TYPE_INIT ||
         chunk.type == SCTP_TYPE_INIT_ACK ||
         chunk.type == SCTP_TYPE_SHUTDOWN_COMPLETE)
       return 0;
@@ -697,6 +732,7 @@ static int assoc_bundle_preflight(const cnet_sctp_wire_decoder *decoded,
   cnet_sctp_wire_chunk chunk;
   size_t i;
   int data_seen = 0;
+  uint8_t data_type = 0u;
   if (!decoded || count == 0u || count > CNET_SCTP_WIRE_MAX_CHUNKS)
     return 0;
   cursor = *decoded;
@@ -720,8 +756,10 @@ static int assoc_bundle_preflight(const cnet_sctp_wire_decoder *decoded,
   for (i = 0u; i < count; ++i) {
     if (cnet_sctp_wire_next_chunk(&cursor, &chunk) != CNET_SCTP_WIRE_OK)
       return 0;
-    if (chunk.type == 0u) {
+    if (chunk.type == 0u || chunk.type == SCTP_TYPE_I_DATA) {
+      if (data_seen && chunk.type != data_type) return 0;
       data_seen = 1;
+      data_type = chunk.type;
     } else if (chunk.type == 3u && i == 0u) {
       /* Only a leading SACK may accompany DATA in this private profile. */
     } else {
@@ -820,7 +858,8 @@ cnet_sctp_assoc_status cnet_sctp_assoc_start(cnet_sctp_assoc *s,
  * Critical: MAC provider must be a real cryptographic PRF before any release. */
 static cnet_sctp_assoc_status make_cookie(cnet_sctp_assoc *s,
     uint64_t now, const uint8_t *peer_init, int peer_reconfig_supported,
-    int peer_forward_tsn_supported,
+    int peer_forward_tsn_supported, int peer_interleaving_supported,
+    int peer_i_forward_tsn_supported,
     uint8_t cookie[CNET_SCTP_ASSOC_COOKIE_BYTES]) {
   memset(cookie, 0, CNET_SCTP_ASSOC_COOKIE_BYTES);
   cookie[0] = 'S'; cookie[1] = 'C'; cookie[2] = '1'; cookie[3] = '1';
@@ -840,6 +879,9 @@ static cnet_sctp_assoc_status make_cookie(cnet_sctp_assoc *s,
   wr64(cookie + 48, s->config.peer_binding);
   cookie[56] = peer_reconfig_supported ? 1u : 0u;
   cookie[57] = peer_forward_tsn_supported ? 1u : 0u;
+  cookie[58] = peer_interleaving_supported ? 1u : 0u;
+  cookie[59] = peer_interleaving_supported &&
+      peer_i_forward_tsn_supported ? 1u : 0u;
   s->in_progress = 1u;
   if (s->config.mac(s->config.provider_context, cookie,
         CNET_SCTP_ASSOC_COOKIE_CLAIMS_BYTES,
@@ -867,7 +909,9 @@ static cnet_sctp_assoc_status verify_cookie(cnet_sctp_assoc *s,
       rd16(cookie + 44u) != s->config.outbound_streams ||
       rd16(cookie + 46u) != s->config.inbound_streams ||
       rd64(cookie + 48u) != s->config.peer_binding ||
-      cookie[56u] > 1u || cookie[57u] > 1u)
+      cookie[56u] > 1u || cookie[57u] > 1u ||
+      cookie[58u] > 1u || cookie[59u] > 1u ||
+      (cookie[59u] && !cookie[58u]))
     return CNET_SCTP_ASSOC_AUTH;
   s->in_progress = 1u;
   mac_result = s->config.verify_mac(s->config.provider_context, cookie,
@@ -946,7 +990,8 @@ static cnet_sctp_assoc_status handle_init(cnet_sctp_assoc *s, uint64_t now,
   /* If output cannot fit the full required response, do not even call
    * the signing provider; no incomplete signed INIT ACK may escape. */
   status = make_cookie(s, now, chunk->value, params.supports_reconfig,
-      params.supports_forward_tsn, value + 20u);
+      params.supports_forward_tsn, params.supports_interleaving,
+      params.supports_i_forward_tsn, value + 20u);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   status = encode_one(s, rd32(chunk->value), SCTP_TYPE_INIT_ACK,
       value, value_size, scratch, sizeof(scratch), &size);
@@ -1025,6 +1070,10 @@ static cnet_sctp_assoc_status handle_init_ack(cnet_sctp_assoc *s,
     s->peer_reconfig_supported = params.supports_reconfig ? 1u : 0u;
     s->peer_forward_tsn_supported =
         params.supports_forward_tsn ? 1u : 0u;
+    s->peer_interleaving_supported =
+        params.supports_interleaving ? 1u : 0u;
+    s->peer_i_forward_tsn_supported =
+        params.supports_i_forward_tsn ? 1u : 0u;
     s->expected_peer_reset_request = s->peer_initial_tsn;
   }
   return status;
@@ -1075,7 +1124,8 @@ static cnet_sctp_assoc_status handle_cookie_echo(cnet_sctp_assoc *s,
   if (may_commit) {
     status = data_prepare(s, &candidate, now, peer_tag, peer_tsn,
         rd32(chunk->value + 36u), rd16(chunk->value + 32u),
-        rd16(chunk->value + 34u), chunk->value[57u]);
+        rd16(chunk->value + 34u), chunk->value[57u],
+        chunk->value[58u], chunk->value[59u]);
     if (status != CNET_SCTP_ASSOC_OK) return status;
   }
   status = encode_one(s, peer_tag, SCTP_TYPE_COOKIE_ACK,
@@ -1095,6 +1145,8 @@ static cnet_sctp_assoc_status handle_cookie_echo(cnet_sctp_assoc *s,
     s->peer_inbound_streams = rd16(chunk->value + 34u);
     s->peer_reconfig_supported = chunk->value[56u];
     s->peer_forward_tsn_supported = chunk->value[57u];
+    s->peer_interleaving_supported = chunk->value[58u];
+    s->peer_i_forward_tsn_supported = chunk->value[59u];
     s->expected_peer_reset_request = peer_tsn;
     s->state = CNET_SCTP_ASSOC_ESTABLISHED;
     s->deadline_ms = 0u;
@@ -1123,7 +1175,8 @@ static cnet_sctp_assoc_status handle_cookie_ack(cnet_sctp_assoc *s,
     cnet_sctp_assoc_status prepared = data_prepare(s, &s->data, now,
         s->peer_tag, s->peer_initial_tsn, s->peer_receive_window,
         s->peer_outbound_streams, s->peer_inbound_streams,
-        s->peer_forward_tsn_supported);
+        s->peer_forward_tsn_supported, s->peer_interleaving_supported,
+        s->peer_i_forward_tsn_supported);
     if (prepared != CNET_SCTP_ASSOC_OK) return prepared;
     s->data_ready = 1u;
     s->expected_peer_reset_request = s->peer_initial_tsn;
@@ -3259,7 +3312,8 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
     } else if (chunk.type == 3u && !valid_sack_shape(&chunk)) {
       return CNET_SCTP_ASSOC_PROTOCOL;
     } else if (header.chunk_count > 1u &&
-               chunk.type != 0u && chunk.type != 3u) {
+               chunk.type != 0u && chunk.type != SCTP_TYPE_I_DATA &&
+               chunk.type != 3u) {
       /* No arbitrary control chunks can be bundled with INIT, Cookie,
        * SHUTDOWN or ABORT in the private Association profile. */
       return CNET_SCTP_ASSOC_PROTOCOL;
@@ -3271,6 +3325,13 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   if (!assoc_packet_shape_preflight(&preflight_decoder,
       header.chunk_count))
     return CNET_SCTP_ASSOC_PROTOCOL;
+  /* RFC 8260 2.2.1/2.3.1 forbids mixing the legacy and interleaved data
+   * families after negotiation. A well-framed violation on a live TCB is
+   * terminal and receives an ABORT; short output capacity commits nothing. */
+  if (s->data_ready &&
+      packet_violates_interleaving_mode(&preflight_decoder,
+          header.chunk_count, s->peer_interleaving_supported != 0u))
+    return respond_abort(s, s->peer_tag, 1, output, cap, written);
   /* The limited unknown-only ERROR/SKIP path belongs to a live,
    * post-COOKIE association. During CLOSED/COOKIE-WAIT/COOKIE-ECHOED, an
    * unrecognized packet is not authenticated association traffic and may
@@ -3317,8 +3378,10 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
   s->last_time_ms = now;
   switch (chunk.type) {
     case 0u: /* DATA */
+    case SCTP_TYPE_I_DATA:
     case 3u: /* SACK */
     case SCTP_TYPE_FORWARD_TSN:
+    case SCTP_TYPE_I_FORWARD_TSN:
       if (!s->data_ready ||
           (header.chunk_count != 1u &&
            s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
@@ -3328,7 +3391,7 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
         s->last_time_ms = prior_time;
         return CNET_SCTP_ASSOC_PROTOCOL;
       }
-      if (chunk.type == 0u) {
+      if (chunk.type == 0u || chunk.type == SCTP_TYPE_I_DATA) {
         if (s->state == CNET_SCTP_ASSOC_SHUTDOWN_SENT) {
           if (header.verification_tag != s->local_tag) {
             s->last_time_ms = prior_time;

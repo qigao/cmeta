@@ -7,9 +7,12 @@
 #define DATA_MAGIC UINT32_C(0x53444331)
 enum {
   CHUNK_DATA = 0,
+  CHUNK_I_DATA = 64,
   CHUNK_SACK = 3,
   CHUNK_FORWARD_TSN = 192,
-  DATA_HEADER = 12
+  CHUNK_I_FORWARD_TSN = 194,
+  DATA_HEADER = 12,
+  I_DATA_HEADER = 16
 };
 enum { DATA_B = 2, DATA_E = 1, DATA_U = 4 };
 enum { PR_NO_LOSS = 0, PR_FAST_LOSS = 1, PR_T3_LOSS = 2 };
@@ -152,6 +155,8 @@ static size_t rx_available(const cnet_sctp_data *d) {
   size_t i;
   for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i)
     if (!d->rx[i].used) ++free_slots;
+  /* Advertise the conservative per-ticket budget used by the sender even
+   * though one peer fragment may occupy the larger full-PMTU RX slot. */
   if (by_bytes > free_slots * CNET_SCTP_DATA_PAYLOAD_MAX)
     by_bytes = free_slots * CNET_SCTP_DATA_PAYLOAD_MAX;
   return by_bytes;
@@ -203,6 +208,7 @@ cnet_sctp_data_status cnet_sctp_data_init(cnet_sctp_data *d,
       cfg->t3_max_ms < cfg->t3_initial_ms ||
       cfg->t3_max_ms > UINT64_MAX - now ||
       cfg->forward_tsn_supported > 1u ||
+      cfg->interleaving_supported > 1u ||
       cfg->max_retransmits == 0u)
     return CNET_SCTP_DATA_INVALID;
   if (d->magic == DATA_MAGIC) return CNET_SCTP_DATA_CLOSED;
@@ -227,12 +233,15 @@ cnet_sctp_data_status cnet_sctp_data_init(cnet_sctp_data *d,
  * both fit. The caller fixes stream SSN and B/E flags for a fragmented
  * message; no implicit per-fragment SSN increment or borrowed views. */
 static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
-    uint16_t stream, uint16_t ssn, uint32_t ppid, uint8_t flags,
+    uint16_t stream, uint32_t message_id, uint32_t fsn, uint32_t ppid,
+    uint8_t flags,
     const uint8_t *payload, size_t n, void *output, size_t cap,
     size_t *written, int zero_probe,
     const cnet_sctp_data_reliability *reliability) {
   cnet_sctp_data_tx *slot = NULL;
-  uint8_t value[DATA_HEADER + CNET_SCTP_DATA_PAYLOAD_MAX];
+  uint8_t value[I_DATA_HEADER + CNET_SCTP_DATA_PAYLOAD_MAX];
+  const size_t header_size = d->config.interleaving_supported ?
+      I_DATA_HEADER : DATA_HEADER;
   size_t packet_bytes = 0u, i;
   cnet_sctp_data_status status;
   if (n == 0u || n > CNET_SCTP_DATA_PAYLOAD_MAX || !reliability ||
@@ -272,10 +281,17 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
     return CNET_SCTP_DATA_CLOCK;
   wr32(value, d->next_tsn);
   wr16(value + 4u, stream);
-  wr16(value + 6u, ssn);
-  wr32(value + 8u, ppid);
-  memcpy(value + DATA_HEADER, payload, n);
-  status = encode_one(d, CHUNK_DATA, flags, value, DATA_HEADER + n,
+  if (d->config.interleaving_supported) {
+    wr16(value + 6u, 0u);
+    wr32(value + 8u, message_id);
+    wr32(value + 12u, (flags & DATA_B) != 0u ? ppid : fsn);
+  } else {
+    wr16(value + 6u, (uint16_t)message_id);
+    wr32(value + 8u, ppid);
+  }
+  memcpy(value + header_size, payload, n);
+  status = encode_one(d, d->config.interleaving_supported ?
+      CHUNK_I_DATA : CHUNK_DATA, flags, value, header_size + n,
                        output, cap, &packet_bytes);
   if (status != CNET_SCTP_DATA_OK) return status;
   memcpy(slot->packet, output, packet_bytes);
@@ -289,8 +305,11 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
   slot->pending_retransmit = 0u;
   slot->ack_counted = 0u;
   slot->stream_id = stream;
-  slot->ssn = ssn;
+  slot->ssn = (uint16_t)message_id;
+  slot->mid = message_id;
+  slot->fsn = fsn;
   slot->unordered = (flags & DATA_U) != 0u;
+  slot->interleaved = d->config.interleaving_supported;
   slot->reliability_mode = (uint8_t)reliability->mode;
   slot->reliability_value = reliability->value;
   slot->expires_at_ms = reliability->mode == CNET_SCTP_DATA_RELIABILITY_TIMED ?
@@ -317,18 +336,31 @@ cnet_sctp_data_status cnet_sctp_data_send_pr(cnet_sctp_data *d, uint64_t now,
     size_t n, void *output, size_t cap, size_t *written) {
   if (written) *written = 0u;
   cnet_sctp_data_status status = guard(d);
-  uint16_t seq;
+  uint32_t sequence;
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!payload || !output || !written || n == 0u ||
       stream >= d->config.outbound_streams) return CNET_SCTP_DATA_INVALID;
   if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
   if (d->pending.active) return CNET_SCTP_DATA_CAPACITY;
   if (n > CNET_SCTP_DATA_PAYLOAD_MAX) return CNET_SCTP_DATA_CAPACITY;
-  seq = unordered ? 0u : d->tx_ssn[stream];
-  status = send_frame(d, now, stream, seq, ppid,
+  sequence = d->config.interleaving_supported ?
+      (unordered ? d->tx_mid_unordered[stream] :
+       d->tx_mid_ordered[stream]) :
+      (unordered ? 0u : d->tx_ssn[stream]);
+  status = send_frame(d, now, stream, sequence, 0u, ppid,
       (uint8_t)(DATA_B | DATA_E | (unordered ? DATA_U : 0u)),
       (const uint8_t *)payload, n, output, cap, written, 0, reliability);
-  if (status == CNET_SCTP_DATA_OK && !unordered) ++d->tx_ssn[stream];
+  if (status == CNET_SCTP_DATA_OK) {
+    if (d->config.interleaving_supported) {
+      if (unordered) ++d->tx_mid_unordered[stream];
+      else {
+        ++d->tx_mid_ordered[stream];
+        ++d->tx_ssn[stream]; /* lower-16 compatibility projection */
+      }
+    } else if (!unordered) {
+      ++d->tx_ssn[stream];
+    }
+  }
   return status;
 }
 
@@ -372,7 +404,8 @@ cnet_sctp_data_status cnet_sctp_data_send_bundle(cnet_sctp_data *d,
     if (cnet_sctp_wire_decode(singles[i], packet_size,
         &h, &decoder) != CNET_SCTP_WIRE_OK || h.chunk_count != 1u ||
         cnet_sctp_wire_next_chunk(&decoder, &chunks[i]) != CNET_SCTP_WIRE_OK ||
-        chunks[i].type != CHUNK_DATA)
+        chunks[i].type != (staged.config.interleaving_supported ?
+            CHUNK_I_DATA : CHUNK_DATA))
       return CNET_SCTP_DATA_PROTOCOL;
   }
   packet_cap = cap < CNET_SCTP_DATA_MTU ? cap : CNET_SCTP_DATA_MTU;
@@ -414,8 +447,12 @@ cnet_sctp_data_status cnet_sctp_data_queue_message(cnet_sctp_data *d,
   d->pending.offset = 0u;
   d->pending.stream_id = stream;
   d->pending.ssn = unordered ? 0u : d->tx_ssn[stream];
+  d->pending.mid = unordered ? d->tx_mid_unordered[stream] :
+      d->tx_mid_ordered[stream];
+  d->pending.next_fsn = 0u;
   d->pending.ppid = ppid;
   d->pending.unordered = unordered != 0;
+  d->pending.interleaved = d->config.interleaving_supported;
   d->pending.active = 1u;
   if (d->peer_rwnd == 0u && !has_retained_tx(d)) {
     d->probe_interval_ms = d->rto_ms;
@@ -440,13 +477,25 @@ cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d,
   flags = (uint8_t)((d->pending.offset == 0u ? DATA_B : 0u) |
       (d->pending.offset + n == d->pending.size ? DATA_E : 0u) |
       (d->pending.unordered ? DATA_U : 0u));
-  status = send_frame(d, now, d->pending.stream_id, d->pending.ssn,
-      d->pending.ppid, flags, d->pending.bytes + d->pending.offset,
+  status = send_frame(d, now, d->pending.stream_id,
+      d->pending.interleaved ? d->pending.mid : d->pending.ssn,
+      d->pending.next_fsn, d->pending.ppid, flags,
+      d->pending.bytes + d->pending.offset,
       n, output, cap, written, 0, &RELIABLE_POLICY);
   if (status != CNET_SCTP_DATA_OK) return status;
   d->pending.offset += n;
+  ++d->pending.next_fsn;
   if (d->pending.offset == d->pending.size) {
-    if (!d->pending.unordered) ++d->tx_ssn[d->pending.stream_id];
+    if (d->pending.interleaved) {
+      if (d->pending.unordered)
+        ++d->tx_mid_unordered[d->pending.stream_id];
+      else {
+        ++d->tx_mid_ordered[d->pending.stream_id];
+        ++d->tx_ssn[d->pending.stream_id];
+      }
+    } else if (!d->pending.unordered) {
+      ++d->tx_ssn[d->pending.stream_id];
+    }
     /* No message body survives successful admission of the final fragment.
      * Retransmit tickets own independent full-wire copies. */
     memset(&d->pending, 0, sizeof(d->pending));
@@ -488,6 +537,45 @@ static cnet_sctp_data_status sack_packet(cnet_sctp_data *d,
   return encode_one(d, CHUNK_SACK, 0u, value, offset, out, cap, written);
 }
 
+static int same_rx_message(const cnet_sctp_data_rx *a,
+    const cnet_sctp_data_rx *b) {
+  if (!a || !b || a->interleaved != b->interleaved ||
+      a->stream_id != b->stream_id || a->unordered != b->unordered)
+    return 0;
+  return a->interleaved ? a->mid == b->mid :
+      a->ssn == b->ssn && a->ppid == b->ppid;
+}
+
+static cnet_sctp_data_rx *find_rx_fragment(cnet_sctp_data *d,
+    const cnet_sctp_data_rx *start, uint32_t index) {
+  size_t i;
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
+    cnet_sctp_data_rx *candidate = &d->rx[i];
+    if (!candidate->used || !same_rx_message(start, candidate)) continue;
+    if ((start->interleaved && candidate->fsn == index) ||
+        (!start->interleaved && candidate->tsn == start->tsn + index))
+      return candidate;
+  }
+  return NULL;
+}
+
+static int interleaved_message_forwarded(const cnet_sctp_data *d,
+    const cnet_sctp_data_rx *message) {
+  const uint16_t bit = (uint16_t)(UINT16_C(1) << message->stream_id);
+  uint32_t ceiling;
+  uint16_t streams;
+  if (!message->interleaved) return 0;
+  if (message->unordered) {
+    streams = d->rx_forward_mid_unordered_streams;
+    ceiling = d->rx_forward_mid_unordered[message->stream_id];
+  } else {
+    streams = d->rx_forward_mid_ordered_streams;
+    ceiling = d->rx_forward_mid_ordered[message->stream_id];
+  }
+  return (streams & bit) != 0u &&
+      !ahead(message->mid, ceiling);
+}
+
 static void discard_forwarded_partial_messages(cnet_sctp_data *d,
     uint32_t cumulative) {
   uint8_t complete[CNET_SCTP_DATA_RX_SLOTS] = {0};
@@ -498,24 +586,15 @@ static void discard_forwarded_partial_messages(cnet_sctp_data *d,
     const cnet_sctp_data_rx *start = &d->rx[i];
     size_t members[CNET_SCTP_DATA_RX_SLOTS];
     size_t count;
-    uint32_t tsn;
     if (!start->used || (start->flags & DATA_B) == 0u) continue;
-    tsn = start->tsn;
-    for (count = 0u; count < CNET_SCTP_DATA_RX_SLOTS; ++count, ++tsn) {
-      const cnet_sctp_data_rx *fragment = NULL;
-      size_t index = 0u;
-      for (j = 0u; j < CNET_SCTP_DATA_RX_SLOTS; ++j) {
-        if (d->rx[j].used && d->rx[j].tsn == tsn) {
-          fragment = &d->rx[j];
-          index = j;
-          break;
-        }
-      }
-      if (!fragment || fragment->stream_id != start->stream_id ||
-          fragment->ssn != start->ssn || fragment->ppid != start->ppid ||
-          fragment->unordered != start->unordered ||
+    for (count = 0u; count < CNET_SCTP_DATA_RX_SLOTS; ++count) {
+      const cnet_sctp_data_rx *fragment =
+          find_rx_fragment(d, start, (uint32_t)count);
+      size_t index;
+      if (!fragment ||
           (count != 0u && (fragment->flags & DATA_B) != 0u))
         break;
+      index = (size_t)(fragment - d->rx);
       members[count] = index;
       if ((fragment->flags & DATA_E) != 0u) {
         size_t member;
@@ -530,13 +609,13 @@ static void discard_forwarded_partial_messages(cnet_sctp_data *d,
    * retained fragment with the same message identity as one transaction. */
   for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
     const cnet_sctp_data_rx key = d->rx[i];
-    if (!key.used || complete[i] || ahead(key.tsn, cumulative)) continue;
+    if (!key.used || complete[i] ||
+        (ahead(key.tsn, cumulative) &&
+         !interleaved_message_forwarded(d, &key))) continue;
     for (j = 0u; j < CNET_SCTP_DATA_RX_SLOTS; ++j) {
       cnet_sctp_data_rx *fragment = &d->rx[j];
       if (!fragment->used || complete[j] ||
-          fragment->stream_id != key.stream_id ||
-          fragment->ssn != key.ssn || fragment->ppid != key.ppid ||
-          fragment->unordered != key.unordered)
+          !same_rx_message(&key, fragment))
         continue;
       d->buffered_rx -= fragment->size;
       memset(fragment, 0, sizeof(*fragment));
@@ -544,22 +623,14 @@ static void discard_forwarded_partial_messages(cnet_sctp_data *d,
   }
 }
 
-static int rx_message_complete(const cnet_sctp_data *d,
+static int rx_message_complete(cnet_sctp_data *d,
     const cnet_sctp_data_rx *start) {
-  uint32_t tsn;
-  size_t count, i;
+  size_t count;
   if (!start || !start->used || (start->flags & DATA_B) == 0u) return 0;
-  tsn = start->tsn;
-  for (count = 0u; count < CNET_SCTP_DATA_RX_SLOTS; ++count, ++tsn) {
-    const cnet_sctp_data_rx *fragment = NULL;
-    for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i)
-      if (d->rx[i].used && d->rx[i].tsn == tsn) {
-        fragment = &d->rx[i];
-        break;
-      }
-    if (!fragment || fragment->stream_id != start->stream_id ||
-        fragment->ssn != start->ssn || fragment->ppid != start->ppid ||
-        fragment->unordered != start->unordered ||
+  for (count = 0u; count < CNET_SCTP_DATA_RX_SLOTS; ++count) {
+    const cnet_sctp_data_rx *fragment =
+        find_rx_fragment(d, start, (uint32_t)count);
+    if (!fragment ||
         (count != 0u && (fragment->flags & DATA_B) != 0u))
       return 0;
     if ((fragment->flags & DATA_E) != 0u) return 1;
@@ -605,18 +676,73 @@ static void advance_forward_stream(cnet_sctp_data *d, uint16_t stream) {
   }
 }
 
+/* RFC 8260 applies the skip ceiling independently to ordered and unordered
+ * MID spaces. Ordered delivery pauses on any complete message at or below
+ * the ceiling; otherwise it advances to the first MID after the skipped
+ * range. Unordered delivery has no ordering gate, but retains a floor so
+ * late fragments of an explicitly skipped message cannot be resurrected. */
+static void advance_forward_mid(cnet_sctp_data *d, uint16_t stream,
+    int unordered) {
+  const uint16_t bit = (uint16_t)(UINT16_C(1) << stream);
+  uint16_t *streams = unordered ? &d->rx_forward_mid_unordered_streams :
+      &d->rx_forward_mid_ordered_streams;
+  uint32_t *ceiling_slot = unordered ?
+      &d->rx_forward_mid_unordered[stream] :
+      &d->rx_forward_mid_ordered[stream];
+  uint32_t *current = unordered ? &d->rx_mid_unordered_floor[stream] :
+      &d->rx_mid_ordered[stream];
+  uint32_t nearest = 0u, nearest_delta = 0u;
+  size_t i;
+  int found = 0;
+  if ((*streams & bit) == 0u) return;
+  if (*ceiling_slot - *current >= UINT32_C(0x80000000)) {
+    *streams &= (uint16_t)~bit;
+    return;
+  }
+  if (unordered) {
+    *current = *ceiling_slot + 1u;
+    return;
+  }
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
+    cnet_sctp_data_rx *start = &d->rx[i];
+    uint32_t delta;
+    if (!start->used || !start->interleaved || start->unordered ||
+        start->stream_id != stream || (start->flags & DATA_B) == 0u ||
+        !rx_message_complete(d, start))
+      continue;
+    delta = start->mid - *current;
+    if (delta <= *ceiling_slot - *current &&
+        (!found || delta < nearest_delta)) {
+      found = 1;
+      nearest = start->mid;
+      nearest_delta = delta;
+    }
+  }
+  if (found) {
+    *current = nearest;
+  } else {
+    *current = *ceiling_slot + 1u;
+    *streams &= (uint16_t)~bit;
+  }
+  d->rx_ssn[stream] = (uint16_t)*current;
+}
+
 /* RFC 3758 3.6: advance the peer cumulative TSN and ordered-stream SSNs in
  * one bounded transaction. Skipped partial messages are discarded before
  * any ULP view can escape; output-capacity failure leaves the live TCB intact. */
 static cnet_sctp_data_status input_forward_tsn(cnet_sctp_data *d,
-    uint64_t now, const cnet_sctp_wire_chunk *ch, void *out, size_t cap,
-    size_t *written) {
+    uint64_t now, const cnet_sctp_wire_chunk *ch, int interleaved,
+    void *out, size_t cap, size_t *written) {
   cnet_sctp_data staged;
   uint32_t cumulative;
   size_t position;
+  const size_t entry_size = interleaved ? 8u : 4u;
+  uint16_t touched_ordered = 0u, touched_unordered = 0u;
   cnet_sctp_data_status status;
-  if (!d->config.forward_tsn_supported || ch->value_size < 4u ||
-      ((ch->value_size - 4u) & 3u) != 0u)
+  if (!d->config.forward_tsn_supported ||
+      interleaved != (d->config.interleaving_supported != 0u) ||
+      ch->value_size < 4u ||
+      (ch->value_size - 4u) % entry_size != 0u)
     return CNET_SCTP_DATA_PROTOCOL;
   cumulative = rd32(ch->value);
   memcpy(&staged, d, sizeof(staged));
@@ -630,25 +756,56 @@ static cnet_sctp_data_status input_forward_tsn(cnet_sctp_data *d,
       ++staged.cumulative_rx;
       staged.rx_gaps >>= 1u;
     }
-    discard_forwarded_partial_messages(&staged, staged.cumulative_rx);
-    for (position = 4u; position < ch->value_size; position += 4u) {
+    for (position = 4u; position < ch->value_size;
+         position += entry_size) {
       const uint16_t stream = rd16(ch->value + position);
-      const uint16_t ssn = rd16(ch->value + position + 2u);
       const uint16_t bit = stream < CNET_SCTP_DATA_STREAMS ?
           (uint16_t)(UINT16_C(1) << stream) : 0u;
       if (stream >= staged.config.inbound_streams || bit == 0u)
         return CNET_SCTP_DATA_PROTOCOL;
-      if ((staged.rx_forward_streams & bit) == 0u ||
-          (uint16_t)(ssn - staged.rx_forward_ssn[stream]) <
-              UINT16_C(0x8000)) {
-        staged.rx_forward_streams |= bit;
-        staged.rx_forward_ssn[stream] = ssn;
+      if (interleaved) {
+        const int unordered = (rd16(ch->value + position + 2u) & 1u) != 0u;
+        const uint32_t mid = rd32(ch->value + position + 4u);
+        uint16_t *streams = unordered ?
+            &staged.rx_forward_mid_unordered_streams :
+            &staged.rx_forward_mid_ordered_streams;
+        uint32_t *ceiling = unordered ?
+            &staged.rx_forward_mid_unordered[stream] :
+            &staged.rx_forward_mid_ordered[stream];
+        const uint32_t delta = mid - *ceiling;
+        if ((*streams & bit) != 0u && delta == UINT32_C(0x80000000))
+          return CNET_SCTP_DATA_PROTOCOL;
+        if ((*streams & bit) == 0u || delta < UINT32_C(0x80000000)) {
+          *streams |= bit;
+          *ceiling = mid;
+        }
+        if (unordered) touched_unordered |= bit;
+        else touched_ordered |= bit;
+      } else {
+        const uint16_t ssn = rd16(ch->value + position + 2u);
+        if ((staged.rx_forward_streams & bit) == 0u ||
+            (uint16_t)(ssn - staged.rx_forward_ssn[stream]) <
+                UINT16_C(0x8000)) {
+          staged.rx_forward_streams |= bit;
+          staged.rx_forward_ssn[stream] = ssn;
+        }
+        advance_forward_stream(&staged, stream);
       }
-      advance_forward_stream(&staged, stream);
+    }
+    discard_forwarded_partial_messages(&staged, staged.cumulative_rx);
+    if (interleaved) {
+      for (position = 0u; position < CNET_SCTP_DATA_STREAMS; ++position) {
+        const uint16_t bit = (uint16_t)(UINT16_C(1) << position);
+        if ((touched_ordered & bit) != 0u)
+          advance_forward_mid(&staged, (uint16_t)position, 0);
+        if ((touched_unordered & bit) != 0u)
+          advance_forward_mid(&staged, (uint16_t)position, 1);
+      }
     }
   } else {
     /* Duplicate/old FORWARD-TSN is acknowledged but cannot rewind SSNs. */
-    for (position = 4u; position < ch->value_size; position += 4u) {
+    for (position = 4u; position < ch->value_size;
+         position += entry_size) {
       const uint16_t stream = rd16(ch->value + position);
       const uint16_t bit = stream < CNET_SCTP_DATA_STREAMS ?
           (uint16_t)(UINT16_C(1) << stream) : 0u;
@@ -669,24 +826,50 @@ static cnet_sctp_data_status input_forward_tsn(cnet_sctp_data *d,
 static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
     const cnet_sctp_wire_chunk *ch, void *out, size_t cap, size_t *written) {
   uint32_t tsn, prospective_cum, mask;
+  uint32_t mid = 0u, fsn = 0u, ppid = 0u;
   int32_t distance;
   uint16_t stream, ssn;
   size_t bytes;
+  const int interleaved = ch->type == CHUNK_I_DATA;
+  const size_t header_size = interleaved ? I_DATA_HEADER : DATA_HEADER;
   cnet_sctp_data_rx *slot = NULL;
   cnet_sctp_data_status status;
   unsigned int i;
   int duplicate = 0;
+  int drop_payload = 0;
   /* RFC 9260 3.3.1: ignore reserved DATA bits, and accept the I bit.
    * This owner-local receiver already emits an immediate SACK for DATA. */
-  if (ch->value_size < DATA_HEADER + 1u)
+  if (interleaved != (d->config.interleaving_supported != 0u) ||
+      ch->value_size < header_size + 1u)
     return CNET_SCTP_DATA_PROTOCOL; /* fragments legal, empty RFC DATA not */
-  bytes = ch->value_size - DATA_HEADER;
-  if (bytes > CNET_SCTP_DATA_PAYLOAD_MAX) return CNET_SCTP_DATA_CAPACITY;
+  bytes = ch->value_size - header_size;
+  if (bytes > CNET_SCTP_DATA_RX_PAYLOAD_MAX)
+    return CNET_SCTP_DATA_CAPACITY;
   tsn = rd32(ch->value);
   stream = rd16(ch->value + 4u);
   /* With U=1 the wire SSN is explicitly ignored by the receiver. */
-  ssn = (ch->flags & DATA_U) != 0u ? 0u : rd16(ch->value + 6u);
+  ssn = interleaved || (ch->flags & DATA_U) != 0u ?
+      0u : rd16(ch->value + 6u);
   if (stream >= d->config.inbound_streams) return CNET_SCTP_DATA_PROTOCOL;
+  if (interleaved) {
+    const uint32_t floor = (ch->flags & DATA_U) != 0u ?
+        d->rx_mid_unordered_floor[stream] : d->rx_mid_ordered[stream];
+    uint32_t delta;
+    mid = rd32(ch->value + 8u);
+    if ((ch->flags & DATA_B) != 0u) {
+      ppid = rd32(ch->value + 12u);
+    } else {
+      fsn = rd32(ch->value + 12u);
+      if (fsn == 0u) return CNET_SCTP_DATA_PROTOCOL;
+      if (fsn >= CNET_SCTP_DATA_RX_SLOTS)
+        return CNET_SCTP_DATA_CAPACITY;
+    }
+    delta = mid - floor;
+    if (delta == UINT32_C(0x80000000)) return CNET_SCTP_DATA_PROTOCOL;
+    if (delta > UINT32_C(0x80000000)) drop_payload = 1;
+  } else {
+    ppid = rd32(ch->value + 8u);
+  }
   mask = d->rx_gaps;
   prospective_cum = d->cumulative_rx;
   /* Unsigned RFC serial arithmetic also rejects the ambiguous half-wrap. */
@@ -697,7 +880,7 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
       (mask & (UINT32_C(1) << ((unsigned int)distance - 1u))) != 0u)
     duplicate = 1;
   if (!duplicate) {
-    if (bytes > rx_available(d)) {
+    if (!drop_payload && bytes > rx_available(d)) {
       /* RFC 9260 6.2: zero-window DATA is dropped without advancing the
        * receive TSN, but answered by a current-window SACK. */
       status = sack_packet(d, d->cumulative_rx, d->rx_gaps,
@@ -709,7 +892,7 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
       }
       return status;
     }
-    for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
+    for (i = 0u; !drop_payload && i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
       if (!d->rx[i].used) {
         if (!slot) slot = &d->rx[i];
         continue;
@@ -718,11 +901,21 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
        * with the same stream/SSN, but admit contiguous middle/end chunks.
        * The TSN bitmap already rejects exact duplicate fragments. */
       if ((ch->flags & DATA_B) && !(ch->flags & DATA_U) &&
-          !d->rx[i].unordered && (d->rx[i].flags & DATA_B) &&
+          !interleaved && !d->rx[i].unordered &&
+          (d->rx[i].flags & DATA_B) &&
           d->rx[i].stream_id == stream && d->rx[i].ssn == ssn)
         return CNET_SCTP_DATA_PROTOCOL;
+      if (interleaved && d->rx[i].interleaved &&
+          d->rx[i].stream_id == stream &&
+          d->rx[i].unordered == ((ch->flags & DATA_U) != 0u) &&
+          d->rx[i].mid == mid) {
+        if (d->rx[i].fsn == fsn ||
+            ((d->rx[i].flags & DATA_E) != 0u && fsn > d->rx[i].fsn) ||
+            ((ch->flags & DATA_E) != 0u && d->rx[i].fsn > fsn))
+          return CNET_SCTP_DATA_PROTOCOL;
+      }
     }
-    if (!slot) return CNET_SCTP_DATA_CAPACITY;
+    if (!drop_payload && !slot) return CNET_SCTP_DATA_CAPACITY;
     mask |= UINT32_C(1) << ((unsigned int)distance - 1u);
     while ((mask & 1u) != 0u) {
       ++prospective_cum;
@@ -730,22 +923,27 @@ static cnet_sctp_data_status input_data(cnet_sctp_data *d, uint64_t now,
     }
   }
   const size_t offered = rx_window_after_admit(
-      d, duplicate ? 0u : bytes);
+      d, duplicate || drop_payload ? 0u : bytes);
   status = sack_packet(d, prospective_cum, mask,
       offered, duplicate, tsn, out, cap, written);
   if (status != CNET_SCTP_DATA_OK) return status;
-  if (!duplicate) {
-    memcpy(slot->payload, ch->value + DATA_HEADER, bytes);
+  if (!duplicate && !drop_payload) {
+    memcpy(slot->payload, ch->value + header_size, bytes);
     slot->size = bytes;
     slot->tsn = tsn;
     slot->stream_id = stream;
     slot->ssn = ssn;
-    slot->ppid = rd32(ch->value + 8u);
+    slot->mid = mid;
+    slot->fsn = fsn;
+    slot->ppid = ppid;
     slot->unordered = (ch->flags & DATA_U) != 0u;
+    slot->interleaved = interleaved != 0;
     /* Only U/B/E affect reassembly; never retain reserved/I bits as state. */
     slot->flags = (uint8_t)(ch->flags & (DATA_B | DATA_E | DATA_U));
     slot->used = 1u;
     d->buffered_rx += bytes;
+  }
+  if (!duplicate) {
     d->cumulative_rx = prospective_cum;
     d->rx_gaps = mask;
   }
@@ -1048,6 +1246,23 @@ cnet_sctp_data_status cnet_sctp_data_reset_association(cnet_sctp_data *d,
   memset(d->rx_ssn, 0, sizeof(d->rx_ssn));
   memset(d->rx_forward_ssn, 0, sizeof(d->rx_forward_ssn));
   d->rx_forward_streams = 0u;
+  memset(d->rx_forward_mid_ordered, 0,
+      sizeof(d->rx_forward_mid_ordered));
+  memset(d->rx_forward_mid_unordered, 0,
+      sizeof(d->rx_forward_mid_unordered));
+  d->rx_forward_mid_ordered_streams = 0u;
+  d->rx_forward_mid_unordered_streams = 0u;
+  memset(d->tx_mid_ordered, 0, sizeof(d->tx_mid_ordered));
+  memset(d->tx_mid_unordered, 0, sizeof(d->tx_mid_unordered));
+  memset(d->rx_mid_ordered, 0, sizeof(d->rx_mid_ordered));
+  memset(d->rx_mid_unordered_floor, 0,
+      sizeof(d->rx_mid_unordered_floor));
+  memset(d->rx_forward_mid_ordered, 0,
+      sizeof(d->rx_forward_mid_ordered));
+  memset(d->rx_forward_mid_unordered, 0,
+      sizeof(d->rx_forward_mid_unordered));
+  d->rx_forward_mid_ordered_streams = 0u;
+  d->rx_forward_mid_unordered_streams = 0u;
   d->next_tsn = local_next_tsn;
   d->last_ack = local_next_tsn - 1u;
   d->cumulative_rx = peer_next_tsn - 1u;
@@ -1086,16 +1301,27 @@ int cnet_sctp_data_streams_through_tsn_drained(const cnet_sctp_data *d,
 void cnet_sctp_data_reset_outbound_ssn(cnet_sctp_data *d,
     uint16_t stream_id) {
   if (d && d->magic == DATA_MAGIC &&
-      stream_id < d->config.outbound_streams)
+      stream_id < d->config.outbound_streams) {
     d->tx_ssn[stream_id] = 0u;
+    d->tx_mid_ordered[stream_id] = 0u;
+    d->tx_mid_unordered[stream_id] = 0u;
+  }
 }
 void cnet_sctp_data_reset_inbound_ssn(cnet_sctp_data *d,
     uint16_t stream_id) {
   if (d && d->magic == DATA_MAGIC &&
       stream_id < d->config.inbound_streams) {
     d->rx_ssn[stream_id] = 0u;
+    d->rx_mid_ordered[stream_id] = 0u;
+    d->rx_mid_unordered_floor[stream_id] = 0u;
     d->rx_forward_ssn[stream_id] = 0u;
+    d->rx_forward_mid_ordered[stream_id] = 0u;
+    d->rx_forward_mid_unordered[stream_id] = 0u;
     d->rx_forward_streams &=
+        (uint16_t)~(uint16_t)(UINT16_C(1) << stream_id);
+    d->rx_forward_mid_ordered_streams &=
+        (uint16_t)~(uint16_t)(UINT16_C(1) << stream_id);
+    d->rx_forward_mid_unordered_streams &=
         (uint16_t)~(uint16_t)(UINT16_C(1) << stream_id);
   }
 }
@@ -1119,12 +1345,14 @@ cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now,
       cnet_sctp_wire_next_chunk(&parser, &chunk) != CNET_SCTP_WIRE_OK)
     return CNET_SCTP_DATA_PROTOCOL;
   if (header.chunk_count == 1u) {
-    if (chunk.type == CHUNK_DATA)
+    if (chunk.type == CHUNK_DATA || chunk.type == CHUNK_I_DATA)
       return input_data(d, now, &chunk, out, cap, written);
     if (chunk.type == CHUNK_SACK)
       return input_sack(d, now, &chunk);
-    if (chunk.type == CHUNK_FORWARD_TSN)
-      return input_forward_tsn(d, now, &chunk, out, cap, written);
+    if (chunk.type == CHUNK_FORWARD_TSN ||
+        chunk.type == CHUNK_I_FORWARD_TSN)
+      return input_forward_tsn(d, now, &chunk,
+          chunk.type == CHUNK_I_FORWARD_TSN, out, cap, written);
     return CNET_SCTP_DATA_PROTOCOL;
   }
   /* RFC 9260 6.9: receive multiple DATA chunks and at most one
@@ -1149,7 +1377,7 @@ cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now,
          * extension of this single-path private profile. */
         if (i != 0u) return CNET_SCTP_DATA_PROTOCOL;
         status = input_sack(&staged, now, &chunk);
-      } else if (chunk.type == CHUNK_DATA) {
+      } else if (chunk.type == CHUNK_DATA || chunk.type == CHUNK_I_DATA) {
         size_t packet_bytes = 0u;
         status = input_data(&staged, now, &chunk,
             response, sizeof(response), &packet_bytes);
@@ -1167,13 +1395,6 @@ cnet_sctp_data_status cnet_sctp_data_input(cnet_sctp_data *d, uint64_t now,
   }
 }
 
-static cnet_sctp_data_rx *find_rx_tsn(cnet_sctp_data *d, uint32_t tsn) {
-  size_t i;
-  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i)
-    if (d->rx[i].used && d->rx[i].tsn == tsn) return &d->rx[i];
-  return NULL;
-}
-
 static cnet_sctp_data_status take_message(cnet_sctp_data *d,
     uint16_t held_streams, uint32_t last_tsn,
     cnet_sctp_data_message *meta, void *out, size_t cap, size_t *written) {
@@ -1184,29 +1405,28 @@ static cnet_sctp_data_status take_message(cnet_sctp_data *d,
   if (!meta || !out || !written) return CNET_SCTP_DATA_INVALID;
   for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i) {
     cnet_sctp_data_rx *start = &d->rx[i];
-    uint32_t tsn;
     size_t total = 0u, count;
     int complete = 0;
     int held = 0;
     if (!start->used || (start->flags & DATA_B) == 0u ||
-        (!start->unordered && start->ssn != d->rx_ssn[start->stream_id]))
+        (!start->unordered &&
+         (start->interleaved ?
+          start->mid != d->rx_mid_ordered[start->stream_id] :
+          start->ssn != d->rx_ssn[start->stream_id])))
       continue;
     if (start->stream_id < CNET_SCTP_DATA_STREAMS &&
         (held_streams &
          (uint16_t)(UINT16_C(1) << start->stream_id)) != 0u &&
         ahead(start->tsn, last_tsn))
       continue;
-    /* RFC 9260 DATA fragments of one message have contiguous TSNs and
-     * identical SID/SSN/PPID/U; they may arrive out of order. Scan only
-     * the bounded RX slots. No partial user delivery or borrowed pointer. */
-    tsn = start->tsn;
-    for (count = 0u; count < CNET_SCTP_DATA_RX_SLOTS; ++count, ++tsn) {
-      cnet_sctp_data_rx *frag = find_rx_tsn(d, tsn);
+    /* Legacy DATA fragments use contiguous TSNs; I-DATA fragments use FSNs
+     * and may be interleaved with other messages. Both are found through the
+     * bounded RX slots. No partial user delivery or borrowed pointer. */
+    for (count = 0u; count < CNET_SCTP_DATA_RX_SLOTS; ++count) {
+      cnet_sctp_data_rx *frag =
+          find_rx_fragment(d, start, (uint32_t)count);
       if (!frag) break; /* incomplete: gap missing */
-      if (frag->stream_id != start->stream_id ||
-          frag->ssn != start->ssn || frag->ppid != start->ppid ||
-          frag->unordered != start->unordered ||
-          (count != 0u && (frag->flags & DATA_B) != 0u))
+      if (count != 0u && (frag->flags & DATA_B) != 0u)
         return CNET_SCTP_DATA_PROTOCOL; /* no legacy interleaving */
       if (frag->stream_id < CNET_SCTP_DATA_STREAMS &&
           (held_streams &
@@ -1224,33 +1444,46 @@ static cnet_sctp_data_status take_message(cnet_sctp_data *d,
     /* Snapshot metadata before freeing its first fragment. The entire
      * message is committed at once, never exposing erased RX storage. */
     {
+      const cnet_sctp_data_rx key = *start;
       const uint16_t stream_id = start->stream_id;
       const uint16_t stream_ssn = start->ssn;
+      const uint32_t message_id = start->mid;
       const uint32_t ppid = start->ppid;
       const uint32_t start_tsn = start->tsn;
       const uint8_t unordered = start->unordered;
+      const uint8_t interleaved = start->interleaved;
       size_t copied = 0u;
-      uint32_t consume_tsn = start->tsn;
+      uint32_t consume_index = 0u;
       uint8_t last_flags;
       do {
-        cnet_sctp_data_rx *frag = find_rx_tsn(d, consume_tsn);
+        cnet_sctp_data_rx *frag =
+            find_rx_fragment(d, &key, consume_index);
         last_flags = frag->flags;
         memcpy((uint8_t *)out + copied, frag->payload, frag->size);
         copied += frag->size;
         d->buffered_rx -= frag->size;
         memset(frag, 0, sizeof(*frag));
-        ++consume_tsn;
+        ++consume_index;
       } while ((last_flags & DATA_E) == 0u);
       meta->stream_id = stream_id;
-      meta->stream_sequence = stream_ssn;
+      meta->stream_sequence = interleaved ?
+          (uint16_t)message_id : stream_ssn;
       meta->ppid = ppid;
       meta->tsn = start_tsn;
+      meta->message_identifier = interleaved ? message_id : stream_ssn;
       meta->size = copied;
       meta->unordered = unordered;
+      meta->interleaved = interleaved;
       *written = copied;
       if (!unordered) {
-        ++d->rx_ssn[stream_id];
-        advance_forward_stream(d, stream_id);
+        if (interleaved) {
+          ++d->rx_mid_ordered[stream_id];
+          ++d->rx_ssn[stream_id];
+          advance_forward_mid(d, stream_id, 0);
+        } else {
+          ++d->rx_ssn[stream_id];
+          advance_forward_stream(d, stream_id);
+        }
       }
       /* ULP released RX tickets: schedule an explicit SACK when a closed
        * advertised window has reopened by at least one full payload slot. */
@@ -1322,9 +1555,12 @@ static cnet_sctp_data_status emit_forward_tsn(cnet_sctp_data *d,
     uint64_t now, int loss_kind, uint32_t loss_tsn,
     void *out, size_t cap, size_t *written) {
   cnet_sctp_data staged;
-  uint8_t value[4u + 4u * CNET_SCTP_DATA_STREAMS] = {0};
+  uint8_t value[4u + 16u * CNET_SCTP_DATA_STREAMS] = {0};
   uint16_t stream_ssn[CNET_SCTP_DATA_STREAMS] = {0};
+  uint32_t stream_mid_ordered[CNET_SCTP_DATA_STREAMS] = {0};
+  uint32_t stream_mid_unordered[CNET_SCTP_DATA_STREAMS] = {0};
   uint16_t streams = 0u;
+  uint16_t unordered_streams = 0u;
   uint32_t cursor, cumulative;
   size_t i, value_size = 4u, packet_size = 0u;
   int abandoned_seen = 0;
@@ -1356,7 +1592,16 @@ static cnet_sctp_data_status emit_forward_tsn(cnet_sctp_data *d,
     cumulative = cursor;
     if (tx->abandoned) {
       abandoned_seen = 1;
-      if (!tx->unordered) {
+      if (staged.config.interleaving_supported) {
+        uint16_t *mask = tx->unordered ? &unordered_streams : &streams;
+        uint32_t *mids = tx->unordered ?
+            stream_mid_unordered : stream_mid_ordered;
+        const uint16_t bit = (uint16_t)(UINT16_C(1) << tx->stream_id);
+        if ((*mask & bit) == 0u ||
+            tx->mid - mids[tx->stream_id] < UINT32_C(0x80000000))
+          mids[tx->stream_id] = tx->mid;
+        *mask |= bit;
+      } else if (!tx->unordered) {
         const uint16_t bit = (uint16_t)(UINT16_C(1) << tx->stream_id);
         if ((streams & bit) == 0u ||
             (uint16_t)(tx->ssn - stream_ssn[tx->stream_id]) <
@@ -1402,12 +1647,30 @@ static cnet_sctp_data_status emit_forward_tsn(cnet_sctp_data *d,
   wr32(value, cumulative);
   for (i = 0u; i < CNET_SCTP_DATA_STREAMS; ++i) {
     if ((streams & (uint16_t)(UINT16_C(1) << i)) == 0u) continue;
-    wr16(value + value_size, (uint16_t)i);
-    wr16(value + value_size + 2u, stream_ssn[i]);
-    value_size += 4u;
+    if (staged.config.interleaving_supported) {
+      wr16(value + value_size, (uint16_t)i);
+      wr16(value + value_size + 2u, 0u);
+      wr32(value + value_size + 4u, stream_mid_ordered[i]);
+      value_size += 8u;
+    } else {
+      wr16(value + value_size, (uint16_t)i);
+      wr16(value + value_size + 2u, stream_ssn[i]);
+      value_size += 4u;
+    }
+  }
+  if (staged.config.interleaving_supported) {
+    for (i = 0u; i < CNET_SCTP_DATA_STREAMS; ++i) {
+      if ((unordered_streams & (uint16_t)(UINT16_C(1) << i)) == 0u)
+        continue;
+      wr16(value + value_size, (uint16_t)i);
+      wr16(value + value_size + 2u, 1u);
+      wr32(value + value_size + 4u, stream_mid_unordered[i]);
+      value_size += 8u;
+    }
   }
   if (now > UINT64_MAX - staged.rto_ms) return CNET_SCTP_DATA_CLOCK;
-  status = encode_one(&staged, CHUNK_FORWARD_TSN, 0u, value, value_size,
+  status = encode_one(&staged, staged.config.interleaving_supported ?
+      CHUNK_I_FORWARD_TSN : CHUNK_FORWARD_TSN, 0u, value, value_size,
       staged.forward_packet, sizeof(staged.forward_packet), &packet_size);
   if (status != CNET_SCTP_DATA_OK) return status;
   if (packet_size > cap) return CNET_SCTP_DATA_CAPACITY;
@@ -1499,16 +1762,28 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
             (d->pending.offset == 0u ? DATA_B : 0u) |
             (d->pending.offset + 1u == d->pending.size ? DATA_E : 0u) |
             (d->pending.unordered ? DATA_U : 0u));
-        status = send_frame(d, now, d->pending.stream_id, d->pending.ssn,
-            d->pending.ppid, flags, d->pending.bytes + d->pending.offset,
+        status = send_frame(d, now, d->pending.stream_id,
+            d->pending.interleaved ? d->pending.mid : d->pending.ssn,
+            d->pending.next_fsn, d->pending.ppid, flags,
+            d->pending.bytes + d->pending.offset,
             1u, out, cap, written, 1, &RELIABLE_POLICY);
         if (status != CNET_SCTP_DATA_OK) return status;
         d->probe_tsn = d->next_tsn - 1u;
         d->probe_active = 1u;
         d->probe_unanswered = 0u;
         ++d->pending.offset;
+        ++d->pending.next_fsn;
         if (d->pending.offset == d->pending.size) {
-          if (!d->pending.unordered) ++d->tx_ssn[d->pending.stream_id];
+          if (d->pending.interleaved) {
+            if (d->pending.unordered)
+              ++d->tx_mid_unordered[d->pending.stream_id];
+            else {
+              ++d->tx_mid_ordered[d->pending.stream_id];
+              ++d->tx_ssn[d->pending.stream_id];
+            }
+          } else if (!d->pending.unordered) {
+            ++d->tx_ssn[d->pending.stream_id];
+          }
           memset(&d->pending, 0, sizeof(d->pending));
         }
         d->probe_interval_ms = interval;

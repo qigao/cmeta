@@ -132,6 +132,16 @@ static void test_supported_extension_negotiation(void) {
       CNET_SCTP_INIT_PARAMS_OK);
   assert(out.supports_reconfig && out.parsed_count == 1u);
 
+  memset(p, 0, sizeof(p));
+  n = append(p, 16u, 0x8008u, 3u);
+  p[20u] = 130u;
+  p[21u] = 64u;
+  p[22u] = 194u;
+  assert(cnet_sctp_init_params_preflight(p, n, 0, &out) ==
+      CNET_SCTP_INIT_PARAMS_OK);
+  assert(out.supports_reconfig && out.supports_interleaving &&
+      out.supports_i_forward_tsn);
+
   n = append(p, n, 0x8008u, 2u);
   p[28u] = 130u;
   assert_failure_does_not_expose_borrowed_cookie(

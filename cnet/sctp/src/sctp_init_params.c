@@ -13,7 +13,9 @@ enum {
   PARAM_ECN_CAPABLE = 0x8000,
   PARAM_SUPPORTED_EXTENSIONS = 0x8008,
   PARAM_FORWARD_TSN_SUPPORTED = 0xC000,
-  CHUNK_RECONFIG = 130
+  CHUNK_I_DATA = 64,
+  CHUNK_RECONFIG = 130,
+  CHUNK_I_FORWARD_TSN = 194
 };
 
 static uint16_t read16(const uint8_t *bytes) {
@@ -99,6 +101,10 @@ cnet_sctp_init_param_status cnet_sctp_init_params_preflight(
         for (i = 4u; i < length; ++i) {
           if (value[position + i] == CHUNK_RECONFIG)
             parsed.supports_reconfig = 1;
+          else if (value[position + i] == CHUNK_I_DATA)
+            parsed.supports_interleaving = 1;
+          else if (value[position + i] == CHUNK_I_FORWARD_TSN)
+            parsed.supports_i_forward_tsn = 1;
         }
         /* A parameter without RE-CONFIG is still valid and must not be
          * confused with an absent/duplicate RE-CONFIG advertisement. */
