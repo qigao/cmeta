@@ -184,6 +184,44 @@ The reflected struct field declarations reference canonical CMeta built-in
 descriptors, so omitting the archive is a test harness error, not compiler
 incompatibility.
 
+## Reference review: zelang-dev/c-threads (pinned main `d7cbefa0099044d6d834939290eb62e02ed8bb1b`)
+
+The external [c-threads](https://github.com/zelang-dev/c-threads)
+library is **reference material**, not a dependency, ABI fallback, or vendor
+import. It wraps pthreads/Pthreads4w and provides an accessor-based
+`pthread_key_t` TSS emulation and a separate `catomics.h` compatibility layer.
+
+The emulated `thrd_local(type, var, initial)` is **not interchangeable** with
+Salts' `static SALTS_THREAD_LOCAL type var` storage-class declaration. Its
+accessors return allocated objects and require key/owner lifecycle management.
+Salts' current thread-affine objects cannot silently change their address,
+storage, error, or destruction semantics. Moreover, the reviewed
+`include/cthreads.h` lazily checks/writes a shared `thrd_##var##_tls`
+value around `tss_create` without `pthread_once` or an equivalent
+initialization lock; simultaneous first-use requires its own qualification.
+The emulation allocates the per-thread object but does not initialize it with
+the macro's requested `initial` value on first allocation. The
+`src/cthreads.c` `thrd_sleep` wrapper also ignores interrupted sleep and
+the remaining duration, which differs from Salts' contract expectations.
+
+`include/catomics.h` mixes native builtins/inline assembly with older
+compatibility macros. Its lock-free macro uses `sizeof(obj)` rather than
+`sizeof(*obj)` in the relevant fallback and must not be treated as a
+complete substitute for Salts' `_Atomic` object and memory-order contract.
+TinyCC still advertises `__STDC_NO_ATOMICS__=1`. Do not include that header
+instead of `<stdatomic.h>`, redefine compiler feature macros, or import a
+global allocator to turn a failing Salts admission test green.
+
+Borrowed **design principle only**: make key-backed TSS initialization exactly
+once and test first use under real concurrent pthreads. The independent
+`posix_tss_semantics_probe.c` exercises 16 racing first-use threads,
+repeated per-thread access, address isolation **while all threads are live**,
+one key creation, exactly one destructor per exiting worker, and explicit
+main-thread teardown before key deletion. It uses only POSIX pthreads (no
+`cthreads.h`, rpmalloc, Salts runtime, or C11 atomic override). Native
+GCC/Clang CTest and pinned-TCC diagnostics run the same test. A pass is **not**
+evidence that Salts supports emulated TLS or a new compiler in production.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:
