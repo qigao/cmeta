@@ -69,7 +69,9 @@ echo '== independent pthread_once + TSS first use and cleanup (c-threads referen
 timeout 30s "$out/tcc_posix_tss_probe"
 
 echo '== GNU __atomic intrinsic explicit-storage backend (catomics reference) =='
-"$TCC" -std=c11 -Iplatform/include     "$source/intrinsic_atomic_conformance.c" -lpthread     -o "$out/tcc_intrinsic_atomic_conformance"
+"$TCC" -std=c11 -DSALTS_PROBE_DIAG=1 -Iplatform/include \
+    "$source/intrinsic_atomic_conformance.c" -lpthread \
+    -o "$out/tcc_intrinsic_atomic_conformance"
 timeout 30s "$out/tcc_intrinsic_atomic_conformance"
 
 echo '== default Salts::Platform header admission and actual POSIX source =='
