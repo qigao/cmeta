@@ -227,6 +227,7 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   test_context ca = {0}, cb = {0};
   cnet_sctp_session_event event = {0};
   cnet_sctp_session_tx_usage usage = {0};
+  cnet_sctp_session_unsent_cancelled cancelled = {0};
   uint8_t lost[1200], forward[1200], sack[1200], payload[32];
   uint8_t reliable[1200], response[1200];
   size_t lost_size = 0u, forward_size = 0u, sack_size = 0u;
@@ -247,6 +248,12 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   assert(cnet_sctp_session_send(&a, 22u, 2u, 1, "drop", 4u,
       lost, sizeof(lost), &lost_size) == CNET_SCTP_SESSION_OK);
   assert(lost_size != 0u);
+  /* A real PR-SCTP DATA TSN was already emitted. App-requested local
+   * pre-TSN cancel must NOT relabel it as a synchronous cancellation, even
+   * if the peer has not ACKed it; retain the original retransmit policy. */
+  assert(cnet_sctp_session_cancel_unsent_message(&a, 23u, 2u,
+      partial_a, &cancelled) == CNET_SCTP_SESSION_EMPTY);
+  assert(cancelled.ticket == 0u && cancelled.generation == 0u);
   assert(cnet_sctp_session_get_tx_usage(&a, 2u, partial_a, &usage) ==
       CNET_SCTP_SESSION_OK);
   assert(usage.generation == partial_a && usage.retained_bytes == 4u &&
@@ -271,18 +278,10 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   assert(usage.retained_bytes == 0u && usage.abandoned_bytes == 0u &&
       usage.retained_fragments == 0u && usage.gap_acked_bytes == 0u &&
       usage.association_forward_pending);
-  assert(cnet_sctp_session_input(&b, deadline + 1u, forward, forward_size,
-      sack, sizeof(sack), &sack_size) == CNET_SCTP_SESSION_OK);
-  assert(sack_size != 0u);
-  assert(cnet_sctp_session_input(&a, deadline + 2u, sack, sack_size,
-      response, sizeof(response), &response_size) == CNET_SCTP_SESSION_OK);
-  assert(response_size == 0u);
-  assert(cnet_sctp_session_get_tx_usage(&a, 2u, partial_a, &usage) ==
-      CNET_SCTP_SESSION_OK);
-  assert(usage.retained_bytes == 0u && usage.abandoned_bytes == 0u &&
-      usage.retained_fragments == 0u &&
-      !usage.association_forward_pending);
-  assert(cnet_sctp_session_poll(&a, deadline + 3u, &event,
+  /* Abandonment is a LOCAL decision, visible exactly once before the peer
+   * has ever received or acknowledged the FORWARD control. It is NOT yet
+   * evidence that the remote TSN stream has advanced. */
+  assert(cnet_sctp_session_poll(&a, deadline, &event,
       payload, sizeof(payload), response, sizeof(response), &response_size) ==
       CNET_SCTP_SESSION_OK);
   assert(event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED &&
@@ -294,6 +293,22 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
       event.reliability.mode == CNET_SCTP_SESSION_RETRANSMITS &&
       event.reliability.value == 0u &&
       event.abandon_reason == CNET_SCTP_SESSION_ABANDON_RETRANSMITS);
+  assert(cnet_sctp_session_poll(&a, deadline, &event,
+      payload, sizeof(payload), response, sizeof(response), &response_size) ==
+      CNET_SCTP_SESSION_EMPTY);
+  assert(cnet_sctp_session_input(&b, deadline + 1u, forward, forward_size,
+      sack, sizeof(sack), &sack_size) == CNET_SCTP_SESSION_OK);
+  assert(sack_size != 0u);
+  assert(cnet_sctp_session_input(&a, deadline + 2u, sack, sack_size,
+      response, sizeof(response), &response_size) == CNET_SCTP_SESSION_OK);
+  assert(response_size == 0u);
+  assert(cnet_sctp_session_get_tx_usage(&a, 2u, partial_a, &usage) ==
+      CNET_SCTP_SESSION_OK);
+  assert(usage.retained_bytes == 0u && usage.abandoned_bytes == 0u &&
+      usage.retained_fragments == 0u &&
+      !usage.association_forward_pending);
+  /* The FORWARD SACK retires the control but MUST NOT re-emit the already
+   * consumed local abandonment event, nor fabricate a cancellation. */
   assert(cnet_sctp_session_poll(&a, deadline + 4u, &event,
       payload, sizeof(payload), response, sizeof(response), &response_size) ==
       CNET_SCTP_SESSION_EMPTY);
