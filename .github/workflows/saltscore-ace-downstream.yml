@@ -62,3 +62,18 @@ jobs:
           ctest --test-dir build-m6-ace -C Release \
             --output-on-failure --no-tests=error
           test ! -e "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+      - name: Audit final installed ABI ownership and imports
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/saltscore-ace-smoke/audit-owner.py \
+            --prefix "$RUNNER_TEMP/saltscore-ace-sdk" \
+            --build-dir build-m6-ace \
+            --core-tools saltscore-candidate/tools \
+            --report build-m6-ace/m6-abi-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m6-saltscore-ace-abi-${{ matrix.os }}
+          path: build-m6-ace/m6-abi-audit.json
+          if-no-files-found: ignore
