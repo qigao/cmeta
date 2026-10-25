@@ -377,7 +377,13 @@ static int session_round_trip(void) {
   first_size = sizeof(first);
   if (cnet_sctp_session_pump_message(client, now_ms + 500u,
           first, sizeof(first), &first_size) != CNET_SCTP_SESSION_BUSY ||
-      first_size != 0u)
+      first_size != 0u ||
+      /* Exactly at the expiry deadline, cancellation must refuse and
+       * preserve the original TIMED message for the Owner advance() path.
+       * It is not a safe local pre-TSN CANCELLED result any more. */
+      cnet_sctp_session_cancel_unsent_message(client, now_ms + 500u,
+          2u, timed_generation, &cancelled) != CNET_SCTP_SESSION_BUSY ||
+      cancelled.ticket != 0u || cancelled.generation != 0u)
     goto cleanup;
   first_size = sizeof(first);
   if (cnet_sctp_session_advance(client, now_ms + 500u,
