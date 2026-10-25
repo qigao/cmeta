@@ -45,7 +45,7 @@ jobs:
           fi
           prefix="$RUNNER_TEMP/saltscore-ace-sdk"
           cmake -S saltscore-candidate -B build-m6-core "${generator[@]}" \
-            -DBUILD_TESTING=OFF "-DCMAKE_INSTALL_PREFIX=$prefix"
+            -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$prefix"
           cmake --build build-m6-core --config Release --parallel 2
           cmake --install build-m6-core --config Release
           if [[ "$RUNNER_OS" == Windows ]]; then
@@ -57,7 +57,7 @@ jobs:
           fi
           cmake -S cmake/ci/saltscore-ace-smoke -B build-m6-ace \
             "${generator[@]}" "-DSALTS_SOURCE_ROOT=$GITHUB_WORKSPACE" \
-            "-DCMAKE_PREFIX_PATH=$prefix" -DBUILD_TESTING=ON
+            "-DCMAKE_PREFIX_PATH=$prefix" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
           cmake --build build-m6-ace --config Release --parallel 2
           ctest --test-dir build-m6-ace -C Release \
             --output-on-failure --no-tests=error
