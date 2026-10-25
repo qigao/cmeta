@@ -62,7 +62,10 @@ static cnet_sctp_session_create_config session_config(uint16_t port,
   config.struct_size = sizeof(config);
   config.local_port = port;
   config.remote_port = port == 5000u ? 5001u : 5000u;
-  config.receive_window = 8192u;
+  /* The installed ABI advertises 24 KiB copied messages. A 32 KiB
+   * receiver window permits testing a full-size reassembly without
+   * relying on the receiver to publish partial-delivery APIs. */
+  config.receive_window = 32768u;
   config.outbound_streams = 4u;
   config.inbound_streams = 4u;
   config.t1_ms = 100u;
@@ -134,8 +137,11 @@ static int session_round_trip(void) {
   uint8_t fourth[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t message[CNET_SCTP_SESSION_MAX_MESSAGE_BYTES];
   uint8_t fragmented[2048];
+  uint8_t maximum[CNET_SCTP_SESSION_MAX_MESSAGE_BYTES + 1u];
   size_t first_size = 0u, second_size = 0u, third_size = 0u, fourth_size = 0u;
-  size_t i;
+  size_t i, fragments_sent = 0u;
+  uint64_t now_ms = 29u;
+  cnet_sctp_session_status pump_status;
   int result = 20;
 
   if (cnet_sctp_session_create(&client_config, 0u, &client) !=
@@ -213,6 +219,41 @@ static int session_round_trip(void) {
       memcmp(message, fragmented, sizeof(fragmented)) != 0 ||
       cnet_sctp_session_pump_message(client, 27u, first, sizeof(first),
           &first_size) != CNET_SCTP_SESSION_EMPTY || first_size != 0u)
+    goto cleanup;
+
+  /* Full advertised 24 KiB boundary: reject 24 KiB+1 without admission,
+   * then copy and deliver exactly 24 KiB through the installed Session
+   * target, pumping only as SACK/window credit permits. No internal
+   * Association/DATA header or private fragment size may be referenced. */
+  for (i = 0u; i < sizeof(maximum); ++i)
+    maximum[i] = (uint8_t)((i * 73u + (i >> 5u)) & 0xffu);
+  if (cnet_sctp_session_queue_message(client, 28u, 0u, 1,
+          maximum, sizeof(maximum)) != CNET_SCTP_SESSION_INVALID ||
+      cnet_sctp_session_queue_message(client, 28u, 0u, 1,
+          maximum, CNET_SCTP_SESSION_MAX_MESSAGE_BYTES) !=
+              CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_queue_message(client, 28u, 0u, 1,
+          "overlap", 7u) != CNET_SCTP_SESSION_CAPACITY)
+    goto cleanup;
+  for (i = 0u; i < 32u; ++i) {
+    first_size = 0u;
+    pump_status = cnet_sctp_session_pump_message(client, now_ms,
+        first, sizeof(first), &first_size);
+    if (pump_status == CNET_SCTP_SESSION_EMPTY) break;
+    if (pump_status != CNET_SCTP_SESSION_OK || first_size == 0u ||
+        deliver(server, client, now_ms + 1u, first, first_size) != 0)
+      goto cleanup;
+    ++fragments_sent;
+    now_ms += 3u;
+  }
+  if (fragments_sent < 2u || i == 32u ||
+      cnet_sctp_session_poll(server, now_ms + 2u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+      !event.binary || !event.unordered ||
+      event.message_size != CNET_SCTP_SESSION_MAX_MESSAGE_BYTES ||
+      memcmp(message, maximum, CNET_SCTP_SESSION_MAX_MESSAGE_BYTES) != 0)
     goto cleanup;
 
   result = 0;
