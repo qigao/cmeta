@@ -20,6 +20,7 @@ set(BUILD_EXAMPLES OFF)
 set(BUILD_BENCHMARKS OFF)
 set(CMETA_BUILD_NATIVE_THUNKS OFF)
 set(SALTS_PLUGIN_USE_SALTSCORE ON)
+set(SALTS_CFLOW_USE_SALTSCORE ON)
 set(SALTS_NATIVE_SOVERSION "2.3")
 include("${SALTS_SOURCE_ROOT}/cmake/CmakeUtils.cmake")
 find_package(SaltsCore 0.1 CONFIG REQUIRED)
@@ -40,6 +41,21 @@ add_subdirectory("${SALTS_SOURCE_ROOT}/component" "${PROJECT_BINARY_DIR}/compone
 add_subdirectory("${SALTS_SOURCE_ROOT}/plugin" "${PROJECT_BINARY_DIR}/plugin")
 add_subdirectory("${SALTS_SOURCE_ROOT}/component-plugin" "${PROJECT_BINARY_DIR}/component-plugin")
 add_subdirectory("${SALTS_SOURCE_ROOT}/component-runtime" "${PROJECT_BINARY_DIR}/component-runtime")
+add_subdirectory("${SALTS_SOURCE_ROOT}/cflow" "${PROJECT_BINARY_DIR}/cflow")
+
+# Execute unchanged original status, reactive stream, and ACE Pipes/Filters
+# suites. These prove actual CFlow source functionality, not header-only stubs.
+foreach(_name IN ITEMS status stream_slice ace_pipes_filters)
+  add_executable(salts_m6_cflow_${_name}
+    "${SALTS_SOURCE_ROOT}/cflow/tests/cflow_${_name}_test.c")
+  target_compile_features(salts_m6_cflow_${_name} PRIVATE c_std_11)
+  set_target_properties(salts_m6_cflow_${_name} PROPERTIES
+    C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_link_libraries(salts_m6_cflow_${_name} PRIVATE
+    Salts::CFlow Salts::TinyTest)
+  add_test(NAME salts.m6.cflow_${_name}
+    COMMAND salts_m6_cflow_${_name})
+endforeach()
 
 add_library(salts_m6_ace_provider SHARED ace_provider.c)
 target_compile_features(salts_m6_ace_provider PRIVATE c_std_11)

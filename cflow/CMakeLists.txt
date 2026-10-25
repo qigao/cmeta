@@ -169,10 +169,31 @@ target_include_directories(
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
 # CFlow remains independent of CNet; no CNet-to-Actor integration target.
-target_link_libraries(
-  ${TARGET_NAME}
-  PUBLIC Salts::CMeta Salts::NativeIO Salts::Platform
-  PRIVATE Salts::Concurrency)
+# Explicit M6 CFlow migration gate: the source implementation is original
+# Salts, but Foundation owners must come from the installed *shared* Core.
+if(SALTS_CFLOW_USE_SALTSCORE)
+  foreach(_component IN ITEMS NativeIO Platform Concurrency)
+    if(NOT TARGET SaltsCore::${_component})
+      message(FATAL_ERROR "CFlow needs installed SaltsCore::${_component}")
+    endif()
+    get_target_property(_kind SaltsCore::${_component} TYPE)
+    if(NOT _kind STREQUAL "SHARED_LIBRARY")
+      message(FATAL_ERROR "CFlow refuses static Core owner ${_component}")
+    endif()
+  endforeach()
+  foreach(_legacy IN ITEMS Core NativeIO Platform Concurrency Coroutine CNet)
+    if(TARGET Salts::${_legacy})
+      message(FATAL_ERROR "CFlow refuses legacy binary owner Salts::${_legacy}")
+    endif()
+  endforeach()
+  target_link_libraries(${TARGET_NAME}
+    PUBLIC Salts::CMeta SaltsCore::NativeIO SaltsCore::Platform
+    PRIVATE SaltsCore::Concurrency)
+else()
+  target_link_libraries(${TARGET_NAME}
+    PUBLIC Salts::CMeta Salts::NativeIO Salts::Platform
+    PRIVATE Salts::Concurrency)
+endif()
 
 install(
   TARGETS ${TARGET_NAME}
