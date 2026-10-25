@@ -60,6 +60,19 @@ static int check_cstl(void) {
     CHECK(vec_size(&v) == 2u);
     vec_raw_destroy_storage(&v);
     CHECK(v.data == NULL && !v.initialized);
+
+    /* This crosses CSTL -> CMeta descriptor and trait function ABI.
+     * A raw byte vector alone would not test this ownership boundary. */
+    vec_t typed = {0};
+    const int32_t typed_value = 37;
+    CHECK(vec_raw_init(&typed, &cmeta_type_int32, 2u) == STL_OK);
+    CHECK(vec_push(&typed, &typed_value) == STL_OK);
+    CHECK(vec_size(&typed) == 1u);
+    CHECK(*(const int32_t *)vec_at_const(&typed, 0u) == typed_value);
+    CHECK(cmeta_type_desc_valid(typed.element_type));
+    CHECK(cmeta_type_equal(typed.element_type, &cmeta_type_int32));
+    vec_raw_destroy_storage(&typed);
+    CHECK(typed.data == NULL && !typed.initialized);
     return 0;
 }
 
