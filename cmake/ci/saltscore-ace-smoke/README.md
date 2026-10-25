@@ -147,3 +147,20 @@ each of `native_io_backend_init`, `cmeta_readiness_reactor_init_kind`,
 `cmeta_readiness_backend_supported`, `cmeta_deadline_queue_init`
 and the existing memory/thread ABI functions, and the appropriate
 direct dynamic imports from the external CFlow executables.
+
+## M6.9 — original NativeIO/Actor/Machine lifecycle conformance
+
+The next stacked candidate compiles and executes **four unchanged
+original CFlow C11 suites**: typed Event Mailbox with concurrent
+producers, native Pipe Publisher/Subscriber cancellation and
+acknowledgment, sharded NativeIO cross-owner routing/capacity and
+drain, and resumable Machine Instance with cancellation/transaction
+arbitration. These are linked to the actual imported
+`SaltsCore::NativeIO/Concurrency/Platform` shared libraries
+and original Salts CMeta/CFlow, never a legacy static owner.
+
+All four run on Linux, macOS and Windows source CTests; the Linux
+ASan/UBSan/LeakSanitizer and TSan jobs repeat them three times
+alongside the qualified CMeta/ServiceHost/CFlow tests. Full
+installation/relocation and single-owner ABI checks remain mandatory.
+This is a new test-only stacked Draft, not a production cutover.

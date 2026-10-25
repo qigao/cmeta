@@ -180,3 +180,33 @@ install(EXPORT SaltsTargets
   FILE SaltsM6Targets.cmake
   NAMESPACE Salts::
   DESTINATION "${_m6_package_dir}")
+
+# M6.9 — unchanged original Actor/Machine/NativeIO lifecycle contracts,
+# never reconstructed mock adapters or private copies of Platform primitives.
+foreach(_original_suite IN ITEMS
+    event_mailbox
+    io_native_adapter
+    io_native_sharded_adapter
+    machine_instance)
+  add_executable(salts_m6_cflow_${_original_suite}
+    "${SALTS_SOURCE_ROOT}/cflow/tests/cflow_${_original_suite}_test.c")
+  target_include_directories(salts_m6_cflow_${_original_suite} PRIVATE
+    "${SALTS_SOURCE_ROOT}/cflow/src")
+  target_compile_features(salts_m6_cflow_${_original_suite} PRIVATE c_std_11)
+  set_target_properties(salts_m6_cflow_${_original_suite} PROPERTIES
+    C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_link_libraries(salts_m6_cflow_${_original_suite} PRIVATE
+    Salts::CFlow Salts::TinyTest
+    SaltsCore::NativeIO SaltsCore::Concurrency SaltsCore::Platform)
+  if(WIN32)
+    target_link_libraries(salts_m6_cflow_${_original_suite} PRIVATE ws2_32)
+  endif()
+  if(MSVC)
+    target_compile_options(salts_m6_cflow_${_original_suite} PRIVATE
+      $<$<COMPILE_LANGUAGE:C>:-experimental:c11atomics>)
+  endif()
+  add_test(NAME salts.m6.cflow_${_original_suite}
+    COMMAND salts_m6_cflow_${_original_suite})
+  set_tests_properties(salts.m6.cflow_${_original_suite}
+    PROPERTIES TIMEOUT 90)
+endforeach()
