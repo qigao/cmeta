@@ -453,7 +453,8 @@ cnet_sctp_session_status cnet_sctp_session_cancel_unsent_message(
   pending = &session->association.data.pending;
   if (!pending->active || pending->stream_id != stream) {
     const cnet_sctp_data *data = &session->association.data;
-    size_t i;
+    /* Reuse the enclosing Owner-local index. MSVC /W4 /WX must reject
+     * accidental shadowing in the standalone installed C11 SDK build. */
     /* A direct-send message may have no pending copy yet still own real
      * unretired DATA TSNs. Refuse to misreport such a request as an empty,
      * safely cancellable queue. Gap-ACKed tickets remain retained. */
