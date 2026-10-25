@@ -154,8 +154,9 @@ static int session_round_trip(void) {
   uint64_t client_new_generation = 0u, server_new_generation = 0u;
   uint64_t old_ticket = 0u, gap_ticket_a = 0u, gap_ticket_b = 0u;
   uint64_t first_batch_ticket = 0u, next_batch_ticket = 0u;
-  uint64_t fragment_ticket = 0u;
-  uint32_t last_fragment_tsn = 0u;
+  uint64_t fragment_ticket = 0u, reordered_ticket = 0u;
+  uint32_t last_fragment_tsn = 0u, withheld_tsn = 0u;
+  uint32_t reordered_last_tsn = 0u;
   uint32_t gap_cum_ack = 0u;
   cnet_sctp_wire_header sack_header = {0};
   cnet_sctp_wire_decoder sack_decoder = {0};
@@ -893,8 +894,112 @@ static int session_round_trip(void) {
           CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u)
     goto cleanup;
 
+  /* Second independently copied reliable message: retain B fragment,
+   * deliver the LAST E fragment first, and verify its revocable Gap SACK
+   * does NOT create a whole-message ACK receipt. After delayed B arrives,
+   * the peer's cumulative SACK must release the one matching ticket.
+   * The original input remains caller-owned and must not be borrowed. */
+  if (cnet_sctp_session_queue_reliable_tracked(client, now_ms + 648u,
+          0u, client_new_generation, 1,
+          fragmented, sizeof(fragmented), &reordered_ticket) !=
+              CNET_SCTP_SESSION_OK ||
+      reordered_ticket <= fragment_ticket)
+    goto cleanup;
+  first_size = 0u;
+  if (cnet_sctp_session_pump_message(client, now_ms + 649u,
+          first, sizeof(first), &first_size) != CNET_SCTP_SESSION_OK ||
+      first_size == 0u || first_size > sizeof(stale_data) ||
+      cnet_sctp_wire_decode(first, first_size, &sack_header,
+          &sack_decoder) != CNET_SCTP_WIRE_OK ||
+      cnet_sctp_wire_next_chunk(&sack_decoder, &sack_chunk) !=
+          CNET_SCTP_WIRE_OK ||
+      (sack_chunk.type != 0u && sack_chunk.type != 64u) ||
+      sack_chunk.value_size < 12u)
+    goto cleanup;
+  withheld_tsn = ((uint32_t)sack_chunk.value[0u] << 24u) |
+      ((uint32_t)sack_chunk.value[1u] << 16u) |
+      ((uint32_t)sack_chunk.value[2u] << 8u) |
+      (uint32_t)sack_chunk.value[3u];
+  stale_size = first_size;
+  memcpy(stale_data, first, stale_size);
+  third_size = 0u;
+  if (cnet_sctp_session_pump_message(client, now_ms + 650u,
+          third, sizeof(third), &third_size) != CNET_SCTP_SESSION_OK ||
+      third_size == 0u ||
+      cnet_sctp_wire_decode(third, third_size,
+          &sack_header, &sack_decoder) != CNET_SCTP_WIRE_OK ||
+      cnet_sctp_wire_next_chunk(&sack_decoder, &sack_chunk) !=
+          CNET_SCTP_WIRE_OK ||
+      (sack_chunk.type != 0u && sack_chunk.type != 64u) ||
+      sack_chunk.value_size < 12u)
+    goto cleanup;
+  reordered_last_tsn = ((uint32_t)sack_chunk.value[0u] << 24u) |
+      ((uint32_t)sack_chunk.value[1u] << 16u) |
+      ((uint32_t)sack_chunk.value[2u] << 8u) |
+      (uint32_t)sack_chunk.value[3u];
+  if (reordered_last_tsn != withheld_tsn + 1u)
+    goto cleanup;
+  /* The last fragment is only Gap-ACKed: the cumulative ACK remains
+   * before B. No full-message receipt is eligible, even though every
+   * message fragment now has a TSN and E was physically received. */
+  second_size = 0u;
+  if (cnet_sctp_session_input(server, now_ms + 651u,
+          third, third_size, second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      second_size == 0u ||
+      cnet_sctp_wire_decode(second, second_size,
+          &sack_header, &sack_decoder) != CNET_SCTP_WIRE_OK ||
+      cnet_sctp_wire_next_chunk(&sack_decoder, &sack_chunk) !=
+          CNET_SCTP_WIRE_OK ||
+      sack_chunk.type != 3u || sack_chunk.value_size < 16u ||
+      sack_chunk.value[8u] == 0u && sack_chunk.value[9u] == 0u)
+    goto cleanup;
+  first_size = 0u;
+  if (cnet_sctp_session_input(client, now_ms + 652u,
+          second, second_size, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      first_size != 0u ||
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u ||
+      cnet_sctp_session_get_tx_usage(client, 0u,
+          client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
+      tx_usage.gap_acked_bytes == 0u ||
+      tx_usage.retained_bytes != sizeof(fragmented) ||
+      cnet_sctp_session_poll(server, now_ms + 653u, &event,
+          message, sizeof(message), fourth, sizeof(fourth),
+          &fourth_size) != CNET_SCTP_SESSION_EMPTY)
+    goto cleanup;
+  second_size = 0u;
+  if (cnet_sctp_session_input(server, now_ms + 654u,
+          stale_data, stale_size, second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      second_size == 0u)
+    goto cleanup;
+  first_size = 0u;
+  if (cnet_sctp_session_input(client, now_ms + 655u,
+          second, second_size, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      first_size != 0u ||
+      cnet_sctp_session_poll(server, now_ms + 656u, &event,
+          message, sizeof(message), fourth, sizeof(fourth),
+          &fourth_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+      event.stream_id != 0u || event.generation != server_new_generation ||
+      !event.binary || !event.unordered ||
+      event.message_size != sizeof(fragmented) ||
+      memcmp(message, fragmented, sizeof(fragmented)) != 0 ||
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_OK ||
+      acked.ticket != reordered_ticket ||
+      acked.tsn != reordered_last_tsn ||
+      acked.generation != client_new_generation ||
+      acked.stream_id != 0u || acked.message_size != sizeof(fragmented) ||
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u)
+    goto cleanup;
+
   fourth_size = 0u;
-  if (cnet_sctp_session_close_channel(client, now_ms + 650u, 0u,
+  if (cnet_sctp_session_close_channel(client, now_ms + 659u, 0u,
           fourth, sizeof(fourth), &fourth_size,
           &close_generation) != CNET_SCTP_SESSION_OK ||
       fourth_size == 0u || close_generation != client_new_generation)
