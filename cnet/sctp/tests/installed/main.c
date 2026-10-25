@@ -227,8 +227,10 @@ static int session_round_trip(void) {
    * Association/DATA header or private fragment size may be referenced. */
   for (i = 0u; i < sizeof(maximum); ++i)
     maximum[i] = (uint8_t)((i * 73u + (i >> 5u)) & 0xffu);
+  /* The copied DATA queue uses CAPACITY for a validly shaped message
+   * that exceeds its fixed 24 KiB slot, before committing any state. */
   if (cnet_sctp_session_queue_message(client, 28u, 0u, 1,
-          maximum, sizeof(maximum)) != CNET_SCTP_SESSION_INVALID ||
+          maximum, sizeof(maximum)) != CNET_SCTP_SESSION_CAPACITY ||
       cnet_sctp_session_queue_message(client, 28u, 0u, 1,
           maximum, CNET_SCTP_SESSION_MAX_MESSAGE_BYTES) !=
               CNET_SCTP_SESSION_OK ||
