@@ -97,6 +97,11 @@ jobs:
           BUILD_A=build/mixed-gcc BUILD_B=build/mixed-clang \
             CC_A=gcc CC_B=clang LINKER=gcc BUILD_ROOT=build/mixed-gcc-clang \
             bash tests/compiler/run_cmeta_cstl_mixed_abi.sh
+      - name: Verify explicit Plugin shared-provider bootstrap across GCC and Clang
+        shell: bash
+        run: |
+          COMPILER_A=gcc COMPILER_B=clang BUILD_ROOT=build/plugin-dso-native \
+            bash tests/compiler/run_plugin_dso_smoke.sh
 
   tcc-experimental:
     name: TCC / pinned mob / experimental
@@ -152,6 +157,14 @@ jobs:
             CMETA_LIBRARY=build/tcc-cmeta-cstl/libcmeta_compiler.a \
             bash tests/compiler/run_cmeta_macro_probes.sh \
               2>&1 | tee build/tcc-macros/build.log
+      - name: Diagnostic GCC/TCC explicit Plugin shared-object bootstrap
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p build/plugin-dso-tcc
+          COMPILER_A=gcc COMPILER_B=tcc BUILD_ROOT=build/plugin-dso-tcc \
+            bash tests/compiler/run_plugin_dso_smoke.sh \
+              2>&1 | tee build/plugin-dso-tcc/build.log
       - name: Configure standalone C11 conformance
         run: cmake -S tests/compiler -B build/atomic-tcc -G Ninja -DCMAKE_C_COMPILER=tcc
       - name: Compile
@@ -167,6 +180,8 @@ jobs:
           path: |
             build/mixed-tcc-gcc/build.log
             build/mixed-tcc-gcc/*.log
+            build/plugin-dso-tcc/build.log
+            build/plugin-dso-tcc/*.log
             build/tcc-macros/build.log
             build/tcc-macros/*.log
             build/tcc-cmeta-cstl/build.log

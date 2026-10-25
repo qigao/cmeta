@@ -163,6 +163,27 @@ These standalone executables deliberately avoid switching production
 compiler capabilities; GCC/Clang run as required baseline, and pinned TCC
 runs as an experimental-only diagnostic.
 
+## Explicit Plugin shared-object bootstrap (Linux ELF only)
+
+The isolated `run_plugin_dso_smoke.sh` builds a shared provider using
+`CMETA_PLUGIN_DECLARE_EMPTY`. A separately compiled host opens it using
+`dlopen(RTLD_NOW | RTLD_LOCAL)`, resolves `cmeta_plugin_query`, admits only
+the exact manifest size and ABI, checks the three version fields and passive
+export contract, rejects the wrong ABI epoch, and closes the module.
+
+GCC↔Clang is a required native baseline; GCC↔TCC is a non-blocking,
+diagnostic-only comparison. These are **not** the Salts::Plugin Registry or
+ServiceHost: they do not exercise leases, active exports, callback ownership,
+linker-section fragment discovery, cancellation/drain or concurrent DSO unload.
+A pass cannot authorize use of TCC-built provider DSOs in production.
+
+The CMeta public macro script requires a completed CMeta static archive:
+`CMETA_LIBRARY=build/whole-gcc/libcmeta_compiler.a CC=gcc
+bash tests/compiler/run_cmeta_macro_probes.sh`.
+The reflected struct field declarations reference canonical CMeta built-in
+descriptors, so omitting the archive is a test harness error, not compiler
+incompatibility.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:
