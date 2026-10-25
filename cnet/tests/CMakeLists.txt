@@ -419,6 +419,16 @@ add_dependencies(cnet_tls_test cnet_gmssl_shangmi_provider_test)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   # Reverse peer direction: Tongsuo strict client authenticates the public
   # CNet NativeIO server and receives encrypted application-data echo.
+  # Draft GmSSL port14 source integration. Public CNet NativeIO server,
+  # independently driven by OpenSSL; no private provider link in this probe.
+  add_executable(cnet_openssl_tls13_port14_server_probe
+    interop/cnet_openssl_tls13_port14_server.c)
+  target_link_libraries(cnet_openssl_tls13_port14_server_probe
+    PRIVATE Salts::CNet Salts::Core)
+  set_target_properties(cnet_openssl_tls13_port14_server_probe PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+    FOLDER "cnet/tests")
+
   add_executable(cnet_tongsuo_strict_server_probe
     interop/cnet_tongsuo_strict_server.c)
   target_link_libraries(cnet_tongsuo_strict_server_probe
