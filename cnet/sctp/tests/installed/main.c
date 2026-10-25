@@ -702,7 +702,14 @@ static int session_round_trip(void) {
       tx_usage.retained_fragments != 2u ||
       /* Revocable gap ACK must NEVER create a terminal ACK receipt. */
       cnet_sctp_session_take_reliable_ack(client, &acked) !=
-          CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u)
+          CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u ||
+      /* The Gap SACK is revocable. A fully emitted SID message has no
+       * pending copied tail, but its two retained DATA tickets still make
+       * pre-TSN cancellation conservatively BUSY. */
+      cnet_sctp_session_cancel_unsent_message(client, now_ms + 550u,
+          0u, client_new_generation, &cancelled) !=
+              CNET_SCTP_SESSION_BUSY ||
+      cancelled.ticket != 0u || cancelled.generation != 0u)
     goto cleanup;
   close_generation = 0u;
   fourth_size = 0u;
@@ -746,6 +753,13 @@ static int session_round_trip(void) {
           client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
       tx_usage.retained_bytes != 0u || tx_usage.gap_acked_bytes != 0u ||
       tx_usage.retained_fragments != 0u ||
+      /* Only after the real cumulative SACK clears both tickets can the
+       * pre-TSN cancellation API truthfully report no relevant work. The
+       * independent, already-latched ACK receipts are still available. */
+      cnet_sctp_session_cancel_unsent_message(client, now_ms + 553u,
+          0u, client_new_generation, &cancelled) !=
+              CNET_SCTP_SESSION_EMPTY ||
+      cancelled.ticket != 0u || cancelled.generation != 0u ||
       cnet_sctp_session_take_reliable_ack(client, &acked) !=
           CNET_SCTP_SESSION_OK ||
       acked.ticket != gap_ticket_a ||
