@@ -8,7 +8,6 @@
   #include "cnet_test_internal.h"
 #endif
 
-#include <cstl/hash_map.h>
 #include "cnet_monocypher_namespace.h"
 #include <monocypher.h>
 #include <salts/clock.h>
@@ -32,6 +31,21 @@ typedef struct cnet_packet_key {
   cnet_datagram_peer peer;
   uint32_t conversation;
 } cnet_packet_key;
+
+/* Fixed-capacity, owner-local, C11 peer/session index.
+ * Linear probing with backshift deletion; never allocates after init. */
+typedef struct cnet_packet_index_entry {
+  cnet_packet_key key;
+  uint32_t record_slot;
+  bool occupied;
+} cnet_packet_index_entry;
+
+typedef struct cnet_packet_index {
+  cnet_packet_index_entry *entries;
+  size_t mask;
+  size_t limit;
+  size_t count;
+} cnet_packet_index;
 
 typedef struct cnet_packet_endpoint_impl cnet_packet_endpoint_impl;
 
@@ -71,7 +85,7 @@ struct cnet_packet_endpoint_impl {
   uint32_t *free_records;
   cnet_packet_send_operation *send_operations;
   uint32_t *free_send_operations;
-  hash_map_t peer_index;
+  cnet_packet_index peer_index;
   size_t session_capacity;
   size_t free_record_count;
   size_t send_operation_capacity;
@@ -199,12 +213,97 @@ static bool cnet_packet_key_equal(const void *left_value, const void *right_valu
          memcmp(left->peer.address, right->peer.address, sizeof(left->peer.address)) == 0;
 }
 
-static int cnet_packet_stl_status(stl_status status) {
-  if (status == STL_OK) return SALTS_OK;
-  if (status == STL_OUT_OF_MEMORY) return SALTS_ENOMEM;
-  if (status == STL_CAPACITY_EXCEEDED) return SALTS_ENOBUFS;
-  if (status == STL_NOT_FOUND) return SALTS_ENOENT;
-  return SALTS_EINVAL;
+static int cnet_packet_index_init(cnet_packet_index *index, size_t limit) {
+  size_t count = 1u;
+  if (index == NULL || index->entries != NULL || limit == 0u)
+    return SALTS_EINVAL;
+  if (limit > UINT32_MAX || limit > SIZE_MAX / 2u) return SALTS_ERANGE;
+  const size_t minimum = limit * 2u;
+  while (count < minimum) {
+    if (count > SIZE_MAX / 2u) return SALTS_ERANGE;
+    count *= 2u;
+  }
+  if (count > SIZE_MAX / sizeof(cnet_packet_index_entry)) return SALTS_ERANGE;
+  index->entries = (cnet_packet_index_entry *)calloc(count, sizeof(*index->entries));
+  if (index->entries == NULL) return SALTS_ENOMEM;
+  index->mask = count - 1u;
+  index->limit = limit;
+  index->count = 0u;
+  return SALTS_OK;
+}
+
+static void cnet_packet_index_destroy(cnet_packet_index *index) {
+  if (index == NULL) return;
+  free(index->entries);
+  *index = (cnet_packet_index){0};
+}
+
+static uint32_t cnet_packet_index_get(const cnet_packet_index *index,
+                                      const cnet_packet_key *key) {
+  size_t bucket;
+  if (index == NULL || index->entries == NULL || key == NULL) return 0u;
+  bucket = cnet_packet_key_hash(key, sizeof(*key), NULL) & index->mask;
+  for (size_t probe = 0u; probe <= index->mask; ++probe) {
+    const cnet_packet_index_entry *entry = &index->entries[bucket];
+    if (!entry->occupied) return 0u;
+    if (cnet_packet_key_equal(&entry->key, key, sizeof(*key), NULL))
+      return entry->record_slot;
+    bucket = (bucket + 1u) & index->mask;
+  }
+  return 0u;
+}
+
+static int cnet_packet_index_put(cnet_packet_index *index,
+                                  const cnet_packet_key *key,
+                                  uint32_t record_slot) {
+  size_t bucket;
+  if (index == NULL || index->entries == NULL || key == NULL || record_slot == 0u)
+    return SALTS_EINVAL;
+  bucket = cnet_packet_key_hash(key, sizeof(*key), NULL) & index->mask;
+  for (size_t probe = 0u; probe <= index->mask; ++probe) {
+    cnet_packet_index_entry *entry = &index->entries[bucket];
+    if (!entry->occupied) {
+      if (index->count >= index->limit) return SALTS_ENOBUFS;
+      entry->key = *key;
+      entry->record_slot = record_slot;
+      entry->occupied = true;
+      ++index->count;
+      return SALTS_OK;
+    }
+    if (cnet_packet_key_equal(&entry->key, key, sizeof(*key), NULL))
+      return SALTS_EALREADY;
+    bucket = (bucket + 1u) & index->mask;
+  }
+  return SALTS_ENOBUFS;
+}
+
+static int cnet_packet_index_remove(cnet_packet_index *index,
+                                     const cnet_packet_key *key) {
+  size_t hole;
+  if (index == NULL || index->entries == NULL || key == NULL) return SALTS_EINVAL;
+  hole = cnet_packet_key_hash(key, sizeof(*key), NULL) & index->mask;
+  for (size_t probe = 0u; probe <= index->mask; ++probe) {
+    cnet_packet_index_entry *entry = &index->entries[hole];
+    if (!entry->occupied) return SALTS_ENOENT;
+    if (cnet_packet_key_equal(&entry->key, key, sizeof(*key), NULL)) break;
+    hole = (hole + 1u) & index->mask;
+    if (probe == index->mask) return SALTS_ENOENT;
+  }
+  /* Backshift maintains every probe chain without tombstones, avoiding
+   * unbounded historical collision costs across many session generations. */
+  size_t next = (hole + 1u) & index->mask;
+  while (index->entries[next].occupied) {
+    size_t home = cnet_packet_key_hash(&index->entries[next].key,
+                                      sizeof(cnet_packet_key), NULL) & index->mask;
+    if (((next - home) & index->mask) > ((hole - home) & index->mask)) {
+      index->entries[hole] = index->entries[next];
+      hole = next;
+    }
+    next = (next + 1u) & index->mask;
+  }
+  index->entries[hole] = (cnet_packet_index_entry){0};
+  --index->count;
+  return SALTS_OK;
 }
 
 bool cnet_packet_session_valid(cnet_packet_session session) {
@@ -342,9 +441,9 @@ static void cnet_packet_callback_leave(cnet_packet_endpoint_impl *impl) {
 
 static cnet_packet_record *cnet_packet_record_from_key(cnet_packet_endpoint_impl *impl,
                                                         const cnet_packet_key *key) {
-  const uint32_t *slot = (const uint32_t *)hash_map_get_const(&impl->peer_index, key);
-  if (slot == NULL || *slot == 0u || (size_t)*slot > impl->session_capacity) return NULL;
-  return impl->records[*slot - 1u].occupied ? &impl->records[*slot - 1u] : NULL;
+  const uint32_t slot = cnet_packet_index_get(&impl->peer_index, key);
+  if (slot == 0u || (size_t)slot > impl->session_capacity) return NULL;
+  return impl->records[slot - 1u].occupied ? &impl->records[slot - 1u] : NULL;
 }
 
 static uint32_t cnet_packet_record_conversation(const cnet_packet_record *record) {
@@ -425,7 +524,7 @@ static void cnet_packet_record_finalize(cnet_packet_endpoint_impl *impl,
     (void)cnet_secure_kcp_destroy(&record->secure_kcp);
     record->secure_kcp_initialized = false;
   }
-  if (hash_map_remove(&impl->peer_index, &record->key, NULL) != STL_OK) {
+  if (cnet_packet_index_remove(&impl->peer_index, &record->key) != SALTS_OK) {
     cnet_packet_user_error(impl, cnet_packet_record_handle(impl, record), SALTS_EPROTO);
   }
   cnet_packet_user_state(impl, record, CNET_PACKET_SESSION_CLOSED);
@@ -587,7 +686,7 @@ static int cnet_packet_record_open(cnet_packet_endpoint_impl *impl, const cnet_p
     }
   }
   map_slot = (uint32_t)(index + 1u);
-  status = cnet_packet_stl_status(hash_map_put(&impl->peer_index, key, &map_slot));
+  status = cnet_packet_index_put(&impl->peer_index, key, map_slot);
   if (status != SALTS_OK) {
     if (record->kcp_initialized) {
       (void)cnet_kcp_destroy(&record->kcp);
@@ -606,7 +705,7 @@ static int cnet_packet_record_open(cnet_packet_endpoint_impl *impl, const cnet_p
   if (record->secure_kcp_initialized) {
     status = cnet_secure_kcp_start(&record->secure_kcp, (uint32_t)cmeta_monotonic_ms());
     if (status != SALTS_OK) {
-      (void)hash_map_remove(&impl->peer_index, &record->key, NULL);
+      (void)cnet_packet_index_remove(&impl->peer_index, &record->key);
       (void)cnet_secure_kcp_destroy(&record->secure_kcp);
       record->secure_kcp_initialized = false;
       record->occupied = false;
@@ -835,7 +934,7 @@ int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
   cnet_packet_endpoint_impl *impl;
   cnet_datagram_config datagram_config;
   size_t send_operation_capacity = 0u;
-  stl_status map_status;
+  int map_status;
   size_t index;
   int status;
   if (endpoint == NULL) return SALTS_EINVAL;
@@ -865,19 +964,15 @@ int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
     free(impl);
     return SALTS_ENOMEM;
   }
-  map_status = hash_map_init_bytes(&impl->peer_index, sizeof(cnet_packet_key),
-                                   _Alignof(cnet_packet_key), sizeof(uint32_t), _Alignof(uint32_t),
-                                   config->session_capacity, cnet_packet_key_hash,
-                                   cnet_packet_key_equal, NULL);
-  if (map_status == STL_OK) map_status = hash_map_reserve(&impl->peer_index, config->session_capacity);
-  if (map_status != STL_OK) {
-    hash_map_raw_destroy_storage(&impl->peer_index);
+  map_status = cnet_packet_index_init(&impl->peer_index, config->session_capacity);
+  if (map_status != SALTS_OK) {
+    cnet_packet_index_destroy(&impl->peer_index);
     free(impl->free_send_operations);
     free(impl->send_operations);
     free(impl->free_records);
     free(impl->records);
     free(impl);
-    return cnet_packet_stl_status(map_status);
+    return map_status;
   }
   impl->owner = endpoint;
   impl->session_capacity = config->session_capacity;
@@ -901,7 +996,7 @@ int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
   datagram_config.observer.user = impl;
   status = cnet_datagram_init(&impl->datagram, &datagram_config);
   if (status != SALTS_OK) {
-    hash_map_raw_destroy_storage(&impl->peer_index);
+    cnet_packet_index_destroy(&impl->peer_index);
     free(impl->free_send_operations);
     free(impl->send_operations);
     free(impl->free_records);
@@ -914,7 +1009,7 @@ int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
   if (status != SALTS_OK) {
     (void)cnet_datagram_stop(&impl->datagram, 1000u);
     (void)cnet_datagram_destroy(&impl->datagram);
-    hash_map_raw_destroy_storage(&impl->peer_index);
+    cnet_packet_index_destroy(&impl->peer_index);
     free(impl->free_send_operations);
     free(impl->send_operations);
     free(impl->free_records);
@@ -1138,7 +1233,7 @@ int cnet_packet_endpoint_destroy(cnet_packet_endpoint *endpoint) {
   if (!impl->stopped) return SALTS_EBUSY;
   status = cnet_datagram_destroy(&impl->datagram);
   if (status != SALTS_OK) return status;
-  hash_map_raw_destroy_storage(&impl->peer_index);
+  cnet_packet_index_destroy(&impl->peer_index);
   free(impl->free_send_operations);
   free(impl->send_operations);
   free(impl->free_records);

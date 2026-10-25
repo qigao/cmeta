@@ -59,7 +59,7 @@ function(cnet_configure_target target_name)
   target_link_libraries(
     ${target_name}
     PUBLIC Salts::NativeIO Salts::Concurrency Salts::Core
-    PRIVATE Salts::UriParser Salts::Platform Salts::CSTL monocypher cmeta_reed
+    PRIVATE Salts::UriParser Salts::Platform monocypher cmeta_reed
             ${cnet_cares_link_items} kcp::kcp c-ares::cares
             GmSSL::GmSSL
             $<$<PLATFORM_ID:Windows>:crypt32>
