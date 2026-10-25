@@ -160,10 +160,84 @@ static void output_length_on_early_errors(void) {
   assert(written == 0u);
 }
 
+static void channel_type_maps_to_data_policy(void) {
+  cnet_sctp_dcep d = {0}, peer = {0};
+  test_owner owner = {1};
+  cnet_sctp_data_reliability policy = {CNET_SCTP_DATA_RELIABLE, 99u};
+  uint8_t open[32], ack = 2u, peer_ack[1];
+  size_t written = 0u, peer_written = 0u;
+  int unordered = 7;
+
+  assert(cnet_sctp_dcep_init(&d, 8u, 1, owned, &owner) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_send_policy(&d, 0u, &unordered, &policy) ==
+      CNET_SCTP_DCEP_BUSY);
+  assert(unordered == 7 && policy.mode == CNET_SCTP_DATA_RELIABLE &&
+      policy.value == 99u);
+
+  assert(cnet_sctp_dcep_open(&d, 0u, 0x81u, 0u, 3u,
+      NULL, 0u, NULL, 0u, open, sizeof(open), &written) ==
+      CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_init(&peer, 8u, 0, owned, &owner) ==
+      CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_input(&peer, 0u, open, written,
+      peer_ack, sizeof(peer_ack), &peer_written) == CNET_SCTP_DCEP_OK);
+  assert(peer_written == 1u && !cnet_sctp_dcep_ready(&peer, 0u));
+  assert(cnet_sctp_dcep_user_data_received(&peer, 0u) == CNET_SCTP_DCEP_OK);
+  assert(!cnet_sctp_dcep_ready(&peer, 0u) &&
+      cnet_sctp_dcep_send_policy(&peer, 0u, &unordered, &policy) ==
+          CNET_SCTP_DCEP_BUSY);
+  assert(cnet_sctp_dcep_ack_admitted(&peer, 0u) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_ready(&peer, 0u));
+  assert(cnet_sctp_dcep_send_policy(&peer, 0u, &unordered, &policy) ==
+      CNET_SCTP_DCEP_OK && unordered &&
+      policy.mode == CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
+      policy.value == 3u);
+  /* RFC 8832 section 6: pre-ACK DATA on an unordered channel is ordered. */
+  assert(cnet_sctp_dcep_send_policy(&d, 0u, &unordered, &policy) ==
+      CNET_SCTP_DCEP_OK);
+  assert(!unordered && policy.mode ==
+      CNET_SCTP_DATA_RELIABILITY_RETRANSMITS && policy.value == 3u);
+  assert(cnet_sctp_dcep_user_data_received(&d, 0u) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_ready(&d, 0u));
+  assert(cnet_sctp_dcep_send_policy(&d, 0u, &unordered, &policy) ==
+      CNET_SCTP_DCEP_OK && unordered &&
+      policy.mode == CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
+      policy.value == 3u);
+  assert(cnet_sctp_dcep_input(&d, 0u, &ack, 1u,
+      NULL, 0u, &written) == CNET_SCTP_DCEP_OK);
+
+  assert(cnet_sctp_dcep_open(&d, 2u, 0x02u, 0u, 50u,
+      NULL, 0u, NULL, 0u, open, sizeof(open), &written) ==
+      CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_input(&d, 2u, &ack, 1u,
+      NULL, 0u, &written) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_send_policy(&d, 2u, &unordered, &policy) ==
+      CNET_SCTP_DCEP_OK && !unordered &&
+      policy.mode == CNET_SCTP_DATA_RELIABILITY_TIMED &&
+      policy.value == 50u);
+  assert(cnet_sctp_dcep_user_data_received(&d, 2u) == CNET_SCTP_DCEP_OK);
+
+  assert(cnet_sctp_dcep_open(&d, 4u, 0x80u, 0u, 123u,
+      NULL, 0u, NULL, 0u, open, sizeof(open), &written) ==
+      CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_input(&d, 4u, &ack, 1u,
+      NULL, 0u, &written) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_send_policy(&d, 4u, &unordered, &policy) ==
+      CNET_SCTP_DCEP_OK && unordered &&
+      policy.mode == CNET_SCTP_DATA_RELIABLE && policy.value == 0u);
+
+  assert(cnet_sctp_dcep_send_policy(&d, 2u, NULL, &policy) ==
+      CNET_SCTP_DCEP_INVALID);
+  owner.admitted = 0;
+  assert(cnet_sctp_dcep_send_policy(&d, 2u, &unordered, &policy) ==
+      CNET_SCTP_DCEP_OWNER);
+}
+
 int main(void) {
   reliable_open_ack();
   output_length_on_early_errors();
   unordered_and_negative();
-  puts("C11 RFC8832 reliable DCEP OPEN/ACK, UTF-8, parity, bounds PASS");
+  channel_type_maps_to_data_policy();
+  puts("C11 RFC8832 DCEP OPEN/ACK and RFC3758 policy mapping PASS");
   return 0;
 }

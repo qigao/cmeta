@@ -206,6 +206,58 @@ cnet_sctp_dcep_status cnet_sctp_dcep_ack_admitted(cnet_sctp_dcep *d,
   return CNET_SCTP_DCEP_OK;
 }
 
+cnet_sctp_dcep_status cnet_sctp_dcep_send_policy(cnet_sctp_dcep *d,
+    uint16_t sid, int *unordered,
+    cnet_sctp_data_reliability *reliability) {
+  cnet_sctp_dcep_status status = guard(d);
+  const cnet_sctp_dcep_channel *channel;
+  uint8_t type;
+  if (status != CNET_SCTP_DCEP_OK) return status;
+  if (!unordered || !reliability || sid >= d->streams)
+    return CNET_SCTP_DCEP_INVALID;
+  channel = &d->channels[sid];
+  if (channel->state == 0u || channel->state == 3u)
+    return CNET_SCTP_DCEP_BUSY;
+  if (channel->state != 2u &&
+      (channel->state != 1u || !channel->locally_initiated))
+    return CNET_SCTP_DCEP_PROTOCOL;
+  type = (uint8_t)(channel->channel_type & UINT8_C(0x7f));
+  switch (type) {
+    case 0x00u:
+      reliability->mode = CNET_SCTP_DATA_RELIABLE;
+      reliability->value = 0u;
+      break;
+    case 0x01u:
+      reliability->mode = CNET_SCTP_DATA_RELIABILITY_RETRANSMITS;
+      reliability->value = channel->reliability;
+      break;
+    case 0x02u:
+      reliability->mode = CNET_SCTP_DATA_RELIABILITY_TIMED;
+      reliability->value = channel->reliability;
+      break;
+    default:
+      return CNET_SCTP_DCEP_PROTOCOL;
+  }
+  *unordered = channel->state == 2u &&
+      (channel->channel_type & UINT8_C(0x80)) != 0u;
+  return CNET_SCTP_DCEP_OK;
+}
+
+cnet_sctp_dcep_status cnet_sctp_dcep_user_data_received(cnet_sctp_dcep *d,
+    uint16_t sid) {
+  cnet_sctp_dcep_status status = guard(d);
+  cnet_sctp_dcep_channel *channel;
+  if (status != CNET_SCTP_DCEP_OK) return status;
+  if (sid >= d->streams) return CNET_SCTP_DCEP_INVALID;
+  channel = &d->channels[sid];
+  if (channel->state == 2u || channel->state == 3u)
+    return CNET_SCTP_DCEP_OK;
+  if (channel->state != 1u || !channel->locally_initiated)
+    return CNET_SCTP_DCEP_PROTOCOL;
+  channel->state = 2u;
+  return CNET_SCTP_DCEP_OK;
+}
+
 int cnet_sctp_dcep_ready(const cnet_sctp_dcep *d, uint16_t stream) {
   if (!d || d->magic != DCEP_MAGIC || d->stopped ||
       !d->is_owner(d->context) || stream >= d->streams) return 0;

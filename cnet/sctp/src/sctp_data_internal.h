@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "sctp_reliability_internal.h"
+
 /* PRIVATE C11 SCTP DATA/SACK transport core. No heap, worker, socket or lock.
  * The one CNet Owner drives send, input, take, T3 and stop; no copied pointer
  * may outlive a call. The prototype supports bounded DATA/I-DATA
@@ -47,17 +49,6 @@ typedef enum cnet_sctp_data_status {
 } cnet_sctp_data_status;
 
 typedef int (*cnet_sctp_data_owner_fn)(void *context);
-
-typedef enum cnet_sctp_data_reliability_mode {
-  CNET_SCTP_DATA_RELIABLE = 0,
-  CNET_SCTP_DATA_RELIABILITY_RETRANSMITS = 1,
-  CNET_SCTP_DATA_RELIABILITY_TIMED = 2
-} cnet_sctp_data_reliability_mode;
-
-typedef struct cnet_sctp_data_reliability {
-  cnet_sctp_data_reliability_mode mode;
-  uint32_t value; /* retransmission count or lifetime in milliseconds */
-} cnet_sctp_data_reliability;
 
 typedef enum cnet_sctp_data_abandon_reason {
   CNET_SCTP_DATA_ABANDON_TIMED = 1,
