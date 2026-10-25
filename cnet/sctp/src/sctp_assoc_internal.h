@@ -161,6 +161,8 @@ typedef struct cnet_sctp_assoc {
   uint16_t peer_inbound_streams;
   uint8_t peer_reconfig_supported;
   uint8_t peer_forward_tsn_supported;
+  uint8_t peer_interleaving_supported;
+  uint8_t peer_i_forward_tsn_supported;
   uint8_t reset_active;
   uint8_t reconfig_kind;
   uint8_t reset_is_reciprocal;

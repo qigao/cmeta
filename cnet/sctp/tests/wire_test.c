@@ -209,64 +209,75 @@ static void test_max_chunk_count_and_no_partial_decode(void) {
 }
 
 /* RFC 9260 §3.3.7 / §6.10 permits ABORT with control chunks but forbids
- * bundling any DATA chunk with ABORT. Validate both wire orders without
- * partially writing output or publishing parsed decoder state. */
+ * bundling DATA with ABORT; RFC 8260 applies the same rule to I-DATA.
+ * Validate both wire orders without partially writing output or publishing
+ * parsed decoder state. */
 static void test_abort_data_bundle_rejected(void) {
-  uint8_t data_value[13] = {0};
+  uint8_t data_value[17] = {0};
   uint8_t sack_value[12] = {0};
-  uint8_t output[64], packet[64];
+  uint8_t output[80], packet[80];
   cnet_sctp_wire_header header;
   cnet_sctp_wire_decoder decoder;
   cnet_sctp_wire_chunk allowed[2] = {
     {3u, 0u, sack_value, sizeof(sack_value)},
     {6u, 0u, NULL, 0u}
   };
-  cnet_sctp_wire_chunk forbidden[2][2] = {
-    {{6u, 0u, NULL, 0u}, {0u, 3u, data_value, sizeof(data_value)}},
-    {{0u, 3u, data_value, sizeof(data_value)}, {6u, 0u, NULL, 0u}}
-  };
-  size_t written = 99u, order;
+  const uint8_t data_types[2] = {0u, 64u};
+  size_t written = 99u, type_i, order;
 
   memset(output, 0xCC, sizeof(output));
-  for (order = 0u; order < 2u; ++order) {
-    written = 99u;
-    assert(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
-        forbidden[order], 2u, output, sizeof(output), &written) ==
-        CNET_SCTP_WIRE_MALFORMED);
-    assert(written == 0u && output[0] == 0xCCu &&
-        output[sizeof(output) - 1u] == 0xCCu);
-
-    /* Construct the invalid packet independently of the encoder so decode
-     * is tested against CRC-valid peer bytes after the encoder is fixed. */
-    memset(packet, 0, sizeof(packet));
-    packet[0] = 0x13u; packet[1] = 0x88u; /* source port 5000 */
-    packet[2] = 0x13u; packet[3] = 0x89u; /* destination port 5001 */
-    packet[4] = 0x12u; packet[5] = 0x34u;
-    packet[6] = 0x56u; packet[7] = 0x78u;
-    {
-      const size_t abort_offset = order == 0u ? 12u : 32u;
+  for (type_i = 0u; type_i < sizeof(data_types); ++type_i) {
+    const size_t value_size = data_types[type_i] == 0u ? 13u : 17u;
+    const size_t data_length = value_size + 4u;
+    const size_t padded_data_length = (data_length + 3u) & ~(size_t)3u;
+    for (order = 0u; order < 2u; ++order) {
+      cnet_sctp_wire_chunk forbidden[2] = {
+        {6u, 0u, NULL, 0u},
+        {data_types[type_i], 3u, data_value, value_size}
+      };
+      const size_t abort_offset = order == 0u ? 12u : 12u + padded_data_length;
       const size_t data_offset = order == 0u ? 16u : 12u;
+      const size_t packet_size = 16u + padded_data_length;
+      if (order != 0u) {
+        const cnet_sctp_wire_chunk swap = forbidden[0];
+        forbidden[0] = forbidden[1];
+        forbidden[1] = swap;
+      }
+      written = 99u;
+      assert(cnet_sctp_wire_encode(5000u, 5001u, UINT32_C(0x12345678),
+          forbidden, 2u, output, sizeof(output), &written) ==
+          CNET_SCTP_WIRE_MALFORMED);
+      assert(written == 0u && output[0] == 0xCCu &&
+          output[sizeof(output) - 1u] == 0xCCu);
+
+      /* Construct the invalid packet independently of the encoder so decode
+       * is tested against CRC-valid peer bytes after the encoder is fixed. */
+      memset(packet, 0, sizeof(packet));
+      packet[0] = 0x13u; packet[1] = 0x88u; /* source port 5000 */
+      packet[2] = 0x13u; packet[3] = 0x89u; /* destination port 5001 */
+      packet[4] = 0x12u; packet[5] = 0x34u;
+      packet[6] = 0x56u; packet[7] = 0x78u;
       packet[abort_offset] = 6u;
       packet[abort_offset + 1u] = 0u;
       packet[abort_offset + 2u] = 0u;
       packet[abort_offset + 3u] = 4u;
-      packet[data_offset] = 0u;
+      packet[data_offset] = data_types[type_i];
       packet[data_offset + 1u] = 3u;
-      packet[data_offset + 2u] = 0u;
-      packet[data_offset + 3u] = 17u;
-      memset(packet + data_offset + 4u, 0, sizeof(data_value));
-      packet[data_offset + 16u] = 0xA5u;
+      packet[data_offset + 2u] = (uint8_t)(data_length >> 8);
+      packet[data_offset + 3u] = (uint8_t)data_length;
+      memset(packet + data_offset + 4u, 0, value_size);
+      packet[data_offset + data_length - 1u] = 0xA5u;
+      seal(packet, packet_size);
+      memset(&header, 0xCC, sizeof(header));
+      memset(&decoder, 0xCC, sizeof(decoder));
+      assert(cnet_sctp_wire_decode(packet, packet_size, &header, &decoder) ==
+          CNET_SCTP_WIRE_MALFORMED);
+      assert(header.source_port == 0u && header.destination_port == 0u &&
+        header.verification_tag == 0u && header.checksum == 0u &&
+        header.chunk_count == 0u);
+      assert(decoder.packet == NULL && decoder.packet_size == 0u &&
+        decoder.next_offset == 0u && decoder.chunks_remaining == 0u);
     }
-    seal(packet, 36u);
-    memset(&header, 0xCC, sizeof(header));
-    memset(&decoder, 0xCC, sizeof(decoder));
-    assert(cnet_sctp_wire_decode(packet, 36u, &header, &decoder) ==
-        CNET_SCTP_WIRE_MALFORMED);
-    assert(header.source_port == 0u && header.destination_port == 0u &&
-      header.verification_tag == 0u && header.checksum == 0u &&
-      header.chunk_count == 0u);
-    assert(decoder.packet == NULL && decoder.packet_size == 0u &&
-      decoder.next_offset == 0u && decoder.chunks_remaining == 0u);
   }
 
   /* Control-before-ABORT remains legal; do not over-restrict ABORT to a

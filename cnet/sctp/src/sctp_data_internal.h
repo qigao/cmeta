@@ -7,14 +7,20 @@
 
 /* PRIVATE C11 SCTP DATA/SACK transport core. No heap, worker, socket or lock.
  * The one CNet Owner drives send, input, take, T3 and stop; no copied pointer
- * may outlive a call. The prototype supports bounded legacy DATA
+ * may outlive a call. The prototype supports bounded DATA/I-DATA
  * fragmentation, RFC 9260 gap/duplicate SACKs and fixed path/stream ceilings.
- * RFC 3758 timed/max-retransmit abandonment uses negotiated FORWARD-TSN.
- * Interleaving, shutdown and complete RFC 7 cwnd conformance remain separate
- * mandatory gates before browser compatibility.
+ * RFC 3758/RFC 8260 timed/max-retransmit abandonment uses the negotiated
+ * FORWARD-TSN variant. Shutdown and complete RFC 7 cwnd conformance remain
+ * separate mandatory gates before browser compatibility.
  */
 #define CNET_SCTP_DATA_MTU 1200u
+/* Local sender fragmentation stays conservative at 1024 bytes. A peer using
+ * the full path MTU can legally place 1172 bytes in a legacy DATA chunk
+ * (1200 - common header 12 - Chunk header 4 - DATA value header 12).
+ * Receive storage must admit that wire-valid maximum; I-DATA's larger header
+ * naturally limits its peer payload to 1168 bytes at the same MTU. */
 #define CNET_SCTP_DATA_PAYLOAD_MAX 1024u
+#define CNET_SCTP_DATA_RX_PAYLOAD_MAX 1172u
 #define CNET_SCTP_DATA_MESSAGE_MAX 24576u /* 24 KiB, >16 KiB WebRTC gate */
 #define CNET_SCTP_DATA_TX_SLOTS 16u
 #define CNET_SCTP_DATA_BUNDLE_MAX 4u
@@ -59,6 +65,7 @@ typedef struct cnet_sctp_data_config {
   uint64_t t3_initial_ms, t3_max_ms;
   uint8_t max_retransmits;
   uint8_t forward_tsn_supported;
+  uint8_t interleaving_supported;
   cnet_sctp_data_owner_fn is_owner;
   void *owner_context;
 } cnet_sctp_data_config;
@@ -80,7 +87,9 @@ typedef struct cnet_sctp_data_tx {
   uint8_t pending_retransmit; /* loss intent, never flight credit */
   uint8_t probe_retransmitted; /* suppress ambiguous zero-window RTT samples */
   uint16_t stream_id, ssn;
+  uint32_t mid, fsn;
   uint8_t unordered;
+  uint8_t interleaved;
   uint8_t reliability_mode;
   uint32_t reliability_value;
   uint64_t expires_at_ms;
@@ -89,11 +98,13 @@ typedef struct cnet_sctp_data_tx {
 } cnet_sctp_data_tx;
 
 typedef struct cnet_sctp_data_rx {
-  uint8_t payload[CNET_SCTP_DATA_PAYLOAD_MAX];
+  uint8_t payload[CNET_SCTP_DATA_RX_PAYLOAD_MAX];
   size_t size;
   uint32_t tsn, ppid;
   uint16_t stream_id, ssn;
+  uint32_t mid, fsn;
   uint8_t unordered;
+  uint8_t interleaved;
   uint8_t flags; /* RFC 9260 DATA U/B/E for bounded reassembly */
   uint8_t used;
 } cnet_sctp_data_rx;
@@ -102,16 +113,18 @@ typedef struct cnet_sctp_data_pending {
   uint8_t bytes[CNET_SCTP_DATA_MESSAGE_MAX];
   size_t size, offset;
   uint16_t stream_id, ssn;
-  uint32_t ppid;
+  uint32_t ppid, mid, next_fsn;
   uint8_t unordered;
+  uint8_t interleaved;
   uint8_t active;
 } cnet_sctp_data_pending;
 
 typedef struct cnet_sctp_data_message {
   uint16_t stream_id, stream_sequence;
-  uint32_t ppid, tsn;
+  uint32_t ppid, tsn, message_identifier;
   size_t size;
   uint8_t unordered;
+  uint8_t interleaved;
 } cnet_sctp_data_message;
 
 typedef struct cnet_sctp_data {
@@ -122,6 +135,14 @@ typedef struct cnet_sctp_data {
   uint16_t tx_ssn[CNET_SCTP_DATA_STREAMS], rx_ssn[CNET_SCTP_DATA_STREAMS];
   uint16_t rx_forward_ssn[CNET_SCTP_DATA_STREAMS];
   uint16_t rx_forward_streams;
+  uint32_t tx_mid_ordered[CNET_SCTP_DATA_STREAMS];
+  uint32_t tx_mid_unordered[CNET_SCTP_DATA_STREAMS];
+  uint32_t rx_mid_ordered[CNET_SCTP_DATA_STREAMS];
+  uint32_t rx_mid_unordered_floor[CNET_SCTP_DATA_STREAMS];
+  uint32_t rx_forward_mid_ordered[CNET_SCTP_DATA_STREAMS];
+  uint32_t rx_forward_mid_unordered[CNET_SCTP_DATA_STREAMS];
+  uint16_t rx_forward_mid_ordered_streams;
+  uint16_t rx_forward_mid_unordered_streams;
   uint32_t next_tsn, last_ack, cumulative_rx, rx_gaps;
   uint32_t peer_rwnd, cwnd, ssthresh;
   uint32_t last_advertised_rwnd;
@@ -174,8 +195,10 @@ cnet_sctp_data_status cnet_sctp_data_send_pr(cnet_sctp_data *d,
  * commit atomically after all semantic and response-capacity checks;
  * DATA returns one final cumulative SACK. No application callback runs. */
 /* One fragmented user message may be queued at a time. A copied, bounded
- * pending buffer owns all bytes. pump() emits at most one DATA fragment per
- * call (B|E flags and TSNs strictly sequential, fixed SSN, no interleaving).
+ * pending buffer owns all bytes. pump() emits at most one DATA/I-DATA
+ * fragment per call. The FCFS sender has one active message; negotiated
+ * I-DATA uses MID/FSN, and the receiver accepts fragments interleaved across
+ * streams without assuming contiguous TSNs.
  * Backpressure/CWND/T3, retransmission priority and output-capacity
  * failures do not advance offset. Queue copies bytes for an explicit
  * one-byte zero-window probe from advance(); direct send stays blocked.

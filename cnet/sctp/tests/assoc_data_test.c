@@ -761,7 +761,7 @@ static void shutdown_sent_accepts_bundled_data(void) {
         CNET_SCTP_WIRE_OK);
     assert(header.chunk_count == 1u);
     assert(cnet_sctp_wire_next_chunk(&decoder, &chunks[i]) ==
-        CNET_SCTP_WIRE_OK && chunks[i].type == 0u);
+        CNET_SCTP_WIRE_OK && chunks[i].type == 64u);
   }
   assert(cnet_sctp_wire_encode(b.config.local_port, b.config.remote_port,
       b.peer_tag, chunks, 2u, combined, sizeof(combined), &ncombined) ==
@@ -1102,12 +1102,12 @@ static void post_cookie_bundled_data(void) {
     assert(header.chunk_count == 1u);
     assert(cnet_sctp_wire_next_chunk(&decoder, &chunks[i]) ==
         CNET_SCTP_WIRE_OK);
-    assert(chunks[i].type == 0u);
+    assert(chunks[i].type == 64u);
   }
   assert(a.data.next_tsn == ca.tsn + 3u); /* rollover: fffffffe -> 1 */
   memcpy(broken, chunks, sizeof(broken));
   /* DATA without user bytes is malformed. Reserved/I bits are NOT. */
-  broken[2].value_size = 12u;
+  broken[2].value_size = 16u;
   assert(cnet_sctp_wire_encode(a.config.local_port,
       a.config.remote_port, a.peer_tag, broken, 3u,
       combined, sizeof(combined), &n) == CNET_SCTP_WIRE_OK);
@@ -2978,8 +2978,8 @@ static void stream_reset_roundtrip_reuse_and_duplicate(void) {
   assert(cnet_sctp_wire_decode(data, data_n, &header, &decoder) ==
       CNET_SCTP_WIRE_OK);
   assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
-      chunk.type == 0u && chunk.value_size >= 13u &&
-      read16_test(chunk.value + 6u) == 0u);
+      chunk.type == 64u && chunk.value_size >= 17u &&
+      read32_test(chunk.value + 8u) == 0u);
   assert(cnet_sctp_assoc_input(&b, 17u, data, data_n,
       sack, sizeof(sack), &sack_n) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_take_message(&b, &message, payload,
@@ -2993,7 +2993,7 @@ static void stream_reset_roundtrip_reuse_and_duplicate(void) {
   assert(cnet_sctp_wire_decode(data, data_n, &header, &decoder) ==
       CNET_SCTP_WIRE_OK);
   assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
-      chunk.type == 0u && read16_test(chunk.value + 6u) == 0u);
+      chunk.type == 64u && read32_test(chunk.value + 8u) == 0u);
   assert(cnet_sctp_assoc_input(&a, 20u, data, data_n,
       sack, sizeof(sack), &sack_n) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_take_message(&a, &message, payload,
@@ -4265,8 +4265,8 @@ static void association_reset_roundtrip_rebases_tsn_and_ssn(void) {
   assert(cnet_sctp_wire_decode(data, data_n, &header, &decoder) ==
       CNET_SCTP_WIRE_OK &&
       cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
-      chunk.type == 0u && read32_test(chunk.value) == a_next &&
-      read16_test(chunk.value + 6u) == 0u);
+      chunk.type == 64u && read32_test(chunk.value) == a_next &&
+      read32_test(chunk.value + 8u) == 0u);
   assert(cnet_sctp_assoc_input(&b, 14u, data, data_n,
       sack, sizeof(sack), &sack_n) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_take_message(&b, &message, payload,
@@ -4562,6 +4562,45 @@ static void association_reset_response_preserves_unread_data(void) {
   assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
 }
 
+static void negotiated_interleaving_rejects_legacy_data_with_abort(void) {
+  cnet_sctp_assoc a, b, before;
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_wire_chunk data = {0}, abort_chunk = {0};
+  cnet_sctp_wire_header header = {0};
+  cnet_sctp_wire_decoder decoder = {0};
+  uint8_t value[13] = {0};
+  uint8_t packet[1200], response[1200];
+  size_t packet_n = 0u, response_n = 0u;
+  ready_pair(&a, &b, &ca, &cb);
+  assert(a.peer_interleaving_supported && b.peer_interleaving_supported &&
+      a.data.config.interleaving_supported &&
+      b.data.config.interleaving_supported);
+  value[3] = (uint8_t)a.initial_tsn;
+  value[12] = 'x';
+  data.type = 0u;
+  data.flags = 3u;
+  data.value = value;
+  data.value_size = sizeof(value);
+  assert(cnet_sctp_wire_encode(a.config.local_port, a.config.remote_port,
+      a.peer_tag, &data, 1u, packet, sizeof(packet), &packet_n) ==
+      CNET_SCTP_WIRE_OK);
+  memcpy(&before, &b, sizeof(before));
+  assert(cnet_sctp_assoc_input(&b, 6u, packet, packet_n,
+      response, 8u, &response_n) == CNET_SCTP_ASSOC_CAPACITY);
+  assert(response_n == 0u && memcmp(&b, &before, sizeof(b)) == 0);
+  assert(cnet_sctp_assoc_input(&b, 6u, packet, packet_n,
+      response, sizeof(response), &response_n) == CNET_SCTP_ASSOC_OK);
+  assert(b.state == CNET_SCTP_ASSOC_FAILED && response_n != 0u);
+  assert(cnet_sctp_wire_decode(response, response_n, &header, &decoder) ==
+      CNET_SCTP_WIRE_OK && header.verification_tag == b.peer_tag);
+  assert(cnet_sctp_wire_next_chunk(&decoder, &abort_chunk) ==
+      CNET_SCTP_WIRE_OK && abort_chunk.type == 6u);
+  assert(cnet_sctp_assoc_stop(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_stop(&b) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&a) == CNET_SCTP_ASSOC_OK);
+  assert(cnet_sctp_assoc_destroy(&b) == CNET_SCTP_ASSOC_OK);
+}
+
 static void pr_sctp_timed_forward_tsn_roundtrip(void) {
   cnet_sctp_assoc a, b, before;
   test_context ca = {0}, cb = {0};
@@ -4594,7 +4633,9 @@ static void pr_sctp_timed_forward_tsn_roundtrip(void) {
   assert(cnet_sctp_wire_decode(forward, forward_n, &header, &decoder) ==
       CNET_SCTP_WIRE_OK);
   assert(cnet_sctp_wire_next_chunk(&decoder, &chunk) == CNET_SCTP_WIRE_OK &&
-      chunk.type == 192u && chunk.value_size == 8u);
+      chunk.type == 194u && chunk.value_size == 12u &&
+      chunk.value[4] == 0u && chunk.value[5] == 1u &&
+      chunk.value[6] == 0u && chunk.value[7] == 0u);
   assert(cnet_sctp_assoc_input(&b, 12u, forward, forward_n,
       sack, sizeof(sack), &sack_n) == CNET_SCTP_ASSOC_OK);
   assert(cnet_sctp_assoc_take_message(&b, &message, payload,
@@ -4609,6 +4650,7 @@ static void pr_sctp_timed_forward_tsn_roundtrip(void) {
 }
 
 int main(void) {
+  negotiated_interleaving_rejects_legacy_data_with_abort();
   pr_sctp_timed_forward_tsn_roundtrip();
   association_reset_roundtrip_rebases_tsn_and_ssn();
   association_reset_collision_and_minimum_interval();
