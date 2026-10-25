@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "cmake/ci/saltscore-ace-smoke/**"
+      - "cmake/ci/saltscore-ace-consumer/**"
       - ".github/workflows/saltscore-ace-downstream.yml"
       - "cmeta/**"
       - "component/**"
