@@ -121,5 +121,5 @@ add_test(NAME salts.m6.service_host_cpp COMMAND salts_m6_service_host_cpp)
 
 add_executable(salts_m6_plugin_path utf8_plugin_path_test.c)
 target_compile_features(salts_m6_plugin_path PRIVATE c_std_11)
-target_link_libraries(salts_m6_plugin_path PRIVATE Salts::Plugin)
+target_link_libraries(salts_m6_plugin_path PRIVATE Salts::Plugin SaltsCore::Core)
 add_test(NAME salts.m6.plugin_utf8_path COMMAND salts_m6_plugin_path)
