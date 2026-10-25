@@ -952,7 +952,7 @@ static int session_round_trip(void) {
       cnet_sctp_wire_next_chunk(&sack_decoder, &sack_chunk) !=
           CNET_SCTP_WIRE_OK ||
       sack_chunk.type != 3u || sack_chunk.value_size < 16u ||
-      sack_chunk.value[8u] == 0u && sack_chunk.value[9u] == 0u)
+      (sack_chunk.value[8u] == 0u && sack_chunk.value[9u] == 0u))
     goto cleanup;
   first_size = 0u;
   if (cnet_sctp_session_input(client, now_ms + 652u,
