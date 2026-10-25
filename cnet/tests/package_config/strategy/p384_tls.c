@@ -227,11 +227,12 @@ static int require_server_config_rejected(const char *cert_file,
 
 int main(int argc, char **argv)
 {
-  if (argc != 15) {
+  if (argc != 19) {
     fprintf(stderr,
             "usage: %s CA CERT KEY WRONG_CA EXPIRED TAMPERED "
             "CHAIN_CA CHAIN_FULL CHAIN_LEAF CHAIN_KEY MALFORMED "
-            "MISMATCHED_KEY UNSUPPORTED_CERT UNSUPPORTED_KEY\n",
+            "MISMATCHED_KEY UNSUPPORTED_CERT UNSUPPORTED_KEY "
+            "RSA3072_CA RSA3072_CERT RSA3072_KEY RSA3072_PSS_CERT\n",
             argv[0]);
     return 2;
   }
@@ -248,6 +249,10 @@ int main(int argc, char **argv)
     return 1;
   if (require_server_config_rejected(argv[13], argv[14], "unsupported Ed25519 key"))
     return 1;
-  puts("installed C11 CNet P384 issuer SHA384 TLS negative matrix: PASS");
+  if (run_case(argv[15], argv[16], argv[17], "localhost", false)) return 1;
+  if (require_server_config_rejected(argv[18], argv[17],
+                                     "unsupported RSASSA-PSS certificate signature"))
+    return 1;
+  puts("installed C11 CNet X.509 TLS matrix: PASS");
   return 0;
 }

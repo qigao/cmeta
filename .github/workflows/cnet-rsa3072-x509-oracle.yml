@@ -1,0 +1,46 @@
+name: CNet RSA-3072 X.509 oracle
+
+on:
+  pull_request:
+    paths:
+      - "cnet/tests/fixtures/rsa3072-test-*.pem"
+      - "cnet/tests/cnet_tls_test.c"
+      - "cnet/tests/package_config/strategy/**"
+      - "cnet/X509_COMPATIBILITY_MATRIX.md"
+      - ".github/workflows/cnet-rsa3072-x509-oracle.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  openssl-reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify independent RSA-3072 fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixtures=cnet/tests/fixtures
+          root="$fixtures/rsa3072-test-root-cert.pem"
+          leaf="$fixtures/rsa3072-test-server-cert.pem"
+          pss_leaf="$fixtures/rsa3072-test-server-pss-cert.pem"
+          key="$fixtures/rsa3072-test-server-key.pem"
+
+          openssl verify -x509_strict -purpose sslserver -CAfile "$root" "$leaf" "$pss_leaf"
+          openssl x509 -in "$leaf" -noout -checkhost localhost
+          openssl x509 -in "$leaf" -noout -checkip 127.0.0.1
+          if openssl x509 -in "$leaf" -noout -checkhost wrong.example; then
+            echo "RSA-3072 fixture unexpectedly admits wrong.example" >&2
+            exit 1
+          fi
+
+          openssl x509 -in "$leaf" -noout -text | grep -Fq 'Public-Key: (3072 bit)'
+          openssl x509 -in "$leaf" -noout -text | grep -Fq 'Signature Algorithm: sha256WithRSAEncryption'
+          openssl x509 -in "$pss_leaf" -noout -text | grep -Fq 'Signature Algorithm: rsassaPss'
+
+          openssl pkey -in "$key" -pubout -outform DER > server-key-public.der
+          openssl x509 -in "$leaf" -pubkey -noout |
+            openssl pkey -pubin -outform DER > server-cert-public.der
+          cmp server-key-public.der server-cert-public.der
