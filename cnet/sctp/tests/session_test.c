@@ -688,6 +688,171 @@ static void unread_abandonment_after_failed_is_not_lost(void) {
   assert(cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
 }
 
+/* Peer ABORT destroys the DATA TCB, NOT the already confirmed, copied
+ * original-generation successes. The association-level ABORT reason is
+ * independent and can be consumed before either success receipt. */
+static void peer_abort_retains_unread_confirmed_results(void) {
+  cnet_sctp_session a = {0}, b = {0};
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_session_event event = {0};
+  cnet_sctp_session_reliable_ack ack = {0};
+  cnet_sctp_session_forward_progress progress = {0};
+  cnet_sctp_session_terminal_failure terminal = {0};
+  cnet_sctp_session_peer_abort abort_info = {0};
+  const uint8_t cause[] = {0u, 12u, 0u, 8u, 'l', 'a', 't', 'e'};
+  const cnet_sctp_wire_chunk abort_chunk = {6u, 0u, cause, sizeof(cause)};
+  uint8_t reliable[1200], pr[1200], forward[1200], sack[1200];
+  uint8_t packet[1200], reply[1200], payload[32], reason[8] = {0};
+  size_t reliable_n = 0u, pr_n = 0u, forward_n = 0u, sack_n = 0u;
+  size_t packet_n = 0u, reply_n = 0u, reason_n = 0u;
+  uint64_t ga = 0u, gb = 0u, gp = 0u, gpb = 0u;
+  uint64_t ticket = 0u, deadline = 0u;
+  int has_deadline = 0;
+
+  ready_pair(&a, &b, &ca, &cb);
+  open_channel_with_policy(&a, &b, 6u, 0u, 0x80u, 0u, &ga, &gb);
+  open_channel_with_policy(&a, &b, 14u, 2u, 0x01u, 0u, &gp, &gpb);
+  assert(cnet_sctp_session_send_reliable_tracked(&a, 22u, 0u, ga, 1,
+      "good", 4u, reliable, sizeof(reliable), &reliable_n, &ticket) ==
+      CNET_SCTP_SESSION_OK && ticket != 0u && reliable_n != 0u);
+  deliver(&b, &a, 23u, reliable, reliable_n);
+  assert(cnet_sctp_session_send(&a, 26u, 2u, 1,
+      "drop", 4u, pr, sizeof(pr), &pr_n) == CNET_SCTP_SESSION_OK &&
+      pr_n != 0u);
+  assert(cnet_sctp_session_next_deadline(&a, &deadline,
+      &has_deadline) == CNET_SCTP_SESSION_OK && has_deadline);
+  assert(cnet_sctp_session_advance(&a, deadline, forward,
+      sizeof(forward), &forward_n) == CNET_SCTP_SESSION_OK &&
+      forward_n > 12u && forward[12u] == 194u);
+  assert(cnet_sctp_session_poll(&a, deadline, &event, payload,
+      sizeof(payload), reply, sizeof(reply), &reply_n) ==
+      CNET_SCTP_SESSION_OK &&
+      event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED &&
+      event.generation == gp && event.stream_id == 2u && event.has_tsn);
+  assert(cnet_sctp_session_input(&b, deadline + 1u, forward,
+      forward_n, sack, sizeof(sack), &sack_n) ==
+      CNET_SCTP_SESSION_OK && sack_n != 0u);
+  assert(cnet_sctp_session_input(&a, deadline + 2u, sack,
+      sack_n, reply, sizeof(reply), &reply_n) ==
+      CNET_SCTP_SESSION_OK && reply_n == 0u);
+  /* Keep both success receipts unread through a REAL incoming ABORT. */
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.association.local_tag,
+      &abort_chunk, 1u, packet, sizeof(packet), &packet_n) ==
+      CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_session_input(&a, deadline + 3u, packet, packet_n,
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_OK &&
+      reply_n == 0u && !a.association.data_ready && a.peer_abort_seen);
+  assert(cnet_sctp_session_take_peer_abort(&a, &abort_info, reason,
+      sizeof(reason), &reason_n) == CNET_SCTP_SESSION_OK &&
+      abort_info.has_tsn && abort_info.has_user_reason &&
+      reason_n == 4u && memcmp(reason, "late", 4u) == 0);
+  ca.owner = 0;
+  assert(cnet_sctp_session_take_reliable_ack(&a, &ack) ==
+      CNET_SCTP_SESSION_OWNER && ack.ticket == 0u);
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_OWNER && progress.generation == 0u);
+  ca.owner = 1;
+  assert(cnet_sctp_session_take_reliable_ack(&a, &ack) ==
+      CNET_SCTP_SESSION_OK && ack.ticket == ticket &&
+      ack.generation == ga && ack.stream_id == 0u &&
+      ack.message_size == 4u);
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_OK && progress.generation == gp &&
+      progress.stream_id == 2u && progress.message_size == 4u &&
+      progress.abandon_reason == CNET_SCTP_SESSION_ABANDON_RETRANSMITS);
+  assert(cnet_sctp_session_take_reliable_ack(&a, &ack) ==
+      CNET_SCTP_SESSION_EMPTY && ack.ticket == 0u);
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_EMPTY && progress.generation == 0u);
+  assert(cnet_sctp_session_take_terminal_failure(&a, &terminal) ==
+      CNET_SCTP_SESSION_EMPTY && terminal.generation == 0u);
+  assert(gb != 0u && gpb != 0u);
+  assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+}
+
+/* RFC 9260 control-before-ABORT: a semantically admissible cumulative
+ * SACK must be latched for the ULP before DATA is destroyed, but a forged
+ * out-of-range SACK before an otherwise valid ABORT must NOT create success. */
+static void peer_abort_prefix_sack_is_not_a_fake_ack(void) {
+  unsigned int admissible;
+  for (admissible = 0u; admissible < 2u; ++admissible) {
+    cnet_sctp_session a = {0}, b = {0};
+    test_context ca = {0}, cb = {0};
+    cnet_sctp_session_event event = {0};
+    cnet_sctp_session_reliable_ack ack = {0};
+    cnet_sctp_session_peer_abort abort_info = {0};
+    cnet_sctp_wire_header header = {0};
+    cnet_sctp_wire_decoder cursor = {0};
+    cnet_sctp_wire_chunk chunks[2] = {{0}};
+    const uint8_t cause[] = {0u, 12u, 0u, 8u, 's', 'a', 'c', 'k'};
+    uint8_t data[1200], sack[1200], bundled[1200], reply[1200];
+    uint8_t copied_sack[32], payload[32], reason[8] = {0};
+    size_t data_n = 0u, sack_n = 0u, bundle_n = 0u, reply_n = 0u;
+    size_t reason_n = 0u;
+    uint64_t ga = 0u, gb = 0u, ticket = 0u;
+    uint32_t unexpected;
+
+    ready_pair(&a, &b, &ca, &cb);
+    open_channel_with_policy(&a, &b, 6u, 0u, 0x80u, 0u, &ga, &gb);
+    assert(cnet_sctp_session_send_reliable_tracked(&a, 20u, 0u,
+        ga, 1, "sent", 4u, data, sizeof(data), &data_n, &ticket) ==
+        CNET_SCTP_SESSION_OK && ticket != 0u && data_n != 0u);
+    /* The genuine peer receives the packet and generates its real SACK;
+     * withhold that SACK until it is bundled immediately ahead of ABORT. */
+    assert(cnet_sctp_session_input(&b, 21u, data, data_n,
+        sack, sizeof(sack), &sack_n) ==
+        CNET_SCTP_SESSION_OK && sack_n != 0u);
+    assert(cnet_sctp_wire_decode(sack, sack_n, &header, &cursor) ==
+        CNET_SCTP_WIRE_OK && header.chunk_count == 1u);
+    assert(cnet_sctp_wire_next_chunk(&cursor, &chunks[0]) ==
+        CNET_SCTP_WIRE_OK && chunks[0].type == 3u &&
+        chunks[0].value_size == 12u);
+    memcpy(copied_sack, chunks[0].value, chunks[0].value_size);
+    chunks[0].value = copied_sack;
+    if (!admissible) {
+      /* Beyond the original DATA send high-water mark. Framing and CRC
+       * remain valid, but this SACK cannot confirm any local ticket. */
+      unexpected = a.association.data.next_tsn + 100u;
+      copied_sack[0] = (uint8_t)(unexpected >> 24);
+      copied_sack[1] = (uint8_t)(unexpected >> 16);
+      copied_sack[2] = (uint8_t)(unexpected >> 8);
+      copied_sack[3] = (uint8_t)unexpected;
+    }
+    chunks[1].type = 6u;
+    chunks[1].flags = 0u;
+    chunks[1].value = cause;
+    chunks[1].value_size = sizeof(cause);
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.association.local_tag,
+        chunks, 2u, bundled, sizeof(bundled), &bundle_n) ==
+        CNET_SCTP_WIRE_OK);
+    assert(cnet_sctp_session_input(&a, 22u, bundled, bundle_n,
+        reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_OK &&
+        reply_n == 0u && !a.association.data_ready && a.peer_abort_seen);
+    assert(cnet_sctp_session_take_peer_abort(&a, &abort_info,
+        reason, sizeof(reason), &reason_n) == CNET_SCTP_SESSION_OK &&
+        abort_info.has_tsn && abort_info.has_user_reason &&
+        reason_n == 4u && memcmp(reason, "sack", 4u) == 0);
+    if (admissible) {
+      assert(cnet_sctp_session_take_reliable_ack(&a, &ack) ==
+          CNET_SCTP_SESSION_OK && ack.ticket == ticket &&
+          ack.generation == ga && ack.stream_id == 0u);
+    } else {
+      assert(cnet_sctp_session_take_reliable_ack(&a, &ack) ==
+          CNET_SCTP_SESSION_EMPTY && ack.ticket == 0u);
+    }
+    assert(cnet_sctp_session_take_reliable_ack(&a, &ack) ==
+        CNET_SCTP_SESSION_EMPTY && ack.ticket == 0u);
+    assert(gb != 0u);
+    assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK);
+    assert(cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK);
+    assert(cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK);
+    assert(cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+  }
+}
+
 int main(void) {
   session_open_message_reset_reuse();
   partial_loss_reports_abandonment_then_reliable_continues();
@@ -695,6 +860,8 @@ int main(void) {
   forward_retry_exhaustion_is_terminal_not_peer_progress();
   reliable_retry_exhaustion_is_terminal_not_acked();
   unread_abandonment_after_failed_is_not_lost();
+  peer_abort_retains_unread_confirmed_results();
+  peer_abort_prefix_sack_is_not_a_fake_ack();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }

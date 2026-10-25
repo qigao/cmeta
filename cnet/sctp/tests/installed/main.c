@@ -1669,7 +1669,7 @@ static int session_peer_abort_reason(void) {
   uint8_t fourth[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t msg[32], small[3] = {0}, reason[8] = {0};
   size_t nf = 0u, ns = 0u, nt = 0u, nq = 0u, reason_size = 0u;
-  uint64_t generation = 0u, ticket = 0u;
+  uint64_t generation = 0u, ticket = 0u, confirmed_ticket = 0u;
   uint32_t sent_tsn = 0u;
   int stage = 0, result = 47;
 
@@ -1711,11 +1711,21 @@ static int session_peer_abort_reason(void) {
     goto cleanup;
   generation = event.generation;
   stage = 3;
+  /* A REAL cumulative SACK proves success before a later peer ABORT.
+   * Hold its copied original-generation receipt unread across ABORT. */
   nf = 0u;
   if (cnet_sctp_session_send_reliable_tracked(client, 13u,
+          0u, generation, 1, "acked", 5u,
+          first, sizeof(first), &nf, &confirmed_ticket) !=
+          CNET_SCTP_SESSION_OK || confirmed_ticket == 0u || nf == 0u ||
+      deliver(server, client, 14u, first, nf) != 0)
+    goto cleanup;
+  nf = 0u;
+  if (cnet_sctp_session_send_reliable_tracked(client, 17u,
           0u, generation, 1, "unacked", 7u,
           first, sizeof(first), &nf, &ticket) !=
-          CNET_SCTP_SESSION_OK || nf < 20u || ticket == 0u)
+          CNET_SCTP_SESSION_OK || nf < 20u || ticket == 0u ||
+      ticket == confirmed_ticket)
     goto cleanup;
   sent_tsn = ((uint32_t)first[16] << 24u) |
       ((uint32_t)first[17] << 16u) |
@@ -1726,7 +1736,7 @@ static int session_peer_abort_reason(void) {
           1u, second, sizeof(second), &ns) != CNET_SCTP_WIRE_OK)
     goto cleanup;
   nt = sizeof(third);
-  if (cnet_sctp_session_input(client, 14u, second, ns,
+  if (cnet_sctp_session_input(client, 18u, second, ns,
           third, sizeof(third), &nt) != CNET_SCTP_SESSION_PROTOCOL ||
       nt != 0u ||
       cnet_sctp_session_take_peer_abort(client, &abort_info,
@@ -1741,13 +1751,17 @@ static int session_peer_abort_reason(void) {
           1u, second, sizeof(second), &ns) != CNET_SCTP_WIRE_OK)
     goto cleanup;
   nt = sizeof(third);
-  if (cnet_sctp_session_input(client, 15u, second, ns,
+  if (cnet_sctp_session_input(client, 19u, second, ns,
           third, sizeof(third), &nt) != CNET_SCTP_SESSION_OK ||
       nt != 0u ||
       cnet_sctp_session_take_terminal_failure(client, &terminal) !=
           CNET_SCTP_SESSION_EMPTY ||
       cnet_sctp_session_take_reliable_ack(client, &ack) !=
-          CNET_SCTP_SESSION_CLOSED)
+          CNET_SCTP_SESSION_OK ||
+      ack.ticket != confirmed_ticket || ack.generation != generation ||
+      ack.stream_id != 0u || ack.message_size != 5u ||
+      cnet_sctp_session_take_reliable_ack(client, &ack) !=
+          CNET_SCTP_SESSION_EMPTY || ack.ticket != 0u)
     goto cleanup;
   /* Owner rejection and insufficient output are both failure-atomic. */
   stage = 5;
