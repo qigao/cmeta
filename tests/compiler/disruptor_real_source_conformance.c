@@ -168,12 +168,103 @@ static int run_mode(disruptor_mode_t mode) {
     return 0;
 }
 
+/* Force the publication/completion gap deterministically. Without the
+ * release-sequence handoff, the ring may leave an otherwise full batch
+ * invisible or unreclaimable until a *later* publisher rescues it.
+ * This runs without inter-thread synchronization to isolate the cursor math.
+ */
+static int reverse_gap_case(disruptor_mode_t mode) {
+    const disruptor_config_t config = {sizeof(uint64_t), 4u, 1u, mode};
+    disruptor_t *ring = disruptor_create(&config);
+    disruptor_consumer_t consumer = {0};
+    disruptor_sequence_range_t range = {0};
+    disruptor_cursor_t claimed[4] = {{0}};
+    disruptor_cursor_t blocked = {0};
+    CHECK(ring != NULL);
+    if (mode == DISRUPTOR_MODE_BROADCAST)
+        CHECK(disruptor_consumer_register(ring, &consumer) == 1u);
+    CHECK(disruptor_publisher_try_claim_n(ring, 4u, &range) == 1);
+    CHECK(range.first_sequence == 1u && range.last_sequence == 4u);
+    for (uint64_t sequence = 1u; sequence <= 4u; ++sequence) {
+        const disruptor_cursor_t cursor = {sequence};
+        uint64_t *slot = (uint64_t *)disruptor_acquire_entry(ring, &cursor);
+        CHECK(slot != NULL);
+        *slot = content_of(sequence);
+    }
+    CHECK(disruptor_publisher_try_claim(ring, &blocked) == 0);
+
+    if (mode == DISRUPTOR_MODE_BROADCAST) {
+        /* Higher sequences must not become visible before sequence 1. */
+        for (uint64_t sequence = 4u; sequence > 1u; --sequence) {
+            const disruptor_cursor_t cursor = {sequence};
+            disruptor_cursor_t read_cursor = {1u};
+            CHECK(disruptor_publisher_publish(ring, &cursor) == 1);
+            CHECK(disruptor_consumer_wait_for_nonblocking_for(
+                ring, &consumer, &read_cursor) == 0);
+        }
+        const disruptor_cursor_t first = {1u};
+        CHECK(disruptor_publisher_publish(ring, &first) == 1);
+        disruptor_cursor_t ready = {1u};
+        CHECK(disruptor_consumer_wait_for_nonblocking_for(
+            ring, &consumer, &ready) == 1);
+        CHECK(ready.sequence == 4u);
+        for (uint64_t sequence = 1u; sequence <= 4u; ++sequence) {
+            const disruptor_cursor_t cursor = {sequence};
+            const uint64_t *slot = (const uint64_t *)disruptor_show_entry(ring, &cursor);
+            CHECK(slot != NULL && *slot == content_of(sequence));
+        }
+        disruptor_consumer_release_entry(ring, &consumer, &ready);
+    } else {
+        CHECK(disruptor_publisher_publish_range(ring, &range) == 1);
+        for (unsigned i = 0u; i < 4u; ++i) {
+            CHECK(disruptor_worker_try_claim(ring, &claimed[i]) == 1);
+            CHECK(claimed[i].sequence == (uint64_t)(i + 1u));
+            const uint64_t *slot = (const uint64_t *)disruptor_show_entry(ring, &claimed[i]);
+            CHECK(slot != NULL && *slot == content_of(claimed[i].sequence));
+        }
+        for (unsigned i = 4u; i > 1u; --i) {
+            disruptor_worker_release_entry(ring, &claimed[i - 1u]);
+            CHECK(disruptor_publisher_try_claim(ring, &blocked) == 0);
+        }
+        /* Releasing the oldest remaining sequence must retire the whole
+         * completed range, not wait for another publisher. */
+        disruptor_worker_release_entry(ring, &claimed[0]);
+    }
+
+    disruptor_cursor_t next = {0};
+    CHECK(disruptor_publisher_try_claim(ring, &next) == 1);
+    CHECK(next.sequence == 5u);
+    uint64_t *slot = (uint64_t *)disruptor_acquire_entry(ring, &next);
+    CHECK(slot != NULL);
+    *slot = content_of(5u);
+    CHECK(disruptor_publisher_publish(ring, &next) == 1);
+    if (mode == DISRUPTOR_MODE_BROADCAST) {
+        disruptor_cursor_t read = {5u};
+        CHECK(disruptor_consumer_wait_for_nonblocking_for(
+            ring, &consumer, &read) == 1);
+        CHECK(read.sequence == 5u);
+        CHECK(*(const uint64_t *)disruptor_show_entry(ring, &read) == content_of(5u));
+        disruptor_consumer_release_entry(ring, &consumer, &read);
+        disruptor_consumer_unregister(ring, &consumer);
+    } else {
+        disruptor_cursor_t read = {0};
+        CHECK(disruptor_worker_try_claim(ring, &read) == 1);
+        CHECK(read.sequence == 5u);
+        CHECK(*(const uint64_t *)disruptor_show_entry(ring, &read) == content_of(5u));
+        disruptor_worker_release_entry(ring, &read);
+    }
+    disruptor_destroy(ring);
+    return 0;
+}
+
 int main(void) {
     const disruptor_config_t invalid = {sizeof(uint64_t), 63u, 1u,
                                         DISRUPTOR_MODE_WORKER_POOL};
     CHECK(disruptor_create(&invalid) == NULL);
+    if (reverse_gap_case(DISRUPTOR_MODE_BROADCAST) != 0) return 1;
+    if (reverse_gap_case(DISRUPTOR_MODE_WORKER_POOL) != 0) return 1;
     if (run_mode(DISRUPTOR_MODE_BROADCAST) != 0) return 1;
     if (run_mode(DISRUPTOR_MODE_WORKER_POOL) != 0) return 1;
-    puts("Actual Salts Disruptor Broadcast/WorkerPool 20k FIFO: PASS (diagnostic)");
+    puts("Actual Salts Disruptor reverse gaps and Broadcast/WorkerPool 20k FIFO: PASS (diagnostic)");
     return 0;
 }
