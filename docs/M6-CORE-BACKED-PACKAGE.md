@@ -129,3 +129,18 @@ rejected in the public package. The full original test suite still
 uses original TinyTest, but builds it **only inside the independent
 test project**, preserving ABI behavior without shipping a native
 test runtime or bringing its additional state into the SDK.
+
+## Exact canonical production export set
+
+Both independent C11/C++17 application and original 13-suite
+conformance projects inspect the **actual imported target list**
+created by `SaltsTargets.cmake`. The Core-backed Salts 3.0 SDK
+must export exactly eight production `Salts::` targets:
+CMeta, ComponentABI, PluginABI, Plugin,
+ComponentProviderABI, Configurator, ServiceHost and CFlow.
+Unexpected additions—including TinyTest, old Core/NativeIO/CNet,
+or unqualified utilities—are a fatal configure error.
+
+`SaltsCore::Core/Platform/Concurrency/Coroutine/NativeIO`
+remain a separate imported shared dependency, not additions to
+the Salts export set. The default legacy 2.3 package is unaffected.

@@ -5,6 +5,7 @@ include(CTest)
 # Real SaltsConfig/SaltsTargets, not the separate SaltsM6 test-only package.
 # Salts 2.3 must never be admitted as the 3.0 ABI implementation.
 find_package(Salts 3.0 CONFIG REQUIRED)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../core-backed-consumer/check-package-exports.cmake")
 if(NOT Salts_VERSION VERSION_EQUAL "3.0.0")
   message(FATAL_ERROR "Wrong Salts ABI epoch: ${Salts_VERSION}")
 endif()

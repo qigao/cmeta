@@ -6,6 +6,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Only the ORIGINAL test sources are compiled, never production Salts objects.
 # The entire production graph comes from real installed SaltsConfig 3.0.
 find_package(Salts 3.0 CONFIG REQUIRED)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../core-backed-consumer/check-package-exports.cmake")
 if(NOT Salts_VERSION VERSION_EQUAL "3.0.0")
   message(FATAL_ERROR "Original conformance requires exact Salts 3.0")
 endif()
