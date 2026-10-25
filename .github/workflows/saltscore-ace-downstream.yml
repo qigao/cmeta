@@ -95,6 +95,48 @@ jobs:
           cmake --build build-m6-external --config Release --parallel 2
           ctest --test-dir build-m6-external -C Release \
             --output-on-failure --no-tests=error
+      - name: Relocate both installed SDKs and requalify external Provider DSO lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          old_core="$RUNNER_TEMP/saltscore-ace-sdk"
+          old_m6="$RUNNER_TEMP/salts-m6-sdk"
+          new_core="$RUNNER_TEMP/saltscore-ace-sdk-relocated"
+          new_m6="$RUNNER_TEMP/salts-m6-sdk-relocated"
+          test -d "$old_core" && test -d "$old_m6"
+          test ! -e "$new_core" && test ! -e "$new_m6"
+          mv "$old_core" "$new_core"
+          mv "$old_m6" "$new_m6"
+          test ! -e "$old_core" && test ! -e "$old_m6"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            generator=(-G 'Visual Studio 18 2026' -A x64)
+            export PATH="$(cygpath -u "$new_m6")/bin:$(cygpath -u "$new_core")/bin:$PATH"
+          elif [[ "$RUNNER_OS" == macOS ]]; then
+            generator=(-G Ninja)
+            export DYLD_LIBRARY_PATH="$new_core/lib:${DYLD_LIBRARY_PATH:-}"
+          else
+            generator=(-G Ninja)
+            export LD_LIBRARY_PATH="$new_core/lib:${LD_LIBRARY_PATH:-}"
+          fi
+          cmake -S cmake/ci/saltscore-ace-consumer \
+            -B build-m6-relocated "${generator[@]}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            "-DCMAKE_PREFIX_PATH=$new_m6;$new_core"
+          cmake --build build-m6-relocated --config Release --parallel 2
+          ctest --test-dir build-m6-relocated -C Release \
+            --output-on-failure --no-tests=error
+          python3 cmake/ci/saltscore-ace-consumer/audit-relocated.py \
+            --core-tools saltscore-candidate/tools \
+            --core-prefix "$new_core" \
+            --m6-prefix "$new_m6" \
+            --build-dir build-m6-relocated \
+            --report build-m6-relocated/abi-relocation.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m6-abi-relocation-${{ matrix.os }}
+          path: build-m6-relocated/abi-relocation.json
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         if: always()
         with:

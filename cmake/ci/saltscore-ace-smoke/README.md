@@ -103,3 +103,18 @@ publication/drain rounds, borrowed scope lifetimes, and generation fences.
 The ASan/UBSan/LSan and TSan workflow also repeats this exact test
 three times alongside the normal PluginRegistry generation test. No
 stand-in scheduling model or skipped race cases are substituted.
+
+## M6.6 — move both installed SDKs before external consumer acceptance
+
+CI moves both the SaltsCore 0.1 and test-only SaltsM6 installation
+prefixes to unrelated paths; their original prefixes MUST be absent.
+It then configures, builds and runs external C11/C++17 ServiceHost/
+PluginRegistry consumers again, using the *relocated* Provider DSO for
+real registry start/lease/stop/unload, not a build-tree substitute.
+
+The relocation ABI report records hashes, dynamic Core/Platform imports,
+native loader 0.1 identities and sole exports for mem_global,
+mem_buffer_release, mem_slice_release, cmeta_thread_current_token,
+salts_core_runtime_abi_0_1_required and salts_core_utf8_valid.
+Missing images/tools/symbols fail closed; upload one JSON per OS.
+This is NOT a release or switch of the old Salts package.
