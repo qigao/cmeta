@@ -721,6 +721,33 @@ static int session_round_trip(void) {
             CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u)
       goto cleanup;
   }
+  /* The preceding revocable-gap fixture deliberately did not poll the
+   * receiver's user messages while asserting raw SACK behavior. Drain and
+   * check BOTH real ordered-independent DATA messages before the separate
+   * ACK-receipt capacity fixture, rather than attributing an old message to
+   * the first new generation-bound ticket. */
+  {
+    int saw_first = 0, saw_later = 0;
+    for (i = 0u; i < 2u; ++i) {
+      second_size = 0u;
+      if (cnet_sctp_session_poll(server, now_ms + 555u + i, &event,
+              message, sizeof(message), second, sizeof(second),
+              &second_size) != CNET_SCTP_SESSION_OK ||
+          event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+          event.stream_id != 0u || !event.binary || !event.unordered ||
+          event.message_size != 9u)
+        goto cleanup;
+      if (memcmp(message, "first-gap", 9u) == 0) saw_first = 1;
+      else if (memcmp(message, "later-gap", 9u) == 0) saw_later = 1;
+      else goto cleanup;
+    }
+    if (!saw_first || !saw_later ||
+        cnet_sctp_session_poll(server, now_ms + 557u, &event,
+            message, sizeof(message), second, sizeof(second),
+            &second_size) != CNET_SCTP_SESSION_EMPTY)
+      goto cleanup;
+  }
+
   /* Exactly 16 unconsumed reliable ACK receipts fit without additional
    * dynamic allocation. All DATA must already be cumulatively ACKed; one
    * more send MUST reject atomically until a receipt is consumed. */
