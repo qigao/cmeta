@@ -81,13 +81,15 @@ jobs:
             -DCNET_SCTP_TEST_OWNER_THREADS=ON \
             -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -fPIE" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread -pie"
-          cmake --build build-sctp-tsan --target cnet_sctp_owner_thread_test cnet_sctp_provider_dso_test --parallel 2
+          cmake --build build-sctp-tsan --target cnet_sctp_owner_thread_test cnet_sctp_provider_dso_test cnet_sctp_session_test --parallel 2
           python3 - <<'PY'
           import json
           from pathlib import Path
           entries = json.loads(Path('build-sctp-tsan/compile_commands.json').read_text())
           required = {'sctp_wire.c', 'sctp_assoc.c', 'sctp_data.c',
                       'sctp_init_params.c', 'sctp_collision.c',
+                      'sctp_dcep.c', 'sctp_webrtc.c', 'sctp_session.c',
+                      'session_test.c',
                       'owner_thread_test.c', 'provider_dso_test.c',
                       'provider_dso_fixture.c'}
           found = set()
@@ -103,7 +105,7 @@ jobs:
           assert found == required, (found, required)
           print('TSan source instrumentation:', ', '.join(sorted(found)))
           PY
-          ctest --test-dir build-sctp-tsan --output-on-failure --repeat until-fail:10 -R 'cnet_sctp_(owner_thread|provider_dso)_test'
+          ctest --test-dir build-sctp-tsan --output-on-failure --repeat until-fail:10 -R 'cnet_sctp_(owner_thread|provider_dso|session)_test'
 
   gmssl-mac-c11:
     name: C11 cookie MAC with pinned GmSSL, no SDK export
@@ -150,10 +152,11 @@ jobs:
           cmds = json.loads(Path('build-sctp-gmssl/compile_commands.json').read_text())
           first_party = ('sctp_wire.c', 'sctp_assoc.c', 'sctp_init_params.c',
                          'sctp_collision.c', 'sctp_data.c', 'sctp_dcep.c',
-                         'sctp_webrtc.c', 'sctp_gmssl_mac.c', 'wire_test.c', 'assoc_test.c',
+                         'sctp_webrtc.c', 'sctp_session.c', 'sctp_gmssl_mac.c',
+                         'wire_test.c', 'assoc_test.c',
                          'init_params_test.c', 'collision_test.c', 'data_test.c',
                          'assoc_data_test.c', 'fragment_test.c', 'dcep_test.c',
-                         'assoc_gmssl_test.c')
+                         'session_test.c', 'assoc_gmssl_test.c')
           found = {}
           for entry in cmds:
               src = Path(entry['file']).name
@@ -187,6 +190,8 @@ jobs:
           test ! -e "$RUNNER_TEMP/sctp-wire-only/include/cnet/sctp_dcep_internal.h"
           test ! -e "$RUNNER_TEMP/sctp-wire-only/include/cnet/sctp_webrtc_internal.h"
           test ! -e "$RUNNER_TEMP/sctp-wire-only/lib/libcnet_sctp_webrtc_proto.a"
+          test ! -e "$RUNNER_TEMP/sctp-wire-only/include/cnet/sctp_session_internal.h"
+          test ! -e "$RUNNER_TEMP/sctp-wire-only/lib/libcnet_sctp_session_proto.a"
           test ! -e "$RUNNER_TEMP/sctp-wire-only/include/cnet/sctp_gmssl_mac_internal.h"
           test ! -e "$RUNNER_TEMP/sctp-wire-only/lib/libcnet_sctp_assoc_proto.a"
           test ! -e "$RUNNER_TEMP/sctp-wire-only/lib/libcnet_sctp_gmssl_mac_proto.a"

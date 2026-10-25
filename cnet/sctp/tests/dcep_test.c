@@ -239,11 +239,13 @@ static void reciprocal_reset_controls_sid_reuse(void) {
   cnet_sctp_data_reliability policy = {CNET_SCTP_DATA_RELIABLE, 0u};
   uint8_t open[32], ack = 2u;
   size_t written = 0u;
+  uint64_t first_generation = 0u, second_generation = 0u;
   int unordered = 0;
 
   assert(cnet_sctp_dcep_init(&d, 8u, 1, owned, &owner) ==
       CNET_SCTP_DCEP_OK);
-  assert(cnet_sctp_dcep_close_begin(&d, 0u) == CNET_SCTP_DCEP_PROTOCOL);
+  assert(cnet_sctp_dcep_close_begin(&d, 0u, &first_generation) ==
+      CNET_SCTP_DCEP_PROTOCOL);
   assert(cnet_sctp_dcep_open(&d, 0u, 0x80u, 0u, 0u,
       NULL, 0u, NULL, 0u, open, sizeof(open), &written) ==
       CNET_SCTP_DCEP_OK);
@@ -251,9 +253,12 @@ static void reciprocal_reset_controls_sid_reuse(void) {
       NULL, 0u, &written) == CNET_SCTP_DCEP_OK);
   assert(cnet_sctp_dcep_ready(&d, 0u));
 
-  assert(cnet_sctp_dcep_close_begin(&d, 0u) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_close_begin(&d, 0u, &first_generation) ==
+      CNET_SCTP_DCEP_OK);
+  assert(first_generation != 0u);
   assert(!cnet_sctp_dcep_ready(&d, 0u) && d.channels[0].state == 4u);
-  assert(cnet_sctp_dcep_close_begin(&d, 0u) == CNET_SCTP_DCEP_BUSY);
+  assert(cnet_sctp_dcep_close_begin(&d, 0u, &second_generation) ==
+      CNET_SCTP_DCEP_BUSY);
   assert(cnet_sctp_dcep_send_policy(&d, 0u, &unordered, &policy) ==
       CNET_SCTP_DCEP_BUSY);
   assert(cnet_sctp_dcep_open(&d, 0u, 0u, 0u, 0u,
@@ -263,19 +268,19 @@ static void reciprocal_reset_controls_sid_reuse(void) {
   assert(cnet_sctp_dcep_user_data_received(&d, 0u) == CNET_SCTP_DCEP_OK);
   assert(!cnet_sctp_dcep_ready(&d, 0u));
 
-  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, 1, 1) ==
+  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, first_generation, 1, 1) ==
       CNET_SCTP_DCEP_OK);
   assert(d.channels[0].state == 4u &&
       d.channels[0].reset_incoming_complete &&
       !d.channels[0].reset_outgoing_complete);
   /* Duplicate success is idempotent; a denied other half remains retryable. */
-  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, 1, 1) ==
+  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, first_generation, 1, 1) ==
       CNET_SCTP_DCEP_OK);
-  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, 0, 0) ==
+  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, first_generation, 0, 0) ==
       CNET_SCTP_DCEP_BUSY);
   assert(d.channels[0].state == 4u &&
       d.channels[0].reset_incoming_complete);
-  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, 0, 1) ==
+  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, first_generation, 0, 1) ==
       CNET_SCTP_DCEP_OK);
   assert(d.channels[0].state == 0u && !cnet_sctp_dcep_ready(&d, 0u));
 
@@ -283,20 +288,61 @@ static void reciprocal_reset_controls_sid_reuse(void) {
   assert(cnet_sctp_dcep_open(&d, 0u, 0x00u, 0u, 0u,
       NULL, 0u, NULL, 0u, open, sizeof(open), &written) ==
       CNET_SCTP_DCEP_OK);
-  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, 0, 1) ==
-      CNET_SCTP_DCEP_PROTOCOL);
-  assert(cnet_sctp_dcep_close_reset_result(&d, 8u, 0, 1) ==
+  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, first_generation, 0, 1) ==
+      CNET_SCTP_DCEP_STALE);
+  assert(cnet_sctp_dcep_close_reset_result(&d, 8u, first_generation, 0, 1) ==
       CNET_SCTP_DCEP_INVALID);
-  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, 2, 1) ==
+  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, first_generation, 2, 1) ==
       CNET_SCTP_DCEP_INVALID);
-  assert(cnet_sctp_dcep_close_begin(&d, 0u) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_close_begin(&d, 0u, &second_generation) ==
+      CNET_SCTP_DCEP_OK);
+  assert(second_generation != 0u && second_generation != first_generation);
+  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, first_generation, 0, 1) ==
+      CNET_SCTP_DCEP_STALE);
+  assert(d.channels[0].state == 4u &&
+      !d.channels[0].reset_outgoing_complete);
   /* A delayed ACK for the original OPEN is harmless and cannot reopen. */
   assert(cnet_sctp_dcep_input(&d, 0u, &ack, 1u,
       NULL, 0u, &written) == CNET_SCTP_DCEP_OK);
   assert(d.channels[0].state == 4u && !cnet_sctp_dcep_ready(&d, 0u));
   owner.admitted = 0;
-  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, 0, 1) ==
+  assert(cnet_sctp_dcep_close_reset_result(&d, 0u, second_generation, 0, 1) ==
       CNET_SCTP_DCEP_OWNER);
+}
+
+static void local_open_admission_is_transactional(void) {
+  cnet_sctp_dcep d = {0};
+  test_owner owner = {1};
+  uint8_t open[32], ack = 2u;
+  size_t written = 0u;
+  uint64_t first = 0u, second = 0u;
+
+  assert(cnet_sctp_dcep_init(&d, 8u, 1, owned, &owner) ==
+      CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_generation(&d, 0u, &first) ==
+      CNET_SCTP_DCEP_PROTOCOL);
+  assert(cnet_sctp_dcep_open(&d, 0u, 0x00u, 0u, 0u,
+      NULL, 0u, NULL, 0u, open, sizeof(open), &written) ==
+      CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_generation(&d, 0u, &first) ==
+      CNET_SCTP_DCEP_OK && first != 0u);
+  assert(cnet_sctp_dcep_open_cancel(&d, 0u, first + 1u) ==
+      CNET_SCTP_DCEP_STALE);
+  assert(d.channels[0].state == 1u);
+  assert(cnet_sctp_dcep_open_cancel(&d, 0u, first) ==
+      CNET_SCTP_DCEP_OK);
+  assert(d.channels[0].state == 0u);
+
+  assert(cnet_sctp_dcep_open(&d, 0u, 0x00u, 0u, 0u,
+      NULL, 0u, NULL, 0u, open, sizeof(open), &written) ==
+      CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_generation(&d, 0u, &second) ==
+      CNET_SCTP_DCEP_OK && second != first);
+  assert(cnet_sctp_dcep_input(&d, 0u, &ack, 1u,
+      NULL, 0u, &written) == CNET_SCTP_DCEP_OK);
+  assert(cnet_sctp_dcep_open_cancel(&d, 0u, second) ==
+      CNET_SCTP_DCEP_BUSY);
+  assert(cnet_sctp_dcep_ready(&d, 0u));
 }
 
 int main(void) {
@@ -305,6 +351,7 @@ int main(void) {
   unordered_and_negative();
   channel_type_maps_to_data_policy();
   reciprocal_reset_controls_sid_reuse();
+  local_open_admission_is_transactional();
   puts("C11 RFC8832 DCEP policy and reciprocal reset lifecycle PASS");
   return 0;
 }
