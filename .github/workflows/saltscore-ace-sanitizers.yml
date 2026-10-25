@@ -12,6 +12,7 @@ on:
       - "component-runtime/src/**"
       - "component-runtime/CMakeLists.txt"
       - "component-runtime/tests/service_host_generation_test.c"
+      - "cflow/**"
   workflow_dispatch:
 
 permissions:
@@ -35,14 +36,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: 80394167aebe3194958d2d19ca1e3dd59073b7c4
+          ref: a43334721f61101381b9ce6c5a311b5be7851119
           path: saltscore-candidate
           persist-credentials: false
       - name: Build exact instrumented shared Core 0.1 SDK
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git -C saltscore-candidate rev-parse HEAD)" = 80394167aebe3194958d2d19ca1e3dd59073b7c4
+          test "$(git -C saltscore-candidate rev-parse HEAD)" = a43334721f61101381b9ce6c5a311b5be7851119
           prefix="$RUNNER_TEMP/saltscore-m6-${{ matrix.kind }}"
           cmake -S saltscore-candidate -B build-core-${{ matrix.kind }} \
             -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF \
