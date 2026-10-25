@@ -465,10 +465,138 @@ static void bounded_forward_progress_preserves_local_events(void) {
   assert(cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
 }
 
+
+/* Emit a real RTX0 PR-SCTP FORWARD, discard it and its single permitted
+ * Owner retransmission, and then exceed the genuine local retry budget.
+ * The already-consumed local abandonment must NOT become confirmed peer
+ * progress, and the terminal record must retain its original generation. */
+static void forward_retry_exhaustion_is_terminal_not_peer_progress(void) {
+  cnet_sctp_session a = {0}, b = {0};
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_session_event local = {0};
+  cnet_sctp_session_forward_progress progress = {0};
+  cnet_sctp_session_terminal_failure failure = {0};
+  uint8_t lost[1200], first[1200], second[1200], payload[32], reply[1200];
+  size_t lost_size = 0u, first_size = 0u, second_size = 0u;
+  size_t reply_size = 0u;
+  uint64_t ga = 0u, gb = 0u, due = 0u;
+  uint32_t original_last_tsn = 0u;
+  int has_due = 0;
+
+  ready_pair(&a, &b, &ca, &cb);
+  open_channel_with_policy(&a, &b, 6u, 2u, 0x01u, 0u, &ga, &gb);
+  /* This fixture changes only the local Owner's bounded retry budget. No
+   * simulated ACK, protocol clock tampering or external message delivery. */
+  a.association.config.max_retransmits = 1u;
+  a.association.data.config.max_retransmits = 1u;
+  assert(cnet_sctp_session_send(&a, 20u, 2u, 1, "lost", 4u,
+      lost, sizeof(lost), &lost_size) == CNET_SCTP_SESSION_OK);
+  assert(lost_size != 0u);
+  assert(cnet_sctp_session_next_deadline(&a, &due, &has_due) ==
+      CNET_SCTP_SESSION_OK && has_due && due > 20u);
+  assert(cnet_sctp_session_advance(&a, due, first,
+      sizeof(first), &first_size) == CNET_SCTP_SESSION_OK &&
+      first_size != 0u && first[12u] == 194u);
+  assert(cnet_sctp_session_poll(&a, due, &local,
+      payload, sizeof(payload), reply, sizeof(reply),
+      &reply_size) == CNET_SCTP_SESSION_OK &&
+      local.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED &&
+      local.stream_id == 2u && local.generation == ga &&
+      local.message_size == 4u && local.has_tsn);
+  original_last_tsn = local.last_tsn;
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_EMPTY);
+  assert(cnet_sctp_session_take_terminal_failure(&a, &failure) ==
+      CNET_SCTP_SESSION_EMPTY && failure.generation == 0u);
+  assert(cnet_sctp_session_next_deadline(&a, &due, &has_due) ==
+      CNET_SCTP_SESSION_OK && has_due);
+  assert(cnet_sctp_session_advance(&a, due, second,
+      sizeof(second), &second_size) == CNET_SCTP_SESSION_OK &&
+      second_size == first_size && memcmp(second, first, first_size) == 0);
+  assert(cnet_sctp_session_next_deadline(&a, &due, &has_due) ==
+      CNET_SCTP_SESSION_OK && has_due);
+  reply_size = sizeof(reply);
+  assert(cnet_sctp_session_advance(&a, due, reply,
+      sizeof(reply), &reply_size) == CNET_SCTP_SESSION_TRANSPORT &&
+      reply_size == 0u);
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_EMPTY && progress.generation == 0u);
+  assert(cnet_sctp_session_take_terminal_failure(&a, &failure) ==
+      CNET_SCTP_SESSION_OK &&
+      failure.kind == CNET_SCTP_SESSION_TERMINAL_FORWARD_UNCONFIRMED &&
+      failure.reason == CNET_SCTP_SESSION_TERMINAL_LOCAL_RETRY_EXHAUSTED &&
+      failure.generation == ga && failure.stream_id == 2u &&
+      failure.ticket == 0u && failure.has_final_tsn &&
+      failure.last_tsn == original_last_tsn && failure.ppid == 53u &&
+      failure.message_size == 4u && failure.binary);
+  assert(cnet_sctp_session_take_terminal_failure(&a, &failure) ==
+      CNET_SCTP_SESSION_EMPTY && failure.generation == 0u);
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_EMPTY);
+  assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+}
+
+/* A dropped tracked RELIABLE DATA record hits its actual T3 budget, never
+ * becomes ACKed, and exposes one old-generation terminal failure ticket. */
+static void reliable_retry_exhaustion_is_terminal_not_acked(void) {
+  cnet_sctp_session a = {0}, b = {0};
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_session_reliable_ack ack = {0};
+  cnet_sctp_session_terminal_failure failure = {0};
+  uint8_t lost[1200], retry[1200];
+  size_t lost_size = 0u, retry_size = 0u;
+  uint64_t ga = 0u, gb = 0u, ticket = 0u, due = 0u;
+  int has_due = 0;
+
+  ready_pair(&a, &b, &ca, &cb);
+  open_channel_with_policy(&a, &b, 6u, 0u, 0x80u, 0u, &ga, &gb);
+  a.association.config.max_retransmits = 1u;
+  a.association.data.config.max_retransmits = 1u;
+  assert(cnet_sctp_session_send_reliable_tracked(&a, 20u, 0u, ga, 1,
+      "lost", 4u, lost, sizeof(lost), &lost_size, &ticket) ==
+      CNET_SCTP_SESSION_OK && ticket != 0u && lost_size != 0u);
+  assert(cnet_sctp_session_take_reliable_ack(&a, &ack) ==
+      CNET_SCTP_SESSION_EMPTY);
+  assert(cnet_sctp_session_take_terminal_failure(&a, &failure) ==
+      CNET_SCTP_SESSION_EMPTY);
+  assert(cnet_sctp_session_next_deadline(&a, &due, &has_due) ==
+      CNET_SCTP_SESSION_OK && has_due && due > 20u);
+  assert(cnet_sctp_session_advance(&a, due, retry,
+      sizeof(retry), &retry_size) == CNET_SCTP_SESSION_OK &&
+      retry_size == lost_size && memcmp(retry, lost, retry_size) == 0);
+  assert(cnet_sctp_session_next_deadline(&a, &due, &has_due) ==
+      CNET_SCTP_SESSION_OK && has_due);
+  retry_size = sizeof(retry);
+  assert(cnet_sctp_session_advance(&a, due, retry,
+      sizeof(retry), &retry_size) == CNET_SCTP_SESSION_TRANSPORT &&
+      retry_size == 0u);
+  assert(cnet_sctp_session_take_reliable_ack(&a, &ack) ==
+      CNET_SCTP_SESSION_EMPTY);
+  assert(cnet_sctp_session_take_terminal_failure(&a, &failure) ==
+      CNET_SCTP_SESSION_OK &&
+      failure.kind == CNET_SCTP_SESSION_TERMINAL_RELIABLE_UNACKED &&
+      failure.reason == CNET_SCTP_SESSION_TERMINAL_LOCAL_RETRY_EXHAUSTED &&
+      failure.ticket == ticket && failure.generation == ga &&
+      failure.stream_id == 0u && failure.has_final_tsn &&
+      failure.ppid == 53u && failure.message_size == 4u &&
+      failure.binary);
+  assert(cnet_sctp_session_take_terminal_failure(&a, &failure) ==
+      CNET_SCTP_SESSION_EMPTY && failure.ticket == 0u);
+  assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+}
+
 int main(void) {
   session_open_message_reset_reuse();
   partial_loss_reports_abandonment_then_reliable_continues();
   bounded_forward_progress_preserves_local_events();
+  forward_retry_exhaustion_is_terminal_not_peer_progress();
+  reliable_retry_exhaustion_is_terminal_not_acked();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }
