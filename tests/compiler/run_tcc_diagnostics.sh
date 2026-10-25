@@ -80,6 +80,15 @@ echo '== unmodified Salts::Concurrency SPSC Ring (C11 _Atomic public ABI; diagno
     -lpthread -o "$out/tcc_spsc_real_source_conformance"
 timeout 30s "$out/tcc_spsc_real_source_conformance"
 
+echo '== unmodified opaque Salts Disruptor + POSIX Platform (diagnostic TLS opt-in) =='
+"$TCC" -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L \
+    -D_XOPEN_SOURCE=700 -DSALTS_THREAD_LOCAL=_Thread_local \
+    -Iconcurrency/include -Iutils/include -Iplatform/include \
+    concurrency/src/disruptor.c platform/src/thread_posix.c \
+    "$source/disruptor_real_source_conformance.c" -lpthread \
+    -o "$out/tcc_disruptor_real_source_conformance"
+timeout 40s "$out/tcc_disruptor_real_source_conformance"
+
 echo '== default Salts::Platform header admission and actual POSIX source =='
 if "$TCC" -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
        -Iplatform/include platform/src/thread_posix.c \

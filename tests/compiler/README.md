@@ -326,6 +326,32 @@ migration targets: they already use bounded plain data or
 mutex-protected ownership. `Disruptor` is the more relevant next
 opaque, synchronization-heavy runtime to qualify after SPSC.
 
+## Real opaque Concurrency consumer: Disruptor
+
+After SPSC, `disruptor_real_source_conformance.c` links the
+**unmodified** `concurrency/src/disruptor.c` and
+`platform/src/thread_posix.c` in one isolated Linux target.
+It tests both BROADCAST (one registered consumer) and WORKER_POOL
+(one worker) with exactly 20,000 ordered messages per mode,
+power-of-two capacity rejection, real concurrent publisher/consumer
+hand-off, timeouts, and final join-before-destroy.
+
+Unlike SPSC, the public `disruptor_t` type is **opaque**: atomic
+fields such as publication cursors, CAS loops and worker-completion
+sequences are private. This makes Disruptor a better *candidate* for
+future explicit native-atomic storage experiments, but this CI
+**does not substitute** the private intrinsic backend for production
+`_Atomic`: it compiles the original C11 atomics. TinyCC's
+`-DSALTS_THREAD_LOCAL=_Thread_local` is limited to its isolated
+diagnostic build, already independently tested for native TLS
+semantics; the normal Salts header still rejects TCC.
+
+An actual Disruptor production-compiler admission also requires
+multi-producer or multi-consumer contention, out-of-order publication
+and completion, parked-worker wake-up, cancellation, sanitizer
+instrumentation and cross-platform/wide-memory-order testing.
+One publisher and one consumer are only the first execution gate.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:
