@@ -145,7 +145,7 @@ static int session_round_trip(void) {
   uint8_t maximum[CNET_SCTP_SESSION_MAX_MESSAGE_BYTES + 1u];
   size_t first_size = 0u, second_size = 0u, third_size = 0u, fourth_size = 0u;
   size_t i, fragments_sent = 0u;
-  uint64_t now_ms = 29u;
+  uint64_t now_ms = 29u, close_generation = 0u;
   cnet_sctp_session_status pump_status;
   int result = 20;
 
@@ -262,6 +262,15 @@ static int session_round_trip(void) {
   client_context.owner_admitted = 1;
   if (cnet_sctp_session_queue_message(client, 29u, 0u, 1,
           "intrude", 7u) != CNET_SCTP_SESSION_CAPACITY)
+    goto cleanup;
+  /* Closing the queue's active DCEP SID must wait for its outstanding
+   * copied message and TX tickets. An early RFC6525 close cannot consume
+   * an SSN/MID, allocate a closing generation, or discard queue bytes. */
+  first_size = sizeof(first);
+  if (cnet_sctp_session_close_channel(client, 29u, 0u, first,
+          sizeof(first), &first_size, &close_generation) !=
+              CNET_SCTP_SESSION_BUSY ||
+      first_size != 0u || close_generation != 0u)
     goto cleanup;
   /* The full message must have been copied before admission returns.
    * Poison the entire caller-owned input; reassembly must still return
