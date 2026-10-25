@@ -65,9 +65,13 @@ TSN progression and SID reuse. At most 16 unread/outstanding
 tickets are retained in the opaque Session; a full table fails closed
 BEFORE sending. Receipts capture the original SID and DCEP generation even
 after an RFC6525 reset/reopen. Abortive stop explicitly discards them.
-This experimental ACK-only subset does **not** implement fragmented
-message completion, PR-SCTP abandonment, cancellation/terminal notifications
-or full buffered_amount. Those remain separate hard gates.
+The separate `cnet_sctp_session_queue_reliable_tracked()` API reserves a
+receipt before copying a reliable message of up to 24 KiB. The Owner emits
+fragments with `pump_message()`, and `advance()` may send a final-byte
+zero-window probe. ACKs of EARLIER fragments cannot retire the full message:
+the last fragment must have a committed TSN and be cumulatively ACKed.
+This remains a reliable-only ACK subset: PR abandonment, cancellation,
+terminal failure and full buffered_amount remain separate hard gates.
 
 This does **not** export the prototype through production `Salts::CNet`,
 replace usrsctp in TurboMedia or qualify a six-RID release.

@@ -129,9 +129,10 @@ typedef struct cnet_sctp_session_tx_usage {
   uint8_t association_forward_pending;
 } cnet_sctp_session_tx_usage;
 
-/* Exactly-once cumulative-ACK receipt for one explicitly tracked, reliable,
- * single-packet DATA message. NOT a PR-SCTP, cancel, fragmented-message,
- * remote-delivery or JavaScript buffered_amount completion event. */
+/* Cumulative-ACK receipt for a tracked reliable message. For a fragmented
+ * message tsn is the LAST fragment TSN, and only that final cumulative ACK
+ * admits the exactly-once receipt. NOT PR-SCTP, cancel, peer delivery,
+ * JS buffered_amount or complete generic terminal events. */
 typedef struct cnet_sctp_session_reliable_ack {
   uint64_t generation;
   uint64_t ticket;
@@ -231,8 +232,9 @@ cnet_sctp_session_status cnet_sctp_session_send(cnet_sctp_session *session,
  * original SID/generation across RFC6525 reset/reuse. CAPACITY/STALE/OWNER
  * refuse without allocating a ticket or sending DATA. An unread receipt
  * holds its bounded slot. Abortive stop discards outstanding receipts.
- * Queued fragments, PR abandonment, cancellation and terminal error events
- * remain UNIMPLEMENTED and must never be inferred from this result. */
+ * Fragmented reliable messages use the separate opt-in queue_reliable_tracked
+ * admission plus the existing pump_message. PR abandonment, cancellation
+ * and terminal error notifications remain UNIMPLEMENTED. */
 cnet_sctp_session_status cnet_sctp_session_send_reliable_tracked(
     cnet_sctp_session *session, uint64_t now_ms,
     uint16_t stream, uint64_t expected_generation, int binary,
@@ -240,6 +242,18 @@ cnet_sctp_session_status cnet_sctp_session_send_reliable_tracked(
     void *packet, size_t capacity, size_t *written, uint64_t *ticket);
 cnet_sctp_session_status cnet_sctp_session_take_reliable_ack(
     cnet_sctp_session *session, cnet_sctp_session_reliable_ack *ack);
+
+/* Opt-in copied, reliable message admission up to 24 KiB. One fixed receipt
+ * is reserved BEFORE admitting the only pending Association message. Return
+ * a generation-bound ticket while a packet still awaits Owner pump_message().
+ * Earlier fragment ACKs cannot finish the ticket: last DATA/I-DATA fragment
+ * must first be emitted and then cumulatively ACKed. A failure changes no
+ * send or receipt state. WebRTC empty PPID56/57 records are supported.
+ * All non-reliable policies remain on untracked queue_message(). */
+cnet_sctp_session_status cnet_sctp_session_queue_reliable_tracked(
+    cnet_sctp_session *session, uint64_t now_ms,
+    uint16_t stream, uint64_t expected_generation, int binary,
+    const void *message, size_t message_size, uint64_t *ticket);
 
 /* queue_message owns a full copied user message before any SCTP TSN is
  * assigned; the caller may free the input immediately. The pending queue is
