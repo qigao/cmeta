@@ -1393,6 +1393,173 @@ cleanup:
   return result;
 }
 
+
+/* Installed public-ABI-only terminal failure qualification. A peer never
+ * receives the original DATA (nor, for PR, either retained FORWARD packet).
+ * Failure is driven ONLY by monotonic Owner deadlines, not synthetic ACKs.
+ * A genuine retry-exhaustion result must retain the original SID/generation
+ * and must never reclassify a successful ACK/peer-progress receipt. */
+static int session_terminal_retry_failure(int forward_case) {
+  test_context cc = {UINT32_C(0x11223344), UINT32_C(0x10203040),
+      UINT32_C(0x13579bdf), 1};
+  test_context sc = {UINT32_C(0x55667788), UINT32_C(0x50607080),
+      UINT32_C(0x13579bdf), 1};
+  cnet_sctp_session_create_config cfg = session_config(5000u, 1, &cc);
+  cnet_sctp_session_create_config peer = session_config(5001u, 0, &sc);
+  cnet_sctp_session *client = NULL, *server = NULL;
+  cnet_sctp_session_event event = {0};
+  cnet_sctp_session_reliable_ack ack = {0};
+  cnet_sctp_session_forward_progress progress = {0};
+  cnet_sctp_session_terminal_failure failed = {0};
+  uint8_t first[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t second[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t third[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t fourth[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t payload[128];
+  size_t nf = 0u, ns = 0u, nt = 0u, nq = 0u;
+  uint16_t sid = forward_case ? 2u : 0u;
+  uint64_t generation = 0u, ticket = 0u, due = 0u;
+  uint32_t abandoned_tsn = 0u;
+  int has_due = 0, stage = 0, result = forward_case ? 43 : 44;
+  cfg.max_retransmits = 1u;
+  peer.max_retransmits = 1u;
+  if (cnet_sctp_session_create(&cfg, 0u, &client) !=
+          CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_create(&peer, 0u, &server) !=
+          CNET_SCTP_SESSION_OK)
+    goto cleanup;
+  stage = 1;
+  if (cnet_sctp_session_start(client, 1u, first, sizeof(first), &nf) !=
+          CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(server, 2u, first, nf,
+          second, sizeof(second), &ns) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(client, 3u, second, ns,
+          third, sizeof(third), &nt) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(server, 4u, third, nt,
+          fourth, sizeof(fourth), &nq) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(client, 5u, fourth, nq,
+          first, sizeof(first), &nf) != CNET_SCTP_SESSION_OK || nf != 0u)
+    goto cleanup;
+  stage = 2;
+  nf = 0u;
+  if (cnet_sctp_session_open_channel(client, 6u, sid,
+          forward_case ? CNET_SCTP_SESSION_CHANNEL_RETRANSMIT_ORDERED :
+          CNET_SCTP_SESSION_CHANNEL_RELIABLE_ORDERED, 0u, 0u,
+          "failure", 7u, NULL, 0u, first, sizeof(first),
+          &nf) != CNET_SCTP_SESSION_OK || nf == 0u ||
+      deliver(server, client, 7u, first, nf) != 0 ||
+      cnet_sctp_session_poll(server, 9u, &event, payload,
+          sizeof(payload), second, sizeof(second), &ns) !=
+          CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.stream_id != sid || ns == 0u ||
+      deliver(client, server, 10u, second, ns) != 0 ||
+      cnet_sctp_session_poll(client, 12u, &event, payload,
+          sizeof(payload), first, sizeof(first), &nf) !=
+          CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.stream_id != sid || event.generation == 0u)
+    goto cleanup;
+  generation = event.generation;
+  stage = 3;
+  nf = 0u;
+  if (forward_case) {
+    if (cnet_sctp_session_send(client, 20u, sid, 1,
+            "drop", 4u, first, sizeof(first), &nf) !=
+            CNET_SCTP_SESSION_OK || nf == 0u)
+      goto cleanup;
+  } else {
+    if (cnet_sctp_session_send_reliable_tracked(client, 20u, sid,
+            generation, 1, "drop", 4u, first,
+            sizeof(first), &nf, &ticket) != CNET_SCTP_SESSION_OK ||
+        nf == 0u || ticket == 0u)
+      goto cleanup;
+  }
+  if (cnet_sctp_session_take_terminal_failure(client, &failed) !=
+          CNET_SCTP_SESSION_EMPTY || failed.generation != 0u ||
+      cnet_sctp_session_next_deadline(client, &due,
+          &has_due) != CNET_SCTP_SESSION_OK ||
+      !has_due || due <= 20u)
+    goto cleanup;
+  stage = 4;
+  ns = 0u;
+  if (cnet_sctp_session_advance(client, due, second,
+          sizeof(second), &ns) != CNET_SCTP_SESSION_OK || ns == 0u)
+    goto cleanup;
+  if (forward_case) {
+    if (second[12u] != 194u ||
+        cnet_sctp_session_poll(client, due, &event, payload,
+            sizeof(payload), third, sizeof(third),
+            &nt) != CNET_SCTP_SESSION_OK ||
+        event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED ||
+        !event.has_tsn || event.generation != generation ||
+        event.stream_id != sid || event.message_size != 4u ||
+        cnet_sctp_session_take_forward_progress(client, &progress) !=
+            CNET_SCTP_SESSION_EMPTY)
+      goto cleanup;
+    abandoned_tsn = event.last_tsn;
+    if (cnet_sctp_session_next_deadline(client, &due, &has_due) !=
+            CNET_SCTP_SESSION_OK || !has_due)
+      goto cleanup;
+    nt = 0u;
+    if (cnet_sctp_session_advance(client, due, third,
+            sizeof(third), &nt) != CNET_SCTP_SESSION_OK ||
+        nt != ns || memcmp(second, third, ns) != 0)
+      goto cleanup;
+  } else {
+    if (ns != nf || memcmp(first, second, ns) != 0 ||
+        cnet_sctp_session_take_reliable_ack(client, &ack) !=
+            CNET_SCTP_SESSION_EMPTY)
+      goto cleanup;
+  }
+  stage = 5;
+  if (cnet_sctp_session_next_deadline(client, &due, &has_due) !=
+          CNET_SCTP_SESSION_OK || !has_due)
+    goto cleanup;
+  nq = sizeof(fourth);
+  if (cnet_sctp_session_advance(client, due, fourth,
+          sizeof(fourth), &nq) != CNET_SCTP_SESSION_TRANSPORT ||
+      nq != 0u)
+    goto cleanup;
+  if (cnet_sctp_session_take_terminal_failure(client, &failed) !=
+          CNET_SCTP_SESSION_OK ||
+      failed.reason != CNET_SCTP_SESSION_TERMINAL_LOCAL_RETRY_EXHAUSTED ||
+      failed.generation != generation || failed.stream_id != sid ||
+      failed.ppid != 53u || failed.message_size != 4u ||
+      !failed.binary || !failed.has_final_tsn ||
+      failed.kind != (forward_case ?
+          CNET_SCTP_SESSION_TERMINAL_FORWARD_UNCONFIRMED :
+          CNET_SCTP_SESSION_TERMINAL_RELIABLE_UNACKED) ||
+      failed.ticket != (forward_case ? 0u : ticket) ||
+      (forward_case && failed.last_tsn != abandoned_tsn))
+    goto cleanup;
+  if (cnet_sctp_session_take_terminal_failure(client, &failed) !=
+          CNET_SCTP_SESSION_EMPTY || failed.generation != 0u ||
+      cnet_sctp_session_take_forward_progress(client, &progress) !=
+          CNET_SCTP_SESSION_EMPTY ||
+      cnet_sctp_session_take_reliable_ack(client, &ack) !=
+          CNET_SCTP_SESSION_EMPTY)
+    goto cleanup;
+  result = 0;
+cleanup:
+  if (result != 0)
+    fprintf(stderr, "installed terminal retry fixture %d failed stage %d\n",
+            forward_case, stage);
+  if (client) {
+    if (cnet_sctp_session_stop(client) != CNET_SCTP_SESSION_OK ||
+        !cnet_sctp_session_drained(client) ||
+        cnet_sctp_session_destroy(client) != CNET_SCTP_SESSION_OK)
+      result = 45;
+  }
+  if (server) {
+    if (cnet_sctp_session_stop(server) != CNET_SCTP_SESSION_OK ||
+        !cnet_sctp_session_drained(server) ||
+        cnet_sctp_session_destroy(server) != CNET_SCTP_SESSION_OK)
+      result = 46;
+  }
+  return result;
+}
+
 int main(void) {
   const uint8_t payload[] = {1u, 2u, 3u};
   const cnet_sctp_wire_chunk chunk = {0u, 0u, payload, sizeof(payload)};
@@ -1422,5 +1589,13 @@ int main(void) {
     const int roundtrip = session_round_trip();
     if (roundtrip != 0) return roundtrip;
   }
-  return session_forward_progress();
+  {
+    const int progress = session_forward_progress();
+    if (progress != 0) return progress;
+  }
+  {
+    const int reliable_failure = session_terminal_retry_failure(0);
+    if (reliable_failure != 0) return reliable_failure;
+  }
+  return session_terminal_retry_failure(1);
 }
