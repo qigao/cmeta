@@ -36,14 +36,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: a43334721f61101381b9ce6c5a311b5be7851119
+          ref: 398c58456e9d1db392a15ee37336b9bcc69e913b
           path: saltscore-candidate
           persist-credentials: false
       - name: Build exact instrumented shared Core 0.1 SDK
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git -C saltscore-candidate rev-parse HEAD)" = a43334721f61101381b9ce6c5a311b5be7851119
+          test "$(git -C saltscore-candidate rev-parse HEAD)" = 398c58456e9d1db392a15ee37336b9bcc69e913b
           prefix="$RUNNER_TEMP/saltscore-m6-${{ matrix.kind }}"
           cmake -S saltscore-candidate -B build-core-${{ matrix.kind }} \
             -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF \
