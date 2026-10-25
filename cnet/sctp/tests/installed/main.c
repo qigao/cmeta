@@ -928,7 +928,14 @@ static int session_round_trip(void) {
       cancelled.ticket != 0u || cancelled.generation != 0u ||
       cnet_sctp_session_get_tx_usage(client, 0u,
           client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
-      tx_usage.queued_bytes == 0u || tx_usage.retained_bytes == 0u)
+      !tx_usage.has_pending_message ||
+      tx_usage.queued_bytes == 0u ||
+      tx_usage.queued_bytes >= sizeof(fragmented) ||
+      /* Delivering B already produced a real cumulative SACK, so its
+       * retained DATA ticket is correctly retired. The copied E suffix
+       * still blocks cancellation even without retained first-fragment
+       * bytes. BUSY must not rely on retained_bytes being nonzero. */
+      tx_usage.retained_bytes != 0u)
     goto cleanup;
   first_size = 0u;
   if (cnet_sctp_session_pump_message(client, now_ms + 640u,
