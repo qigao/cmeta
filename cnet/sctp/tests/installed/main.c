@@ -257,7 +257,11 @@ static int session_round_trip(void) {
           first, sizeof(first), &first_size) != CNET_SCTP_SESSION_OWNER ||
       first_size != 0u ||
       cnet_sctp_session_queue_message(client, 29u, 0u, 1,
-          "intrude", 7u) != CNET_SCTP_SESSION_OWNER)
+          "intrude", 7u) != CNET_SCTP_SESSION_OWNER ||
+      /* Neither an unadmitted stop nor destroy may free/revoke the
+       * queued copy, provider callbacks or the opaque Session handle. */
+      cnet_sctp_session_stop(client) != CNET_SCTP_SESSION_OWNER ||
+      cnet_sctp_session_destroy(client) != CNET_SCTP_SESSION_OWNER)
     goto cleanup;
   client_context.owner_admitted = 1;
   if (cnet_sctp_session_queue_message(client, 29u, 0u, 1,
@@ -360,6 +364,46 @@ static int session_round_trip(void) {
       event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
       event.stream_id != 2u || event.message_size != 4u ||
       memcmp(message, "next", 4u) != 0)
+    goto cleanup;
+
+  /* ACK-gated reset admission: receiving a DATA message is NOT proof
+   * that its send ticket retired. Hold the real SACK back, attempt an
+   * RFC6525 close while one TSN remains live, then deliver the SACK and
+   * require successful close admission with a real generation. */
+  first_size = sizeof(first);
+  if (cnet_sctp_session_send(client, now_ms + 509u, 0u, 1,
+          "ack-gate", 8u, first, sizeof(first), &first_size) !=
+              CNET_SCTP_SESSION_OK)
+    goto cleanup;
+  second_size = 0u;
+  if (cnet_sctp_session_input(server, now_ms + 510u, first, first_size,
+          second, sizeof(second), &second_size) != CNET_SCTP_SESSION_OK ||
+      second_size == 0u ||
+      cnet_sctp_session_poll(server, now_ms + 511u, &event,
+          message, sizeof(message), third, sizeof(third),
+          &third_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+      event.stream_id != 0u || event.message_size != 8u ||
+      memcmp(message, "ack-gate", 8u) != 0)
+    goto cleanup;
+  close_generation = 0u;
+  fourth_size = 0u;
+  if (cnet_sctp_session_close_channel(client, now_ms + 512u, 0u,
+          fourth, sizeof(fourth), &fourth_size, &close_generation) !=
+              CNET_SCTP_SESSION_BUSY ||
+      fourth_size != 0u || close_generation != 0u)
+    goto cleanup;
+  first_size = 0u;
+  if (cnet_sctp_session_input(client, now_ms + 513u,
+          second, second_size, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      first_size != 0u)
+    goto cleanup;
+  fourth_size = 0u;
+  if (cnet_sctp_session_close_channel(client, now_ms + 514u, 0u,
+          fourth, sizeof(fourth), &fourth_size,
+          &close_generation) != CNET_SCTP_SESSION_OK ||
+      fourth_size == 0u || close_generation == 0u)
     goto cleanup;
 
   result = 0;
