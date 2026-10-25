@@ -55,6 +55,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   # This target is not a C11 _Atomic ABI replacement and is never installed.
   salts_add_atomic_conformance(salts_intrinsic_atomic_conformance
     intrinsic_atomic_conformance.c)
+  # This is Salts' original SPSC implementation + original public header.
+  # _Atomic layout is public: do NOT substitute the private intrinsic storage.
+  salts_add_atomic_conformance(salts_spsc_real_source_conformance
+    spsc_real_source_conformance.c
+    "${CMAKE_CURRENT_LIST_DIR}/../../concurrency/src/spsc_ring.c")
+  target_include_directories(salts_spsc_real_source_conformance PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../concurrency/include")
   target_include_directories(salts_intrinsic_atomic_conformance PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/../../platform/include")
   salts_add_atomic_conformance(salts_platform_posix_thread_probe

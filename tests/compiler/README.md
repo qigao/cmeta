@@ -295,6 +295,37 @@ pass ARM64 weak-memory, TSan, cross-toolchain and installed-SDK gates.
 Do not redefine `__STDC_NO_ATOMICS__` or enable this experimental backend in
 production to bypass a failing admission test.
 
+## Real Concurrency consumer: SPSC Ring
+
+`spsc_real_source_conformance.c` compiles **the unmodified**
+`concurrency/src/spsc_ring.c` with its original
+`concurrency/include/salts/spsc_ring.h`, not a copied algorithm.
+It proves a deterministic wrap-marker path (64-byte capacity,
+45-byte prior write/read, then a 26-byte wrap), invalid
+non-power-of-two capacity rejection, and a borrowed-storage
+50,000-frame FIFO handoff between exactly one producer and
+one consumer. Frames are 13 bytes to force repeated nontrivial
+wraps; the test checks payload/order/hash, capacity boundedness
+and a quiescent empty state. Spin polling is bounded by monotonic
+timeouts and both threads are joined before ring storage is freed.
+
+This test reveals a critical adoption boundary: `cmeta_spsc_ring`
+exposes aligned `_Atomic size_t` members in its **public struct**.
+A private intrinsic backend using ordinary `size_t` storage is
+*not* ABI interchangeable simply because sizes happen to agree.
+**Do not cast, memcpy, alias, or silently swap that storage.**
+Any eventual native-atomic facade for SPSC needs a separately
+versioned opaque handle or demonstrated compile/ABI equivalence
+across every supported consumer. Here we instead compile the actual
+C11 consumer with the selected compiler as an isolated experiment.
+TinyCC still declares `__STDC_NO_ATOMICS__=1`, therefore even a
+passing SPSC test does not qualify TCC for the installed Salts SDK.
+
+`DeadlineQueue` and `RCU` are not good atomic-backend
+migration targets: they already use bounded plain data or
+mutex-protected ownership. `Disruptor` is the more relevant next
+opaque, synchronization-heavy runtime to qualify after SPSC.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:

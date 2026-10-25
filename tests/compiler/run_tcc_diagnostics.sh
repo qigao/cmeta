@@ -74,6 +74,12 @@ echo '== GNU __atomic intrinsic explicit-storage backend (catomics reference) ==
     -o "$out/tcc_intrinsic_atomic_conformance"
 timeout 30s "$out/tcc_intrinsic_atomic_conformance"
 
+echo '== unmodified Salts::Concurrency SPSC Ring (C11 _Atomic public ABI; diagnostic) =='
+"$TCC" -std=c11 -D_POSIX_C_SOURCE=200809L -Iconcurrency/include \
+    concurrency/src/spsc_ring.c "$source/spsc_real_source_conformance.c" \
+    -lpthread -o "$out/tcc_spsc_real_source_conformance"
+timeout 30s "$out/tcc_spsc_real_source_conformance"
+
 echo '== default Salts::Platform header admission and actual POSIX source =='
 if "$TCC" -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
        -Iplatform/include platform/src/thread_posix.c \
