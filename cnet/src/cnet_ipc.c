@@ -180,7 +180,7 @@ int cnet_ipc_listener_init(cnet_ipc_listener *listener, const cnet_ipc_listener_
   if (status != SALTS_OK) goto fail;
 #if defined(_WIN32)
   {
-    tstr name = NULL;
+    char *name = NULL;
     cmeta_ipc_pipe_server_config native_config = {0};
     impl->wait_handles = (uintptr_t *)calloc(config->accept_capacity, sizeof(uintptr_t));
     if (impl->wait_handles == NULL) {
@@ -197,7 +197,7 @@ int cnet_ipc_listener_init(cnet_ipc_listener *listener, const cnet_ipc_listener_
     native_config.completion = cnet_ipc_accept_terminal;
     native_config.completion_user = impl;
     status = cmeta_ipc_pipe_server_init(&impl->server, &native_config);
-    tstr_free(name);
+    free(name);
     if (status != SALTS_OK) goto fail;
   }
 #else

@@ -1,6 +1,7 @@
 #include "cnet_transport.h"
 #include <salts/native_ipc.h>
 #include <string.h>
+#include <stdlib.h>
 
 #if !defined(_WIN32)
   #include <errno.h>
@@ -27,26 +28,29 @@ int cnet_transport_ipc_validate_name(const char *name, size_t length) {
   return SALTS_OK;
 }
 
-int cnet_transport_ipc_native_name(const char *name, tstr *out_name) {
-  int status;
-  tstr prefix;
-  tstr joined;
-  if (out_name == NULL || name == NULL) return SALTS_EINVAL;
-  *out_name = NULL;
-  status = cnet_transport_ipc_validate_name(name, strlen(name));
-  if (status != SALTS_OK) return status;
+/* Private Windows/POSIX native name construction.
+ * The caller owns *out_name and must free it; no SDS/tstr dependency. */
+int cnet_transport_ipc_native_name(const char *name, char **out_name) {
+  size_t name_size;
+  size_t prefix_size;
+  char *owned;
 #if defined(_WIN32)
-  prefix = tstr_new_len("\\\\.\\pipe\\", sizeof("\\\\.\\pipe\\") - 1u);
+  static const char prefix[] = "\\\\.\\pipe\\";
 #else
-  prefix = tstr_new();
+  static const char prefix[] = "";
 #endif
-  if (prefix == NULL) return SALTS_ENOMEM;
-  joined = tstr_cat(prefix, name);
-  if (joined == NULL) {
-    tstr_free(prefix);
-    return SALTS_ENOMEM;
-  }
-  *out_name = joined;
+  if (name == NULL || out_name == NULL) return SALTS_EINVAL;
+  *out_name = NULL;
+  name_size = strlen(name);
+  const int status = cnet_transport_ipc_validate_name(name, name_size);
+  if (status != SALTS_OK) return status;
+  prefix_size = sizeof(prefix) - 1u;
+  if (name_size > SIZE_MAX - prefix_size - 1u) return SALTS_ERANGE;
+  owned = (char *)malloc(prefix_size + name_size + 1u);
+  if (owned == NULL) return SALTS_ENOMEM;
+  memcpy(owned, prefix, prefix_size);
+  memcpy(owned + prefix_size, name, name_size + 1u);
+  *out_name = owned;
   return SALTS_OK;
 }
 
@@ -109,7 +113,7 @@ int cnet_transport_ipc_prepare_connect(cnet_transport *transport, native_io_back
   if (out_immediate == NULL) return SALTS_EINVAL;
   *out_immediate = false;
 #if defined(_WIN32)
-  tstr native_name = NULL;
+  char *native_name = NULL;
   cmeta_ipc_pipe_endpoint endpoint;
   int status;
   (void)address;
@@ -120,7 +124,7 @@ int cnet_transport_ipc_prepare_connect(cnet_transport *transport, native_io_back
   if (status != SALTS_OK) return status;
   cmeta_ipc_pipe_endpoint_init(&endpoint);
   status = cmeta_ipc_named_pipe_connect(native_name, SALTS_IPC_PIPE_DUPLEX, &endpoint);
-  tstr_free(native_name);
+  free(native_name);
   *out_immediate = true;
   if (status != SALTS_OK) return status;
   return cnet_transport_adopt_ipc(transport, backend, endpoint.handle);
