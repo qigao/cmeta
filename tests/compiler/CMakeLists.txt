@@ -9,9 +9,16 @@ find_package(Threads REQUIRED)
 
 function(salts_add_atomic_conformance target file)
   add_executable(${target} "${file}")
-  target_compile_features(${target} PRIVATE c_std_11)
-  set_target_properties(${target} PROPERTIES
-    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  # CMake identifies TinyCC but does not publish a c_std_11 feature table.
+  # Let the compiler and the source-level C11 guards reject unsupported syntax;
+  # do not claim feature support or enable an atomic fallback here.
+  if(CMAKE_C_COMPILER_ID STREQUAL "TinyCC")
+    target_compile_options(${target} PRIVATE -std=c11)
+  else()
+    target_compile_features(${target} PRIVATE c_std_11)
+    set_target_properties(${target} PROPERTIES
+      C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  endif()
   target_link_libraries(${target} PRIVATE Threads::Threads)
   if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
