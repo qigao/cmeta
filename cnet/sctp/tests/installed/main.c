@@ -1522,18 +1522,13 @@ static int session_terminal_retry_failure(int forward_case) {
           sizeof(second), &ns) != CNET_SCTP_SESSION_OK || ns == 0u)
     goto cleanup;
   if (forward_case) {
+    /* Deliberately leave the original local abandonment unread until AFTER
+     * FORWARD retry exhaustion. The installed opaque ABI must preserve it
+     * across FAILED instead of relying on an early poll() to avoid loss. */
     if (second[12u] != 194u ||
-        cnet_sctp_session_poll(client, due, &event, payload,
-            sizeof(payload), third, sizeof(third),
-            &nt) != CNET_SCTP_SESSION_OK ||
-        event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED ||
-        !event.has_tsn || event.generation != generation ||
-        event.stream_id != sid || event.message_size != 4u ||
-        cnet_sctp_session_take_forward_progress(client, &progress) !=
-            CNET_SCTP_SESSION_EMPTY)
-      goto cleanup;
-    abandoned_tsn = event.last_tsn;
-    if (cnet_sctp_session_next_deadline(client, &due, &has_due) !=
+        cnet_sctp_session_take_terminal_failure(client, &failed) !=
+            CNET_SCTP_SESSION_EMPTY || failed.generation != 0u ||
+        cnet_sctp_session_next_deadline(client, &due, &has_due) !=
             CNET_SCTP_SESSION_OK || !has_due)
       goto cleanup;
     nt = 0u;
@@ -1568,6 +1563,35 @@ static int session_terminal_retry_failure(int forward_case) {
     if (denied != CNET_SCTP_SESSION_OWNER ||
         failed.generation != 0u || failed.ticket != 0u)
       goto cleanup;
+  }
+  if (forward_case) {
+    /* The unconsumed DATA abandonment must block terminal settlement;
+     * denied Owner access must NOT steal it or clear the result. */
+    if (cnet_sctp_session_take_terminal_failure(client, &failed) !=
+            CNET_SCTP_SESSION_BUSY || failed.generation != 0u)
+      goto cleanup;
+    cc.owner_admitted = 0;
+    nt = 123u;
+    {
+      cnet_sctp_session_status denied = cnet_sctp_session_poll(client, due,
+          &event, payload, sizeof(payload), third, sizeof(third), &nt);
+      cc.owner_admitted = 1;
+      if (denied != CNET_SCTP_SESSION_OWNER || nt != 0u ||
+          event.kind != CNET_SCTP_SESSION_EVENT_NONE)
+        goto cleanup;
+    }
+    nt = 123u;
+    if (cnet_sctp_session_poll(client, due, &event, payload, sizeof(payload),
+            third, sizeof(third), &nt) != CNET_SCTP_SESSION_OK ||
+        nt != 0u ||
+        event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED ||
+        !event.has_tsn || event.generation != generation ||
+        event.stream_id != sid || event.message_size != 4u ||
+        event.abandon_reason != CNET_SCTP_SESSION_ABANDON_RETRANSMITS ||
+        cnet_sctp_session_take_forward_progress(client, &progress) !=
+            CNET_SCTP_SESSION_EMPTY)
+      goto cleanup;
+    abandoned_tsn = event.last_tsn;
   }
   if (cnet_sctp_session_take_terminal_failure(client, &failed) !=
           CNET_SCTP_SESSION_OK ||
