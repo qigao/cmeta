@@ -143,9 +143,13 @@ static int session_round_trip(void) {
   uint8_t message[CNET_SCTP_SESSION_MAX_MESSAGE_BYTES];
   uint8_t fragmented[2048];
   uint8_t maximum[CNET_SCTP_SESSION_MAX_MESSAGE_BYTES + 1u];
+  uint8_t stale_data[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  size_t stale_size = 0u;
   size_t first_size = 0u, second_size = 0u, third_size = 0u, fourth_size = 0u;
   size_t i, fragments_sent = 0u;
   uint64_t now_ms = 29u, close_generation = 0u;
+  uint64_t client_old_generation = 0u, server_old_generation = 0u;
+  uint64_t client_new_generation = 0u, server_new_generation = 0u;
   cnet_sctp_session_status pump_status;
   int result = 20;
 
@@ -175,11 +179,15 @@ static int session_round_trip(void) {
       cnet_sctp_session_poll(server, 9u, &event, message, sizeof(message),
           second, sizeof(second), &second_size) != CNET_SCTP_SESSION_OK ||
       event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN || second_size == 0u ||
+      event.stream_id != 0u || event.generation == 0u ||
+      (server_old_generation = event.generation) == 0u ||
       deliver(client, server, 10u, second, second_size) != 0 ||
       cnet_sctp_session_poll(client, 12u, &event, message, sizeof(message),
           first, sizeof(first), &first_size) != CNET_SCTP_SESSION_OK ||
-      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN)
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.stream_id != 0u || event.generation == 0u)
     goto cleanup;
+  client_old_generation = event.generation;
 
   if (cnet_sctp_session_send(client, 13u, 0u, 1, "sdk", 3u,
           first, sizeof(first), &first_size) != CNET_SCTP_SESSION_OK ||
@@ -404,6 +412,12 @@ static int session_round_trip(void) {
           "ack-gate", 8u, first, sizeof(first), &first_size) !=
               CNET_SCTP_SESSION_OK)
     goto cleanup;
+  /* Keep the exact old-generation SCTP DATA bytes before they can be
+   * overwritten by the two-direction RFC6525 reset exchange. */
+  stale_size = first_size;
+  if (stale_size == 0u || stale_size > sizeof(stale_data))
+    goto cleanup;
+  memcpy(stale_data, first, stale_size);
   second_size = 0u;
   if (cnet_sctp_session_input(server, now_ms + 517u, first, first_size,
           second, sizeof(second), &second_size) != CNET_SCTP_SESSION_OK ||
@@ -432,7 +446,105 @@ static int session_round_trip(void) {
   if (cnet_sctp_session_close_channel(client, now_ms + 521u, 0u,
           fourth, sizeof(fourth), &fourth_size,
           &close_generation) != CNET_SCTP_SESSION_OK ||
-      fourth_size == 0u || close_generation == 0u)
+      fourth_size == 0u || close_generation != client_old_generation)
+    goto cleanup;
+
+  /* Complete both actual RFC6525 reset directions, not just emit a close
+   * request. The event generation must still reference the OLD channel. */
+  second_size = 0u;
+  if (cnet_sctp_session_input(server, now_ms + 522u, fourth, fourth_size,
+          second, sizeof(second), &second_size) != CNET_SCTP_SESSION_OK ||
+      second_size == 0u ||
+      cnet_sctp_session_poll(server, now_ms + 523u, &event,
+          message, sizeof(message), third, sizeof(third),
+          &third_size) != CNET_SCTP_SESSION_EMPTY ||
+      cnet_sctp_session_input(client, now_ms + 524u,
+          second, second_size, third, sizeof(third),
+          &third_size) != CNET_SCTP_SESSION_OK ||
+      third_size == 0u ||
+      cnet_sctp_session_poll(client, now_ms + 525u, &event,
+          message, sizeof(message), first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_CLOSED ||
+      event.stream_id != 0u ||
+      event.generation != client_old_generation ||
+      cnet_sctp_session_input(server, now_ms + 526u,
+          third, third_size, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_poll(server, now_ms + 527u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_CLOSED ||
+      event.stream_id != 0u ||
+      event.generation != server_old_generation)
+    goto cleanup;
+
+  /* A new DCEP OPEN on that same SID must own a NEW generation. */
+  first_size = 0u;
+  if (cnet_sctp_session_open_channel(client, now_ms + 530u, 0u,
+          CNET_SCTP_SESSION_CHANNEL_RELIABLE_UNORDERED, 0u, 0u,
+          "reopened", 8u, NULL, 0u, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      deliver(server, client, now_ms + 531u, first, first_size) != 0 ||
+      cnet_sctp_session_poll(server, now_ms + 533u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.stream_id != 0u ||
+      event.generation == 0u ||
+      event.generation == server_old_generation ||
+      second_size == 0u)
+    goto cleanup;
+  server_new_generation = event.generation;
+  if (deliver(client, server, now_ms + 534u,
+          second, second_size) != 0 ||
+      cnet_sctp_session_poll(client, now_ms + 536u, &event,
+          message, sizeof(message), first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.stream_id != 0u ||
+      event.generation == 0u ||
+      event.generation == client_old_generation)
+    goto cleanup;
+  client_new_generation = event.generation;
+
+  /* Replay a *real* old wire packet after the same SID is reopened.
+   * A duplicate ACK is allowed, but old payload must NOT be surfaced as
+   * new-generation application data. */
+  second_size = 0u;
+  if (cnet_sctp_session_input(server, now_ms + 538u,
+          stale_data, stale_size, second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK)
+    goto cleanup;
+  if (second_size != 0u) {
+    first_size = 0u;
+    if (cnet_sctp_session_input(client, now_ms + 539u,
+            second, second_size, first, sizeof(first),
+            &first_size) != CNET_SCTP_SESSION_OK ||
+        first_size != 0u)
+      goto cleanup;
+  }
+  if (cnet_sctp_session_poll(server, now_ms + 540u, &event,
+          message, sizeof(message), third, sizeof(third),
+          &third_size) != CNET_SCTP_SESSION_EMPTY)
+    goto cleanup;
+
+  /* New application DATA must still arrive under the new SID generation
+   * with its original bytes and the negotiated unordered PPID. */
+  first_size = 0u;
+  if (cnet_sctp_session_send(client, now_ms + 542u, 0u, 1,
+          "new-generation", 14u, first, sizeof(first),
+          &first_size) != CNET_SCTP_SESSION_OK ||
+      deliver(server, client, now_ms + 543u, first, first_size) != 0 ||
+      cnet_sctp_session_poll(server, now_ms + 545u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+      event.generation != server_new_generation ||
+      event.stream_id != 0u || !event.binary || !event.unordered ||
+      event.message_size != 14u ||
+      memcmp(message, "new-generation", 14u) != 0 ||
+      client_new_generation == client_old_generation)
     goto cleanup;
 
   result = 0;
