@@ -100,8 +100,16 @@ jobs:
           -DCMAKE_C_COMPILER=gcc -DCMAKE_BUILD_TYPE=Debug
           "-DCMAKE_C_FLAGS=-O1 -g -fsanitize=thread -fno-omit-frame-pointer"
           "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"
-      - name: Build instrumented real source
-        run: cmake --build build/atomic-tsan --parallel 2
+      - name: Build four instrumented Concurrency targets only
+        # The unrelated language-level test intentionally calls C11 fences;
+        # GCC reports -Werror=tsan for those unsupported fence intrinsics.
+        # All language tests still run unmodified in the normal CTest matrix.
+        run: >-
+          cmake --build build/atomic-tsan --parallel 2
+          --target salts_spsc_real_source_conformance
+          salts_disruptor_real_source_conformance
+          salts_disruptor_mpmc_real_source
+          salts_disruptor_parked_worker_conformance
       - name: Run bounded thread-race tests (no skips)
         env:
           TSAN_OPTIONS: halt_on_error=1:history_size=7
