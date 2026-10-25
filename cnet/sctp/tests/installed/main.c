@@ -366,20 +366,49 @@ static int session_round_trip(void) {
       memcmp(message, "next", 4u) != 0)
     goto cleanup;
 
+  /* Installed PPID adapter: logical zero-length text and binary records
+   * occupy an on-wire one-byte DATA payload with the respective empty PPID,
+   * yet must surface as exactly zero-length application messages. Their
+   * input pointer is permitted to be NULL only when the length is zero. */
+  first_size = sizeof(first);
+  if (cnet_sctp_session_send(client, now_ms + 507u, 2u, 0,
+          NULL, 0u, first, sizeof(first), &first_size) !=
+              CNET_SCTP_SESSION_OK ||
+      deliver(server, client, now_ms + 508u, first, first_size) != 0 ||
+      cnet_sctp_session_poll(server, now_ms + 510u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+      event.stream_id != 2u || event.binary || event.message_size != 0u ||
+      event.ppid != 56u)
+    goto cleanup;
+  first_size = sizeof(first);
+  if (cnet_sctp_session_send(client, now_ms + 511u, 2u, 1,
+          NULL, 0u, first, sizeof(first), &first_size) !=
+              CNET_SCTP_SESSION_OK ||
+      deliver(server, client, now_ms + 512u, first, first_size) != 0 ||
+      cnet_sctp_session_poll(server, now_ms + 514u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+      event.stream_id != 2u || !event.binary || event.message_size != 0u ||
+      event.ppid != 57u)
+    goto cleanup;
+
   /* ACK-gated reset admission: receiving a DATA message is NOT proof
    * that its send ticket retired. Hold the real SACK back, attempt an
    * RFC6525 close while one TSN remains live, then deliver the SACK and
    * require successful close admission with a real generation. */
   first_size = sizeof(first);
-  if (cnet_sctp_session_send(client, now_ms + 509u, 0u, 1,
+  if (cnet_sctp_session_send(client, now_ms + 516u, 0u, 1,
           "ack-gate", 8u, first, sizeof(first), &first_size) !=
               CNET_SCTP_SESSION_OK)
     goto cleanup;
   second_size = 0u;
-  if (cnet_sctp_session_input(server, now_ms + 510u, first, first_size,
+  if (cnet_sctp_session_input(server, now_ms + 517u, first, first_size,
           second, sizeof(second), &second_size) != CNET_SCTP_SESSION_OK ||
       second_size == 0u ||
-      cnet_sctp_session_poll(server, now_ms + 511u, &event,
+      cnet_sctp_session_poll(server, now_ms + 518u, &event,
           message, sizeof(message), third, sizeof(third),
           &third_size) != CNET_SCTP_SESSION_OK ||
       event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
@@ -388,19 +417,19 @@ static int session_round_trip(void) {
     goto cleanup;
   close_generation = 0u;
   fourth_size = 0u;
-  if (cnet_sctp_session_close_channel(client, now_ms + 512u, 0u,
+  if (cnet_sctp_session_close_channel(client, now_ms + 519u, 0u,
           fourth, sizeof(fourth), &fourth_size, &close_generation) !=
               CNET_SCTP_SESSION_BUSY ||
       fourth_size != 0u || close_generation != 0u)
     goto cleanup;
   first_size = 0u;
-  if (cnet_sctp_session_input(client, now_ms + 513u,
+  if (cnet_sctp_session_input(client, now_ms + 520u,
           second, second_size, first, sizeof(first),
           &first_size) != CNET_SCTP_SESSION_OK ||
       first_size != 0u)
     goto cleanup;
   fourth_size = 0u;
-  if (cnet_sctp_session_close_channel(client, now_ms + 514u, 0u,
+  if (cnet_sctp_session_close_channel(client, now_ms + 521u, 0u,
           fourth, sizeof(fourth), &fourth_size,
           &close_generation) != CNET_SCTP_SESSION_OK ||
       fourth_size == 0u || close_generation == 0u)
