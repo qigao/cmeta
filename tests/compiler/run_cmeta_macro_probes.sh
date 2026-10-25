@@ -7,10 +7,20 @@ cd "$(dirname "$0")/../.."
 mkdir -p "$BUILD_ROOT"
 out="$(cd "$BUILD_ROOT" && pwd)"
 common=(-std=c11 -Icmeta/include -Iplugin/include -Iplatform/include)
+: "${CMETA_LIBRARY:?set CMETA_LIBRARY to the canonical full CMeta static archive}"
+if [[ ! -f "$CMETA_LIBRARY" ]]; then
+    echo "Missing CMeta compiled archive: $CMETA_LIBRARY" >&2
+    exit 1
+fi
 failures=0
 
 for name in cmeta_macro_probe plugin_decl_probe; do
-    if "$CC" "${common[@]}" "tests/compiler/$name.c" -o "$out/$name" \
+    dependencies=()
+    if [[ "$name" == "cmeta_macro_probe" ]]; then
+        dependencies=("$CMETA_LIBRARY" -lm)
+    fi
+    if "$CC" "${common[@]}" "tests/compiler/$name.c" \
+            "${dependencies[@]}" -o "$out/$name" \
             >"$out/$name.log" 2>&1; then
         if timeout 30s "$out/$name" >>"$out/$name.log" 2>&1; then
             echo "$name: COMPILE/LINK/RUN PASS ($CC)"
