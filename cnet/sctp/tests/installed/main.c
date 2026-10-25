@@ -153,6 +153,7 @@ static int session_round_trip(void) {
   uint64_t client_old_generation = 0u, server_old_generation = 0u;
   uint64_t client_new_generation = 0u, server_new_generation = 0u;
   uint64_t old_ticket = 0u, gap_ticket_a = 0u, gap_ticket_b = 0u;
+  uint64_t first_batch_ticket = 0u, next_batch_ticket = 0u;
   uint32_t gap_cum_ack = 0u;
   cnet_sctp_wire_header sack_header = {0};
   cnet_sctp_wire_decoder sack_decoder = {0};
@@ -720,8 +721,75 @@ static int session_round_trip(void) {
             CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u)
       goto cleanup;
   }
+  /* Exactly 16 unconsumed reliable ACK receipts fit without additional
+   * dynamic allocation. All DATA must already be cumulatively ACKed; one
+   * more send MUST reject atomically until a receipt is consumed. */
+  for (i = 0u; i < CNET_SCTP_SESSION_MAX_TRACKED_RELIABLE_RECEIPTS; ++i) {
+    const uint64_t tick = now_ms + 560u + 4u * i;
+    uint64_t admitted = 0u;
+    first_size = 0u;
+    if (cnet_sctp_session_send_reliable_tracked(client, tick,
+            0u, client_new_generation, 1, "z", 1u,
+            first, sizeof(first), &first_size, &admitted) !=
+                CNET_SCTP_SESSION_OK ||
+        first_size == 0u || admitted == 0u)
+      goto cleanup;
+    if (i == 0u) first_batch_ticket = admitted;
+    if (admitted != first_batch_ticket + i ||
+        deliver(server, client, tick + 1u, first, first_size) != 0 ||
+        cnet_sctp_session_poll(server, tick + 3u, &event,
+            message, sizeof(message), second, sizeof(second),
+            &second_size) != CNET_SCTP_SESSION_OK ||
+        event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+        event.stream_id != 0u || event.message_size != 1u ||
+        message[0] != (uint8_t)'z')
+      goto cleanup;
+  }
+  first_size = sizeof(first);
+  next_batch_ticket = UINT64_C(1234);
+  if (cnet_sctp_session_send_reliable_tracked(client, now_ms + 625u,
+          0u, client_new_generation, 1, "capacity", 8u,
+          first, sizeof(first), &first_size, &next_batch_ticket) !=
+              CNET_SCTP_SESSION_CAPACITY ||
+      first_size != 0u || next_batch_ticket != 0u ||
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_OK ||
+      acked.ticket != first_batch_ticket ||
+      acked.generation != client_new_generation ||
+      acked.message_size != 1u)
+    goto cleanup;
+  first_size = 0u;
+  if (cnet_sctp_session_send_reliable_tracked(client, now_ms + 626u,
+          0u, client_new_generation, 1, "again", 5u,
+          first, sizeof(first), &first_size, &next_batch_ticket) !=
+              CNET_SCTP_SESSION_OK ||
+      next_batch_ticket != first_batch_ticket +
+          CNET_SCTP_SESSION_MAX_TRACKED_RELIABLE_RECEIPTS ||
+      deliver(server, client, now_ms + 627u, first, first_size) != 0 ||
+      cnet_sctp_session_poll(server, now_ms + 629u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &second_size) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+      event.message_size != 5u ||
+      memcmp(message, "again", 5u) != 0)
+    goto cleanup;
+  for (i = 1u; i <= CNET_SCTP_SESSION_MAX_TRACKED_RELIABLE_RECEIPTS; ++i)
+    if (cnet_sctp_session_take_reliable_ack(client, &acked) !=
+            CNET_SCTP_SESSION_OK ||
+        acked.ticket != first_batch_ticket + i ||
+        acked.generation != client_new_generation ||
+        acked.stream_id != 0u || acked.ppid != 53u ||
+        !acked.binary ||
+        acked.message_size !=
+            (i == CNET_SCTP_SESSION_MAX_TRACKED_RELIABLE_RECEIPTS ?
+             5u : 1u))
+      goto cleanup;
+  if (cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u)
+    goto cleanup;
+
   fourth_size = 0u;
-  if (cnet_sctp_session_close_channel(client, now_ms + 554u, 0u,
+  if (cnet_sctp_session_close_channel(client, now_ms + 634u, 0u,
           fourth, sizeof(fourth), &fourth_size,
           &close_generation) != CNET_SCTP_SESSION_OK ||
       fourth_size == 0u || close_generation != client_new_generation)

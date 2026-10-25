@@ -13,6 +13,8 @@ _Static_assert(CNET_SCTP_SESSION_MAX_MESSAGE_BYTES ==
     CNET_SCTP_DATA_MESSAGE_MAX, "public message bound drifted");
 _Static_assert(CNET_SCTP_SESSION_MAX_STREAMS == CNET_SCTP_DCEP_STREAMS,
     "public stream bound drifted");
+_Static_assert(CNET_SCTP_SESSION_MAX_TRACKED_RELIABLE_RECEIPTS ==
+    CNET_SCTP_DATA_TX_SLOTS, "public reliable ACK receipt bound drifted");
 _Static_assert(CNET_SCTP_SESSION_MAC_BYTES == CNET_SCTP_ASSOC_MAC_BYTES,
     "public MAC size drifted");
 
