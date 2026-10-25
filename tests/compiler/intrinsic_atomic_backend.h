@@ -84,7 +84,9 @@ static inline bool salts_probe_cas_orders_valid(salts_probe_order success,
     } \
     static inline int name_##_load(const name_ *p, salts_probe_order order, type_ *out) { \
         if (!p || !out || !salts_probe_load_order_valid(order)) return SALTS_EINVAL; \
-        __atomic_load(&p->storage, out, (int)order); \
+        type_ temporary; \
+        __atomic_load(&p->storage, &temporary, (int)order); \
+        *out = temporary; \
         return SALTS_OK; \
     } \
     static inline int name_##_store(name_ *p, type_ value, salts_probe_order order) { \
@@ -94,7 +96,9 @@ static inline bool salts_probe_cas_orders_valid(salts_probe_order success,
     } \
     static inline int name_##_exchange(name_ *p, type_ value, salts_probe_order order, type_ *out) { \
         if (!p || !out || !salts_probe_order_valid(order)) return SALTS_EINVAL; \
-        __atomic_exchange(&p->storage, &value, out, (int)order); \
+        type_ temporary; \
+        __atomic_exchange(&p->storage, &value, &temporary, (int)order); \
+        *out = temporary; \
         return SALTS_OK; \
     } \
     static inline int name_##_cas(name_ *p, type_ *expected, type_ desired, \
