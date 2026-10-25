@@ -20,9 +20,11 @@ The test does NOT modify GmSSL `TLS_CTX` members directly.
 Candidate provider validation: [registry](https://github.com/qigao/vcpkg-cache/actions/runs/38195084665),
 [port](https://github.com/qigao/vcpkg-cache/actions/runs/38195084765), and
 [cache contract](https://github.com/qigao/vcpkg-cache/actions/runs/38195084874)
-are SUCCESS. **Salts's exact `3.2.0#10` runtime/CTest CI remains an
-independent open gate.** Neither RFC 8998 nor TLCP has passed real CNet
-on-wire interop, and no new production transport profile is enabled.
+are SUCCESS. The current pinned provider has since advanced, and the released
+source tree now has separately selected RFC 8998 and TLCP CNet profiles with
+native runtime CTests. Exact-head CI and release provenance remain independent
+gates; historical configure-only evidence must not be relabelled as runtime
+qualification.
 
 ## Evidence scope
 
@@ -62,7 +64,7 @@ https://github.com/qigao/vcpkg-cache/tree/1f9d46f66436e3ce74677f393c25e72c008e0f
 | SM4-GCM | `gmssl/sm4.h`: `sm4_gcm_encrypt/decrypt` | RFC 8998 Appendix A.1 KAT, roundtrip, wrong tag and wrong AAD preserve caller output | Not exposed | N/A |
 | SM2 sign and verify | `gmssl/sm2.h`: `sm2_sign_*`, `sm2_verify_*` | fixed independent OpenSSL DER SPKI/signature verify + wrong ID/message/signature; generated-key signing smoke | Not exposed | N/A |
 | TLS 1.3 ShangMi | `gmssl/tls.h`: cipher `0x00c6`, curve `41`, signature `0x0708` | `TLS_CTX` strict version, suite, group, signature and wrong-suite reject (configure-only) | **Not exposed** | **NOT TESTED** |
-| TLCP 1.1 | `gmssl/tls.h`: `TLS_protocol_tlcp`, TLCP ECC/SM4 suites, TLCP cert/key setup | `TLS_CTX` configure-only | **Not exposed** | **NOT TESTED** |
+| TLCP 1.1 | `gmssl/tls.h`: `TLS_protocol_tlcp`, TLCP ECC/SM4 suites, TLCP cert/key setup | strict GCM CLI wire exchange, CNet bounded-ring and public NativeIO tests, identity/record negatives | `CNET_TLS_SECURITY_PROFILE_TLCP11` | native CTests |
 
 Provider-only tests compile and link directly against `GmSSL::GmSSL`. This is
 **intentionally private test code**, not a change to the public consumer target
@@ -84,9 +86,11 @@ overlap, truncated lengths and integer boundaries.
 Pinned `src/tlcp.c` uses `tls_send_record()` / `tls_recv_record()`
 owned by GmSSL `src/tls.c`, and the vcpkg `external-io.cmake` patch adapts
 those record I/O primitives to a per-connection `TLS_IO` callback.
-This is **not** evidence that TLCP works end-to-end over CNet's owner rings:
-dual-cert loading, verification, fragmentation, close and untrusted input
-remain unqualified. #1129 is a separate gate.
+The dedicated #1129 profile now exercises TLCP end-to-end over CNet's owner
+rings and public NativeIO path. Its ordered dual-certificate contract,
+verification and negative coverage are documented in
+[`TLCP11_PROFILE.md`](TLCP11_PROFILE.md). Android/iOS runtime and a second TLCP
+implementation remain explicitly unclaimed.
 
 ## Current executable gate
 
@@ -135,8 +139,9 @@ KAT provenance:
 - [ ] RFC 8998 end-to-end ClientHello/ServerHello cipher, SM2 curve, signature,
       certificate and full record exchange against independently launched
       client/server; wrong CA/name, downgrade and malformed-record negatives.
-- [ ] TLCP full handshake with sign and encryption cert/key pairs and positive
-      + malformed/wrong-cert interop, with explicit external-I/O/close coverage.
+- [x] TLCP full handshake with sign and encryption cert/key pairs, public
+      NativeIO, wrong trust/name/profile, malformed/reversed identity and
+      truncated/authentication-failed record coverage.
 - [ ] Platform installed SDK consumer gate (C11/C++17), no private GmSSL
       include/link dependency or provider DLL leak, and mobile status declared
       separately.

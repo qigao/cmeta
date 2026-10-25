@@ -16,6 +16,9 @@ enum { TEST_BATCH = 16, TEST_TIMEOUT_MS = 5000 };
 #ifndef CNET_SHANGMI_TLS13_TEST
 #define CNET_SHANGMI_TLS13_TEST 0
 #endif
+#ifndef CNET_TLCP11_TEST
+#define CNET_TLCP11_TEST 0
+#endif
 #if CNET_SHANGMI_TLS13_TEST
 #define CNET_TLS_TEST_SECURITY_PROFILE CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13
 #define CNET_TLS_TEST_IDENTITY "localhost"
@@ -23,11 +26,25 @@ enum { TEST_BATCH = 16, TEST_TIMEOUT_MS = 5000 };
 #define CNET_EXTERNAL_TLS_CA getenv("SALTS_SHANGMI_CA")
 #define CNET_EXTERNAL_TLS_CERT getenv("SALTS_SHANGMI_CERT")
 #define CNET_EXTERNAL_TLS_KEY getenv("SALTS_SHANGMI_KEY")
+#define CNET_TLS_TEST_VERSION "TLSv1.3"
+#define CNET_TLS_TEST_CIPHER "TLS_SM4_GCM_SM3"
+#elif CNET_TLCP11_TEST
+#define CNET_TLS_TEST_SECURITY_PROFILE CNET_TLS_SECURITY_PROFILE_TLCP11
+#define CNET_TLS_TEST_IDENTITY "localhost"
+#define CNET_TLS_TEST_SERVER_PASSWORD "fixture-only-password"
+#define CNET_EXTERNAL_TLS_CA getenv("SALTS_TLCP_CA")
+#define CNET_EXTERNAL_TLS_CERT getenv("SALTS_TLCP_CERT")
+#define CNET_EXTERNAL_TLS_KEY getenv("SALTS_TLCP_KEY")
+#define CNET_TLS_TEST_VERSION "TLCPv1.1"
+#define CNET_TLS_TEST_CIPHER "TLS_ECC_SM4_GCM_SM3"
 #else
 #define CNET_TLS_TEST_SECURITY_PROFILE CNET_TLS_SECURITY_PROFILE_STANDARD
 #define CNET_TLS_TEST_IDENTITY "127.0.0.1"
 #define CNET_TLS_TEST_SERVER_PASSWORD NULL
+#define CNET_TLS_TEST_VERSION "TLSv1.3"
 #endif
+
+#define CNET_GMSSL_PROFILE_TEST (CNET_SHANGMI_TLS13_TEST || CNET_TLCP11_TEST)
 
 #ifndef CNET_EXTERNAL_TLS_CA
 #error CNET_EXTERNAL_TLS_CA is required
@@ -89,17 +106,17 @@ static void on_state(void *user, cnet_connection connection,
     size_t version_size = 0u;
     int status = cnet_tls_negotiated_version(
         probe->client, connection, version, sizeof(version), &version_size);
-    if (status != SALTS_OK || strcmp(version, "TLSv1.3") != 0) {
+    if (status != SALTS_OK || strcmp(version, CNET_TLS_TEST_VERSION) != 0) {
       probe->failed = true;
       return;
     }
-#if CNET_SHANGMI_TLS13_TEST
+#if CNET_GMSSL_PROFILE_TEST
     {
       char cipher[64] = {0};
       size_t cipher_size = 0u;
       status = cnet_tls_negotiated_cipher(
           probe->client, connection, cipher, sizeof(cipher), &cipher_size);
-      if (status != SALTS_OK || strcmp(cipher, "TLS_SM4_GCM_SM3") != 0) {
+      if (status != SALTS_OK || strcmp(cipher, CNET_TLS_TEST_CIPHER) != 0) {
         probe->failed = true;
         return;
       }
@@ -294,7 +311,7 @@ static void test_external_tls_listener_shared_progress(void) {
   uint64_t listener_receive_buffer = 0u;
   uint64_t listener_send_buffer = 0u;
   char uri[64];
-#if CNET_SHANGMI_TLS13_TEST
+#if CNET_GMSSL_PROFILE_TEST
   /* Each negative test must reach the same admitted TCP/TLS connection.
    * Only peer trust, peer DNS identity, or client security profile differs.
    */
@@ -361,7 +378,7 @@ static void test_external_tls_listener_shared_progress(void) {
   check_equal(cnet_client_set_stream_socket_options(&server, &server_socket_options),
               SALTS_OK);
 
-#if CNET_SHANGMI_TLS13_TEST
+#if CNET_GMSSL_PROFILE_TEST
   if (reject_server_configuration) {
     check_equal(cnet_tls_server_init(&tls_server, &server_tls_config), SALTS_EIO);
     check_null(tls_server.impl);
@@ -429,7 +446,7 @@ static void test_external_tls_listener_shared_progress(void) {
 
   deadline = cmeta_monotonic_ms() + TEST_TIMEOUT_MS;
   while (
-#if CNET_SHANGMI_TLS13_TEST
+#if CNET_GMSSL_PROFILE_TEST
          (expect_failure
               ? (reject_client_certificate
                      ? (!server_probe.failed && !server_probe.connected)
@@ -463,7 +480,7 @@ static void test_external_tls_listener_shared_progress(void) {
 
   check(accept_completion_seen);
   check(accepted_started);
-#if CNET_SHANGMI_TLS13_TEST
+#if CNET_GMSSL_PROFILE_TEST
   if (expect_failure) {
     /* Fail closed: TCP acceptance and TLS negotiation were attempted, but
      * the untrusted / wrong-profile client must never report CONNECTED.

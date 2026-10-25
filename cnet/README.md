@@ -991,6 +991,15 @@ plaintext. For its C11 API, mTLS examples, native Windows/Linux/macOS
 qualification and outstanding independent-interoperability release gates,
 see [RFC 8998 ShangMi profile](RFC8998_SHANGMI_PROFILE.md).
 
+TLCP 1.1 is a separate, explicitly selected profile with ordered signing and
+encryption identities and no TLS/plaintext fallback. See the
+[TLCP 1.1 profile](TLCP11_PROFILE.md) for its C API contract and qualification
+scope.
+
+The versioned [CNet X.509 compatibility matrix](X509_COMPATIBILITY_MATRIX.md)
+separates verified, unsupported and not-yet-verified certificate/profile
+behavior without generalizing CNet evidence to downstream products.
+
 ## Ownership and progress
 
 `cnet_managed_dial_seal` seals recovery immediately and closes only its own

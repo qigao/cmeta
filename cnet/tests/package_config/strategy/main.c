@@ -41,7 +41,9 @@ static int defer_admission(void *user) { (void)user; return SALTS_EBUSY; }
 int main(void) {
   cnet_client client = {0};
   cnet_tls_client tls_client = {0};
+  cnet_tls_server tls_server = {0};
   cnet_tls_client_config tls_profile_config = {0};
+  cnet_tls_server_config tls_server_profile_config = {0};
   cnet_connection invalid_connection = {0};
   cnet_name_lookup lookup = {0};
   cnet_name_lookup_config lookup_config = {0};
@@ -76,10 +78,29 @@ int main(void) {
    */
   CHECK(CNET_TLS_SECURITY_PROFILE_STANDARD == 0);
   CHECK(CNET_TLS_SECURITY_PROFILE_SHANGMI_TLS13 == 1);
+  CHECK(CNET_TLS_SECURITY_PROFILE_TLCP11 == 2);
   tls_profile_config.size = sizeof(tls_profile_config);
   tls_profile_config.security_profile = (cnet_tls_security_profile)99;
   CHECK(cnet_tls_client_init(&tls_client, &tls_profile_config) == SALTS_EINVAL);
   CHECK(tls_client.impl == NULL);
+  tls_profile_config.security_profile = CNET_TLS_SECURITY_PROFILE_TLCP11;
+  tls_profile_config.cert_file = "unused-client-cert.pem";
+  tls_profile_config.key_file = "unused-client-key.pem";
+  CHECK(cnet_tls_client_init(&tls_client, &tls_profile_config) == SALTS_ENOTSUP);
+  CHECK(tls_client.impl == NULL);
+
+  tls_server_profile_config.size = sizeof(tls_server_profile_config);
+  tls_server_profile_config.cert_file = "unused-server-certs.pem";
+  tls_server_profile_config.key_file = "unused-server-keys.pem";
+  tls_server_profile_config.ca_file = "unused-ca.pem";
+  tls_server_profile_config.client_auth = CNET_TLS_CLIENT_AUTH_REQUIRED;
+  tls_server_profile_config.security_profile = CNET_TLS_SECURITY_PROFILE_TLCP11;
+  CHECK(cnet_tls_server_init(&tls_server, &tls_server_profile_config) == SALTS_ENOTSUP);
+  CHECK(tls_server.impl == NULL);
+  tls_server_profile_config.ca_file = NULL;
+  tls_server_profile_config.client_auth = CNET_TLS_CLIENT_AUTH_NONE;
+  CHECK(cnet_tls_server_init(&tls_server, &tls_server_profile_config) == SALTS_EIO);
+  CHECK(tls_server.impl == NULL);
 
   client_config.backend = backend_kind();
   client_config.connection_capacity = 2u;
