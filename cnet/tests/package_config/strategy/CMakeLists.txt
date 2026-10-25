@@ -60,7 +60,12 @@ set(_x509_fixtures
   rsa3072-test-root-cert.pem
   rsa3072-test-server-cert.pem
   rsa3072-test-server-key.pem
-  rsa3072-test-server-pss-cert.pem)
+  rsa3072-test-server-pss-cert.pem
+  sha512-mixed-root-cert.pem
+  sha512-mixed-server-cert.pem
+  sha512-mixed-server-key.pem
+  unsupported-p521-root-cert.pem
+  unsupported-p521-server-cert.pem)
 foreach(_fixture IN LISTS _x509_fixtures)
   configure_file(
     "${CMAKE_CURRENT_LIST_DIR}/../../fixtures/${_fixture}"
@@ -113,7 +118,12 @@ add_test(NAME cnet_installed_p384_tls
     "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/rsa3072-test-server-pss-cert.pem"
     "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/invalid-ca-root-cert.pem"
     "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/invalid-ca-server-fullchain.pem"
-    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/invalid-ca-server-key.pem")
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/invalid-ca-server-key.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/sha512-mixed-root-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/sha512-mixed-server-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/sha512-mixed-server-key.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/unsupported-p521-root-cert.pem"
+    "${CMAKE_CURRENT_BINARY_DIR}/p384-fixtures/unsupported-p521-server-cert.pem")
 set_tests_properties(cnet_installed_p384_tls PROPERTIES TIMEOUT 90)
 
 # ELF DT_RUNPATH does not resolve indirect shared-library dependencies.
