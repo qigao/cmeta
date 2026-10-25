@@ -93,3 +93,13 @@ request stop, reject premature unload with `CMETA_PLUGIN_BUSY`, release,
 observe quiescence, unload and destroy. No build-tree Provider references or
 fallback loaders are admitted. This extends the clean-prefix proof beyond
 headers/ABI calls to real DSO lifecycle at the installed path.
+
+## M6.5 — concurrent original ServiceHost generations
+
+The original `service_host_concurrency_test.c` is now compiled and run
+against the installed SaltsCore owner with the genuine dynamically loaded
+Provider fixture. It exercises four concurrent readers, 32 bounded
+publication/drain rounds, borrowed scope lifetimes, and generation fences.
+The ASan/UBSan/LSan and TSan workflow also repeats this exact test
+three times alongside the normal PluginRegistry generation test. No
+stand-in scheduling model or skipped race cases are substituted.

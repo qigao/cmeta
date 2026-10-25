@@ -117,6 +117,22 @@ add_dependencies(salts_m6_service_host_generation
 add_test(NAME salts.m6.service_host_generation COMMAND salts_m6_service_host_generation)
 set_tests_properties(salts.m6.service_host_generation PROPERTIES TIMEOUT 65)
 
+# The unchanged original ServiceHost concurrent publication/drain test:
+# four live readers, 32 bounded publish/race rounds and DSO lease fencing.
+add_executable(salts_m6_service_host_concurrency
+  "${SALTS_SOURCE_ROOT}/component-runtime/tests/service_host_concurrency_test.c")
+target_compile_features(salts_m6_service_host_concurrency PRIVATE c_std_11)
+target_include_directories(salts_m6_service_host_concurrency PRIVATE
+  "${SALTS_SOURCE_ROOT}/component-runtime/tests")
+target_link_libraries(salts_m6_service_host_concurrency PRIVATE
+  Salts::ServiceHost Salts::TinyTest SaltsCore::Platform)
+target_compile_definitions(salts_m6_service_host_concurrency PRIVATE
+  "COMPONENT_PROVIDER_PLUGIN_PATH=\"$<TARGET_FILE:salts_m6_host_primary>\"")
+add_dependencies(salts_m6_service_host_concurrency salts_m6_host_primary)
+add_test(NAME salts.m6.service_host_concurrency
+  COMMAND salts_m6_service_host_concurrency)
+set_tests_properties(salts.m6.service_host_concurrency PROPERTIES TIMEOUT 100)
+
 add_executable(salts_m6_service_host_cpp
   "${SALTS_SOURCE_ROOT}/component-runtime/tests/service_host_scope_cpp_test.cpp")
 target_compile_features(salts_m6_service_host_cpp PRIVATE cxx_std_17)

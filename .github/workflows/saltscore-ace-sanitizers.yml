@@ -78,4 +78,4 @@ jobs:
           ctest --test-dir build-ace-${{ matrix.kind }} \
             -C RelWithDebInfo --output-on-failure --no-tests=error \
             --timeout 120 --repeat until-fail:3 \
-            -R '^salts[.]m6[.](service_host_generation|plugin_utf8_path|cmeta_ace_c11|cmeta_ace_cpp17|service_host_cpp)$'
+            -R '^salts[.]m6[.](service_host_generation|service_host_concurrency|plugin_utf8_path|cmeta_ace_c11|cmeta_ace_cpp17|service_host_cpp)$'
