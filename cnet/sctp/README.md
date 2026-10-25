@@ -55,6 +55,19 @@ cumulative SACK before clearing either. DCEP PPID50 bytes are excluded.
 These counts are not JavaScript buffered_amount and are not exactly-once
 message completion notifications.
 
+A separate Owner-only `cnet_sctp_session_take_forward_progress()` follows
+a prior `MESSAGE_ABANDONED` carrying DATA TSNs. The local event is the
+sending Owner's abandonment decision, NOT peer confirmation. The forward
+progress receipt becomes eligible only when a validated real cumulative SACK
+crosses the LAST abandoned TSN; it carries the ORIGINAL SID, generation,
+PPID, TSN range and PR policy once. The cumulative advance may come from a
+FORWARD-TSN or late original DATA and does NOT prove application delivery.
+Up to 16 records are retained: a saturated table makes poll return CAPACITY
+BEFORE consuming another local abandonment. Pre-TSN TIMED expiry creates no
+forward-progress result. Abortive stop discards unread results. Transport
+failure, post-TSN explicit cancellation and full JS buffered_amount remain
+separate gates.
+
 A separate opt-in, reliable-only **single-packet** API
 `cnet_sctp_session_send_reliable_tracked()` returns a monotonic ticket after
 SCTP DATA admission. `cnet_sctp_session_take_reliable_ack()` reports that

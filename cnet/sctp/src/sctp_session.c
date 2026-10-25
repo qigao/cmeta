@@ -169,6 +169,15 @@ static void latch_reliable_cumulative_ack(cnet_sctp_session *session) {
             UINT32_C(0x80000000))
       tracked->cumul_acked = 1u;
   }
+  /* Latch only validated cumulative progress, never a revocable Gap SACK
+   * or merely emitted FORWARD-TSN. Preserve result through TSN wrap. */
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    cnet_sctp_session_forward_track *track = &session->forward_tracks[i];
+    if (track->used && !track->cumul_confirmed &&
+        (uint32_t)(data->last_ack - track->result.last_tsn) <
+            UINT32_C(0x80000000))
+      track->cumul_confirmed = 1u;
+  }
 }
 cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
     uint64_t now_ms, const void *packet, size_t packet_size,
@@ -325,6 +334,29 @@ cnet_sctp_session_status cnet_sctp_session_send_reliable_tracked(
  * tracked RELIABLE packet eligible. Latch it at input commit, not at read
  * time, so later TSN wrap/reset cannot erase an earlier completion.
  * A revocable Gap ACK never marks an event. */
+/* A local abandoned result is separate from actual peer progress, which
+ * the input Owner latches only after a validated cumulative SACK. */
+cnet_sctp_session_status cnet_sctp_session_take_forward_progress(
+    cnet_sctp_session *session,
+    cnet_sctp_session_forward_progress *progress) {
+  cnet_sctp_session_status status;
+  size_t index;
+  if (!progress) return CNET_SCTP_SESSION_INVALID;
+  memset(progress, 0, sizeof(*progress));
+  status = guard(session);
+  if (status != CNET_SCTP_SESSION_OK) return status;
+  if (!session->association.data_ready) return CNET_SCTP_SESSION_CLOSED;
+  for (index = 0u; index < CNET_SCTP_DATA_TX_SLOTS; ++index) {
+    cnet_sctp_session_forward_track *track =
+        &session->forward_tracks[index];
+    if (!track->used || !track->cumul_confirmed) continue;
+    *progress = track->result;
+    memset(track, 0, sizeof(*track));
+    return CNET_SCTP_SESSION_OK;
+  }
+  return CNET_SCTP_SESSION_EMPTY;
+}
+
 cnet_sctp_session_status cnet_sctp_session_take_reliable_ack(
     cnet_sctp_session *session, cnet_sctp_session_reliable_ack *ack) {
   cnet_sctp_session_status status;
@@ -642,6 +674,7 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
   cnet_sctp_webrtc_payload payload;
   uint8_t ack[1];
   size_t message_size = 0u, ack_size = 0u;
+  cnet_sctp_session_forward_track *reserved_forward = NULL;
   cnet_sctp_session_status status = guard(session);
   cnet_sctp_assoc_status as;
   cnet_sctp_dcep_status ds;
@@ -656,6 +689,28 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
   /* Deliver abandonment before reset completion can retire the DCEP record
    * that owns its generation. The DATA layer reserves this fixed event slot
    * at admission, so no allocation or callback is needed here. */
+  /* Reserve an additional progress slot BEFORE consuming a DATA abandon
+   * event, otherwise result saturation could silently lose the original
+   * generation. Pre-TSN expiry has no FORWARD and needs no slot. */
+  if (session->association.data_ready) {
+    const cnet_sctp_data *data = &session->association.data;
+    if (data->abandon_event_count) {
+      const cnet_sctp_data_abandon_event *next =
+          &data->abandon_events[data->abandon_event_head];
+      if (next->has_tsn) {
+        size_t index;
+        for (index = 0u; index < CNET_SCTP_DATA_TX_SLOTS; ++index) {
+          cnet_sctp_session_forward_track *slot =
+              &session->forward_tracks[index];
+          if (!slot->used) {
+            reserved_forward = slot;
+            break;
+          }
+        }
+        if (!reserved_forward) return CNET_SCTP_SESSION_CAPACITY;
+      }
+    }
+  }
   as = cnet_sctp_assoc_take_abandoned(&session->association, &abandoned);
   if (as == CNET_SCTP_ASSOC_OK) {
     ds = cnet_sctp_dcep_generation(&session->dcep, abandoned.stream_id,
@@ -678,6 +733,27 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
     event->has_tsn = abandoned.has_tsn;
     event->binary = abandoned.ppid == 53u || abandoned.ppid == 57u;
     event->locally_initiated = 1u;
+    if (abandoned.has_tsn) {
+      if (!reserved_forward) return CNET_SCTP_SESSION_PROTOCOL;
+      reserved_forward->result.generation = event->generation;
+      reserved_forward->result.stream_id = event->stream_id;
+      reserved_forward->result.first_tsn = event->first_tsn;
+      reserved_forward->result.last_tsn = event->last_tsn;
+      reserved_forward->result.ppid = event->ppid;
+      reserved_forward->result.message_identifier =
+          event->message_identifier;
+      reserved_forward->result.message_size = event->message_size;
+      reserved_forward->result.reliability = event->reliability;
+      reserved_forward->result.abandon_reason = event->abandon_reason;
+      reserved_forward->result.binary = event->binary;
+      reserved_forward->result.unordered = event->unordered;
+      reserved_forward->result.interleaved = event->interleaved;
+      reserved_forward->used = 1u;
+      if (session->association.data_ready &&
+          (uint32_t)(session->association.data.last_ack -
+              event->last_tsn) < UINT32_C(0x80000000))
+        reserved_forward->cumul_confirmed = 1u;
+    }
     return CNET_SCTP_SESSION_OK;
   }
   if (as != CNET_SCTP_ASSOC_EMPTY) return map_assoc(as);
@@ -779,6 +855,7 @@ cnet_sctp_session_status cnet_sctp_session_stop(cnet_sctp_session *session) {
   if (as != CNET_SCTP_ASSOC_OK) return map_assoc(as);
   session->pending_dcep_ack = 0u;
   memset(session->tracked, 0, sizeof(session->tracked));
+  memset(session->forward_tracks, 0, sizeof(session->forward_tracks));
   memset(session->closing_generation, 0, sizeof(session->closing_generation));
   return CNET_SCTP_SESSION_OK;
 }
@@ -808,5 +885,7 @@ int cnet_sctp_session_drained(const cnet_sctp_session *session) {
     return 0;
   for (i = 0u; i < CNET_SCTP_DCEP_STREAMS; ++i)
     if (session->closing_generation[i] != 0u) return 0;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+    if (session->forward_tracks[i].used) return 0;
   return cnet_sctp_assoc_drained(&session->association);
 }

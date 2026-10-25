@@ -143,6 +143,23 @@ typedef struct cnet_sctp_session_reliable_ack {
   uint8_t binary;
 } cnet_sctp_session_reliable_ack;
 
+/* Independent, exactly-once peer cumulative-progress receipt for a local
+ * MESSAGE_ABANDONED carrying DATA TSNs. This result does NOT prove remote
+ * application delivery nor whether peer progress came from FORWARD-TSN or
+ * late original DATA. SID, original generation and TSN range are immutable
+ * across RFC6525 reset/reuse. A full 16-slot result table makes poll()
+ * return CAPACITY BEFORE consuming the next abandonment. */
+typedef struct cnet_sctp_session_forward_progress {
+  uint64_t generation;
+  uint16_t stream_id;
+  uint32_t first_tsn, last_tsn;
+  uint32_t ppid, message_identifier;
+  size_t message_size;
+  cnet_sctp_session_reliability reliability;
+  cnet_sctp_session_abandon_reason abandon_reason;
+  uint8_t binary, unordered, interleaved;
+} cnet_sctp_session_forward_progress;
+
 /* Synchronous result of a locally cancelled, wholly copied pending message
  * BEFORE its first DATA TSN. ticket is the original nonzero tracking token
  * only for queue_reliable_tracked(); untracked sends return ticket=0.
@@ -257,6 +274,13 @@ cnet_sctp_session_status cnet_sctp_session_send_reliable_tracked(
     void *packet, size_t capacity, size_t *written, uint64_t *ticket);
 cnet_sctp_session_status cnet_sctp_session_take_reliable_ack(
     cnet_sctp_session *session, cnet_sctp_session_reliable_ack *ack);
+
+/* Owner-only, bounded, separate from the earlier local abandonment event.
+ * EMPTY until validated peer cumulative SACK crosses LAST abandoned TSN.
+ * Does not implement post-TSN explicit cancel or transport-terminal failure. */
+cnet_sctp_session_status cnet_sctp_session_take_forward_progress(
+    cnet_sctp_session *session,
+    cnet_sctp_session_forward_progress *progress);
 
 /* Opt-in copied, reliable message admission up to 24 KiB. One fixed receipt
  * is reserved BEFORE admitting the only pending Association message. Return

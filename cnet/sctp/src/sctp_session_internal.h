@@ -23,10 +23,17 @@ typedef struct cnet_sctp_session_reliable_track {
   uint8_t used;
 } cnet_sctp_session_reliable_track;
 
+typedef struct cnet_sctp_session_forward_track {
+  cnet_sctp_session_forward_progress result;
+  uint8_t used;
+  uint8_t cumul_confirmed;
+} cnet_sctp_session_forward_track;
+
 typedef struct cnet_sctp_session {
   cnet_sctp_assoc association;
   cnet_sctp_dcep dcep;
   cnet_sctp_session_reliable_track tracked[CNET_SCTP_DATA_TX_SLOTS];
+  cnet_sctp_session_forward_track forward_tracks[CNET_SCTP_DATA_TX_SLOTS];
   uint64_t next_tracked_ticket;
   uint64_t closing_generation[CNET_SCTP_DCEP_STREAMS];
   uint16_t pending_dcep_ack;

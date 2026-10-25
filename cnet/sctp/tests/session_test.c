@@ -227,6 +227,7 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   test_context ca = {0}, cb = {0};
   cnet_sctp_session_event event = {0};
   cnet_sctp_session_tx_usage usage = {0};
+  cnet_sctp_session_forward_progress progress = {0};
   cnet_sctp_session_unsent_cancelled cancelled = {0};
   uint8_t lost[1200], forward[1200], sack[1200], payload[32];
   uint8_t reliable[1200], response[1200];
@@ -302,6 +303,9 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   assert(cnet_sctp_session_poll(&a, deadline, &event,
       payload, sizeof(payload), response, sizeof(response), &response_size) ==
       CNET_SCTP_SESSION_EMPTY);
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_EMPTY);
+  assert(progress.generation == 0u && progress.last_tsn == 0u);
   assert(cnet_sctp_session_input(&b, deadline + 1u, forward, forward_size,
       sack, sizeof(sack), &sack_size) == CNET_SCTP_SESSION_OK);
   assert(sack_size != 0u);
@@ -313,6 +317,19 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   assert(usage.retained_bytes == 0u && usage.abandoned_bytes == 0u &&
       usage.retained_fragments == 0u &&
       !usage.association_forward_pending);
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_OK);
+  assert(progress.generation == partial_a &&
+      progress.stream_id == 2u && progress.message_size == 4u &&
+      progress.first_tsn == progress.last_tsn &&
+      progress.ppid == 53u && progress.message_identifier == 1u &&
+      progress.binary && !progress.unordered && progress.interleaved &&
+      progress.reliability.mode == CNET_SCTP_SESSION_RETRANSMITS &&
+      progress.reliability.value == 0u &&
+      progress.abandon_reason == CNET_SCTP_SESSION_ABANDON_RETRANSMITS);
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_EMPTY);
+  assert(progress.generation == 0u && progress.last_tsn == 0u);
   /* Once the forward barrier is genuinely retired, the strict pre-TSN
    * pending-cancel query can distinguish absence from an in-flight send. */
   assert(cnet_sctp_session_cancel_unsent_message(&a, deadline + 2u, 2u,
