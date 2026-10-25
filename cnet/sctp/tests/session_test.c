@@ -226,6 +226,7 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   cnet_sctp_session a = {0}, b = {0};
   test_context ca = {0}, cb = {0};
   cnet_sctp_session_event event = {0};
+  cnet_sctp_session_tx_usage usage = {0};
   uint8_t lost[1200], forward[1200], sack[1200], payload[32];
   uint8_t reliable[1200], response[1200];
   size_t lost_size = 0u, forward_size = 0u, sack_size = 0u;
@@ -246,17 +247,35 @@ static void partial_loss_reports_abandonment_then_reliable_continues(void) {
   assert(cnet_sctp_session_send(&a, 22u, 2u, 1, "drop", 4u,
       lost, sizeof(lost), &lost_size) == CNET_SCTP_SESSION_OK);
   assert(lost_size != 0u);
+  assert(cnet_sctp_session_get_tx_usage(&a, 2u, partial_a, &usage) ==
+      CNET_SCTP_SESSION_OK);
+  assert(usage.generation == partial_a && usage.retained_bytes == 4u &&
+      usage.retained_fragments == 1u && usage.abandoned_bytes == 0u &&
+      usage.gap_acked_bytes == 0u && usage.queued_bytes == 0u);
+  /* The unrelated reliable SID must not inherit the PR send ticket. */
+  assert(cnet_sctp_session_get_tx_usage(&a, 0u, reliable_a, &usage) ==
+      CNET_SCTP_SESSION_OK && usage.retained_bytes == 0u);
   assert(cnet_sctp_session_next_deadline(&a, &deadline, &has_deadline) ==
       CNET_SCTP_SESSION_OK && has_deadline && deadline > 22u);
   assert(cnet_sctp_session_advance(&a, deadline, forward, sizeof(forward),
       &forward_size) == CNET_SCTP_SESSION_OK);
   assert(forward_size != 0u && forward[12] == 194u);
+  assert(cnet_sctp_session_get_tx_usage(&a, 2u, partial_a, &usage) ==
+      CNET_SCTP_SESSION_OK);
+  /* Abandonment is not yet cumulative retirement: the old DATA ticket
+   * remains retained until the independent peer's FORWARD acknowledgement. */
+  assert(usage.retained_bytes == 4u && usage.abandoned_bytes == 4u &&
+      usage.retained_fragments == 1u && usage.gap_acked_bytes == 0u);
   assert(cnet_sctp_session_input(&b, deadline + 1u, forward, forward_size,
       sack, sizeof(sack), &sack_size) == CNET_SCTP_SESSION_OK);
   assert(sack_size != 0u);
   assert(cnet_sctp_session_input(&a, deadline + 2u, sack, sack_size,
       response, sizeof(response), &response_size) == CNET_SCTP_SESSION_OK);
   assert(response_size == 0u);
+  assert(cnet_sctp_session_get_tx_usage(&a, 2u, partial_a, &usage) ==
+      CNET_SCTP_SESSION_OK);
+  assert(usage.retained_bytes == 0u && usage.abandoned_bytes == 0u &&
+      usage.retained_fragments == 0u);
   assert(cnet_sctp_session_poll(&a, deadline + 3u, &event,
       payload, sizeof(payload), response, sizeof(response), &response_size) ==
       CNET_SCTP_SESSION_OK);
