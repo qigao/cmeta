@@ -615,6 +615,26 @@ static void unread_abandonment_after_failed_is_not_lost(void) {
   assert(cnet_sctp_session_send(&a, 20u, 2u, 1, "lost", 4u,
       lost, sizeof(lost), &lost_size) == CNET_SCTP_SESSION_OK &&
       lost_size != 0u);
+  /* Admit a real peer DCEP OPEN on another SID, but make its ACK output too
+   * small. FAILED must not retry this impossible ACK ahead of the original
+   * local PR abandonment, nor fabricate a CHANNEL_OPEN notification. */
+  {
+    uint8_t remote_open[1200], sack[1200];
+    size_t remote_size = 0u, sack_size = 0u;
+    assert(cnet_sctp_session_open_channel(&b, 21u, 1u,
+        CNET_SCTP_SESSION_CHANNEL_RELIABLE_ORDERED, 0u, 0u,
+        "side", 4u, NULL, 0u, remote_open, sizeof(remote_open),
+        &remote_size) == CNET_SCTP_SESSION_OK && remote_size != 0u);
+    assert(cnet_sctp_session_input(&a, 22u, remote_open, remote_size,
+        sack, sizeof(sack), &sack_size) == CNET_SCTP_SESSION_OK);
+    output_size = 123u;
+    assert(cnet_sctp_session_poll(&a, 23u, &local,
+        payload, sizeof(payload), output, 1u, &output_size) ==
+        CNET_SCTP_SESSION_CAPACITY);
+    assert(output_size == 0u &&
+        local.kind == CNET_SCTP_SESSION_EVENT_NONE &&
+        a.pending_dcep_ack == (uint16_t)(UINT16_C(1) << 1u));
+  }
   assert(cnet_sctp_session_next_deadline(&a, &deadline,
       &has_deadline) == CNET_SCTP_SESSION_OK && has_deadline);
   assert(cnet_sctp_session_advance(&a, deadline, forward,
@@ -636,7 +656,8 @@ static void unread_abandonment_after_failed_is_not_lost(void) {
       output_size == 0u);
   assert(a.association.state == CNET_SCTP_ASSOC_FAILED &&
       a.association.data_ready &&
-      a.association.data.abandon_event_count == 1u);
+      a.association.data.abandon_event_count == 1u &&
+      a.pending_dcep_ack == (uint16_t)(UINT16_C(1) << 1u));
   /* Returning EMPTY here would let the consumer wrongly conclude all
    * generation-bound terminal events have been settled. */
   assert(cnet_sctp_session_take_terminal_failure(&a, &failure) ==
@@ -649,7 +670,8 @@ static void unread_abandonment_after_failed_is_not_lost(void) {
       local.stream_id == 2u && local.generation == ga &&
       local.has_tsn && local.message_size == 4u &&
       local.abandon_reason == CNET_SCTP_SESSION_ABANDON_RETRANSMITS &&
-      a.association.data.abandon_event_count == 0u);
+      a.association.data.abandon_event_count == 0u &&
+      a.pending_dcep_ack == (uint16_t)(UINT16_C(1) << 1u));
   assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
       CNET_SCTP_SESSION_EMPTY &&
       cnet_sctp_session_take_terminal_failure(&a, &failure) ==

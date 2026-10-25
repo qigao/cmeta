@@ -769,7 +769,12 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
   if (!event || !packet_size) return CNET_SCTP_SESSION_INVALID;
   memset(event, 0, sizeof(*event));
   if (status != CNET_SCTP_SESSION_OK) return status;
-  if (session->pending_dcep_ack != 0u)
+  /* Once FAILED, the retained DCEP ACK cannot be emitted. Retain its
+   * obligation until explicit stop, but never let this unpublishable control
+   * starve the Owner's original-generation DATA abandonment event. Neither
+   * an ACK packet nor a CHANNEL_OPEN result is fabricated on this path. */
+  if (session->pending_dcep_ack != 0u &&
+      session->association.state != CNET_SCTP_ASSOC_FAILED)
     return send_pending_ack(session, now_ms, event, packet,
         packet_capacity, packet_size);
 
