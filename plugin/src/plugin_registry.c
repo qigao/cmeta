@@ -3,7 +3,14 @@
 #include "plugin_loader_internal.h"
 
 #include <salts/thread.h>
+/* Explicit compile-time ownership switch, NOT a runtime fallback.
+ * The original plugin registry uses the installed Core validator only in
+ * the isolated migration build; production legacy Salts remains untouched. */
+#if defined(SALTS_PLUGIN_USE_SALTSCORE) && SALTS_PLUGIN_USE_SALTSCORE
+#include <salts_core/utf8.h>
+#else
 #include <vstr.h>
+#endif
 
 #include <limits.h>
 #include <stdlib.h>
@@ -55,7 +62,11 @@ static bool bounded_utf8_path_valid(const char *path) {
         if (path[length] == '\0') {
             if (length == 0u)
                 return false;
+#if defined(SALTS_PLUGIN_USE_SALTSCORE) && SALTS_PLUGIN_USE_SALTSCORE
+            return salts_core_utf8_valid(path, length) != 0;
+#else
             return vstr_utf8_valid(vstr_from_buf(path, length)) != 0;
+#endif
         }
     }
     return false;

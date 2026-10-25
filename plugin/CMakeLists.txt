@@ -33,9 +33,30 @@ cmake_config_target(
   EXPORT_NAME Plugin)
 
 target_compile_features(cmeta_plugin PRIVATE c_std_11)
-target_link_libraries(cmeta_plugin
-  PUBLIC cmeta_plugin_abi
-  PRIVATE Salts::Core Salts::Platform ${CMAKE_DL_LIBS})
+# Explicit, fail-closed native ownership migration gate. Never embed both
+# historical Salts and SaltsCore allocators in the same target graph.
+if(SALTS_PLUGIN_USE_SALTSCORE)
+  if(TARGET Salts::Core OR TARGET Salts::Platform)
+    message(FATAL_ERROR "Plugin migration refuses duplicate legacy owners")
+  endif()
+  foreach(_owner IN ITEMS Core Platform)
+    if(NOT TARGET SaltsCore::${_owner})
+      message(FATAL_ERROR "Plugin migration needs installed SaltsCore::${_owner}")
+    endif()
+    get_target_property(_kind SaltsCore::${_owner} TYPE)
+    if(NOT _kind STREQUAL "SHARED_LIBRARY")
+      message(FATAL_ERROR "Plugin migration requires shared owner")
+    endif()
+  endforeach()
+  target_compile_definitions(cmeta_plugin PRIVATE SALTS_PLUGIN_USE_SALTSCORE=1)
+  target_link_libraries(cmeta_plugin
+    PUBLIC cmeta_plugin_abi
+    PRIVATE SaltsCore::Core SaltsCore::Platform ${CMAKE_DL_LIBS})
+else()
+  target_link_libraries(cmeta_plugin
+    PUBLIC cmeta_plugin_abi
+    PRIVATE Salts::Core Salts::Platform ${CMAKE_DL_LIBS})
+endif()
 
 install(
   TARGETS cmeta_plugin_abi cmeta_plugin
