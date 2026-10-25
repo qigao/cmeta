@@ -137,6 +137,7 @@ static int session_round_trip(void) {
   cnet_sctp_session *client = NULL, *server = NULL;
   cnet_sctp_session_event event = {0};
   cnet_sctp_session_tx_usage tx_usage = {0};
+  cnet_sctp_session_reliable_ack acked = {0};
   uint8_t first[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t second[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t third[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
@@ -151,6 +152,7 @@ static int session_round_trip(void) {
   uint64_t now_ms = 29u, close_generation = 0u;
   uint64_t client_old_generation = 0u, server_old_generation = 0u;
   uint64_t client_new_generation = 0u, server_new_generation = 0u;
+  uint64_t old_ticket = 0u, gap_ticket_a = 0u, gap_ticket_b = 0u;
   uint32_t gap_cum_ack = 0u;
   cnet_sctp_wire_header sack_header = {0};
   cnet_sctp_wire_decoder sack_decoder = {0};
@@ -281,6 +283,9 @@ static int session_round_trip(void) {
        * queued copy, provider callbacks or the opaque Session handle. */
       cnet_sctp_session_stop(client) != CNET_SCTP_SESSION_OWNER ||
       cnet_sctp_session_destroy(client) != CNET_SCTP_SESSION_OWNER ||
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_OWNER ||
+      acked.ticket != 0u ||
       cnet_sctp_session_get_tx_usage(client, 0u,
           client_old_generation, &tx_usage) != CNET_SCTP_SESSION_OWNER ||
       tx_usage.generation != 0u || tx_usage.queued_bytes != 0u ||
@@ -428,9 +433,13 @@ static int session_round_trip(void) {
    * RFC6525 close while one TSN remains live, then deliver the SACK and
    * require successful close admission with a real generation. */
   first_size = sizeof(first);
-  if (cnet_sctp_session_send(client, now_ms + 516u, 0u, 1,
-          "ack-gate", 8u, first, sizeof(first), &first_size) !=
-              CNET_SCTP_SESSION_OK)
+  if (cnet_sctp_session_send_reliable_tracked(client, now_ms + 516u,
+          0u, client_old_generation, 1, "ack-gate", 8u, first,
+          sizeof(first), &first_size, &old_ticket) !=
+              CNET_SCTP_SESSION_OK ||
+      old_ticket == 0u ||
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u)
     goto cleanup;
   /* Keep the exact old-generation SCTP DATA bytes before they can be
    * overwritten by the two-direction RFC6525 reset exchange. */
@@ -527,6 +536,25 @@ static int session_round_trip(void) {
       event.generation == client_old_generation)
     goto cleanup;
   client_new_generation = event.generation;
+  /* Take a REAL cumulative ACK receipt only after the original SID has
+   * been retired and reopened, preserving its old generation forever. */
+  if (cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_OK ||
+      acked.ticket != old_ticket ||
+      acked.generation != client_old_generation ||
+      acked.stream_id != 0u || acked.message_size != 8u ||
+      acked.ppid != 53u || !acked.binary ||
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u)
+    goto cleanup;
+  first_size = sizeof(first);
+  old_ticket = UINT64_C(999);
+  if (cnet_sctp_session_send_reliable_tracked(client, now_ms + 537u,
+          0u, client_old_generation, 1, "stale", 5u,
+          first, sizeof(first), &first_size, &old_ticket) !=
+              CNET_SCTP_SESSION_STALE ||
+      old_ticket != 0u || first_size != 0u)
+    goto cleanup;
   if (cnet_sctp_session_get_tx_usage(client, 0u,
           client_old_generation, &tx_usage) != CNET_SCTP_SESSION_STALE ||
       tx_usage.generation != 0u || tx_usage.retained_bytes != 0u ||
@@ -580,18 +608,21 @@ static int session_round_trip(void) {
    * cumulative ACK stays behind N. RFC6525 close must remain BUSY even
    * though that later fragment was acknowledged out of order. */
   first_size = 0u;
-  if (cnet_sctp_session_send(client, now_ms + 547u, 0u, 1,
-          "first-gap", 9u, first, sizeof(first),
-          &first_size) != CNET_SCTP_SESSION_OK ||
-      first_size == 0u || first_size > sizeof(stale_data))
+  if (cnet_sctp_session_send_reliable_tracked(client, now_ms + 547u,
+          0u, client_new_generation, 1, "first-gap", 9u,
+          first, sizeof(first), &first_size, &gap_ticket_a) !=
+              CNET_SCTP_SESSION_OK ||
+      first_size == 0u || first_size > sizeof(stale_data) ||
+      gap_ticket_a == 0u)
     goto cleanup;
   stale_size = first_size;
   memcpy(stale_data, first, stale_size);
   third_size = 0u;
-  if (cnet_sctp_session_send(client, now_ms + 548u, 0u, 1,
-          "later-gap", 9u, third, sizeof(third),
-          &third_size) != CNET_SCTP_SESSION_OK ||
-      third_size == 0u)
+  if (cnet_sctp_session_send_reliable_tracked(client, now_ms + 548u,
+          0u, client_new_generation, 1, "later-gap", 9u,
+          third, sizeof(third), &third_size, &gap_ticket_b) !=
+              CNET_SCTP_SESSION_OK ||
+      third_size == 0u || gap_ticket_b <= gap_ticket_a)
     goto cleanup;
   if (cnet_sctp_session_get_tx_usage(client, 0u,
           client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
@@ -623,7 +654,10 @@ static int session_round_trip(void) {
   if (cnet_sctp_session_get_tx_usage(client, 0u,
           client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
       tx_usage.retained_bytes != 18u || tx_usage.gap_acked_bytes != 9u ||
-      tx_usage.retained_fragments != 2u)
+      tx_usage.retained_fragments != 2u ||
+      /* Revocable gap ACK must NEVER create a terminal ACK receipt. */
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u)
     goto cleanup;
   close_generation = 0u;
   fourth_size = 0u;
@@ -666,8 +700,26 @@ static int session_round_trip(void) {
   if (cnet_sctp_session_get_tx_usage(client, 0u,
           client_new_generation, &tx_usage) != CNET_SCTP_SESSION_OK ||
       tx_usage.retained_bytes != 0u || tx_usage.gap_acked_bytes != 0u ||
-      tx_usage.retained_fragments != 0u)
+      tx_usage.retained_fragments != 0u ||
+      cnet_sctp_session_take_reliable_ack(client, &acked) !=
+          CNET_SCTP_SESSION_OK ||
+      acked.ticket != gap_ticket_a ||
+      acked.generation != client_new_generation ||
+      acked.stream_id != 0u || acked.message_size != 9u ||
+      acked.ppid != 53u || !acked.binary)
     goto cleanup;
+  {
+    const uint32_t previous_tsn = acked.tsn;
+    if (cnet_sctp_session_take_reliable_ack(client, &acked) !=
+            CNET_SCTP_SESSION_OK ||
+        acked.ticket != gap_ticket_b ||
+        acked.generation != client_new_generation ||
+        acked.tsn != previous_tsn + 1u ||
+        acked.stream_id != 0u || acked.message_size != 9u ||
+        cnet_sctp_session_take_reliable_ack(client, &acked) !=
+            CNET_SCTP_SESSION_EMPTY || acked.ticket != 0u)
+      goto cleanup;
+  }
   fourth_size = 0u;
   if (cnet_sctp_session_close_channel(client, now_ms + 554u, 0u,
           fourth, sizeof(fourth), &fourth_size,
