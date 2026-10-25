@@ -787,6 +787,50 @@ int cnet_sctp_data_outbound_drained(const cnet_sctp_data *d) {
     if (d->tx[i].used) return 0;
   return 1;
 }
+int cnet_sctp_data_association_reset_ready(const cnet_sctp_data *d) {
+  unsigned int i;
+  if (!cnet_sctp_data_outbound_drained(d) || d->buffered_rx != 0u ||
+      d->rx_gaps != 0u)
+    return 0;
+  for (i = 0u; i < CNET_SCTP_DATA_RX_SLOTS; ++i)
+    if (d->rx[i].used) return 0;
+  return 1;
+}
+cnet_sctp_data_status cnet_sctp_data_reset_association(cnet_sctp_data *d,
+    uint64_t now, uint32_t local_next_tsn, uint32_t peer_next_tsn) {
+  cnet_sctp_data_status status = guard(d);
+  if (status != CNET_SCTP_DATA_OK) return status;
+  if ((status = clock_check(d, now)) != CNET_SCTP_DATA_OK) return status;
+  if (!cnet_sctp_data_association_reset_ready(d))
+    return CNET_SCTP_DATA_INVALID;
+
+  memset(d->tx, 0, sizeof(d->tx));
+  memset(d->rx, 0, sizeof(d->rx));
+  memset(&d->pending, 0, sizeof(d->pending));
+  memset(d->tx_ssn, 0, sizeof(d->tx_ssn));
+  memset(d->rx_ssn, 0, sizeof(d->rx_ssn));
+  d->next_tsn = local_next_tsn;
+  d->last_ack = local_next_tsn - 1u;
+  d->cumulative_rx = peer_next_tsn - 1u;
+  d->rx_gaps = 0u;
+  d->in_flight = 0u;
+  d->buffered_rx = 0u;
+  d->partial_bytes_acked = 0u;
+  d->t3_deadline_ms = 0u;
+  d->t3_wait_tsn = 0u;
+  d->t3_wait_ack = 0u;
+  d->recovery_exit_tsn = 0u;
+  d->recovery_active = 0u;
+  d->probe_deadline_ms = 0u;
+  d->probe_interval_ms = 0u;
+  d->probe_tsn = 0u;
+  d->probe_active = 0u;
+  d->probe_unanswered = 0u;
+  d->last_advertised_rwnd = CNET_SCTP_DATA_RECEIVE_CEILING;
+  d->window_update_pending = 0u;
+  d->last_time_ms = now;
+  return CNET_SCTP_DATA_OK;
+}
 int cnet_sctp_data_streams_through_tsn_drained(const cnet_sctp_data *d,
     uint16_t stream_mask, uint32_t last_tsn) {
   unsigned int i;

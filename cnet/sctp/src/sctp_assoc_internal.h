@@ -123,12 +123,22 @@ typedef struct cnet_sctp_assoc_stream_change_event {
   cnet_sctp_assoc_stream_reset_result result;
 } cnet_sctp_assoc_stream_change_event;
 
+/* RFC 6525 association-reset snapshot. The two values are the first DATA
+ * TSNs this endpoint and its peer will use after a successful reset. */
+typedef struct cnet_sctp_assoc_reset_event {
+  uint32_t local_next_tsn;
+  uint32_t peer_next_tsn;
+  uint8_t initiated_locally;
+  cnet_sctp_assoc_stream_reset_result result;
+} cnet_sctp_assoc_reset_event;
+
 typedef enum cnet_sctp_assoc_reconfig_kind {
   CNET_SCTP_RECONFIG_NONE = 0,
   CNET_SCTP_RECONFIG_STREAM_RESET = 1,
   CNET_SCTP_RECONFIG_ADD_OUTGOING = 2,
   CNET_SCTP_RECONFIG_ADD_INCOMING = 3,
-  CNET_SCTP_RECONFIG_ADD_STREAMS = 4
+  CNET_SCTP_RECONFIG_ADD_STREAMS = 4,
+  CNET_SCTP_RECONFIG_SSN_TSN_RESET = 5
 } cnet_sctp_assoc_reconfig_kind;
 
 typedef struct cnet_sctp_assoc {
@@ -204,8 +214,10 @@ typedef struct cnet_sctp_assoc {
   uint8_t outgoing_reset_results[CNET_SCTP_DATA_STREAMS];
   uint8_t incoming_stream_change_pending;
   uint8_t outgoing_stream_change_pending;
+  uint8_t association_reset_pending;
   cnet_sctp_assoc_stream_change_event incoming_stream_change;
   cnet_sctp_assoc_stream_change_event outgoing_stream_change;
+  cnet_sctp_assoc_reset_event association_reset;
   uint8_t saved_packet[CNET_SCTP_ASSOC_MAX_PACKET];
   size_t saved_size;
   uint8_t retransmits;
@@ -316,6 +328,14 @@ cnet_sctp_assoc_status cnet_sctp_assoc_add_streams(
 cnet_sctp_assoc_status cnet_sctp_assoc_take_stream_change(
     cnet_sctp_assoc *association,
     cnet_sctp_assoc_stream_change_event *event);
+/* RFC 6525 SSN/TSN reset. Admission requires both DATA directions to be
+ * quiescent. New DATA/TSN assignment is frozen until the peer completes or
+ * denies the request; completion is retained for take_association_reset(). */
+cnet_sctp_assoc_status cnet_sctp_assoc_reset_association(
+    cnet_sctp_assoc *association, uint64_t now_ms,
+    void *output, size_t capacity, size_t *written);
+cnet_sctp_assoc_status cnet_sctp_assoc_take_association_reset(
+    cnet_sctp_assoc *association, cnet_sctp_assoc_reset_event *event);
 
 /* RFC 9260 9.2 graceful shutdown request.  New application sends are
  * refused, but existing owned DATA may drain before SHUTDOWN/T2 starts.

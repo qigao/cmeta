@@ -176,6 +176,12 @@ cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d, uint64_t now_ms,
 cnet_sctp_data_status cnet_sctp_data_shutdown_cumack(cnet_sctp_data *d,
     uint64_t now_ms, uint32_t cumulative);
 int cnet_sctp_data_outbound_drained(const cnet_sctp_data *d);
+/* RFC 6525 association reset is admitted only when no locally retained DATA,
+ * pending copied message, or unread/gapped peer DATA can be discarded by the
+ * TSN jump. Congestion/RTO estimates and negotiated stream counts survive. */
+int cnet_sctp_data_association_reset_ready(const cnet_sctp_data *d);
+cnet_sctp_data_status cnet_sctp_data_reset_association(cnet_sctp_data *d,
+    uint64_t now_ms, uint32_t local_next_tsn, uint32_t peer_next_tsn);
 int cnet_sctp_data_streams_through_tsn_drained(const cnet_sctp_data *d,
     uint16_t stream_mask, uint32_t last_tsn);
 void cnet_sctp_data_reset_outbound_ssn(cnet_sctp_data *d, uint16_t stream_id);
