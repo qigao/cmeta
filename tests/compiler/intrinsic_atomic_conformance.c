@@ -59,9 +59,13 @@ static int scalar_tests(void) {
         SALTS_PROBE_RELAXED, &u64out) == SALTS_OK);
     CHECK(u64out == UINT64_C(0x100000001));
     MARK("scalar load all widths");
+    MARK("load8");
     CHECK(salts_probe_u8_load(&b8, SALTS_PROBE_ACQUIRE, &u8out) == SALTS_OK && u8out == 13u);
+    MARK("load16");
     CHECK(salts_probe_u16_load(&b16, SALTS_PROBE_ACQUIRE, &u16out) == SALTS_OK && u16out == 79u);
+    MARK("load32");
     CHECK(salts_probe_u32_load(&b32, SALTS_PROBE_ACQUIRE, &u32out) == SALTS_OK && u32out == 323u);
+    MARK("load64");
     CHECK(salts_probe_u64_load(&b64, SALTS_PROBE_ACQUIRE, &u64out) == SALTS_OK &&
         u64out == UINT64_C(0x200000002));
 
