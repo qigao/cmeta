@@ -305,8 +305,12 @@ cnet_sctp_session_status cnet_sctp_session_send(cnet_sctp_session *session,
  * refuse without allocating a ticket or sending DATA. An unread receipt
  * holds its bounded slot. Abortive stop discards outstanding receipts.
  * Fragmented reliable messages use the separate opt-in queue_reliable_tracked
- * admission plus the existing pump_message. PR abandonment, cancellation
- * and terminal error notifications remain UNIMPLEMENTED. */
+ * admission plus the existing pump_message. LOCAL retry exhaustion is an
+ * independent take_terminal_failure() result, and PR DATA abandonment is
+ * reported by poll(). An unsent copied message may be cancelled explicitly;
+ * post-TSN application cancellation and generic per-message transport/provider
+ * failure notifications remain unimplemented. Peer ABORT is association-level,
+ * never evidence of locally exhausted retransmissions. */
 cnet_sctp_session_status cnet_sctp_session_send_reliable_tracked(
     cnet_sctp_session *session, uint64_t now_ms,
     uint16_t stream, uint64_t expected_generation, int binary,
@@ -322,9 +326,13 @@ cnet_sctp_session_status cnet_sctp_session_take_forward_progress(
     cnet_sctp_session *session,
     cnet_sctp_session_forward_progress *progress);
 
-/* Owner-only, bounded terminal retry-exhaustion results. Returns EMPTY
- * before a real failed Owner advance and after all terminal records are
- * claimed. Never reclassifies an ACKed/peer-forward-confirmed success. */
+/* Owner-only, bounded LOCAL retry-exhaustion results. Returns BUSY
+ * while original local PR abandonment records remain unread in DATA: first
+ * consume those records through poll() (preserving SID/generation/TSN) before
+ * draining terminal failures. A successful take consumes one result; EMPTY
+ * means no remaining eligible result before or after retry exhaustion.
+ * Never reclassifies ACKed/peer-forward-confirmed success. Peer ABORT is
+ * consumed separately by take_peer_abort(), not through this function. */
 cnet_sctp_session_status cnet_sctp_session_take_terminal_failure(
     cnet_sctp_session *session,
     cnet_sctp_session_terminal_failure *failure);
