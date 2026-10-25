@@ -57,6 +57,28 @@ static cnet_datagram_peer cnet_packet_test_peer(uint16_t port) {
   return peer;
 }
 
+/* Match the packet index's field-wise hash to intentionally generate
+ * colliding normalized peer keys without depending on host struct padding. */
+static size_t cnet_packet_test_peer_bucket(const cnet_datagram_peer *peer,
+                                           uint32_t conversation, size_t mask) {
+  const unsigned char *fields[] = {(const unsigned char *)&peer->family,
+                                   (const unsigned char *)&peer->port,
+                                   (const unsigned char *)&peer->scope_id,
+                                   peer->address,
+                                   (const unsigned char *)&conversation};
+  const size_t sizes[] = {sizeof(peer->family), sizeof(peer->port),
+                          sizeof(peer->scope_id), sizeof(peer->address),
+                          sizeof(conversation)};
+  size_t hash = (size_t)UINT32_C(2166136261);
+  for (size_t field = 0u; field < sizeof(fields)/sizeof(fields[0]); ++field) {
+    for (size_t index = 0u; index < sizes[field]; ++index) {
+      hash ^= fields[field][index];
+      hash *= (size_t)UINT32_C(16777619);
+    }
+  }
+  return hash & mask;
+}
+
 static int cnet_packet_test_admit(void *user, cnet_packet_endpoint *endpoint,
                                   cnet_packet_protocol protocol,
                                   const cnet_datagram_peer *peer, uint32_t conversation) {
@@ -1055,6 +1077,55 @@ spec("CNet unified UDP and KCP packet endpoint") {
     check_true(first.generation != second.generation);
     check_equal(cnet_packet_send(&endpoint, first, "x", 1u), SALTS_ENOENT);
     check_equal(cnet_packet_session_get_info(&endpoint, first, &info), SALTS_ENOENT);
+    check_equal(cnet_packet_endpoint_stop(&endpoint, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_packet_endpoint_destroy(&endpoint), SALTS_OK);
+  }
+
+  it("preserves colliding peer lookup through bounded backshift and slot reuse") {
+    cnet_packet_endpoint endpoint = {0};
+    cnet_packet_test_probe probe = {0};
+    cnet_packet_endpoint_config config = cnet_packet_test_config(CNET_PACKET_UDP, &probe);
+    cnet_datagram_peer peers[4] = {0};
+    cnet_packet_session sessions[3] = {0};
+    cnet_packet_session current = {0};
+    cnet_packet_session rejected = {0};
+    cnet_packet_session_info info = {0};
+    size_t matched = 0u;
+    size_t bucket = SIZE_MAX;
+
+    config.session_capacity = 3u; /* The private index has 8 buckets. */
+    for (uint32_t port = 10000u; port <= 65535u && matched < 4u; ++port) {
+      cnet_datagram_peer peer = cnet_packet_test_peer((uint16_t)port);
+      const size_t candidate = cnet_packet_test_peer_bucket(&peer, 0u, 7u);
+      if (bucket == SIZE_MAX) bucket = candidate;
+      if (candidate == bucket) peers[matched++] = peer;
+    }
+    check_equal(matched, (size_t)4u);
+    if (matched != 4u) return;
+    check_equal(cnet_packet_endpoint_init(&endpoint, &config), SALTS_OK);
+    for (size_t i = 0u; i < 3u; ++i) {
+      check_equal(cnet_packet_session_open(&endpoint, &peers[i], 0u, &sessions[i]), SALTS_OK);
+      check_true(cnet_packet_session_valid(sessions[i]));
+    }
+    check_equal(cnet_packet_session_open(&endpoint, &peers[3], 0u, &rejected), SALTS_ENOBUFS);
+    check_false(cnet_packet_session_valid(rejected));
+    check_equal(cnet_packet_session_close(&endpoint, sessions[1]), SALTS_OK);
+    check_equal(cnet_packet_session_open(&endpoint, &peers[3], 0u, &current), SALTS_OK);
+    check_equal(cnet_packet_session_get_info(&endpoint, sessions[0], &info), SALTS_OK);
+    check_equal(info.peer.port, peers[0].port);
+    check_equal(cnet_packet_session_get_info(&endpoint, sessions[2], &info), SALTS_OK);
+    check_equal(info.peer.port, peers[2].port);
+    check_equal(cnet_packet_session_open(&endpoint, &peers[0], 0u, &rejected), SALTS_EALREADY);
+    for (size_t iteration = 0u; iteration < 32u; ++iteration) {
+      const cnet_datagram_peer *next = &peers[iteration & 1u ? 3u : 1u];
+      const cnet_packet_session stale = current;
+      check_equal(cnet_packet_session_close(&endpoint, current), SALTS_OK);
+      check_equal(cnet_packet_session_open(&endpoint, next, 0u, &current), SALTS_OK);
+      check_true(current.generation != stale.generation);
+      check_equal(cnet_packet_session_get_info(&endpoint, stale, &info), SALTS_ENOENT);
+      check_equal(cnet_packet_session_get_info(&endpoint, sessions[0], &info), SALTS_OK);
+      check_equal(cnet_packet_session_get_info(&endpoint, sessions[2], &info), SALTS_OK);
+    }
     check_equal(cnet_packet_endpoint_stop(&endpoint, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(cnet_packet_endpoint_destroy(&endpoint), SALTS_OK);
   }
