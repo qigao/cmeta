@@ -157,6 +157,18 @@ jobs:
             --output-on-failure --no-tests=error \
             -R '^(cnet_tls_test|cnet_installed_sdk_test)$'
 
+      - name: Independent default OpenSSL TLS13 HRR and CCS via public CNet NativeIO
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Source-built Salts::CNet with the exact port14 GmSSL ABI.
+          # NativeIO Owner owns TLS; only OpenSSL produces peer records.
+          cmake --build "$BUILD_ROOT" --target cnet_openssl_tls13_port14_server_probe --parallel 2
+          export ASAN_OPTIONS='detect_leaks=1:halt_on_error=1'
+          export UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1'
+          python3 cnet/tests/interop/verify_openssl_tls13_port14.py \
+            "$BUILD_ROOT/bin/cnet_openssl_tls13_port14_server_probe"
+
       - name: Verify installed C11 consumer instrumentation
         shell: bash
         run: |
