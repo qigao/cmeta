@@ -19,8 +19,9 @@ The profile retains the unchanged original production implementation
 for `Salts::CMeta`, `Salts::ComponentABI`, `Salts::PluginABI`,
 `Salts::Plugin`, `Salts::ComponentProviderABI`,
 `Salts::Configurator`, `Salts::ServiceHost`, and `Salts::CFlow`.
-It also installs `Salts::TinyTest`, but never builds original tests
-or dependent source examples in this mode. All components use the
+TinyTest is explicitly **not** exported or installed by this profile.
+The independent original test suite builds original TinyTest from source
+in its own test-only target, never making it a production dependency. All components use the
 canonical `SaltsTargets` installation; this is **not** an alias for
 the previously qualified temporary `SaltsM6` package.
 
@@ -119,3 +120,12 @@ negative ABI gate. The existing legacy `find_package(Salts 2.3 EXACT)`
 rejection also remains mandatory. Malformed packages and injected
 legacy target aliases exist **only in the negative test fixtures**;
 the actual released package candidate contains neither.
+
+## Test-only dependency excluded from real SDK
+
+The reduced real Salts 3.0 package now exports exactly the eight
+CMeta/ACE/CFlow production targets; `Salts::TinyTest` is explicitly
+rejected in the public package. The full original test suite still
+uses original TinyTest, but builds it **only inside the independent
+test project**, preserving ABI behavior without shipping a native
+test runtime or bringing its additional state into the SDK.

@@ -16,11 +16,14 @@ if(NOT DEFINED SALTS_SOURCE_ROOT OR
 endif()
 
 foreach(_retained IN ITEMS CMeta ComponentABI PluginABI Plugin
-    ComponentProviderABI Configurator ServiceHost CFlow TinyTest)
+    ComponentProviderABI Configurator ServiceHost CFlow)
   if(NOT TARGET "Salts::${_retained}")
     message(FATAL_ERROR "Missing installed Salts3 target: ${_retained}")
   endif()
 endforeach()
+if(TARGET Salts::TinyTest)
+  message(FATAL_ERROR "Installed 3.0 package must not export test-only TinyTest")
+endif()
 foreach(_legacy IN ITEMS Core Platform Concurrency Coroutine NativeIO CNet)
   if(TARGET "Salts::${_legacy}")
     message(FATAL_ERROR "Original conformance refuses old Runtime: ${_legacy}")
@@ -36,6 +39,18 @@ foreach(_foundation IN ITEMS Core Platform Concurrency Coroutine NativeIO)
     message(FATAL_ERROR "Must import a single installed SHARED ${_foundation}")
   endif()
 endforeach()
+
+# Only the independent conformance suite compiles TinyTest. It is deliberately
+# absent from the real production Salts 3.0 export set and ABI closure.
+add_library(salts3_original_tinytest STATIC
+  "${SALTS_SOURCE_ROOT}/tinytest/src/tinytest.c")
+target_compile_features(salts3_original_tinytest PRIVATE c_std_11)
+target_include_directories(salts3_original_tinytest PUBLIC
+  "${SALTS_SOURCE_ROOT}/tinytest/include")
+if(MSVC)
+  target_compile_options(salts3_original_tinytest PRIVATE
+    $<$<COMPILE_LANGUAGE:C>:-experimental:c11atomics>)
+endif()
 
 function(salts3_original_case name source)
   add_executable(salts3_original_${name} "${source}")
@@ -53,7 +68,7 @@ function(salts3_original_case name source)
     "${SALTS_SOURCE_ROOT}/component-runtime/tests"
     "${SALTS_SOURCE_ROOT}/cflow/src")
   target_link_libraries(salts3_original_${name} PRIVATE
-    Salts::TinyTest Salts::CMeta Salts::CFlow Salts::ServiceHost
+    salts3_original_tinytest Salts::CMeta Salts::CFlow Salts::ServiceHost
     Salts::Plugin SaltsCore::Core SaltsCore::Platform
     SaltsCore::NativeIO SaltsCore::Concurrency)
   if(WIN32)

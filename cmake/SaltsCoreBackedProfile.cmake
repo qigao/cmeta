@@ -53,7 +53,9 @@ endforeach()
 # Real original production target sources and export set. Deliberately do
 # NOT add platform/, concurrency/, coroutine/, native-io/, cnet/ or utils/.
 # No old Salts::Core, Platform, NativeIO, Concurrency or CNet can appear.
-add_subdirectory(tinytest)
+# TinyTest is a test-only dependency, not an exported production ABI.
+# Original reference conformance builds TinyTest from source in its own
+# independent test executable. This reduced Salts 3.0 package ships none.
 add_subdirectory(cmeta)
 add_subdirectory(component)
 add_subdirectory(plugin)
@@ -67,6 +69,10 @@ foreach(_legacy IN ITEMS Core Platform Concurrency Coroutine NativeIO CNet)
       "old Salts::${_legacy}")
   endif()
 endforeach()
+if(TARGET Salts::TinyTest OR TARGET tinytest)
+  message(FATAL_ERROR "Core-backed production package cannot export test runtime")
+endif()
+
 foreach(_retained IN ITEMS CMeta ComponentABI PluginABI Plugin
     ComponentProviderABI Configurator ServiceHost CFlow)
   if(NOT TARGET "Salts::${_retained}")
