@@ -33,8 +33,10 @@ typedef struct cnet_sctp_dcep_channel {
   uint16_t sid, priority;
   uint32_t reliability;
   uint8_t channel_type; /* reliable, max-retransmit, or timed; ordered/U bit */
-  uint8_t state; /* 0 free, 1 local WAIT_ACK, 2 open, 3 peer ACK_PENDING */
+  uint8_t state; /* 0 free, 1 local WAIT_ACK, 2 open, 3 ACK_PENDING, 4 closing */
   uint8_t locally_initiated; /* never accept ACK for a peer-opened stream */
+  uint8_t reset_outgoing_complete;
+  uint8_t reset_incoming_complete;
   uint8_t label[CNET_SCTP_DCEP_TEXT_MAX];
   uint8_t protocol[CNET_SCTP_DCEP_TEXT_MAX];
   size_t label_size, protocol_size;
@@ -92,6 +94,17 @@ cnet_sctp_dcep_status cnet_sctp_dcep_send_policy(cnet_sctp_dcep *d,
  * DATA on an unused stream is a protocol error. */
 cnet_sctp_dcep_status cnet_sctp_dcep_user_data_received(cnet_sctp_dcep *d,
     uint16_t stream);
+
+/* Coordinate RFC 8831 channel close with the Association's reciprocal RFC
+ * 6525 reset events. close_begin() makes the SID immediately unavailable for
+ * new sends but preserves the channel record while in-flight user DATA drains.
+ * Report each local-direction reset result with close_reset_result(); the SID
+ * becomes reusable only after both outgoing and incoming directions succeed.
+ * A failed direction remains closing and may be retried by the ULP. */
+cnet_sctp_dcep_status cnet_sctp_dcep_close_begin(cnet_sctp_dcep *d,
+    uint16_t stream);
+cnet_sctp_dcep_status cnet_sctp_dcep_close_reset_result(cnet_sctp_dcep *d,
+    uint16_t stream, int incoming, int succeeded);
 int cnet_sctp_dcep_ready(const cnet_sctp_dcep *d, uint16_t stream);
 cnet_sctp_dcep_status cnet_sctp_dcep_stop(cnet_sctp_dcep *d);
 
