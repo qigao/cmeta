@@ -1,0 +1,118 @@
+name: Salts 3.0 installed ACE CFlow sanitizers
+
+# Scoped to real Core-backed Salts package and original-source consumers.
+# Distinct from CNet/GmSSL and historical Salts 2.3 sanitizer workflows.
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/salts3-core-backed-sanitizers.yml"
+      - "cmake/SaltsCoreBackedProfile.cmake"
+      - "cmake/SaltsConfig.cmake.in"
+      - "cmake/ci/core-backed-conformance/**"
+      - "CMakeLists.txt"
+      - "cmeta/**"
+      - "plugin/**"
+      - "component/**"
+      - "component-runtime/**"
+      - "component-plugin/**"
+      - "cflow/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  salts3-native-sanitizers:
+    name: Installed Salts 3.0 ${{ matrix.kind }} native owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: asan-ubsan
+            flags: "-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1"
+          - kind: tsan
+            flags: "-fsanitize=thread -fno-omit-frame-pointer -g -O1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/salts-core
+          ref: a98fc58f24230a56c32f79ece3b656e79e0a1fb3
+          path: saltscore-candidate
+          persist-credentials: false
+      - name: Validate instrumented CTest selection is well quoted
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 saltscore-candidate/tools/check_ci_ctest_regex.py \
+            .github/workflows/salts3-core-backed-sanitizers.yml
+      - name: Install one exact shared Core native owner with instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C saltscore-candidate rev-parse HEAD)" = \
+            a98fc58f24230a56c32f79ece3b656e79e0a1fb3
+          prefix="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
+          cmake -S saltscore-candidate -B build-instrumented-core-${{ matrix.kind }} \
+            -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF \
+            "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_INSTALL_PREFIX=$prefix"
+          cmake --build build-instrumented-core-${{ matrix.kind }} --parallel 2
+          cmake --install build-instrumented-core-${{ matrix.kind }} \
+            --config RelWithDebInfo
+      - name: Install real Salts 3.0 Core-backed CMeta ACE CFlow targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
+          salts="$RUNNER_TEMP/salts3-asan-${{ matrix.kind }}"
+          cmake -S . -B build-instrumented-salts-${{ matrix.kind }} \
+            -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DSALTS_CORE_BACKED_PROFILE=ON -DBUILD_TESTS=OFF \
+            -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_PREFIX_PATH=$core" "-DCMAKE_INSTALL_PREFIX=$salts"
+          cmake --build build-instrumented-salts-${{ matrix.kind }} --parallel 2
+          cmake --install build-instrumented-salts-${{ matrix.kind }} \
+            --config RelWithDebInfo
+          test -f "$salts/lib/cmake/Salts/SaltsTargets.cmake"
+      - name: Build all thirteen original CMeta ACE CFlow conformance suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
+          salts="$RUNNER_TEMP/salts3-asan-${{ matrix.kind }}"
+          cmake -S cmake/ci/core-backed-conformance \
+            -B build-instrumented-parity-${{ matrix.kind }} -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            "-DSALTS_FIXTURE_ROOT=$GITHUB_WORKSPACE" \
+            "-DCMAKE_PREFIX_PATH=$salts;$core" \
+            "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
+          cmake --build build-instrumented-parity-${{ matrix.kind }} --parallel 2
+      - name: Execute full original source parity under fail-on-report sanitizers
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
+          export LD_LIBRARY_PATH="$core/lib:${LD_LIBRARY_PATH:-}"
+          if [[ '${{ matrix.kind }}' == 'asan-ubsan' ]]; then
+            export ASAN_OPTIONS='detect_leaks=1:halt_on_error=1:abort_on_error=1'
+            export UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1'
+          else
+            export TSAN_OPTIONS='halt_on_error=1:exitcode=66'
+          fi
+          ctest --test-dir build-instrumented-parity-${{ matrix.kind }} \
+            -C RelWithDebInfo --output-on-failure --no-tests=error \
+            --timeout 120 --repeat until-fail:3 \
+            -R '^sdk[.]salts3[.]parity[.][a-z0-9_]+$'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-salts3-${{ matrix.kind }}-ctest
+          path: build-instrumented-parity-${{ matrix.kind }}/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
