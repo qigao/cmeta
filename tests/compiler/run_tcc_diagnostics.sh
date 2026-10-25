@@ -89,6 +89,15 @@ echo '== unmodified opaque Salts Disruptor + POSIX Platform (diagnostic TLS opt-
     -o "$out/tcc_disruptor_real_source_conformance"
 timeout 40s "$out/tcc_disruptor_real_source_conformance"
 
+echo '== unmodified opaque Disruptor / 4 publishers + 4 workers exact-once (diagnostic) =='
+"$TCC" -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L \
+    -D_XOPEN_SOURCE=700 -DSALTS_THREAD_LOCAL=_Thread_local \
+    -Iconcurrency/include -Iutils/include -Iplatform/include \
+    concurrency/src/disruptor.c platform/src/thread_posix.c \
+    "$source/disruptor_mpmc_real_source.c" -lpthread \
+    -o "$out/tcc_disruptor_mpmc_real_source"
+timeout 40s "$out/tcc_disruptor_mpmc_real_source"
+
 echo '== default Salts::Platform header admission and actual POSIX source =='
 if "$TCC" -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
        -Iplatform/include platform/src/thread_posix.c \

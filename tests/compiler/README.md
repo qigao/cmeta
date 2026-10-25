@@ -393,6 +393,31 @@ These tests prove only the specified x64/Linux executions. They do
 not substitute weak-memory litmus testing on ARM64, TSan, exact
 compiler/DSO unwind ABI, or complete installed SDK admission.
 
+## Concurrent MPMC Disruptor admission experiment
+
+`disruptor_mpmc_real_source.c` is built with the same **unchanged**
+`concurrency/src/disruptor.c` and Salts::Platform implementation.
+The test starts 4 native pthread publishers and 4 native pthread
+workers against a 64-slot `DISRUPTOR_MODE_WORKER_POOL` queue.
+Publishers concurrently contend for cursor claims; workers
+independently contend for claims and retire their slots, sometimes
+out of sequence. All 12,000 published messages are checked by
+sequence-derived payload, and a pthread-mutex-protected verdict table
+proves each sequence was processed **exactly once in this test**.
+The verdict mutex does not guard production publication, claims or
+retirement; those still exercise the real Disruptor atomics. Every
+worker/publisher polls only with a bounded monotonic deadline and
+all threads are joined before destroying the queue.
+
+This is a strictly isolated Linux qualification. TinyCC uses a
+private `SALTS_THREAD_LOCAL=_Thread_local` compile definition for
+the otherwise-unchanged Platform source, never an ABI or installed
+header change. GCC/Clang are the normal CTest baselines. The TCC
+diagnostic is deliberately non-blocking and must **not** turn a green
+aggregate workflow into a false claim of TCC compiler admission.
+More runs, memory-order litmus tests, TSan, cancellation/close
+races, parked-worker wakeups and ARM64 are still required.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:

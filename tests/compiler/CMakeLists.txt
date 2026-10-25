@@ -74,6 +74,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     "${CMAKE_CURRENT_LIST_DIR}/../../platform/include")
   target_compile_definitions(salts_disruptor_real_source_conformance PRIVATE
     _DEFAULT_SOURCE=1 _POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700)
+  # Full opaque worker-pool contention: 4 publishers and 4 consumers.
+  salts_add_atomic_conformance(salts_disruptor_mpmc_real_source
+    disruptor_mpmc_real_source.c
+    "${CMAKE_CURRENT_LIST_DIR}/../../concurrency/src/disruptor.c"
+    "${CMAKE_CURRENT_LIST_DIR}/../../platform/src/thread_posix.c")
+  target_include_directories(salts_disruptor_mpmc_real_source PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}/../../concurrency/include"
+    "${CMAKE_CURRENT_LIST_DIR}/../../utils/include"
+    "${CMAKE_CURRENT_LIST_DIR}/../../platform/include")
+  target_compile_definitions(salts_disruptor_mpmc_real_source PRIVATE
+    _DEFAULT_SOURCE=1 _POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700)
   target_include_directories(salts_intrinsic_atomic_conformance PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/../../platform/include")
   salts_add_atomic_conformance(salts_platform_posix_thread_probe
