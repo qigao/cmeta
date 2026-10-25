@@ -4101,10 +4101,16 @@ cnet_sctp_assoc_status cnet_sctp_assoc_take_abandoned(cnet_sctp_assoc *s,
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (!event) return CNET_SCTP_ASSOC_INVALID;
+  /* A LOCAL retry-budget EXPIRED state changes the Association to FAILED,
+   * but does NOT clear its existing DATA TCB or buffered abandonment FIFO.
+   * Allow this strictly read-only Owner take after local FAILED, so an
+   * unpolled PR event can still retain its ORIGINAL DCEP generation.
+   * Peer ABORT is different: its DATA state has already been destroyed. */
   if ((s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
        s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
        s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
-       s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED) || !s->data_ready)
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED &&
+       s->state != CNET_SCTP_ASSOC_FAILED) || !s->data_ready)
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
   return data_result(cnet_sctp_data_take_abandoned(&s->data, event));
 }

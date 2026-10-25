@@ -13,6 +13,7 @@
 #define CNET_SCTP_SESSION_MAX_MESSAGE_BYTES 24576u
 #define CNET_SCTP_SESSION_MAX_STREAMS 16u
 #define CNET_SCTP_SESSION_MAX_TRACKED_RELIABLE_RECEIPTS 16u
+#define CNET_SCTP_SESSION_MAX_PEER_ABORT_REASON_BYTES 1180u
 #define CNET_SCTP_SESSION_MAC_BYTES 32u
 
 typedef struct cnet_sctp_session cnet_sctp_session;
@@ -187,6 +188,18 @@ typedef struct cnet_sctp_session_terminal_failure {
   uint8_t has_final_tsn;
 } cnet_sctp_session_terminal_failure;
 
+/* Separate, Owner-pulled peer SCTP ABORT. Framing, CRC and SCTP verification
+ * tag must pass ingress preflight; cryptographic peer identity remains the
+ * responsibility of the external DTLS transport. A single bounded Cause 12
+ * user reason is copied (never borrowed/truncated). This association-level
+ * result is NOT LOCAL_RETRY_EXHAUSTED, not a per-message ACK/failure and does
+ * not assign a DCEP SID/generation to arbitrary untracked traffic.
+ * last_acked_tsn/last_sent_tsn are pre-ABORT TCB snapshots if has_tsn=1. */
+typedef struct cnet_sctp_session_peer_abort {
+  uint32_t last_acked_tsn, last_sent_tsn;
+  uint8_t has_tsn, has_user_reason;
+} cnet_sctp_session_peer_abort;
+
 /* Synchronous result of a locally cancelled, wholly copied pending message
  * BEFORE its first DATA TSN. ticket is the original nonzero tracking token
  * only for queue_reliable_tracked(); untracked sends return ticket=0.
@@ -315,6 +328,15 @@ cnet_sctp_session_status cnet_sctp_session_take_forward_progress(
 cnet_sctp_session_status cnet_sctp_session_take_terminal_failure(
     cnet_sctp_session *session,
     cnet_sctp_session_terminal_failure *failure);
+
+/* Consume a distinct, copied peer ABORT event (if any) exactly once.
+ * On CAPACITY/OWNER/INVALID the event remains available; *info and *written
+ * are cleared, and an undersized reason buffer NEVER truncates the reason.
+ * On success, caller owns the copied reason bytes. A second call is EMPTY.
+ * Unread events are discarded only by explicit abortive stop/destroy. */
+cnet_sctp_session_status cnet_sctp_session_take_peer_abort(
+    cnet_sctp_session *session, cnet_sctp_session_peer_abort *info,
+    void *reason, size_t capacity, size_t *written);
 
 /* Opt-in copied, reliable message admission up to 24 KiB. One fixed receipt
  * is reserved BEFORE admitting the only pending Association message. Return

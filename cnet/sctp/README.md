@@ -111,9 +111,24 @@ Only fully emitted reliable messages carry a valid final DATA TSN;
 queued/partially emitted messages never invent one. The two existing
 fixed 16-entry ledgers are reused, with no new heap, callback or worker.
 Abortive stop discards unread terminal and successful results.
-This limited terminal reason does NOT cover untracked messages, unpolled
-local abandonment events, peer ABORT, generic transport errors, post-TSN
-application cancellation, or `buffered_amount`. All remain separate gates.
+A still-unread local PR abandonment is retained in DATA after local retry
+exhaustion: the terminal take returns BUSY until Session poll first reports
+the original local MESSAGE_ABANDONED event and reserves its fixed forward
+progress record. The Association's FAILED state admits only this read-only
+event retrieval while its DATA state remains intact; no retransmission,
+write or restart is authorized. This prevents a silently lost generation
+or a misleading terminal EMPTY result.
+
+A separate `cnet_sctp_session_take_peer_abort()` makes the lower SCTP
+Association's one-shot peer ABORT report available from the opaque installed
+Session. Only a checksum/verification-tag/cause-valid ABORT is admitted;
+caller-provided DTLS transport must establish real peer identity. The
+bounded Cause-12 reason is copied without truncation and capacity rejection
+does not consume it. The report contains pre-ABORT last acknowledged/sent
+TSNs when available. It is NOT LOCAL_RETRY_EXHAUSTED and does not fabricate
+per-SID application-ticket termination. Explicit stop discards unread ABORT.
+General untracked per-message outcomes, provider errors, post-TSN explicit
+application cancellation and `buffered_amount` remain separate gates.
 
 This remains an experimental reliable ACK / PR local-abandonment subset;
 general message termination semantics are NOT release-qualified.

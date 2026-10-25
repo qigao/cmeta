@@ -17,6 +17,8 @@ _Static_assert(CNET_SCTP_SESSION_MAX_TRACKED_RELIABLE_RECEIPTS ==
     CNET_SCTP_DATA_TX_SLOTS, "public reliable ACK receipt bound drifted");
 _Static_assert(CNET_SCTP_SESSION_MAC_BYTES == CNET_SCTP_ASSOC_MAC_BYTES,
     "public MAC size drifted");
+_Static_assert(CNET_SCTP_SESSION_MAX_PEER_ABORT_REASON_BYTES ==
+    CNET_SCTP_ASSOC_MAX_ABORT_REASON, "peer ABORT reason bound drifted");
 
 static cnet_sctp_session_status map_assoc(cnet_sctp_assoc_status status) {
   switch (status) {
@@ -342,6 +344,30 @@ cnet_sctp_session_status cnet_sctp_session_send_reliable_tracked(
 /* Consume only original-generation, non-ACKed, explicitly tracked messages
  * after real retry-budget exhaustion. Success receipts are never failed;
  * queued/partially emitted sends have no valid final DATA TSN. */
+/* A peer ABORT is its own one-shot association event, NEVER a local
+ * retransmission-budget failure. Preserve the core Owner-only, capacity-
+ * atomic reason-copy behavior without leaking private Association structs. */
+cnet_sctp_session_status cnet_sctp_session_take_peer_abort(
+    cnet_sctp_session *session, cnet_sctp_session_peer_abort *info,
+    void *reason, size_t capacity, size_t *written) {
+  cnet_sctp_session_status status;
+  cnet_sctp_assoc_status as;
+  cnet_sctp_assoc_peer_abort_info detail = {0};
+  if (written) *written = 0u;
+  if (info) memset(info, 0, sizeof(*info));
+  status = guard(session);
+  if (status != CNET_SCTP_SESSION_OK) return status;
+  if (!info || !written) return CNET_SCTP_SESSION_INVALID;
+  as = cnet_sctp_assoc_take_peer_abort(&session->association,
+      &detail, reason, capacity, written);
+  if (as != CNET_SCTP_ASSOC_OK) return map_assoc(as);
+  info->last_acked_tsn = detail.last_acked_tsn;
+  info->last_sent_tsn = detail.last_sent_tsn;
+  info->has_tsn = detail.has_tsn;
+  info->has_user_reason = detail.has_user_reason;
+  return CNET_SCTP_SESSION_OK;
+}
+
 cnet_sctp_session_status cnet_sctp_session_take_terminal_failure(
     cnet_sctp_session *session,
     cnet_sctp_session_terminal_failure *failure) {
@@ -353,6 +379,13 @@ cnet_sctp_session_status cnet_sctp_session_take_terminal_failure(
   status = guard(session);
   if (status != CNET_SCTP_SESSION_OK) return status;
   if (!session->terminal_retry_exhausted) return CNET_SCTP_SESSION_EMPTY;
+  /* The DATA engine still owns unread original-generation local PR
+   * abandonment records after local transport failure. Those MUST be
+   * surfaced by poll() and reserved in the forward ledger BEFORE an
+   * apparently empty terminal-receipt result can be reported. */
+  if (session->association.data_ready &&
+      session->association.data.abandon_event_count != 0u)
+    return CNET_SCTP_SESSION_BUSY;
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
     cnet_sctp_session_reliable_track *item = &session->tracked[i];
     if (!item->used || item->cumul_acked) continue;
