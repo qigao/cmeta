@@ -108,6 +108,17 @@ The result is separately reported from atomics. TinyCC also explicitly defines
 `__STDC_NO_THREADS__=1`; the test does not override this or otherwise
 reinterpret thread feature admission.
 
+## Minimal Salts source object compilation
+
+The experimental TinyCC script also compiles isolated, real Salts translation
+units: `cmeta/src/abi.c`, `cmeta/src/type_identity.c`, `cstl/src/vec.c`,
+and `asn1/src/asn1.c`. It runs each independently to collect all compiler
+failures instead of stopping after the first. These are **compile-only** checks
+with the actual public includes; they do not qualify inter-module linking,
+the CMeta ACE runtime, a CNet stack or an installed SDK. Any failing
+translation unit makes the experimental diagnostic step fail without changing
+production compiler admission.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:

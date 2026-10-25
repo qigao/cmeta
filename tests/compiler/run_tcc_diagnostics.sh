@@ -83,3 +83,28 @@ else
         -o "$out/tcc_platform_native_tls_diagnostic"
     timeout 30s "$out/tcc_platform_native_tls_diagnostic"
 fi
+
+echo '== TinyCC isolated Salts C11 source object probes (no SDK link) =='
+object_failures=0
+tcc_compile_object() {
+    local name="$1"
+    shift
+    if "$TCC" -std=c11 "$@" -o "$out/$name.o" >"$out/$name.log" 2>&1; then
+        echo "object $name: PASS (compile only, no SDK admission)"
+    else
+        echo "object $name: FAILED (compiler/source diagnostic)"
+        cat "$out/$name.log"
+        object_failures=$((object_failures + 1))
+    fi
+}
+
+tcc_compile_object cmeta_abi -Icmeta/include -Iplatform/include -c cmeta/src/abi.c
+tcc_compile_object cmeta_type_identity -Icmeta/include -Iplatform/include -c cmeta/src/type_identity.c
+tcc_compile_object cstl_vec -Icmeta/include -Icstl/include -Iplatform/include -c cstl/src/vec.c
+tcc_compile_object asn1 -Iasn1/include -c asn1/src/asn1.c
+
+if (( object_failures > 0 )); then
+    echo "TinyCC isolated source objects: $object_failures FAILED (NOT QUALIFIED)"
+    exit 1
+fi
+echo 'TinyCC isolated source objects: 4/4 PASS (compile-only)'

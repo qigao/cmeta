@@ -47,6 +47,17 @@ jobs:
           gcc -std=c11 -O2 -pthread -c "$src/atomic_abi_peer.c" -o build/atomic-interop/peer_gcc.o
           gcc -pthread build/atomic-interop/driver_clang.o build/atomic-interop/peer_gcc.o -latomic -o build/atomic-interop/clang_driver_gcc_peer
           timeout 30s build/atomic-interop/clang_driver_gcc_peer
+      - name: Compile isolated Salts CMeta/CSTL/ASN1 objects with GCC and Clang
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/atomic-interop/objects
+          for cc in gcc clang; do
+            "$cc" -std=c11 -Icmeta/include -Iplatform/include -c cmeta/src/abi.c -o "build/atomic-interop/objects/${cc}-cmeta-abi.o"
+            "$cc" -std=c11 -Icmeta/include -Iplatform/include -c cmeta/src/type_identity.c -o "build/atomic-interop/objects/${cc}-cmeta-type.o"
+            "$cc" -std=c11 -Icmeta/include -Icstl/include -Iplatform/include -c cstl/src/vec.c -o "build/atomic-interop/objects/${cc}-cstl-vec.o"
+            "$cc" -std=c11 -Iasn1/include -c asn1/src/asn1.c -o "build/atomic-interop/objects/${cc}-asn1.o"
+          done
 
   tcc-experimental:
     name: TCC / pinned mob / experimental
