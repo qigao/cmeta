@@ -1499,7 +1499,24 @@ static int session_terminal_retry_failure(int forward_case) {
           &has_due) != CNET_SCTP_SESSION_OK ||
       !has_due || due <= 20u)
     goto cleanup;
+  /* Owner clock regression is a transaction refusal, not transport
+   * termination, and cannot create either kind of failure receipt. */
+  nt = sizeof(third);
+  if (cnet_sctp_session_advance(client, 19u, third,
+          sizeof(third), &nt) != CNET_SCTP_SESSION_CLOCK ||
+      nt != 0u ||
+      cnet_sctp_session_take_terminal_failure(client, &failed) !=
+          CNET_SCTP_SESSION_EMPTY || failed.generation != 0u)
+    goto cleanup;
   stage = 4;
+  /* Insufficient output capacity cannot consume the retransmission budget
+   * or publish a FORWARD/ACK or terminal event. Retry at the SAME deadline. */
+  nt = sizeof(third);
+  if (cnet_sctp_session_advance(client, due, third,
+          1u, &nt) != CNET_SCTP_SESSION_CAPACITY || nt != 0u ||
+      cnet_sctp_session_take_terminal_failure(client, &failed) !=
+          CNET_SCTP_SESSION_EMPTY || failed.generation != 0u)
+    goto cleanup;
   ns = 0u;
   if (cnet_sctp_session_advance(client, due, second,
           sizeof(second), &ns) != CNET_SCTP_SESSION_OK || ns == 0u)
@@ -1541,6 +1558,17 @@ static int session_terminal_retry_failure(int forward_case) {
           sizeof(fourth), &nq) != CNET_SCTP_SESSION_TRANSPORT ||
       nq != 0u)
     goto cleanup;
+  /* Foreign Owner is not allowed to consume a terminal result; restoring
+   * original Owner must still return that identical immutable failure. */
+  {
+    cnet_sctp_session_status denied;
+    cc.owner_admitted = 0;
+    denied = cnet_sctp_session_take_terminal_failure(client, &failed);
+    cc.owner_admitted = 1;
+    if (denied != CNET_SCTP_SESSION_OWNER ||
+        failed.generation != 0u || failed.ticket != 0u)
+      goto cleanup;
+  }
   if (cnet_sctp_session_take_terminal_failure(client, &failed) !=
           CNET_SCTP_SESSION_OK ||
       failed.reason != CNET_SCTP_SESSION_TERMINAL_LOCAL_RETRY_EXHAUSTED ||
