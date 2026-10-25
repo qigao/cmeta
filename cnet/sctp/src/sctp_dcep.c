@@ -148,6 +148,8 @@ cnet_sctp_dcep_status cnet_sctp_dcep_input(cnet_sctp_dcep *d,
     return CNET_SCTP_DCEP_INVALID;
   channel = &d->channels[sid];
   if (bytes[0] == DCEP_ACK) {
+    if (n == 1u && channel->locally_initiated && channel->state == 4u)
+      return CNET_SCTP_DCEP_OK; /* late ACK cannot reopen a closing SID */
     if (n != 1u || !channel->locally_initiated ||
         (channel->state != 1u && channel->state != 2u))
       return CNET_SCTP_DCEP_PROTOCOL;
@@ -216,7 +218,7 @@ cnet_sctp_dcep_status cnet_sctp_dcep_send_policy(cnet_sctp_dcep *d,
   if (!unordered || !reliability || sid >= d->streams)
     return CNET_SCTP_DCEP_INVALID;
   channel = &d->channels[sid];
-  if (channel->state == 0u || channel->state == 3u)
+  if (channel->state == 0u || channel->state == 3u || channel->state == 4u)
     return CNET_SCTP_DCEP_BUSY;
   if (channel->state != 2u &&
       (channel->state != 1u || !channel->locally_initiated))
@@ -250,11 +252,51 @@ cnet_sctp_dcep_status cnet_sctp_dcep_user_data_received(cnet_sctp_dcep *d,
   if (status != CNET_SCTP_DCEP_OK) return status;
   if (sid >= d->streams) return CNET_SCTP_DCEP_INVALID;
   channel = &d->channels[sid];
-  if (channel->state == 2u || channel->state == 3u)
+  /* DATA admitted before the peer reset barrier can arrive after local close
+   * begins. It is not a new DCEP handshake and must not reopen the channel. */
+  if (channel->state == 2u || channel->state == 3u || channel->state == 4u)
     return CNET_SCTP_DCEP_OK;
   if (channel->state != 1u || !channel->locally_initiated)
     return CNET_SCTP_DCEP_PROTOCOL;
   channel->state = 2u;
+  return CNET_SCTP_DCEP_OK;
+}
+
+cnet_sctp_dcep_status cnet_sctp_dcep_close_begin(cnet_sctp_dcep *d,
+    uint16_t sid) {
+  cnet_sctp_dcep_status status = guard(d);
+  cnet_sctp_dcep_channel *channel;
+  if (status != CNET_SCTP_DCEP_OK) return status;
+  if (sid >= d->streams) return CNET_SCTP_DCEP_INVALID;
+  channel = &d->channels[sid];
+  if (channel->state == 0u) return CNET_SCTP_DCEP_PROTOCOL;
+  /* A peer-opened channel is not usable until its ACK has been admitted.
+   * Closing it earlier could reset the SID before the peer learns it exists. */
+  if (channel->state == 3u || channel->state == 4u)
+    return CNET_SCTP_DCEP_BUSY;
+  channel->state = 4u;
+  channel->reset_outgoing_complete = 0u;
+  channel->reset_incoming_complete = 0u;
+  return CNET_SCTP_DCEP_OK;
+}
+
+cnet_sctp_dcep_status cnet_sctp_dcep_close_reset_result(cnet_sctp_dcep *d,
+    uint16_t sid, int incoming, int succeeded) {
+  cnet_sctp_dcep_status status = guard(d);
+  cnet_sctp_dcep_channel *channel;
+  if (status != CNET_SCTP_DCEP_OK) return status;
+  if (sid >= d->streams || (incoming != 0 && incoming != 1) ||
+      (succeeded != 0 && succeeded != 1))
+    return CNET_SCTP_DCEP_INVALID;
+  channel = &d->channels[sid];
+  if (channel->state != 4u) return CNET_SCTP_DCEP_PROTOCOL;
+  /* A denial/timeout is observable as incomplete close. Preserve any other
+   * successfully reset direction so the ULP can retry only this direction. */
+  if (!succeeded) return CNET_SCTP_DCEP_BUSY;
+  if (incoming) channel->reset_incoming_complete = 1u;
+  else channel->reset_outgoing_complete = 1u;
+  if (channel->reset_outgoing_complete && channel->reset_incoming_complete)
+    memset(channel, 0, sizeof(*channel));
   return CNET_SCTP_DCEP_OK;
 }
 
