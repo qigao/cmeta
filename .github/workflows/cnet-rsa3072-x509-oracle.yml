@@ -29,9 +29,12 @@ jobs:
           key="$fixtures/rsa3072-test-server-key.pem"
 
           openssl verify -x509_strict -purpose sslserver -CAfile "$root" "$leaf" "$pss_leaf"
-          openssl x509 -in "$leaf" -noout -checkhost localhost
-          openssl x509 -in "$leaf" -noout -checkip 127.0.0.1
-          if openssl x509 -in "$leaf" -noout -checkhost wrong.example; then
+          openssl verify -x509_strict -purpose sslserver -verify_hostname localhost \
+            -CAfile "$root" "$leaf"
+          openssl verify -x509_strict -purpose sslserver -verify_ip 127.0.0.1 \
+            -CAfile "$root" "$leaf"
+          if openssl verify -x509_strict -purpose sslserver \
+            -verify_hostname wrong.example -CAfile "$root" "$leaf"; then
             echo "RSA-3072 fixture unexpectedly admits wrong.example" >&2
             exit 1
           fi
