@@ -2,9 +2,19 @@
 
 #include "sctp_webrtc_internal.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #define SESSION_MAGIC UINT32_C(0x53554c50)
+
+_Static_assert(CNET_SCTP_SESSION_MAX_PACKET_BYTES ==
+    CNET_SCTP_DATA_INGRESS_MTU, "public packet bound drifted");
+_Static_assert(CNET_SCTP_SESSION_MAX_MESSAGE_BYTES ==
+    CNET_SCTP_DATA_MESSAGE_MAX, "public message bound drifted");
+_Static_assert(CNET_SCTP_SESSION_MAX_STREAMS == CNET_SCTP_DCEP_STREAMS,
+    "public stream bound drifted");
+_Static_assert(CNET_SCTP_SESSION_MAC_BYTES == CNET_SCTP_ASSOC_MAC_BYTES,
+    "public MAC size drifted");
 
 static cnet_sctp_session_status map_assoc(cnet_sctp_assoc_status status) {
   switch (status) {
@@ -90,6 +100,45 @@ cnet_sctp_session_status cnet_sctp_session_init(cnet_sctp_session *session,
     return map_dcep(ds);
   }
   session->magic = SESSION_MAGIC;
+  return CNET_SCTP_SESSION_OK;
+}
+
+cnet_sctp_session_status cnet_sctp_session_create(
+    const cnet_sctp_session_create_config *config,
+    uint64_t initial_time_ms, cnet_sctp_session **out) {
+  cnet_sctp_session_config internal = {0};
+  cnet_sctp_session *session;
+  cnet_sctp_session_status status;
+  if (!out) return CNET_SCTP_SESSION_INVALID;
+  *out = NULL;
+  if (!config || config->abi_version != CNET_SCTP_SESSION_ABI_VERSION ||
+      config->struct_size != sizeof(*config))
+    return CNET_SCTP_SESSION_INVALID;
+  internal.association.local_port = config->local_port;
+  internal.association.remote_port = config->remote_port;
+  internal.association.receive_window = config->receive_window;
+  internal.association.outbound_streams = config->outbound_streams;
+  internal.association.inbound_streams = config->inbound_streams;
+  internal.association.t1_ms = config->t1_ms;
+  internal.association.t1_max_ms = config->t1_max_ms;
+  internal.association.t5_shutdown_guard_ms = config->t5_shutdown_guard_ms;
+  internal.association.cookie_lifetime_ms = config->cookie_lifetime_ms;
+  internal.association.peer_binding = config->peer_binding;
+  internal.association.max_retransmits = config->max_retransmits;
+  internal.association.is_owner = config->is_owner;
+  internal.association.entropy = config->entropy;
+  internal.association.mac = config->mac;
+  internal.association.verify_mac = config->verify_mac;
+  internal.association.provider_context = config->provider_context;
+  internal.is_dtls_client = config->is_dtls_client;
+  session = (cnet_sctp_session *)calloc(1u, sizeof(*session));
+  if (!session) return CNET_SCTP_SESSION_CAPACITY;
+  status = cnet_sctp_session_init(session, &internal, initial_time_ms);
+  if (status != CNET_SCTP_SESSION_OK) {
+    free(session);
+    return status;
+  }
+  *out = session;
   return CNET_SCTP_SESSION_OK;
 }
 
@@ -265,8 +314,11 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
     event->ppid = abandoned.ppid;
     event->first_tsn = abandoned.first_tsn;
     event->last_tsn = abandoned.last_tsn;
-    event->reliability = abandoned.reliability;
-    event->abandon_reason = abandoned.reason;
+    event->reliability.mode =
+        (cnet_sctp_session_reliability_mode)abandoned.reliability.mode;
+    event->reliability.value = abandoned.reliability.value;
+    event->abandon_reason =
+        (cnet_sctp_session_abandon_reason)abandoned.reason;
     event->unordered = abandoned.unordered;
     event->interleaved = abandoned.interleaved;
     event->has_tsn = abandoned.has_tsn;
@@ -296,7 +348,7 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
       event->stream_id = sid;
       event->generation = generation;
       event->incoming_reset = reset.incoming;
-      event->reset_result = reset.result;
+      event->reset_result = (cnet_sctp_session_reset_result)reset.result;
       return CNET_SCTP_SESSION_OK;
     }
     if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
@@ -305,7 +357,7 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
       event->kind = CNET_SCTP_SESSION_EVENT_CHANNEL_CLOSED;
       event->stream_id = sid;
       event->generation = generation;
-      event->reset_result = reset.result;
+      event->reset_result = (cnet_sctp_session_reset_result)reset.result;
       return CNET_SCTP_SESSION_OK;
     }
   }
@@ -376,13 +428,21 @@ cnet_sctp_session_status cnet_sctp_session_stop(cnet_sctp_session *session) {
   return CNET_SCTP_SESSION_OK;
 }
 
-cnet_sctp_session_status cnet_sctp_session_destroy(cnet_sctp_session *session) {
+cnet_sctp_session_status cnet_sctp_session_destroy_in_place(
+    cnet_sctp_session *session) {
   cnet_sctp_assoc_status as;
   if (!session || session->magic != SESSION_MAGIC)
     return CNET_SCTP_SESSION_INVALID;
   as = cnet_sctp_assoc_destroy(&session->association);
   if (as != CNET_SCTP_ASSOC_OK) return map_assoc(as);
   memset(session, 0, sizeof(*session));
+  return CNET_SCTP_SESSION_OK;
+}
+
+cnet_sctp_session_status cnet_sctp_session_destroy(cnet_sctp_session *session) {
+  cnet_sctp_session_status status = cnet_sctp_session_destroy_in_place(session);
+  if (status != CNET_SCTP_SESSION_OK) return status;
+  free(session);
   return CNET_SCTP_SESSION_OK;
 }
 

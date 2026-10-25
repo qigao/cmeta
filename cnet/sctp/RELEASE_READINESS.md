@@ -1,7 +1,7 @@
 # Release readiness — RFC-first C11 SCTP (#1281)
 
-**Initial preflight: 2026-10-13. Feature-checkpoint update: 2026-10-17. Decision: NO-GO for public or production SCTP.**
-This is a release *preflight record*, not permission to create a tag, publish a package, or replace TurboMedia's usrsctp. Private research [PR #1281](https://github.com/qigao/salts/pull/1281) has merged to `master`, but no opaque session SDK or production integration was published. All SCTP work remains original C11, with no Rust/C++ SCTP engine, bridge, or runtime fallback.
+**Initial preflight: 2026-10-13. Feature-checkpoint update: 2026-10-25. Decision: NO-GO for production SCTP.**
+This is a release *preflight record*, not permission to create a tag, publish a package, or replace TurboMedia's usrsctp. Private research [PR #1281](https://github.com/qigao/salts/pull/1281) has merged to `master`; the standalone prototype now has an opaque installed C11 session target, but no production CNet/DTLS integration or Salts.Native publication. All SCTP work remains original C11, with no Rust/C++ SCTP engine, bridge, or runtime fallback.
 
 ## Version and immutable source authority
 
@@ -22,10 +22,10 @@ Release governance is already tracked in [Salts #1081](https://github.com/qigao/
 | Gate | Current evidence | Go/no-go |
 | --- | --- | --- |
 | M0 RFC and legal provenance | RFC matrix and C11-only module; known GmSSL Apache-2.0 provider for tests | **PARTIAL** — final release source/license/dependency audit open |
-| M1 C11 wire + installed consumer | Strict Chunk framing, CRC32C, INIT TLVs; independent `CNetSctpPrototype::Wire` installed C11 consumer | **PARTIAL** — production opaque session ABI and Salts SDK export absent |
+| M1 C11 wire + installed consumer | Strict Chunk framing, CRC32C and INIT TLVs; installed `CNetSctpPrototype::Session` uses an opaque C11 handle and versioned create config, while its independent consumer proves two-session handshake, DCEP OPEN/ACK, message transfer and teardown | **IMPLEMENTED IN STANDALONE PROTOTYPE** — not yet exported by production `Salts::CNet` or Salts.Native |
 | M2 SCTP core | Owner-driven INIT/COOKIE/T1, HMAC-SM3, entropy/key rotation, bounded DATA/SACK/T3/Fast Recovery and zero-window recovery; SHUTDOWN/T2 with pending DATA and ULP RX drain; atomic bundled DATA/leading SACK receive; optional absolute T5 shutdown guard with ABORT-on-expiry and late-ACK preemption | **PARTIAL** — complete congestion/PMTU, restart, full ABORT/error-cause and peer-race behavior, full RFC wire surface and real Provider Owner integration remain open |
-| M3 WebRTC extensions | Private PPID/DCEP OPEN/ACK with channel-type projection into the shared DATA reliability policy and pre-ACK ordering, explicit Owner-driven closing state coordinated with both reciprocal reset directions before SID reuse, ordered/unordered streams, 24 KiB DATA/I-DATA fragmentation, dedicated RFC 3758 negotiation with bounded fragmented timed/max-retransmit FORWARD-TSN/I-FORWARD-TSN and fixed Owner-pulled abandonment records, negotiated RFC 8260 MID/FSN receive interleaving, and a bounded negotiated RFC 6525 slice with deferred `In progress` receive processing, local/peer Incoming and paired reset scheduling, RFC 8831 reciprocal close, single-direction and paired stream growth, quiescent SSN/TSN association reset, its 30-second local-request floor, simultaneous-reset collision recovery, timeout/retry and reuse tests. A source-private Owner-scoped ULP target makes OPEN/SCTP admission transactional, retains peer ACK backpressure, binds close results to a 64-bit per-SID generation before reuse, and now surfaces exactly-once generation-bound abandonment after a controlled-loss I-FORWARD-TSN exchange while preserving later reliable-message continuity. | **PARTIAL** — independent-peer controlled-loss proof is still absent; the ULP target is not installed/public and still lacks production CNet/DTLS Generation leases, multi-message scheduling/partial delivery, remaining cross-parameter collisions, negotiated limits and complete browser qualification |
-| M4 independent interoperability | No real GmSSL SCTP-over-DTLS + independent browser/libwebrtc peer proof | **BLOCKED** |
+| M3 WebRTC extensions | PPID/DCEP OPEN/ACK with channel-type projection into the shared DATA reliability policy and pre-ACK ordering, explicit Owner-driven closing state coordinated with both reciprocal reset directions before SID reuse, ordered/unordered streams, 24 KiB DATA/I-DATA fragmentation, dedicated RFC 3758 negotiation with bounded fragmented timed/max-retransmit FORWARD-TSN/I-FORWARD-TSN and fixed Owner-pulled abandonment records, negotiated RFC 8260 MID/FSN receive interleaving, and a bounded negotiated RFC 6525 slice. The opaque installed ULP makes OPEN/SCTP admission transactional, retains peer ACK backpressure, binds close results to a 64-bit per-SID generation before reuse, and surfaces exactly-once generation-bound abandonment. | **PARTIAL** — production CNet/DTLS Generation leases, multi-message scheduling/partial delivery, remaining cross-parameter collisions, negotiated limits and complete browser qualification remain open |
+| M4 independent interoperability | TurboMedia PR #269 (merged as `78e36536ca3cd39dbd0fdcbc8f6c5f636436a833`) drives the private C11 engine through real ICE/DTLS against public Janus and verifies DCEP, text/binary/20 KiB fragments, unordered, reset/reuse, controlled RTX1 and RTX0 loss, I-FORWARD-TSN and later ordered continuity | **PARTIAL** — public-peer WebRTC evidence exists, but it still uses a source-integrated test path rather than the installed Session ABI plus production CNet DTLS generation lease |
 | M5 ownership, sanitizers and SDK | Linux/Windows/macOS standalone C11, source ASan/UBSan, pinned-GmSSL Cookie-MAC, and effective-source TSan for private Owner handoff + test-DSO callback/drain/dlclose all green at exact HEAD `1ebec510a7928864a74307a98aaa18a310abd0de` ([CNet C11 #39705821651](https://github.com/qigao/salts/actions/runs/39705821651)); Salts CI selected Android/iOS Release checks pass ([#39705821753](https://github.com/qigao/salts/actions/runs/39705821753)) | **PARTIAL** — production CNet Owner/DTLS Generation drain and real DTLS Provider unload race remain open; Android/iOS builds did not install/qualify the new SCTP session SDK; Linux arm64 and six-RID installed ABI checks remain open |
 | M6 review/cutover | No independent protocol review or explicit release/cutover approval | **BLOCKED** |
 
@@ -52,7 +52,7 @@ Separate known cross-repo qualification: [#1177](https://github.com/qigao/salts/
 
 ### B. RFC-first CNet SCTP / TurboMedia DataChannel
 
-**NO-GO** for any public Salts SDK, release tag, or TurboMedia cutover today. Continue follow-up work from the merged private baseline and [TurboMedia #227](https://github.com/qigao/turbomedia/issues/227). When M0–M5 and independent browser/DTLS interoperability pass, review a **new, exact SHA-qualified integration candidate based on the approved Salts ABI graph**; reconcile ancestry and run full first-party sanitizer, six-RID *SCTP* installed consumers and immutable packages. Only M6 written approval can permit a public SCTP session ABI and exclusive usrsctp removal. No dual-backend release and no automatic runtime fallback.
+**NO-GO** for a Salts.Native release or TurboMedia cutover today. Continue follow-up work from the merged research baseline and [TurboMedia #227](https://github.com/qigao/turbomedia/issues/227). The standalone opaque Session ABI must still be integrated with the production CNet DTLS generation/lease graph and pass full first-party sanitizer, six-RID installed consumers, performance comparison and immutable-package qualification. Only M6 written approval can permit production export and exclusive usrsctp removal. No dual-backend release and no automatic runtime fallback.
 
 ## Release preparation checklist (no release action authorized)
 
@@ -76,8 +76,8 @@ Separate known cross-repo qualification: [#1177](https://github.com/qigao/salts/
 
 A separate **opt-in** C11 POSIX pthread qualification target now exists:
 `CNET_SCTP_TEST_OWNER_THREADS=ON` builds `cnet_sctp_owner_thread_test` and
-uses the same private (noninstalled) Association/Data sources. The default
-Windows/macOS/installed Wire-only build remains unchanged; the Linux source
+uses the same private Association/Data sources. The default Windows/macOS
+standalone build now also installs the opaque Session target; the Linux source
 ASan+UBSan job enables the new test, while a dedicated Ubuntu Clang 18 job
 builds the actual target and first-party dependencies with `-fsanitize=thread`,
 `-fPIE`, and a TSan-linked PIE. The CI includes an explicit compilation-command
