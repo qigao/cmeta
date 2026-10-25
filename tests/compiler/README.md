@@ -71,6 +71,14 @@ experimental TCC workflow runs this separately in three directions:
 - TCC driver + GCC peer;
 - TCC driver + TCC peer.
 
+TinyCC 0.9.28rc may produce object-file `.eh_frame` information rejected by
+GNU `ld` when it constructs `.eh_frame_hdr` (overlapping FDEs). The script
+always records the default linker outcome as its own result. It separately
+attempts a **diagnostic-only** link using `--no-eh-frame-hdr` with a
+non-executable test stack (`-z noexecstack`); these options do **not**
+validate TCC's unwind metadata or permit mixing TCC objects in the production
+SDK.
+
 The local diagnostic entrypoint is `bash tests/compiler/run_tcc_diagnostics.sh`
 (with a pinned TinyCC binary and `gcc` on PATH). Its results are evidence of
 a limited implementation, not permission to build Salts with TCC. In particular,
