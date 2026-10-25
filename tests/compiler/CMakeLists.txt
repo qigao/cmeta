@@ -45,6 +45,8 @@ salts_add_atomic_conformance(salts_atomic_abi_same_compiler
 
 # Qualify actual POSIX Platform threading primitives without the full SDK.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  salts_add_atomic_conformance(salts_native_tls_probe
+    tcc_tls_probe.c)
   salts_add_atomic_conformance(salts_platform_posix_thread_probe
     tcc_platform_thread_probe.c
     "${CMAKE_CURRENT_LIST_DIR}/../../platform/src/thread_posix.c")

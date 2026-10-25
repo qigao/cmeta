@@ -93,6 +93,15 @@ replacement. It tests a timed condition wait, thread create/join, thread
 identity token, POSIX once, mutex lifecycle and RW locks. GCC and Clang
 execute it as a standalone CTest baseline.
 
+TinyCC's own headers advertise `__STDC_NO_THREADS__=1` although the
+compiler source documents and recognizes `_Thread_local`. The new
+`tcc_tls_probe.c` independently tests real per-pthread TLS isolation without
+changing that feature macro. The diagnostic first attempts the unchanged
+Salts::Platform source and header; when rejected, it may privately compile
+a second test with `-DSALTS_THREAD_LOCAL=_Thread_local` **only after** the
+independent native TLS probe passes. That second compile is not an SDK build,
+a production fallback, or compiler admission.
+
 The TinyCC diagnostic compiles and links the same production Platform source
 directly with TCC's own linker, without the full Salts/vcpkg dependency graph.
 The result is separately reported from atomics. TinyCC also explicitly defines

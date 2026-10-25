@@ -50,7 +50,7 @@ echo '== TCC driver / TCC peer =='
 timeout 30s "$out/tcc_driver_tcc_peer"
 
 echo '== TCC native linker / TCC driver and TCC peer =='
-if "$TCC" "$out/driver_tcc.o" "$out/peer_tcc.o" -lpthread -latomic \
+if "$TCC" "$out/driver_tcc.o" "$out/peer_tcc.o" -lpthread \
       -o "$out/tcc_native_link" >"$out/tcc_native_link.log" 2>&1; then
     timeout 30s "$out/tcc_native_link"
 else
@@ -58,9 +58,28 @@ else
     cat "$out/tcc_native_link.log"
 fi
 
-echo '== TCC compile and run the real Salts::Platform POSIX threading backend =='
-"$TCC" -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
-    -Iplatform/include platform/src/thread_posix.c \
-    tests/compiler/tcc_platform_thread_probe.c -lpthread \
-    -o "$out/tcc_platform_thread_probe"
-timeout 30s "$out/tcc_platform_thread_probe"
+echo '== TCC _Thread_local syntax and pthread isolation, without feature macro overrides =='
+"$TCC" -std=c11 -D_POSIX_C_SOURCE=200809L \
+    "$source/tcc_tls_probe.c" -lpthread -o "$out/tcc_tls_probe"
+timeout 30s "$out/tcc_tls_probe"
+
+echo '== default Salts::Platform header admission and actual POSIX source =='
+if "$TCC" -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
+       -Iplatform/include platform/src/thread_posix.c \
+       tests/compiler/tcc_platform_thread_probe.c -lpthread \
+       -o "$out/tcc_platform_strict" 2>"$out/platform_strict.log"; then
+    echo 'Salts::Platform default header compiled with TCC'
+    timeout 30s "$out/tcc_platform_strict"
+else
+    echo 'Salts::Platform default header rejects or fails TCC (NOT QUALIFIED)'
+    cat "$out/platform_strict.log"
+    # Isolate native TLS language capability only. This target is a private
+    # diagnostic; it DOES NOT change Salts headers, ABI or release admission.
+    echo '== diagnostic-only opt-in to native _Thread_local, NOT Salts admission =='
+    "$TCC" -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700 \
+        -DSALTS_THREAD_LOCAL=_Thread_local \
+        -Iplatform/include platform/src/thread_posix.c \
+        tests/compiler/tcc_platform_thread_probe.c -lpthread \
+        -o "$out/tcc_platform_native_tls_diagnostic"
+    timeout 30s "$out/tcc_platform_native_tls_diagnostic"
+fi
