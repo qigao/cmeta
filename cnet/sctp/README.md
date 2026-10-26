@@ -142,10 +142,21 @@ prefix SACK. If that fixed success ledger is full, CAPACITY retains the next
 event for Owner retry after an existing success receipt is consumed; no ULP
 event/output or generation is silently truncated. No per-message transport
 failure is fabricated for other untracked/in-flight DATA. Original generation
-metadata that cannot be resolved at transfer is fail-closed (STALE at take)
-rather than invented; admission-time per-message generation binding remains
-a distinct qualification gate. No public C ABI, heap, socket or background
-worker is introduced.
+metadata that is unbound in a lower DATA-only caller remains fail-closed
+(STALE at Session take), never replaced by the currently active DCEP SID.
+In the opaque Session, every successfully admitted direct or copied PR
+message now binds the nonzero original DCEP generation into the DATA
+pending copy, each fragment/retransmission ticket (including zero-window
+probe), and its one bounded local abandonment record. DATA reserves this
+record's capacity BEFORE admission; no second unbounded identity queue
+was added. The copied reliable-tracked queue binds generation too, so
+pre-TSN cancellation refuses an inadvertently reused SID with STALE
+instead of attributing the old message to the new lifetime. Actual
+I-DATA, test-only legacy DATA, fragmented sends, pre-TSN TIMED expiry,
+and failure-atomic Owner/capacity tests cover this private path.
+Independent real reset/reuse against another browser/DTLS implementation
+and six-RID release qualification remain separate gates. No public C ABI,
+heap, socket or background worker was added.
 
 General untracked per-message outcomes, provider errors, post-TSN explicit
 application cancellation and `buffered_amount` remain separate gates.

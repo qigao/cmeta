@@ -365,9 +365,11 @@ cnet_sctp_session_status cnet_sctp_session_queue_reliable_tracked(
 
 /* Owner-only atomic cancel of a copied message BEFORE its first fragment.
  * Returns the original SID/generation, optional tracked ticket, logical
- * payload size and DCEP policy synchronously and exactly once. Repetition
- * yields EMPTY only when no pending or retained DATA/protocol-forward
- * barrier remains; wrong generation STALE. A sent DATA/probe or any
+ * payload size and DCEP policy synchronously and exactly once. The
+ * copied message's admission-time generation MUST still match the active
+ * DCEP SID; otherwise STALE preserves the original queued bytes/ticket.
+ * Repetition yields EMPTY only when no pending or retained DATA/protocol-
+ * forward barrier remains; wrong generation STALE. A sent DATA/probe or any
  * still-retained SID ticket is BUSY, as is a conservatively association-wide
  * FORWARD-TSN barrier; an already expired TIMED message remains on its separate
  * advance()+MESSAGE_ABANDONED path. Cancel emits NO DATA/FORWARD/ACK,
@@ -380,10 +382,15 @@ cnet_sctp_session_status cnet_sctp_session_cancel_unsent_message(
     cnet_sctp_session_unsent_cancelled *cancelled);
 
 /* queue_message owns a full copied user message before any SCTP TSN is
- * assigned; the caller may free the input immediately. The pending queue is
- * bounded to ONE message per Association: a second queue returns CAPACITY
- * without consuming bytes. DCEP OPEN/ACK and reliability policy must already
- * admit the SID. No borrowed application input survives the call.
+ * assigned; the caller may free the input immediately. Its original DCEP
+ * SID generation is bound on successful admission and travels with DATA
+ * tickets and any later local PR abandonment; peer ABORT or SID reset must
+ * never substitute the currently active SID lifetime. Existing DATA PR-event
+ * reservation denies capacity exhaustion BEFORE admitting a new message.
+ * The pending queue is bounded to ONE message per Association: a second
+ * queue returns CAPACITY without consuming bytes. DCEP OPEN/ACK and
+ * reliability policy must already admit the SID. No borrowed application
+ * input survives the call.
  *
  * pump_message emits AT MOST ONE DATA/I-DATA fragment. EMPTY means no queued
  * bytes remain, CAPACITY means congestion/receive-window/buffer backpressure

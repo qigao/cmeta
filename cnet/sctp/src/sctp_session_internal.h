@@ -30,9 +30,10 @@ typedef struct cnet_sctp_session_forward_track {
 } cnet_sctp_session_forward_track;
 
 /* Fixed post-ABORT, copy-owned transfer of DATA's already queued, LOCAL
- * PR abandonment records. The original SID generation is snapshotted
- * before the Association can destroy its DATA TCB; no payload is borrowed
- * and no new abandonment is fabricated for other in-flight messages. */
+ * PR abandonment records. The original SID generation was bound at each
+ * successful message admission and is merely copied here before the
+ * Association destroys DATA. Never requery the current/reused DCEP SID,
+ * borrow application payloads, or fabricate other in-flight outcomes. */
 typedef struct cnet_sctp_session_abort_abandoned {
   cnet_sctp_data_abandon_event data;
   uint64_t generation;
