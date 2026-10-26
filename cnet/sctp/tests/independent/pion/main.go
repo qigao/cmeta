@@ -121,7 +121,7 @@ func main() {
 	fmt.Println("PION_DCEP_ACK_OK")
 	fmt.Println("PION_RECEIVED_C11_NOMINAL_IDATA")
 	// The next C11 DATA must be released only by real I-FORWARD-TSN.
-	var n int
+	// n was already declared by the original DCEP send in this scope.
 	var ppi sctp.PayloadProtocolIdentifier
 	// The C11 sender committed one subsequent DATA TSN but our test-only
 	// datagram transport dropped it. Pion must process the real RFC8260
