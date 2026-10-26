@@ -25,13 +25,23 @@ typedef struct oracle_context {
   uint32_t tag;
   uint32_t tsn;
   uint32_t key;
+  uint64_t admitted_generation;
 } oracle_context;
 
 static volatile sig_atomic_t shutting_down = 0;
 static pion_test_dtls secure_transport = {0};
 static int use_real_dtls = 0;
 static void stop_signal(int signo) { (void)signo; shutting_down = 1; }
-static int owner(void *context) { return context != NULL; }
+static int owner(void *context) {
+  const oracle_context *c = (const oracle_context *)context;
+  if (!c) return 0;
+  /* The same C11 Owner stays admitted only for the exact authenticated
+   * DTLS generation that created this Session. This is a single-threaded
+   * test gate, NOT production lease/concurrent cancel/drain. */
+  return !use_real_dtls ||
+      (secure_transport.accepted && secure_transport.generation != 0u &&
+       c->admitted_generation == secure_transport.generation);
+}
 static int entropy(void *context, uint8_t *p, size_t n) {
   const oracle_context *c = (const oracle_context *)context;
   if (!c || !p || n != 8u) return -1;
@@ -146,7 +156,8 @@ static int emit_app(cnet_sctp_session *session, uint64_t now, int fd,
 
 int main(int argc, char **argv) {
   oracle_context context = {
-    UINT32_C(0x11223344), UINT32_C(0x10203040), UINT32_C(0x13579bdf)
+    UINT32_C(0x11223344), UINT32_C(0x10203040),
+    UINT32_C(0x13579bdf), 0u
   };
   cnet_sctp_session_create_config cfg = {0};
   cnet_sctp_session *session = NULL;
@@ -185,7 +196,8 @@ int main(int argc, char **argv) {
   cfg.t1_ms = 100u;
   cfg.t1_max_ms = 400u;
   cfg.cookie_lifetime_ms = 5000u;
-  cfg.peer_binding = UINT64_C(0x0123456789abcdef);
+  cfg.peer_binding = use_real_dtls ?
+      0u : UINT64_C(0x0123456789abcdef);
   cfg.max_retransmits = 5u;
   cfg.is_dtls_client = 0u; /* Pion DCEP client uses even SID=0. */
   cfg.is_owner = owner;
@@ -193,8 +205,12 @@ int main(int argc, char **argv) {
   cfg.mac = test_mac;
   cfg.verify_mac = test_verify;
   cfg.provider_context = &context;
-  if (cnet_sctp_session_create(&cfg, 0u, &session) !=
-      CNET_SCTP_SESSION_OK) {
+  /* Plaintext SCTP-only oracle retains the old bounded behavior.
+   * DTLS mode MUST NOT allocate/admit an SCTP Association before both
+   * certificate pins and the exported generation have been verified. */
+  if (!use_real_dtls &&
+      cnet_sctp_session_create(&cfg, 0u, &session) !=
+          CNET_SCTP_SESSION_OK) {
     fprintf(stderr, "C11 oracle session create failed\n");
     return 3;
   }
@@ -247,11 +263,31 @@ int main(int argc, char **argv) {
             &destination, encrypted, (size_t)raw_size,
             packet, sizeof(packet), &plaintext_size);
         if (unwrapped < 0) {
-          fprintf(stderr, "C11 oracle DTLS packet authentication/record failure\n");
+          fprintf(stderr,
+              "C11 oracle DTLS packet authentication/record failure\n");
+          if (!session) {
+            puts("C11_DTLS_REJECTED_BEFORE_SESSION_CREATE");
+            fflush(stdout);
+          }
           failure = 33; break;
         }
         /* SCTP Owner NEVER sees handshake/ciphertext bytes. */
         if (unwrapped == 0) continue;
+        if (!session) {
+          if (!secure_transport.accepted ||
+              secure_transport.generation == 0u ||
+              context.admitted_generation != 0u) {
+            failure = 34; break;
+          }
+          context.admitted_generation = secure_transport.generation;
+          cfg.peer_binding = context.admitted_generation;
+          if (cnet_sctp_session_create(&cfg, now, &session) !=
+              CNET_SCTP_SESSION_OK) {
+            failure = 35; break;
+          }
+          puts("C11_DTLS_SESSION_CREATED_AFTER_AUTH");
+          fflush(stdout);
+        }
       } else {
         if ((size_t)raw_size > sizeof(packet)) { failure = 9; break; }
         memcpy(packet, encrypted, (size_t)raw_size);
@@ -357,6 +393,7 @@ int main(int argc, char **argv) {
         }
       }
     }
+    if (!session) continue;
     {
       int has_deadline = 0;
       uint64_t due = 0u;

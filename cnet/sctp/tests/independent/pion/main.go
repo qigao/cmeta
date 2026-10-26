@@ -173,6 +173,8 @@ func main() {
 			 * for the EXACT native certificate-rejection marker. */
 			expect(lines, "OPENSSL_DTLS_BAD_CLIENT_FINGERPRINT_REJECTED",
 				6*time.Second)
+			expect(lines, "C11_DTLS_REJECTED_BEFORE_SESSION_CREATE",
+				6*time.Second)
 			_ = secure.Close()
 			fmt.Println("PION_DTLS_WRONG_CLIENT_FINGERPRINT_REJECTED")
 			return // never create SCTP on an invalid authenticated peer
@@ -260,10 +262,11 @@ func main() {
 	expected := "MESSAGE=0:" + hex.EncodeToString(payload)
 	seenIData, seenMessage, seenForward, seenDrop, seenConfirmed := false, false, false, false, false
 	seenForwardLoss, seenForwardRetry, seenPinnedClient := false, false, false
+	seenBoundGeneration := false
 	limit := time.After(6 * time.Second)
 	for !seenIData || !seenMessage || !seenForward || !seenDrop ||
 		!seenConfirmed || (dropFirstForward && (!seenForwardLoss || !seenForwardRetry)) ||
-		(useDTLS && !seenPinnedClient) {
+		(useDTLS && (!seenPinnedClient || !seenBoundGeneration)) {
 		select {
 		case line, open := <-lines:
 			require(open, "C11 peer terminated during I-DATA")
@@ -271,6 +274,11 @@ func main() {
 			if line == "OPENSSL_DTLS_CLIENT_FINGERPRINT_MATCH" {
 				require(useDTLS, "unexpected DTLS fingerprint event in plaintext mode")
 				seenPinnedClient = true
+			}
+			if line == "C11_DTLS_SESSION_CREATED_AFTER_AUTH" {
+				require(useDTLS && seenPinnedClient,
+					"OpenSSL C11 Session created before DTLS peer identity")
+				seenBoundGeneration = true
 			}
 			if line == "RX_TYPE=64" { seenIData = true }
 			if line == expected { seenMessage = true }

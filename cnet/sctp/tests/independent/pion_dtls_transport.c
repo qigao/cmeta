@@ -82,6 +82,28 @@ done:
   EVP_PKEY_CTX_free(generator);
   return success;
 }
+static int derive_verified_dtls_generation(SSL *ssl,
+    uint64_t *generation) {
+  static const char label[] = "CNetSctpPrototype-test-Owner-Generation";
+  uint8_t material[32] = {0};
+  uint64_t result = 0u;
+  size_t i;
+  int ok;
+  if (!ssl || !generation || !SSL_is_init_finished(ssl) ||
+      SSL_version(ssl) != DTLS1_2_VERSION) return -1;
+  /* RFC 5705 unique handshake exporter. NEVER use this short non-secret
+   * 64-bit projection as a Cookie MAC secret or as an API credential. */
+  ok = SSL_export_keying_material(ssl, material, sizeof(material),
+      label, sizeof(label) - 1u, NULL, 0u, 0);
+  if (ok == 1) {
+    for (i = 0u; i < sizeof(result); ++i)
+      result = (result << 8u) | (uint64_t)material[i];
+  }
+  OPENSSL_cleanse(material, sizeof(material));
+  if (ok != 1 || result == 0u) return -1;
+  *generation = result;
+  return 0;
+}
 static int peer_fingerprint_matches(SSL *ssl, const uint8_t expected[32]) {
   X509 *peer = SSL_get1_peer_certificate(ssl);
   uint8_t actual[32] = {0};
@@ -198,8 +220,11 @@ int pion_test_dtls_input(pion_test_dtls *t, int fd,
       fflush(stdout);
       return -1;
     }
+    if (derive_verified_dtls_generation(t->ssl, &t->generation) != 0)
+      return -1;
     t->accepted = 1u;
     puts("OPENSSL_DTLS_CLIENT_FINGERPRINT_MATCH");
+    puts("OPENSSL_DTLS_GENERATION_EXPORTED");
     fflush(stdout);
   }
   result = SSL_read(t->ssl, plaintext, (int)capacity);
@@ -231,4 +256,5 @@ void pion_test_dtls_stop(pion_test_dtls *t) {
   t->ssl = NULL;
   t->context = NULL;
   t->accepted = 0u;
+  t->generation = 0u;
 }
