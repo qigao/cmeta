@@ -149,7 +149,7 @@ def self_test():
             assert len(set(rotated)) == 6, rotated
             for offset in range(3):
                 assert sorted(order[offset] for order in rotated) == sorted(
-                    BACKENDS
+                    BACKENDS * 2
                 )
     dummy = [
         {"measurements": {
