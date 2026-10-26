@@ -720,7 +720,11 @@ static void cnet_owner_test_expired_partial_vector_send(
      * but neither outcome may retire CNet's backing prematurely. */
     clock.now_ms += WRITE_TIMEOUT_MS + 1u;
     clock.next_ms = clock.now_ms;
-    check_equal(cnet_owner_test_process_deadlines(&owner), SALTS_ENOENT);
+    /* No completion was observed yet: NativeIO still owns the pending
+     * request and accepts the Owner's cancellation (SALTS_OK). The old
+     * completion-first ordering instead returns ENOENT at expiry. */
+    check_equal(cnet_owner_test_process_deadlines(&owner), SALTS_OK);
+    check_equal(mem_buffer_ref_count(original_buffer), UINT32_C(1));
   }
   check_equal(cnet_owner_test_observe_raw(&owner, &completion, 1u,
                                          CNET_OWNER_TEST_TIMEOUT_MS, &count),
