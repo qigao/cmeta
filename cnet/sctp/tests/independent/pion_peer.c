@@ -100,6 +100,14 @@ static void trace_event(const cnet_sctp_session_event *event,
  * This is a test-only UDP adapter, NOT an application cancellation API. */
 static uint32_t dropped_tsn = 0u;
 static int dropped_tsn_live = 0;
+/* An additional, independently qualified scenario drops the FIRST genuine
+ * I-FORWARD wire control, then requires a byte-for-byte identical Owner
+ * retransmission before Pion may retire the abandoned unordered MID. */
+static int drop_first_iforward = 0;
+static int first_forward_dropped = 0;
+static int forward_retransmitted = 0;
+static uint8_t saved_forward[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+static size_t saved_forward_size = 0u;
 static uint32_t chunk_tsn(const uint8_t *wire) {
   return ((uint32_t)wire[16u] << 24u) |
       ((uint32_t)wire[17u] << 16u) |
@@ -143,10 +151,12 @@ int main(int argc, char **argv) {
   uint64_t start, now;
   int fd = -1, failure = 0;
   unsigned int local_port, peer_port;
-  if (argc != 3) {
-    fprintf(stderr, "usage: pion_oracle_peer UDP_LISTEN_PORT UDP_PEER_PORT\n");
+  if ((argc != 3 && argc != 4) ||
+      (argc == 4 && strcmp(argv[3], "drop-first-iforward") != 0)) {
+    fprintf(stderr, "usage: pion_oracle_peer UDP_LISTEN_PORT UDP_PEER_PORT [drop-first-iforward]\n");
     return 2;
   }
+  drop_first_iforward = argc == 4;
   local_port = (unsigned int)strtoul(argv[1], NULL, 10);
   peer_port = (unsigned int)strtoul(argv[2], NULL, 10);
   if (local_port == 0u || peer_port == 0u ||
@@ -287,6 +297,13 @@ int main(int argc, char **argv) {
         cnet_sctp_session_forward_progress progress = {0};
         status = cnet_sctp_session_take_forward_progress(session, &progress);
         if (status == CNET_SCTP_SESSION_OK) {
+          /* A dropped first I-FORWARD cannot receive an independent
+           * cumulative acknowledgement before the replay is forwarded. */
+          if (drop_first_iforward && !forward_retransmitted) {
+            fprintf(stderr,
+                "C11 oracle premature peer FORWARD confirmation\n");
+            failure = 30; break;
+          }
           if (progress.generation != original_generation ||
               progress.stream_id != 0u ||
               progress.abandon_reason != CNET_SCTP_SESSION_ABANDON_TIMED ||
@@ -332,20 +349,48 @@ int main(int argc, char **argv) {
           puts("C11_FILTERED_SAME_TSN_RETRANSMISSION");
           fflush(stdout);
         } else {
+          int suppress = 0;
           if (written != 0u && reply[12u] == 194u) {
-            if (stage != 2u || !dropped_tsn_live) {
+            if (stage == 2u && dropped_tsn_live) {
+              dropped_tsn_live = 0;
+              stage = 3u;
+              puts("C11_REAL_I_FORWARD_TSN_194");
+              fflush(stdout);
+              if (drop_first_iforward) {
+                memcpy(saved_forward, reply, written);
+                saved_forward_size = written;
+                first_forward_dropped = 1;
+                puts("C11_DROPPED_FIRST_I_FORWARD_194");
+                fflush(stdout);
+                suppress = 1;
+              }
+            } else if (stage == 3u && drop_first_iforward &&
+                       first_forward_dropped && !forward_retransmitted) {
+              /* The real Owner RTO must retransmit the same immutable
+               * I-FORWARD wire record, not create another MID/TSN, before
+               * recovering the peer's cumulative SACK. */
+              if (written != saved_forward_size ||
+                  memcmp(reply, saved_forward, written) != 0) {
+                fprintf(stderr,
+                    "C11 oracle I-FORWARD retry mutated retained bytes\n");
+                failure = 29; break;
+              }
+              forward_retransmitted = 1;
+              puts("C11_RETRANSMITTED_SAME_I_FORWARD_194");
+              fflush(stdout);
+            } else {
+              fprintf(stderr,
+                  "C11 oracle unexpected I-FORWARD while stage=%u\n",
+                  stage);
               failure = 24; break;
             }
-            dropped_tsn_live = 0;
-            stage = 3u;
-            puts("C11_REAL_I_FORWARD_TSN_194");
-            fflush(stdout);
           } else if (written != 0u && reply[12u] == 192u) {
             fprintf(stderr,
                 "C11 emitted legacy FORWARD instead of I-FORWARD\n");
             failure = 25; break;
           }
-          if (publish(fd, &destination, reply, written) != 0) {
+          if (!suppress &&
+              publish(fd, &destination, reply, written) != 0) {
             failure = 16; break;
           }
         }

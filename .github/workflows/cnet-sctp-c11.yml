@@ -180,8 +180,12 @@ jobs:
             --target cnet_sctp_pion_oracle_peer --parallel 2
           cd cnet/sctp/tests/independent/pion
           test "$(go list -m -mod=mod -f '{{.Version}}' github.com/pion/sctp)" = "v1.10.0"
-          timeout 35s go run -mod=mod . \
+          go build -mod=mod -o "$RUNNER_TEMP/pion-independent-oracle" .
+          timeout 35s "$RUNNER_TEMP/pion-independent-oracle" \
             "$GITHUB_WORKSPACE/build-sctp-pion-oracle/cnet_sctp_pion_oracle_peer"
+          timeout 35s "$RUNNER_TEMP/pion-independent-oracle" \
+            "$GITHUB_WORKSPACE/build-sctp-pion-oracle/cnet_sctp_pion_oracle_peer" \
+            drop-first-iforward
           go mod verify
 
   sanitizer-source:

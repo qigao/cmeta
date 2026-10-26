@@ -43,8 +43,15 @@ func expect(lines <-chan string, prefix string, timeout time.Duration) string {
 }
 
 func main() {
-	require(len(os.Args) == 2, "expected C11 oracle binary argument")
-	peer := exec.Command(os.Args[1], "49571", "49572")
+	require(len(os.Args) == 2 || (len(os.Args) == 3 &&
+		os.Args[2] == "drop-first-iforward"),
+		"expected C11 oracle binary and optional drop-first-iforward")
+	dropFirstForward := len(os.Args) == 3
+	peerArgs := []string{"49571", "49572"}
+	if dropFirstForward {
+		peerArgs = append(peerArgs, "drop-first-iforward")
+	}
+	peer := exec.Command(os.Args[1], peerArgs...)
 	out, err := peer.StdoutPipe()
 	require(err == nil, "StdoutPipe: %v", err)
 	peer.Stderr = os.Stderr
@@ -140,8 +147,10 @@ func main() {
 	// an Owner-delivered exact PPID53 message, NOT a self-loopback fixture.
 	expected := "MESSAGE=0:" + hex.EncodeToString(payload)
 	seenIData, seenMessage, seenForward, seenDrop, seenConfirmed := false, false, false, false, false
+	seenForwardLoss, seenForwardRetry := false, false
 	limit := time.After(6 * time.Second)
-	for !seenIData || !seenMessage || !seenForward || !seenDrop || !seenConfirmed {
+	for !seenIData || !seenMessage || !seenForward || !seenDrop ||
+		!seenConfirmed || (dropFirstForward && (!seenForwardLoss || !seenForwardRetry)) {
 		select {
 		case line, open := <-lines:
 			require(open, "C11 peer terminated during I-DATA")
@@ -151,14 +160,27 @@ func main() {
 			if line == "C11_REAL_I_FORWARD_TSN_194" { seenForward = true }
 			if line == "C11_DROPPED_ONE_I_DATA" { seenDrop = true }
 			if line == "C11_PEER_CONFIRMED_I_FORWARD" { seenConfirmed = true }
+			if line == "C11_DROPPED_FIRST_I_FORWARD_194" {
+				require(dropFirstForward, "unexpected I-FORWARD loss in baseline mode")
+				seenForwardLoss = true
+			}
+			if line == "C11_RETRANSMITTED_SAME_I_FORWARD_194" {
+				require(dropFirstForward, "unexpected I-FORWARD replay in baseline mode")
+				seenForwardRetry = true
+			}
 		case <-limit:
 			require(false,
-				"RFC8260 evidence missing: type64=%t message=%t forward=%t drop=%t peerACK=%t",
-				seenIData, seenMessage, seenForward, seenDrop, seenConfirmed)
+				"RFC8260 evidence missing: type64=%t message=%t forward=%t drop=%t peerACK=%t fwdLost=%t fwdRetried=%t",
+				seenIData, seenMessage, seenForward, seenDrop, seenConfirmed,
+				seenForwardLoss, seenForwardRetry)
 		}
 	}
 	// Real SCTP RFC8260 I-DATA and I-FORWARD peer recovery over *test-only*
 	// UDP datagrams. This is NOT authenticated DTLS/ICE/browser evidence.
-	fmt.Println("PION_INDEPENDENT_RFC8260_IFORWARD_PASS " +
-		strconv.Itoa(int(metadata.PartialReliabilityMode)))
+	mode := "baseline"
+	if dropFirstForward {
+		mode = "lost-first-iforward"
+	}
+	fmt.Println("PION_INDEPENDENT_RFC8260_IFORWARD_PASS mode=" + mode +
+		" partialReliability=" + strconv.Itoa(int(metadata.PartialReliabilityMode)))
 }
