@@ -1536,6 +1536,107 @@ static void tx_usage_refuses_old_generation_tickets(void) {
 }
 
 
+/* A verified peer ABORT may preempt a real in-flight bilateral RFC6525 close
+ * after peer FORWARD SACK, but before its reset transaction completes.
+ * The already-local PR abandonment and confirmed FORWARD receipt retain the
+ * original SID generation. Closing fails; no CHANNEL_CLOSED or locally
+ * exhausted transport failure may be synthesized from the peer ABORT. */
+static void peer_abort_preempts_reset_without_losing_pr_events(void) {
+  cnet_sctp_session a = {0}, b = {0};
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_session_event event = {0};
+  cnet_sctp_session_forward_progress progress = {0};
+  cnet_sctp_session_terminal_failure failure = {0};
+  cnet_sctp_session_peer_abort aborted = {0};
+  static const uint8_t cause[] = {
+      0u, 12u, 0u, 8u, 's', 't', 'o', 'p'
+  };
+  const cnet_sctp_wire_chunk abort_chunk = {6u, 0u, cause, sizeof(cause)};
+  uint8_t data[1200], forward[1200], sack[1200], reset[1200];
+  uint8_t wire[1200], reply[1200], message[32], reason[8] = {0};
+  size_t data_n = 0u, forward_n = 0u, sack_n = 0u, reset_n = 0u;
+  size_t wire_n = 0u, reply_n = 0u, reason_n = 0u;
+  uint64_t original = 0u, peer = 0u, closing = 0u, deadline = 0u;
+  uint32_t last_abandoned_tsn = 0u;
+  int has_deadline = 0;
+
+  ready_pair(&a, &b, &ca, &cb);
+  open_channel_with_policy(&a, &b, 6u, 2u, 0x01u, 0u,
+      &original, &peer);
+  assert(cnet_sctp_session_send(&a, 20u, 2u, 1, "lost", 4u,
+      data, sizeof(data), &data_n) == CNET_SCTP_SESSION_OK &&
+      data_n != 0u);
+  assert(cnet_sctp_session_next_deadline(&a, &deadline, &has_deadline) ==
+      CNET_SCTP_SESSION_OK && has_deadline);
+  assert(cnet_sctp_session_advance(&a, deadline, forward,
+      sizeof(forward), &forward_n) == CNET_SCTP_SESSION_OK &&
+      forward_n != 0u && forward[12u] == 194u &&
+      a.association.data.abandon_event_count == 1u);
+  last_abandoned_tsn = a.association.data.abandon_events[
+      a.association.data.abandon_event_head].last_tsn;
+  assert(a.association.data.abandon_events[
+      a.association.data.abandon_event_head].admission_generation == original);
+  assert(cnet_sctp_session_input(&b, deadline + 1u, forward, forward_n,
+      sack, sizeof(sack), &sack_n) == CNET_SCTP_SESSION_OK &&
+      sack_n != 0u);
+  assert(cnet_sctp_session_input(&a, deadline + 2u, sack, sack_n,
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_OK &&
+      reply_n == 0u);
+  /* A real reset request has been emitted; keep the original abandonment
+   * and its cumulative-progress receipt unread during the whole overlap. */
+  assert(cnet_sctp_session_close_channel(&a, deadline + 3u, 2u,
+      reset, sizeof(reset), &reset_n, &closing) == CNET_SCTP_SESSION_OK &&
+      closing == original && reset_n != 0u &&
+      a.association.reset_active && a.closing_generation[2u] == original);
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.association.local_tag,
+      &abort_chunk, 1u, wire, sizeof(wire), &wire_n) ==
+      CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_session_input(&a, deadline + 4u, wire, wire_n,
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_OK &&
+      reply_n == 0u && a.peer_abort_seen &&
+      a.abort_abandoned_count == 1u && !a.association.data_ready &&
+      a.abort_abandoned[0].generation == original);
+  ca.owner = 0;
+  assert(cnet_sctp_session_take_peer_abort(&a, &aborted, reason,
+      sizeof(reason), &reason_n) == CNET_SCTP_SESSION_OWNER &&
+      reason_n == 0u && !aborted.has_user_reason);
+  ca.owner = 1;
+  assert(cnet_sctp_session_poll(&a, deadline + 4u, &event,
+      message, sizeof(message), reply, sizeof(reply), &reply_n) ==
+      CNET_SCTP_SESSION_OK &&
+      event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED &&
+      event.generation == original && event.stream_id == 2u &&
+      event.last_tsn == last_abandoned_tsn && event.message_size == 4u &&
+      a.abort_abandoned_count == 0u);
+  assert(cnet_sctp_session_poll(&a, deadline + 4u, &event,
+      message, sizeof(message), reply, sizeof(reply), &reply_n) ==
+      CNET_SCTP_SESSION_OK &&
+      event.kind == CNET_SCTP_SESSION_EVENT_CHANNEL_CLOSE_FAILED &&
+      event.generation == original && event.stream_id == 2u);
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_OK && progress.generation == original &&
+      progress.stream_id == 2u &&
+      progress.last_tsn == last_abandoned_tsn &&
+      cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_EMPTY);
+  assert(cnet_sctp_session_take_terminal_failure(&a, &failure) ==
+      CNET_SCTP_SESSION_EMPTY && failure.generation == 0u);
+  assert(cnet_sctp_session_take_peer_abort(&a, &aborted, reason,
+      sizeof(reason), &reason_n) == CNET_SCTP_SESSION_OK &&
+      aborted.has_user_reason && reason_n == 4u &&
+      memcmp(reason, "stop", 4u) == 0);
+  assert(cnet_sctp_session_poll(&a, deadline + 4u, &event,
+      message, sizeof(message), reply, sizeof(reply), &reply_n) ==
+      CNET_SCTP_SESSION_EMPTY &&
+      event.kind == CNET_SCTP_SESSION_EVENT_NONE);
+  assert(peer != 0u);
+  assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK &&
+      cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK &&
+      cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK &&
+      cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+}
+
+
 int main(void) {
   session_open_message_reset_reuse();
   partial_loss_reports_abandonment_then_reliable_continues();
@@ -1552,6 +1653,7 @@ int main(void) {
   queued_cancel_rejects_reused_dcep_generation();
   peer_abort_unbound_generation_fails_closed();
   tx_usage_refuses_old_generation_tickets();
+  peer_abort_preempts_reset_without_losing_pr_events();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }
