@@ -51,8 +51,8 @@ func expect(lines <-chan string, prefix string, timeout time.Duration) string {
 
 func main() {
 	require(len(os.Args) >= 2 && len(os.Args) <= 4,
-		"expected C11 oracle binary [drop-first-iforward] [dtls]")
-	dropFirstForward, useDTLS := false, false
+		"expected C11 oracle binary [drop-first-iforward] [dtls|dtls-bad-server-fingerprint]")
+	dropFirstForward, useDTLS, badServerFingerprint := false, false, false
 	for _, option := range os.Args[2:] {
 		switch option {
 		case "drop-first-iforward":
@@ -61,10 +61,15 @@ func main() {
 		case "dtls":
 			require(!useDTLS, "duplicate DTLS option")
 			useDTLS = true
+		case "dtls-bad-server-fingerprint":
+			require(!useDTLS, "duplicate DTLS option")
+			useDTLS, badServerFingerprint = true, true
 		default:
 			require(false, "unknown mode %s", option)
 		}
 	}
+	require(!badServerFingerprint || !dropFirstForward,
+		"wrong-fingerprint test must not run SCTP loss scenarios")
 	peerArgs := []string{"49571", "49572"}
 	var certificate tls.Certificate
 	if useDTLS {
@@ -106,6 +111,12 @@ func main() {
 		require(decodeErr == nil && len(der) == 32,
 			"OpenSSL DTLS server did not publish valid pinned fingerprint")
 		copy(expectedServerFingerprint[:], der)
+		if badServerFingerprint {
+			/* Simulate a corrupted SDP fingerprint from the trusted offer.
+			 * The DTLS certificate stays genuine; a successful handshake
+			 * would therefore be a credential validation vulnerability. */
+			expectedServerFingerprint[0] ^= 1
+		}
 	}
 	expect(lines, "READY", 5*time.Second)
 
@@ -116,7 +127,7 @@ func main() {
 	if useDTLS {
 		raw, listenErr := net.ListenUDP("udp", local)
 		require(listenErr == nil, "DTLS socket listen: %v", listenErr)
-		pinned := false
+		pinned, rejectedBadServerPin := false, false
 		secure, dtlsErr := dtls.Client(raw, remote, &dtls.Config{
 			Certificates:       []tls.Certificate{certificate},
 			InsecureSkipVerify: true, // bounded to the SHA256 check BELOW
@@ -127,6 +138,7 @@ func main() {
 				}
 				actual := sha256.Sum256(rawCerts[0])
 				if actual != expectedServerFingerprint {
+					rejectedBadServerPin = true
 					return errors.New("OpenSSL DTLS SHA256 fingerprint mismatch")
 				}
 				pinned = true
@@ -137,6 +149,14 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 9*time.Second)
 		err = secure.HandshakeContext(ctx)
 		cancel()
+		if badServerFingerprint {
+			require(err != nil && rejectedBadServerPin && !pinned,
+				"wrong OpenSSL SHA256 pin was not explicitly rejected: err=%v callback=%t",
+				err, rejectedBadServerPin)
+			_ = secure.Close()
+			fmt.Println("PION_DTLS_WRONG_SERVER_FINGERPRINT_REJECTED")
+			return // no SCTP association, INIT, DCEP or payload admitted
+		}
 		require(err == nil && pinned,
 			"independent Pion/OpenSSL DTLS 1.2 handshake or pin: %v pinned=%t",
 			err, pinned)

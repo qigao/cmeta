@@ -205,6 +205,12 @@ jobs:
           timeout 35s "$RUNNER_TEMP/pion-independent-oracle" \
             "$GITHUB_WORKSPACE/build-sctp-pion-installed-consumer/cnet_sctp_pion_oracle_peer" \
             dtls drop-first-iforward
+          # Deliberately corrupt the trusted server SHA256 fingerprint.
+          # Passing requires the Pion DTLS verification callback to reject
+          # the genuine OpenSSL certificate BEFORE creating any SCTP session.
+          timeout 15s "$RUNNER_TEMP/pion-independent-oracle" \
+            "$GITHUB_WORKSPACE/build-sctp-pion-installed-consumer/cnet_sctp_pion_oracle_peer" \
+            dtls-bad-server-fingerprint
           go mod verify
           # The model cannot silently upgrade modules or generate untracked
           # security checksum entries in CI. Print the exact proposed patch
