@@ -1887,8 +1887,19 @@ static void late_peer_abort_is_closed_after_local_retry_exhaustion(void) {
             a.association.data.abandon_event_head].last_tsn ==
                 original_tsn);
     if (saturated) {
-      /* An all-unconfirmed full ledger cannot be consumed through the
-       * success API. One earlier legitimate failure must free capacity. */
+      /* Prove the actual capacity deadlock precondition using one genuine
+       * unread PR event and a deliberately saturated prior result table.
+       * Poll must refuse WITHOUT consuming the event or publishing bytes. */
+      reply_n = 123u;
+      assert(cnet_sctp_session_poll(&a, deadline + 1u, &event,
+          body, sizeof(body), reply, sizeof(reply), &reply_n) ==
+          CNET_SCTP_SESSION_CAPACITY && reply_n == 0u &&
+          event.kind == CNET_SCTP_SESSION_EVENT_NONE &&
+          a.association.data.abandon_event_count == 1u);
+      /* The full ledger has no peer-confirmed successes to consume. One
+       * existing LOCAL terminal result may free capacity, but then the
+       * next terminal query must remain BUSY until the original PR event
+       * itself has been published. */
       assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
           CNET_SCTP_SESSION_EMPTY &&
           cnet_sctp_session_take_terminal_failure(&a, &terminal) ==
@@ -1898,6 +1909,9 @@ static void late_peer_abort_is_closed_after_local_retry_exhaustion(void) {
           terminal.last_tsn != original_tsn &&
           a.association.data.abandon_event_count == 1u);
       ++terminal_count;
+      assert(cnet_sctp_session_take_terminal_failure(&a, &terminal) ==
+          CNET_SCTP_SESSION_BUSY && terminal.generation == 0u &&
+          a.association.data.abandon_event_count == 1u);
     } else {
       assert(cnet_sctp_session_take_terminal_failure(&a, &terminal) ==
           CNET_SCTP_SESSION_BUSY && terminal.generation == 0u);
