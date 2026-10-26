@@ -223,6 +223,70 @@ jobs:
             --output-on-failure --verbose
           echo "Test-only real DTLS 1.2 and installed opaque C11 Session qualified; NOT independent browser/ICE or production Owner."
 
+  dtls-opaque-asan-ubsan:
+    name: Real DTLS installed Session with effective-source ASan/UBSan (10x)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Qualify actual C11 installed Session and DTLS consumer under ASan/UBSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          command -v clang-18
+          prefix="$GITHUB_WORKSPACE/sctp-c11-dtls-san-sdk"
+          common="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          cmake -S cnet/sctp -B build-sctp-dtls-san-sdk \
+            -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_C_FLAGS="$common" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTING=OFF -DCNET_SCTP_TEST_GMSSL=OFF
+          cmake --build build-sctp-dtls-san-sdk --parallel 2
+          cmake --install build-sctp-dtls-san-sdk --prefix "$prefix"
+          cmake -S cnet/sctp/tests/independent/dtls \
+            -B build-sctp-dtls-san-consumer \
+            -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_C_FLAGS="$common" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build build-sctp-dtls-san-consumer --parallel 2
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          files = [
+              Path('build-sctp-dtls-san-sdk/compile_commands.json'),
+              Path('build-sctp-dtls-san-consumer/compile_commands.json'),
+          ]
+          required = {
+              'sctp_session.c', 'sctp_assoc.c', 'sctp_data.c',
+              'sctp_wire.c', 'sctp_init_params.c', 'sctp_collision.c',
+              'sctp_dcep.c', 'sctp_webrtc.c', 'dtls_records.c',
+          }
+          seen = set()
+          for path in files:
+              for entry in json.loads(path.read_text()):
+                  name = Path(entry['file']).name
+                  if name not in required: continue
+                  command = entry.get('command', ' '.join(entry.get('arguments', [])))
+                  assert '-fsanitize=address,undefined' in command, (name, command)
+                  assert '-fno-omit-frame-pointer' in command, (name, command)
+                  seen.add(name)
+          assert seen == required, (sorted(seen), sorted(required))
+          print('DTLS opaque effective-source ASan+UBSan:', sorted(seen))
+          PY
+          ctest --test-dir build-sctp-dtls-san-consumer \
+            --output-on-failure --repeat until-fail:10
+
   sanitizer-source:
     runs-on: ubuntu-latest
     steps:
