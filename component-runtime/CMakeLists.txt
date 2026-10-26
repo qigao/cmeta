@@ -38,6 +38,7 @@ install(FILES
   include/salts/configurator.h
   include/salts/service_host.h
   include/salts/component_runtime_abi.h
+  include/salts/native_io_ace_token.h
   DESTINATION include/salts)
 
 if(BUILD_TESTS)
