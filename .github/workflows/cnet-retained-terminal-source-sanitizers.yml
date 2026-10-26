@@ -1,0 +1,147 @@
+name: CNet retained native send terminal source sanitizers
+
+'on':
+  pull_request:
+    paths:
+      - 'cnet/tests/cnet_owner_test.c'
+      - 'cnet/src/cnet_owner.c'
+      - 'cnet/src/cnet_write_queue.c'
+      - 'utils/src/cmeta_buffer.c'
+      - '.github/workflows/cnet-retained-terminal-source-sanitizers.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: cnet-retained-terminal-source-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-owner:
+    if: >-
+      github.repository == 'qigao/salts' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == 'qigao/salts')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { mode: tsan, preset: linux-tsan-ci, asan: 'OFF', ubsan: 'OFF', tsan: 'ON' }
+          - { mode: asan-ubsan, preset: linux-dev-ci, asan: 'ON', ubsan: 'ON', tsan: 'OFF' }
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/build/ccache-cnet-retained-${{ matrix.mode }}
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      TSAN_OPTIONS: halt_on_error=1:exitcode=66:history_size=7
+    steps:
+      - name: Checkout exact unmerged CNet source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Configure canonical vcpkg cache and re2c
+        uses: ./.github/actions/setup-vcpkg-curl-cache
+
+      - name: Prepare compiler and build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config ccache
+          mkdir -p "build/cnet-retained-${{ matrix.mode }}"
+          printf 'salts_source=%s\nmode=%s\nsource_instrumented=true\nproduction_sdk_changed=false\n' \
+            "$(git rev-parse HEAD)" "${{ matrix.mode }}" \
+            | tee "build/cnet-retained-${{ matrix.mode }}/provenance.txt"
+
+      - name: Restore exact source-sanitizer dependencies via curl
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 cmake/ci/restore-vcpkg-cache.py preset ${{ matrix.preset }}
+
+      - name: Configure and build real CNet Owner under sanitizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="build/cnet-retained-${{ matrix.mode }}"
+          cmake --preset ${{ matrix.preset }} -S . -B "$build" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTING=ON -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF \
+            -DENABLE_SANITIZER_ADDRESS=${{ matrix.asan }} \
+            -DENABLE_SANITIZER_UNDEFINED=${{ matrix.ubsan }} \
+            -DENABLE_SANITIZER_THREAD=${{ matrix.tsan }}
+          cmake --build "$build" --parallel 2 --target cnet_owner_profile_test
+
+      - name: Confirm source instrumentation and loaded DSOs
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="build/cnet-retained-${{ matrix.mode }}"
+          python3 - <<'PY' | tee "$build/instrumentation.txt"
+          import json
+          import os
+          from pathlib import Path
+          mode=os.environ["SANITIZER_MODE"]
+          build=Path("build/cnet-retained-"+mode)
+          rows=json.loads((build/"compile_commands.json").read_text())
+          required=("cnet/src/cnet_owner.c", "cnet/src/cnet_write_queue.c",
+                    "utils/src/cmeta_buffer.c", "cnet/tests/cnet_owner_test.c")
+          misses=[]
+          for suffix in required:
+              matches=[r for r in rows if r["file"].replace("\\", "/").endswith(suffix)]
+              if not matches:
+                  misses.append(suffix+" (not compiled)")
+                  continue
+              flags=matches[0].get("command") or " ".join(matches[0].get("arguments", []))
+              expected=("-fsanitize=thread",) if mode=="tsan" else ("-fsanitize=address", "-fsanitize=undefined")
+              if not all(x in flags for x in expected):
+                  misses.append(suffix+" (missing instrumentation)")
+          print("mode=",mode,"units=",len(rows),"unqualified=",misses)
+          if misses: raise SystemExit("source instrumentation incomplete")
+          PY
+          export LD_LIBRARY_PATH="$PWD/$build/bin:$PWD/vcpkg_installed/x64-linux/lib:${LD_LIBRARY_PATH:-}"
+          ldd "$build/bin/cnet_owner_profile_test" | tee "$build/dependencies.txt"
+          if grep -q 'not found' "$build/dependencies.txt"; then
+            echo "CNet owner source dependency closure incomplete" >&2
+            exit 1
+          fi
+        env:
+          SANITIZER_MODE: ${{ matrix.mode }}
+
+      - name: Repeat original native send and cancel-before-observe conformance
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="build/cnet-retained-${{ matrix.mode }}"
+          export LD_LIBRARY_PATH="$PWD/$build/bin:$PWD/vcpkg_installed/x64-linux/lib:${LD_LIBRARY_PATH:-}"
+          ctest --test-dir "$build" --no-tests=error --output-on-failure \
+            --timeout 120 --repeat until-fail:5 \
+            -R '^cnet_owner_profile_test$' \
+            2>&1 | tee "$build/owner-ctest.log"
+
+      - name: Preserve exact test and instrumentation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnet-retained-terminal-${{ matrix.mode }}-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/cnet-retained-${{ matrix.mode }}/provenance.txt
+            build/cnet-retained-${{ matrix.mode }}/instrumentation.txt
+            build/cnet-retained-${{ matrix.mode }}/dependencies.txt
+            build/cnet-retained-${{ matrix.mode }}/owner-ctest.log
+            build/cnet-retained-${{ matrix.mode }}/Testing/Temporary/LastTest.log
