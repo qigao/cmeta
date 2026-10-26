@@ -2,7 +2,18 @@
 #include "cmeta_thread.h"
 
 #include <limits.h>
-#include <stdatomic.h>
+/* Only this opaque implementation may select an alternate Atomic storage
+ * backend. Never advertise TinyCC as a fully conforming C11 atomic compiler.
+ * Public SALTS_SPSC_ATOMIC_SIZE_T and salts/atomic.h remain unchanged.
+ */
+#if defined(SALTS_DISRUPTOR_BACKEND_ASM)
+  #include "disruptor_atomic_asm.h"
+#else
+  #if defined(__STDC_NO_ATOMICS__)
+    #error "Disruptor requires native C11 atomics or explicit SALTS_DISRUPTOR_BACKEND_ASM"
+  #endif
+  #include <stdatomic.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 

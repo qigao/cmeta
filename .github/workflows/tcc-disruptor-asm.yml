@@ -1,0 +1,82 @@
+name: TinyCC Disruptor linked ASM
+
+on:
+  pull_request:
+    paths:
+      - 'concurrency/src/disruptor.c'
+      - 'concurrency/src/disruptor_atomic_asm.h'
+      - 'concurrency/src/asm-atomic/**'
+      - 'concurrency/tcc/**'
+      - '.github/workflows/tcc-disruptor-asm.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'concurrency/src/disruptor.c'
+      - 'concurrency/src/disruptor_atomic_asm.h'
+      - 'concurrency/src/asm-atomic/**'
+      - 'concurrency/tcc/**'
+      - '.github/workflows/tcc-disruptor-asm.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tcc-archive:
+    name: TinyCC Disruptor ASM / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pinned TinyCC
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in x86_64|aarch64) ;; *) exit 1 ;; esac
+          git clone --quiet https://github.com/TinyCC/tinycc.git "$RUNNER_TEMP/tinycc"
+          git -C "$RUNNER_TEMP/tinycc" checkout --detach e23dabed154a8495f3ac1ff3cc9d04fa1c207893
+          cd "$RUNNER_TEMP/tinycc"
+          ./configure --prefix="$RUNNER_TEMP/tcc-bin"
+          make -j2
+          make install
+          echo "$RUNNER_TEMP/tcc-bin/bin" >> "$GITHUB_PATH"
+      - name: Build real static library and run linked consumer conformance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S concurrency/tcc -B build/tcc-disruptor -G Ninja \
+            -DCMAKE_C_COMPILER=tcc -DCMAKE_ASM_COMPILER=gcc
+          cmake --build build/tcc-disruptor --parallel 2
+          test -s build/tcc-disruptor/libsalts_tcc_disruptor.a
+          ctest --test-dir build/tcc-disruptor --repeat until-fail:5 --output-on-failure
+      - name: Preserve test logs (not unqualified SDK artifacts)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcc-disruptor-${{ matrix.os }}
+          if-no-files-found: ignore
+          path: build/tcc-disruptor/Testing/Temporary/LastTest.log
+
+  native-baseline:
+    name: Disruptor C11 / ${{ matrix.os }} / ${{ matrix.cc }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify ordinary C11 Disruptor remains unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S concurrency/tests/retirement -B build/native -G Ninja \
+            -DCMAKE_C_COMPILER=${{ matrix.cc }} -DSALTS_RETIREMENT_SANITIZER=none
+          cmake --build build/native --parallel 2
+          ctest --test-dir build/native --repeat until-fail:5 --output-on-failure
