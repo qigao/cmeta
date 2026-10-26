@@ -1210,6 +1210,127 @@ static void peer_abort_snapshot_progress_capacity_is_atomic(void) {
       cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
 }
 
+/* Exercise the real Session -> Association -> DATA admission-generation
+ * propagation, not merely a synthetic injected abandonment FIFO.
+ * 0: direct maxRTX0; 1: copied 2100-byte message with two emitted fragments
+ * and an unsent suffix; 2: TIMED copied message abandoned BEFORE any TSN.
+ * Capacity/Owner refusals must not reserve identity or consume a DATA TSN.
+ * Test-only DCEP generation mutation simulates forbidden old-SID reuse after
+ * successful admission: original DATA and the resulting abandonment event
+ * must retain the old generation, never requery the current SID. */
+static void pr_admission_generation_is_immutable(void) {
+  unsigned int mode;
+  for (mode = 0u; mode < 3u; ++mode) {
+    cnet_sctp_session a = {0}, b = {0};
+    test_context ca = {0}, cb = {0};
+    cnet_sctp_session_event event = {0};
+    uint8_t body[2100], wire[1200], forward[1200], payload[32];
+    size_t wire_n = 0u, forward_n = 0u, i;
+    uint64_t ga = 0u, gb = 0u, deadline = 0u;
+    uint32_t original_next_tsn;
+    int has_deadline = 0, found_tx = 0;
+    const uint8_t channel_type = mode == 2u ? 0x02u : 0x01u;
+    const uint32_t policy_value = mode == 2u ? 5u : 0u;
+    size_t size = mode == 1u ? sizeof(body) : 4u;
+
+    for (i = 0u; i < sizeof(body); ++i) body[i] = (uint8_t)(i ^ 0x5Au);
+    ready_pair(&a, &b, &ca, &cb);
+    open_channel_with_policy(&a, &b, 6u, 2u, channel_type, policy_value,
+        &ga, &gb);
+    original_next_tsn = a.association.data.next_tsn;
+
+    /* No fallback on a full fixed 16-entry PR event reservation ledger. */
+    a.association.data.abandon_event_count = CNET_SCTP_DATA_TX_SLOTS;
+    wire_n = 123u;
+    memset(wire, 0xCC, sizeof(wire));
+    if (mode == 0u)
+      assert(cnet_sctp_session_send(&a, 20u, 2u, 1, body, size,
+          wire, sizeof(wire), &wire_n) == CNET_SCTP_SESSION_CAPACITY &&
+          wire_n == 0u);
+    else
+      assert(cnet_sctp_session_queue_message(&a, 20u, 2u, 1,
+          body, size) == CNET_SCTP_SESSION_CAPACITY);
+    assert(a.association.data.next_tsn == original_next_tsn &&
+        !a.association.data.pending.active &&
+        a.association.data.abandon_event_count == CNET_SCTP_DATA_TX_SLOTS);
+    for (i = 0u; i < sizeof(wire); ++i) assert(wire[i] == 0xCCu);
+    a.association.data.abandon_event_count = 0u;
+    a.association.data.abandon_event_head = 0u;
+
+    ca.owner = 0;
+    if (mode == 0u)
+      assert(cnet_sctp_session_send(&a, 20u, 2u, 1, body, size,
+          wire, sizeof(wire), &wire_n) == CNET_SCTP_SESSION_OWNER);
+    else
+      assert(cnet_sctp_session_queue_message(&a, 20u, 2u, 1,
+          body, size) == CNET_SCTP_SESSION_OWNER);
+    ca.owner = 1;
+    assert(a.association.data.next_tsn == original_next_tsn &&
+        !a.association.data.pending.active);
+
+    if (mode == 0u) {
+      assert(cnet_sctp_session_send(&a, 20u, 2u, 1, body, size,
+          wire, sizeof(wire), &wire_n) == CNET_SCTP_SESSION_OK &&
+          wire_n != 0u);
+    } else {
+      assert(cnet_sctp_session_queue_message(&a, 20u, 2u, 1,
+          body, size) == CNET_SCTP_SESSION_OK &&
+          a.association.data.pending.active &&
+          a.association.data.pending.admission_generation == ga);
+      memset(body, 0xEE, sizeof(body)); /* no borrowed application payload */
+      assert(cnet_sctp_session_queue_message(&a, 20u, 2u, 1,
+          body, size) == CNET_SCTP_SESSION_CAPACITY &&
+          a.association.data.pending.admission_generation == ga);
+      if (mode == 1u) {
+        assert(cnet_sctp_session_pump_message(&a, 21u,
+            wire, sizeof(wire), &wire_n) == CNET_SCTP_SESSION_OK &&
+            wire_n > 32u && wire[12u] == 64u &&
+            a.association.data.pending.active);
+        assert(cnet_sctp_session_pump_message(&a, 22u,
+            wire, sizeof(wire), &wire_n) == CNET_SCTP_SESSION_OK &&
+            wire_n > 32u && a.association.data.pending.active);
+      }
+    }
+    for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+      const cnet_sctp_data_tx *tx = &a.association.data.tx[i];
+      if (!tx->used || tx->stream_id != 2u || tx->ppid != 53u)
+        continue;
+      found_tx = 1;
+      assert(tx->admission_generation == ga);
+    }
+    assert(found_tx == (mode != 2u));
+    a.dcep.channels[2u].generation = ga + 700u; /* injected old-SID reuse */
+    assert(cnet_sctp_session_next_deadline(&a, &deadline, &has_deadline) ==
+        CNET_SCTP_SESSION_OK && has_deadline && deadline >= 20u);
+    forward_n = 123u;
+    assert(cnet_sctp_session_advance(&a, deadline, forward,
+        sizeof(forward), &forward_n) == CNET_SCTP_SESSION_OK);
+    if (mode == 2u)
+      assert(forward_n == 0u);
+    else
+      assert(forward_n != 0u && forward[12u] == 194u);
+    assert(a.association.data.abandon_event_count == 1u &&
+        a.association.data.abandon_events[
+            a.association.data.abandon_event_head].admission_generation ==
+                ga);
+    assert(cnet_sctp_session_poll(&a, deadline, &event, payload,
+        sizeof(payload), wire, sizeof(wire), &wire_n) ==
+        CNET_SCTP_SESSION_OK &&
+        event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED &&
+        event.generation == ga && event.stream_id == 2u &&
+        event.message_size == size && event.ppid == 53u &&
+        event.reliability.mode == (mode == 2u ?
+            CNET_SCTP_SESSION_TIMED : CNET_SCTP_SESSION_RETRANSMITS) &&
+        event.has_tsn == (mode != 2u));
+    assert(gb != 0u &&
+        cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK &&
+        cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK &&
+        cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK &&
+        cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+  }
+}
+
+
 int main(void) {
   session_open_message_reset_reuse();
   partial_loss_reports_abandonment_then_reliable_continues();
@@ -1222,6 +1343,7 @@ int main(void) {
   peer_abort_preserves_unread_local_abandonment();
   peer_abort_snapshot_full_wrapped_fifo();
   peer_abort_snapshot_progress_capacity_is_atomic();
+  pr_admission_generation_is_immutable();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }
