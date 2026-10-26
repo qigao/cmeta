@@ -388,6 +388,25 @@ if(CNET_SCTP_TEST_OWNER_THREADS)
       $<TARGET_FILE:cnet_sctp_test_provider_dso>)
 endif()
 
+# Test-only independent Pion SCTP oracle. Real UDP datagrams to an external
+# Go implementation of SCTP (RFC8260); no DTLS in this deliberately isolated
+# first oracle slice. NEVER export, install or link this adapter into Salts.
+option(CNET_SCTP_TEST_PION_ORACLE
+  "Build separate Pion SCTP RFC8260 test-only UDP packet peer" OFF)
+if(CNET_SCTP_TEST_PION_ORACLE)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "Independent Pion SCTP oracle is Linux-only")
+  endif()
+  add_executable(cnet_sctp_pion_oracle_peer
+    tests/independent/pion_peer.c)
+  target_link_libraries(cnet_sctp_pion_oracle_peer PRIVATE
+    CNetSctpPrototype::Session)
+  set_target_properties(cnet_sctp_pion_oracle_peer PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_compile_options(cnet_sctp_pion_oracle_peer PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+endif()
+
 # Optional cryptographic research gate. Its private C11 sources and GmSSL
 # dependency MUST NOT enter the installed CNetSctpPrototype::Wire package.
 # Standalone Wire/Association CI does not require GmSSL or a C++ runtime.

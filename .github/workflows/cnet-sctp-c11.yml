@@ -149,6 +149,41 @@ jobs:
           xcrun lipo -archs "$ios_consumer" | grep -w arm64
           echo "iOS arm64 installed opaque C11 Session compiled and linked; NO device execution."
 
+  pion-independent-rfc8260:
+    name: Independent Pion RFC8260 negotiation and I-DATA (test-only UDP)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - name: Qualify independent pinned Go SCTP peer against C11 opaque Session
+        shell: bash
+        env:
+          GOSUMDB: sum.golang.org
+          GOPROXY: https://proxy.golang.org
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          cmake -S cnet/sctp -B build-sctp-pion-oracle \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+            -DCNET_SCTP_TEST_PION_ORACLE=ON -DCNET_SCTP_TEST_GMSSL=OFF
+          cmake --build build-sctp-pion-oracle \
+            --target cnet_sctp_pion_oracle_peer --parallel 2
+          cd cnet/sctp/tests/independent/pion
+          test "$(go list -m -mod=mod -f '{{.Version}}' github.com/pion/sctp)" = "v1.10.0"
+          timeout 35s go run -mod=mod . \
+            "$GITHUB_WORKSPACE/build-sctp-pion-oracle/cnet_sctp_pion_oracle_peer"
+          go mod verify
+
   sanitizer-source:
     runs-on: ubuntu-latest
     steps:
