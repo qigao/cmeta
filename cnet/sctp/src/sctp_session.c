@@ -75,6 +75,37 @@ static uint16_t first_set(uint16_t bits) {
   return sid;
 }
 
+/* A valid RFC6525 SID retirement cannot reuse the SID while old user DATA
+ * is still copied/retained. Fail closed on invariant violations rather than
+ * emitting a stale message under a NEW channel generation. DCEP PPID50 uses
+ * its own control lifetime; this guard concerns only application payloads.
+ * Read-only under the admitted single Owner, without callbacks or allocation. */
+static int outbound_generation_matches(
+    const cnet_sctp_session *session, uint16_t sid, uint64_t generation) {
+  return generation != 0u && sid < session->dcep.streams &&
+      session->dcep.channels[sid].state != 0u &&
+      session->dcep.channels[sid].generation == generation;
+}
+static cnet_sctp_session_status guard_outbound_generations(
+    const cnet_sctp_session *session) {
+  const cnet_sctp_data *data;
+  size_t i;
+  if (!session->association.data_ready) return CNET_SCTP_SESSION_OK;
+  data = &session->association.data;
+  if (data->pending.active && data->pending.ppid != CNET_SCTP_DCEP_PPID &&
+      !outbound_generation_matches(session, data->pending.stream_id,
+          data->pending.admission_generation))
+    return CNET_SCTP_SESSION_STALE;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    const cnet_sctp_data_tx *tx = &data->tx[i];
+    if (tx->used && tx->ppid != CNET_SCTP_DCEP_PPID &&
+        !outbound_generation_matches(session, tx->stream_id,
+            tx->admission_generation))
+      return CNET_SCTP_SESSION_STALE;
+  }
+  return CNET_SCTP_SESSION_OK;
+}
+
 cnet_sctp_session_status cnet_sctp_session_init(cnet_sctp_session *session,
     const cnet_sctp_session_config *config, uint64_t initial_time_ms) {
   uint16_t streams;
@@ -257,6 +288,9 @@ cnet_sctp_session_status cnet_sctp_session_advance(cnet_sctp_session *session,
     uint64_t now_ms, void *packet, size_t capacity, size_t *written) {
   cnet_sctp_session_status status = guard(session);
   cnet_sctp_assoc_status as;
+  if (written) *written = 0u;
+  if (status != CNET_SCTP_SESSION_OK) return status;
+  status = guard_outbound_generations(session);
   if (status != CNET_SCTP_SESSION_OK) return status;
   as = cnet_sctp_assoc_advance(&session->association, now_ms,
       (uint8_t *)packet, capacity, written);
@@ -327,6 +361,8 @@ cnet_sctp_session_status cnet_sctp_session_send(cnet_sctp_session *session,
   if (cnet_sctp_webrtc_prepare(binary, message, message_size, &payload) !=
       CNET_SCTP_WEBRTC_OK)
     return CNET_SCTP_SESSION_INVALID;
+  status = guard_outbound_generations(session);
+  if (status != CNET_SCTP_SESSION_OK) return status;
   return map_assoc(cnet_sctp_assoc_send_message_pr_bound(
       &session->association, now_ms, stream, payload.ppid, unordered,
       &reliability, payload.wire_bytes, payload.wire_size,
@@ -379,6 +415,8 @@ cnet_sctp_session_status cnet_sctp_session_send_reliable_tracked(
       break;
     }
   if (!slot) return CNET_SCTP_SESSION_CAPACITY;
+  status = guard_outbound_generations(session);
+  if (status != CNET_SCTP_SESSION_OK) return status;
   as = cnet_sctp_assoc_send_message_pr_bound(&session->association,
       now_ms, stream, payload.ppid, unordered, &reliability,
       payload.wire_bytes, payload.wire_size, packet, capacity, written,
@@ -592,6 +630,8 @@ cnet_sctp_session_status cnet_sctp_session_queue_reliable_tracked(
     }
   }
   if (!slot) return CNET_SCTP_SESSION_CAPACITY;
+  status = guard_outbound_generations(session);
+  if (status != CNET_SCTP_SESSION_OK) return status;
   as = cnet_sctp_assoc_queue_message_pr_bound(&session->association,
       now_ms, stream, payload.ppid, unordered, &policy,
       payload.wire_bytes, payload.wire_size, generation);
@@ -721,6 +761,8 @@ cnet_sctp_session_status cnet_sctp_session_queue_message(
   if (cnet_sctp_webrtc_prepare(binary, message, message_size, &payload) !=
       CNET_SCTP_WEBRTC_OK)
     return CNET_SCTP_SESSION_INVALID;
+  status = guard_outbound_generations(session);
+  if (status != CNET_SCTP_SESSION_OK) return status;
   return map_assoc(cnet_sctp_assoc_queue_message_pr_bound(
       &session->association, now_ms, stream, payload.ppid, unordered,
       &reliability, payload.wire_bytes, payload.wire_size, generation));
@@ -732,6 +774,8 @@ cnet_sctp_session_status cnet_sctp_session_pump_message(
   cnet_sctp_session_status status = guard(session);
   cnet_sctp_assoc_status as;
   if (written) *written = 0u;
+  if (status != CNET_SCTP_SESSION_OK) return status;
+  status = guard_outbound_generations(session);
   if (status != CNET_SCTP_SESSION_OK) return status;
   as = cnet_sctp_assoc_pump_message(&session->association,
       now_ms, packet, capacity, written);
