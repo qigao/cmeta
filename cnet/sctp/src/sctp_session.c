@@ -947,6 +947,12 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
       return CNET_SCTP_SESSION_OK;
     }
   }
+  /* DATA was destructively retired by peer ABORT. Once the last saved
+   * local abandonment is delivered, CLOSED from the now-missing DATA TCB
+   * means no more DATA events, not an unread/missing ULP result. Continue
+   * to the separate stream-reset queue before reporting EMPTY. */
+  if (as == CNET_SCTP_ASSOC_CLOSED_ERROR && session->peer_abort_seen)
+    as = CNET_SCTP_ASSOC_EMPTY;
   if (as != CNET_SCTP_ASSOC_EMPTY) return map_assoc(as);
 
   while ((as = cnet_sctp_assoc_take_stream_reset(&session->association,
@@ -986,6 +992,11 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
 
   as = cnet_sctp_assoc_take_message(&session->association, &metadata,
       message, message_capacity, &message_size);
+  /* A terminal peer ABORT cannot produce later inbound user DATA. Treat
+   * absence as EMPTY only on this proven terminal origin; ordinary invalid
+   * states retain CLOSED semantics and still fail closed. */
+  if (as == CNET_SCTP_ASSOC_CLOSED_ERROR && session->peer_abort_seen)
+    return CNET_SCTP_SESSION_EMPTY;
   if (as != CNET_SCTP_ASSOC_OK) return map_assoc(as);
   if (metadata.ppid == CNET_SCTP_DCEP_PPID) {
     uint64_t generation = 0u;

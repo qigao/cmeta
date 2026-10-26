@@ -1013,6 +1013,13 @@ static void peer_abort_preserves_unread_local_abandonment(void) {
           cnet_sctp_session_take_peer_abort(&a, &abort_info,
               reason, sizeof(reason), &reason_n) ==
           CNET_SCTP_SESSION_EMPTY && reason_n == 0u);
+      /* Ordinary EOF: no MORE saved events after a real peer ABORT.
+       * CLOSED would obscure a fully drained result queue. */
+      output_n = 123u;
+      assert(cnet_sctp_session_poll(&a, deadline + 2u, &local,
+          message, sizeof(message), output, sizeof(output), &output_n) ==
+          CNET_SCTP_SESSION_EMPTY && output_n == 0u &&
+          local.kind == CNET_SCTP_SESSION_EVENT_NONE);
       assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK);
     }
     assert(gb != 0u);

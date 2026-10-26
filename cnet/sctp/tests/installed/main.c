@@ -1936,6 +1936,12 @@ static int session_peer_abort_with_unread_pr(void) {
       cnet_sctp_session_take_terminal_failure(client, &failure) !=
           CNET_SCTP_SESSION_EMPTY)
     goto cleanup;
+  nq = 123u;
+  if (cnet_sctp_session_poll(client, deadline + 1u, &event,
+          message, sizeof(message), fourth, sizeof(fourth),
+          &nq) != CNET_SCTP_SESSION_EMPTY ||
+      nq != 0u || event.kind != CNET_SCTP_SESSION_EVENT_NONE)
+    goto cleanup;
   stage = 6;
   result = 0;
 cleanup:
