@@ -1031,6 +1031,174 @@ static void peer_abort_preserves_unread_local_abandonment(void) {
   }
 }
 
+/* Test-only DATA FIFO injection. Each fixed record has already been reserved
+ * by the DATA layer in a valid active SID lifetime; this isolates the
+ * full-capacity/wrapped-head ownership transfer without injecting network
+ * events or pretending synthetic abandonment is genuine wire evidence. */
+static void peer_abort_snapshot_full_wrapped_fifo(void) {
+  cnet_sctp_session a = {0}, b = {0};
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_session_event event = {0};
+  cnet_sctp_session_peer_abort abort_info = {0};
+  cnet_sctp_session_forward_progress progress = {0};
+  cnet_sctp_session_terminal_failure failure = {0};
+  cnet_sctp_data *data;
+  const uint8_t cause[] = {0u, 12u, 0u, 8u, 'f', 'i', 'f', 'o'};
+  const cnet_sctp_wire_chunk abort_chunk = {6u, 0u, cause, sizeof(cause)};
+  uint8_t wire[1200], reply[1200], msg[32], reason[8];
+  size_t wire_n = 0u, reply_n = 0u, reason_n = 0u, i;
+  uint64_t g0 = 0u, peer0 = 0u, g2 = 0u, peer2 = 0u;
+  uint32_t base_tsn;
+
+  ready_pair(&a, &b, &ca, &cb);
+  open_channel_with_policy(&a, &b, 6u, 0u, 0x01u, 0u, &g0, &peer0);
+  open_channel_with_policy(&a, &b, 14u, 2u, 0x01u, 0u, &g2, &peer2);
+  data = &a.association.data;
+  base_tsn = data->next_tsn + 10u;
+  data->abandon_event_head = 13u;
+  data->abandon_event_count = CNET_SCTP_DATA_TX_SLOTS;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    cnet_sctp_data_abandon_event *entry =
+        &data->abandon_events[(13u + i) % CNET_SCTP_DATA_TX_SLOTS];
+    memset(entry, 0, sizeof(*entry));
+    entry->stream_id = (uint16_t)((i % 2u) ? 2u : 0u);
+    entry->ppid = 53u;
+    entry->message_identifier = (uint32_t)(100u + i);
+    entry->message_size = 7u + i;
+    entry->first_tsn = base_tsn + (uint32_t)i;
+    entry->last_tsn = entry->first_tsn;
+    entry->reliability.mode = CNET_SCTP_DATA_RELIABILITY_TIMED;
+    entry->reliability.value = 19u;
+    entry->reason = CNET_SCTP_DATA_ABANDON_TIMED;
+    entry->has_tsn = 1u;
+  }
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.association.local_tag,
+      &abort_chunk, 1u, wire, sizeof(wire), &wire_n) ==
+      CNET_SCTP_WIRE_OK);
+  reply_n = 123u;
+  assert(cnet_sctp_session_input(&a, 23u, wire, wire_n,
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_OK &&
+      reply_n == 0u && !a.association.data_ready &&
+      a.abort_abandoned_count == CNET_SCTP_DATA_TX_SLOTS &&
+      a.abort_abandoned_head == 0u);
+  ca.owner = 0;
+  reply_n = 123u;
+  assert(cnet_sctp_session_poll(&a, 23u, &event, msg, sizeof(msg),
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_OWNER &&
+      reply_n == 0u && event.kind == CNET_SCTP_SESSION_EVENT_NONE &&
+      a.abort_abandoned_count == CNET_SCTP_DATA_TX_SLOTS);
+  ca.owner = 1;
+
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    reply_n = 123u;
+    assert(cnet_sctp_session_poll(&a, 23u, &event, msg, sizeof(msg),
+        reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_OK &&
+        reply_n == 0u &&
+        event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED &&
+        event.stream_id == (uint16_t)((i % 2u) ? 2u : 0u) &&
+        event.generation == ((i % 2u) ? g2 : g0) &&
+        event.ppid == 53u && event.message_identifier == 100u + i &&
+        event.message_size == i + 7u &&
+        event.first_tsn == base_tsn + (uint32_t)i &&
+        event.last_tsn == base_tsn + (uint32_t)i &&
+        event.has_tsn &&
+        event.abandon_reason == CNET_SCTP_SESSION_ABANDON_TIMED &&
+        event.reliability.mode == CNET_SCTP_SESSION_TIMED &&
+        event.reliability.value == 19u &&
+        a.abort_abandoned_count == CNET_SCTP_DATA_TX_SLOTS - i - 1u &&
+        cnet_sctp_session_take_forward_progress(&a, &progress) ==
+        CNET_SCTP_SESSION_EMPTY);
+  }
+  reply_n = 123u;
+  assert(cnet_sctp_session_poll(&a, 23u, &event, msg, sizeof(msg),
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_EMPTY &&
+      reply_n == 0u && event.kind == CNET_SCTP_SESSION_EVENT_NONE);
+  assert(cnet_sctp_session_take_peer_abort(&a, &abort_info,
+      reason, sizeof(reason), &reason_n) == CNET_SCTP_SESSION_OK &&
+      abort_info.has_user_reason && reason_n == 4u &&
+      memcmp(reason, "fifo", 4u) == 0);
+  assert(cnet_sctp_session_take_terminal_failure(&a, &failure) ==
+      CNET_SCTP_SESSION_EMPTY && failure.generation == 0u);
+  assert(peer0 != 0u && peer2 != 0u);
+  assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK &&
+      cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK &&
+      cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK &&
+      cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+}
+
+/* Test-only saturated success ledger plus one original local PR record.
+ * CAPACITY from poll must not consume the snapshot, modify output buffers
+ * or overwrite any confirmed receipt. Owner then releases a slot and retries.
+ * The synthetic retained record was already cumulatively acknowledged
+ * before the test's real ABORT; this only isolates result-slot pressure. */
+static void peer_abort_snapshot_progress_capacity_is_atomic(void) {
+  cnet_sctp_session a = {0}, b = {0};
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_session_event event = {0};
+  cnet_sctp_session_forward_progress progress = {0};
+  cnet_sctp_data_abandon_event *pending;
+  uint8_t wire[1200], reply[1200], msg[32];
+  const cnet_sctp_wire_chunk abort_chunk = {6u, 0u, NULL, 0u};
+  size_t wire_n = 0u, reply_n = 0u, i;
+  uint64_t ga = 0u, gb = 0u;
+
+  ready_pair(&a, &b, &ca, &cb);
+  open_channel_with_policy(&a, &b, 6u, 2u, 0x01u, 0u, &ga, &gb);
+  a.association.data.abandon_event_head = 0u;
+  a.association.data.abandon_event_count = 1u;
+  pending = &a.association.data.abandon_events[0u];
+  memset(pending, 0, sizeof(*pending));
+  pending->stream_id = 2u;
+  pending->ppid = 53u;
+  pending->message_size = 9u;
+  pending->has_tsn = 1u;
+  pending->first_tsn = a.association.data.last_ack;
+  pending->last_tsn = a.association.data.last_ack;
+  pending->reliability.mode = CNET_SCTP_DATA_RELIABILITY_TIMED;
+  pending->reliability.value = 1u;
+  pending->reason = CNET_SCTP_DATA_ABANDON_TIMED;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    a.forward_tracks[i].used = 1u;
+    a.forward_tracks[i].cumul_confirmed = 1u;
+    a.forward_tracks[i].result.generation = ga;
+    a.forward_tracks[i].result.stream_id = 2u;
+    a.forward_tracks[i].result.message_size = 100u + i;
+  }
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.association.local_tag,
+      &abort_chunk, 1u, wire, sizeof(wire), &wire_n) ==
+      CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_session_input(&a, 20u, wire, wire_n, reply,
+      sizeof(reply), &reply_n) == CNET_SCTP_SESSION_OK &&
+      reply_n == 0u && a.abort_abandoned_count == 1u);
+  memset(reply, 0xCC, sizeof(reply));
+  memset(msg, 0xCC, sizeof(msg));
+  reply_n = 123u;
+  assert(cnet_sctp_session_poll(&a, 20u, &event, msg, sizeof(msg),
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_CAPACITY &&
+      reply_n == 0u && event.kind == CNET_SCTP_SESSION_EVENT_NONE &&
+      a.abort_abandoned_count == 1u);
+  for (i = 0u; i < sizeof(reply); ++i) assert(reply[i] == 0xCCu);
+  for (i = 0u; i < sizeof(msg); ++i) assert(msg[i] == 0xCCu);
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_OK && progress.message_size == 100u);
+  reply_n = 123u;
+  assert(cnet_sctp_session_poll(&a, 20u, &event, msg, sizeof(msg),
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_OK &&
+      reply_n == 0u &&
+      event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED &&
+      event.stream_id == 2u && event.generation == ga &&
+      event.message_size == 9u && event.has_tsn &&
+      a.abort_abandoned_count == 0u);
+  assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+      CNET_SCTP_SESSION_OK && progress.message_size == 9u &&
+      progress.generation == ga && progress.stream_id == 2u);
+  assert(gb != 0u);
+  assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK &&
+      cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK &&
+      cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK &&
+      cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+}
+
 int main(void) {
   session_open_message_reset_reuse();
   partial_loss_reports_abandonment_then_reliable_continues();
@@ -1041,6 +1209,8 @@ int main(void) {
   peer_abort_retains_unread_confirmed_results();
   peer_abort_prefix_sack_is_not_a_fake_ack();
   peer_abort_preserves_unread_local_abandonment();
+  peer_abort_snapshot_full_wrapped_fifo();
+  peer_abort_snapshot_progress_capacity_is_atomic();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }
