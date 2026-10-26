@@ -493,6 +493,55 @@ is marked experimental and non-blocking; real GCC/Clang ARM64 tests
 are separate, mandatory baseline jobs. No TCC-built ARM64 artifact
 is installed or offered as an SDK.
 
+## MIR/minicoro-inspired external ASM atomic prototype
+
+The design is **not** an imported MIR or minicoro Atomic implementation:
+[MIR's C11-to-MIR front-end](https://github.com/vnmakarov/mir/tree/master/c2mir)
+explicitly excludes C11 atomics, and
+[minicoro](https://github.com/edubart/minicoro/blob/main/minicoro.h)
+uses assembly for coroutine register/stack switching, not atomicity.
+Their useful pattern is **architecture-specific low-level execution
+behind ordinary C callable entrypoints**, with explicit ABI tests
+and fail-closed unsupported targets.
+
+New test-only files under `asm-atomic/` implement that architecture split:
+
+- `asm_atomic_x86_64.S`: SysV AMD64 GAS. `lock xadd` and
+  `lock cmpxchg` RMW/CAS; `xchg` for stores/exchange; TSO reads;
+  `mfence`. Generates an ELF `.note.GNU-stack` marker.
+- `asm_atomic_aarch64.S`: AAPCS64 GAS. `ldar/stlr`,
+  `ldaxr/stlxr` LL/SC loops (no optional LSE instructions), and
+  conservative `dmb ish` fences. Generates a non-executable stack note.
+- `asm_atomic_private.h`: separately owned, naturally aligned
+  32-bit and 64-bit scalar slots and ordinary external C ABI functions.
+  This is *not* the layout or lifetime of C11 `_Atomic` objects.
+- `asm_atomic_conformance.c`: strong/failed CAS expected-value
+  writeback, load/store/exchange, fetch-add/sub, explicit fence,
+  four contending pthread workers (32-bit CAS + 64-bit RMW), and
+  release/acquire publication observed **before thread join**.
+
+**All these functions implement a stronger SEQ_CST-only contract**.
+There is intentionally no `memory_order` enum yet, no compiler
+feature override, no inline ASM dependence in TinyCC, no runtime
+code generation/W^X, no locking fallback, and no mixing of backends
+within one live object. Linux x86-64 and Linux AArch64 only;
+other architectures are rejected at compile time.
+
+The native GCC/Clang CMake+CTest matrix includes the same source and
+ASM with the matching assembler, and the pinned TinyCC x86-64/ARM64
+diagnostics assemble `.S` via native GNU `gcc -c` and then ask
+TinyCC to compile the C consumer and link those ELF objects itself.
+This separates **C compiler ASM syntax limitations** from
+**assembler/object linking** and **atomic CPU behavior**.
+
+**Limits:** foreign ASM operations are outside ISO C's native atomic
+object model. TSan instrumentation cannot see the atomic operations
+inside external assembly unless proper instrumentation/annotation is
+added and qualified; a TSan pass of surrounding C does *not* certify
+this backend. No 8/16-bit primitives, pointer ABI, ARMv8 formal memory
+model proof, Windows ABI, cross-DSO lifetime, sanitizer-compatible
+mixed ABI, installed SDK or Disruptor replacement is claimed.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:

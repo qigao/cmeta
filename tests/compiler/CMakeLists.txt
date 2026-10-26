@@ -45,6 +45,26 @@ salts_add_atomic_conformance(salts_atomic_abi_same_compiler
 
 # Qualify actual POSIX Platform threading primitives without the full SDK.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+
+  # Explicit external Linux assembly entrypoints, NOT a C11 stdatomic shim.
+  # Use the native GAS/Clang assembler on each target architecture and keep
+  # the selected architecture's .S object separate from C compiler builtins.
+  # The strict TinyCC C11 feature gate stays unchanged.
+  if(NOT CMAKE_C_COMPILER_ID STREQUAL "TinyCC" AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+      set(_salts_asm_atomic_source asm-atomic/asm_atomic_x86_64.S)
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+      set(_salts_asm_atomic_source asm-atomic/asm_atomic_aarch64.S)
+    endif()
+    if(DEFINED _salts_asm_atomic_source)
+      enable_language(ASM)
+      salts_add_atomic_conformance(salts_asm_atomic_conformance
+        asm-atomic/asm_atomic_conformance.c
+        "${CMAKE_CURRENT_LIST_DIR}/${_salts_asm_atomic_source}")
+      set_tests_properties(salts_asm_atomic_conformance PROPERTIES TIMEOUT 60)
+      unset(_salts_asm_atomic_source)
+    endif()
+  endif()
   salts_add_atomic_conformance(salts_native_tls_probe
     tcc_tls_probe.c)
   # Key-backed POSIX TSS is an independently tested design reference, NOT

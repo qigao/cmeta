@@ -30,7 +30,7 @@ jobs:
       - name: Repeat real SPSC and Disruptor contention tests five times
         run: >-
           ctest --test-dir build/atomic-${{ matrix.compiler }}
-          -R 'salts_(spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance)'
+          -R 'salts_(asm_atomic_conformance|spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance)'
           --repeat until-fail:5 --output-on-failure
 
   native-arm64-atomic-conformance:
@@ -65,7 +65,7 @@ jobs:
       - name: Stress cross-thread publication, MPMC and retirement 20 times
         run: >-
           ctest --test-dir build/atomic-arm64
-          -R 'salts_(atomic_language_conformance|atomic_abi_same_compiler|intrinsic_atomic_conformance|spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance)'
+          -R 'salts_(atomic_language_conformance|atomic_abi_same_compiler|intrinsic_atomic_conformance|asm_atomic_conformance|spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance)'
           --repeat until-fail:20 --output-on-failure
 
   native-interop:
@@ -268,6 +268,28 @@ jobs:
             tests/compiler/disruptor_mpmc_real_source.c -lpthread \
             -o build/tcc-arm64/disruptor-mpmc
           timeout 40s build/tcc-arm64/disruptor-mpmc
+      - name: Assemble native AArch64 atomics and link with pinned ARM64 TCC
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/tcc-arm64/asm
+          gcc -c -x assembler-with-cpp \
+            tests/compiler/asm-atomic/asm_atomic_aarch64.S \
+            -o build/tcc-arm64/asm/atomic_backend.o
+          tcc -std=c11 tests/compiler/asm-atomic/asm_atomic_conformance.c \
+            build/tcc-arm64/asm/atomic_backend.o -lpthread \
+            -o build/tcc-arm64/asm/conformance
+          timeout 30s build/tcc-arm64/asm/conformance
+      - name: Audit AArch64 external ASM ELF and non-executable stack
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          readelf -h build/tcc-arm64/asm/atomic_backend.o
+          readelf -W -S build/tcc-arm64/asm/atomic_backend.o | grep -F '.note.GNU-stack'
+          readelf -W -l build/tcc-arm64/asm/conformance | grep GNU_STACK
+
       - name: Verify strict C11 compiler admission (no atomics fallback)
         shell: bash
         run: |
@@ -372,6 +394,28 @@ jobs:
           done
           echo "upstream catomics reference failures: $failures"
           test "$failures" -eq 0
+      - name: Assemble native x64 atomic entrypoints and link with pinned TCC
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/asm-tcc-x64
+          gcc -c -x assembler-with-cpp \
+            tests/compiler/asm-atomic/asm_atomic_x86_64.S \
+            -o build/asm-tcc-x64/atomic_backend.o
+          tcc -std=c11 tests/compiler/asm-atomic/asm_atomic_conformance.c \
+            build/asm-tcc-x64/atomic_backend.o -lpthread \
+            -o build/asm-tcc-x64/conformance
+          timeout 30s build/asm-tcc-x64/conformance
+      - name: Audit external ASM ELF and non-executable stack
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          readelf -h build/asm-tcc-x64/atomic_backend.o
+          readelf -W -S build/asm-tcc-x64/atomic_backend.o | grep -F '.note.GNU-stack'
+          readelf -W -l build/asm-tcc-x64/conformance | grep GNU_STACK
+
       - name: Configure standalone C11 conformance
         run: cmake -S tests/compiler -B build/atomic-tcc -G Ninja -DCMAKE_C_COMPILER=tcc
       - name: Compile
