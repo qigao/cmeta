@@ -616,7 +616,8 @@ static void cnet_owner_test_expired_partial_send(native_io_backend_kind backend_
 }
 
 static void cnet_owner_test_expired_partial_vector_send(
-    native_io_backend_kind backend_kind, bool expire_before_observe) {
+    native_io_backend_kind backend_kind, bool expire_before_observe,
+    bool force_cancel_ealready) {
   enum { PAYLOAD_BYTES = 8, WRITE_TIMEOUT_MS = 10 };
   cnet_session_table sessions = {0};
   cnet_command_queue commands = {0};
@@ -714,6 +715,11 @@ static void cnet_owner_test_expired_partial_vector_send(
                 (unsigned char)0x5a);
 
   check_equal(cnet_owner_test_process_session_work(&owner), SALTS_OK);
+  /* Internal test-only hook exercises a NativeIO EALREADY report after the
+   * underlying cancellation call. The original kernel terminal still must
+   * be observed; no completion is synthesized or ownership released here. */
+  if (force_cancel_ealready)
+    check_equal(cnet_owner_test_force_cancel_ealready_once(&owner), SALTS_OK);
   if (expire_before_observe) {
     /* Cancel first while NativeIO owns the real submitted write, without
      * previously observing its completion. A raced native success is valid,
@@ -1749,8 +1755,9 @@ spec("CNet owner shard") {
     const size_t count = cnet_owner_test_backends(backends);
     check_equal(cnet_module_init(), SALTS_OK);
     for (size_t index = 0u; index < count; ++index) {
-      cnet_owner_test_expired_partial_vector_send(backends[index], false);
-      cnet_owner_test_expired_partial_vector_send(backends[index], true);
+      cnet_owner_test_expired_partial_vector_send(backends[index], false, false);
+      cnet_owner_test_expired_partial_vector_send(backends[index], true, false);
+      cnet_owner_test_expired_partial_vector_send(backends[index], true, true);
     }
     check_equal(cnet_module_shutdown(), SALTS_OK);
   }
