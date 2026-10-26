@@ -1798,10 +1798,12 @@ static void stale_generation_denies_old_data_egress(void) {
  * allow one prior LOCAL failure to free the only slot needed by poll(),
  * without returning premature EMPTY or fabricating an ABORT receipt.
  * The terminal state and new abandonment come from real DATA/FORWARD
- * packets and Owner deadlines; only the saturation fixture is injected. */
+ * packets and Owner deadlines; only the saturation fixture is injected.
+ * A full ledger containing a separately confirmed peer-progress receipt
+ * must preserve that success, rather than reclassifying it as LOCAL failure. */
 static void late_peer_abort_is_closed_after_local_retry_exhaustion(void) {
   unsigned int saturated;
-  for (saturated = 0u; saturated < 2u; ++saturated) {
+  for (saturated = 0u; saturated < 3u; ++saturated) {
     cnet_sctp_session a = {0}, b = {0};
     test_context ca = {0}, cb = {0};
     cnet_sctp_session_event event = {0};
@@ -1855,13 +1857,14 @@ static void late_peer_abort_is_closed_after_local_retry_exhaustion(void) {
         CNET_SCTP_SESSION_BUSY && terminal.generation == 0u);
 
     if (saturated) {
-      /* Test-only 16-entry saturation of pre-existing copied failure
-       * records. The real local FAILED flag and the fresh PR abandonment
-       * come from actual Owner timers/wire; injected older placeholders
-       * solely exercise the bounded full-ledger escape path. */
+      /* Test-only 16-entry saturation of existing progress records. In
+       * mode 1 all are unconfirmed; mode 2 has one confirmed SUCCESS
+       * receipt, which must not be converted into LOCAL failure. The
+       * fresh PR abandonment and FAILED arise from real wire/Owner timers. */
       for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
         cnet_sctp_session_forward_track *slot = &a.forward_tracks[i];
         slot->used = 1u;
+        slot->cumul_confirmed = (uint8_t)(saturated == 2u && i == 0u);
         slot->result.generation = ga;
         slot->result.stream_id = 2u;
         slot->result.ppid = 53u;
@@ -1896,19 +1899,31 @@ static void late_peer_abort_is_closed_after_local_retry_exhaustion(void) {
           CNET_SCTP_SESSION_CAPACITY && reply_n == 0u &&
           event.kind == CNET_SCTP_SESSION_EVENT_NONE &&
           a.association.data.abandon_event_count == 1u);
-      /* The full ledger has no peer-confirmed successes to consume. One
-       * existing LOCAL terminal result may free capacity, but then the
-       * next terminal query must remain BUSY until the original PR event
-       * itself has been published. */
-      assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
-          CNET_SCTP_SESSION_EMPTY &&
-          cnet_sctp_session_take_terminal_failure(&a, &terminal) ==
-          CNET_SCTP_SESSION_OK &&
-          terminal.kind == CNET_SCTP_SESSION_TERMINAL_FORWARD_UNCONFIRMED &&
-          terminal.generation == ga &&
-          terminal.last_tsn != original_tsn &&
-          a.association.data.abandon_event_count == 1u);
-      ++terminal_count;
+      if (saturated == 2u) {
+        /* A full ledger with even ONE confirmed result cannot use the
+         * unconfirmed-failure escape. Collect only the confirmed SUCCESS
+         * first; the original unpolled PR record still blocks terminal. */
+        assert(cnet_sctp_session_take_terminal_failure(&a, &terminal) ==
+            CNET_SCTP_SESSION_BUSY && terminal.generation == 0u &&
+            a.association.data.abandon_event_count == 1u);
+        assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+            CNET_SCTP_SESSION_OK && progress.generation == ga &&
+            progress.message_size == 1u &&
+            progress.last_tsn != original_tsn);
+      } else {
+        /* No confirmed slot can be released: one pre-existing, genuine
+         * LOCAL failure may free capacity. The next terminal take must
+         * remain BUSY until the original PR record is actually polled. */
+        assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+            CNET_SCTP_SESSION_EMPTY &&
+            cnet_sctp_session_take_terminal_failure(&a, &terminal) ==
+            CNET_SCTP_SESSION_OK &&
+            terminal.kind == CNET_SCTP_SESSION_TERMINAL_FORWARD_UNCONFIRMED &&
+            terminal.generation == ga &&
+            terminal.last_tsn != original_tsn &&
+            a.association.data.abandon_event_count == 1u);
+        ++terminal_count;
+      }
       assert(cnet_sctp_session_take_terminal_failure(&a, &terminal) ==
           CNET_SCTP_SESSION_BUSY && terminal.generation == 0u &&
           a.association.data.abandon_event_count == 1u);
@@ -1952,7 +1967,9 @@ static void late_peer_abort_is_closed_after_local_retry_exhaustion(void) {
       assert(terminal_count <= CNET_SCTP_DATA_TX_SLOTS + 1u);
     }
     assert(original_failures == 1u &&
-        terminal_count == (saturated ? CNET_SCTP_DATA_TX_SLOTS + 1u : 1u));
+        terminal_count == (saturated == 1u ?
+          CNET_SCTP_DATA_TX_SLOTS + 1u :
+          saturated == 2u ? CNET_SCTP_DATA_TX_SLOTS : 1u));
     assert(cnet_sctp_session_take_peer_abort(&a, &abort_info, reason,
         sizeof(reason), &reason_n) == CNET_SCTP_SESSION_EMPTY &&
         !abort_info.has_user_reason && reason_n == 0u);
