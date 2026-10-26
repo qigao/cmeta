@@ -421,7 +421,10 @@ static void bounded_forward_progress_preserves_local_events(void) {
           message, sizeof(message), response, sizeof(response),
           &response_size) == CNET_SCTP_SESSION_CAPACITY &&
           event.kind == CNET_SCTP_SESSION_EVENT_NONE);
-      assert(a.association.data.abandon_event_count == 1u);
+      assert(a.association.data.abandon_event_count == 1u &&
+          a.association.data.abandon_events[
+              a.association.data.abandon_event_head].admission_generation ==
+                  generation_a);
     }
     now_ms = deadline + 6u;
   }
@@ -437,8 +440,12 @@ static void bounded_forward_progress_preserves_local_events(void) {
       progress.stream_id == 2u && progress.message_size == 1u &&
       progress.first_tsn == progress.last_tsn);
 
+  /* A test-only wrong SID reuse after 17 REAL PR messages were admitted
+   * cannot re-attribute the unread 17th event to the current DCEP lifetime.
+   * The actual RFC6525 Owner would ordinarily fence this reuse. */
+  a.dcep.channels[2u].generation = generation_a + 901u;
   /* One read frees one slot. The 17th local event is still available, with
-   * the same original generation and already validated cumulative progress. */
+   * the ORIGINAL generation and validated cumulative peer progress. */
   assert(cnet_sctp_session_poll(&a, now_ms, &event,
       message, sizeof(message), response, sizeof(response),
       &response_size) == CNET_SCTP_SESSION_OK &&
