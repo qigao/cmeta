@@ -705,7 +705,7 @@ static void cnet_owner_test_expired_partial_vector_send(
   for (size_t index = 0u; index < 4u; ++index) {
     competing[index] = mem_get_buffer(&pool, PAYLOAD_BYTES);
     check_not_null(competing[index]);
-    check_not_equal(competing[index], original_buffer);
+    check_true(competing[index] != original_buffer);
     memset(mem_buffer_data(competing[index]), 0xa5, PAYLOAD_BYTES);
     mem_set_used(competing[index], PAYLOAD_BYTES);
   }
