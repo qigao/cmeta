@@ -154,6 +154,81 @@ static int emit_app(cnet_sctp_session *session, uint64_t now, int fd,
   return publish(fd, destination, output, size);
 }
 
+/* Real OpenSSL/Pion DTLS has authenticated the original peer, then the
+ * external test Owner Generation was revoked. Every public Session surface
+ * below must now refuse with OWNER before touching copied user buffers,
+ * allocating TSNs, reading ULP events, consuming terminal receipts, or
+ * releasing the allocated opaque handle. This remains a single-threaded,
+ * test-only lease check, NOT production concurrent DSO/DTLS teardown. */
+static int qualify_revoked_owner_facade(cnet_sctp_session *session,
+    uint64_t now, uint64_t original_generation) {
+  cnet_sctp_session_event event = {0};
+  cnet_sctp_session_tx_usage usage = {0};
+  cnet_sctp_session_reliable_ack ack = {0};
+  cnet_sctp_session_forward_progress progress = {0};
+  cnet_sctp_session_terminal_failure failure = {0};
+  cnet_sctp_session_peer_abort abort_info = {0};
+  cnet_sctp_session_unsent_cancelled cancelled = {0};
+  uint8_t wire[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t message[32], reason[32];
+  uint64_t ticket = UINT64_C(9876), deadline = 0u;
+  size_t written = sizeof(wire);
+  int has_deadline = 0;
+
+  if (!session || !original_generation) return -1;
+  if (cnet_sctp_session_get_tx_usage(session, 0u, original_generation,
+          &usage) != CNET_SCTP_SESSION_OWNER ||
+      usage.generation != 0u || usage.retained_bytes != 0u ||
+      usage.queued_bytes != 0u)
+    return -1;
+  if (cnet_sctp_session_poll(session, now, &event, message,
+          sizeof(message), wire, sizeof(wire), &written) !=
+          CNET_SCTP_SESSION_OWNER ||
+      event.kind != CNET_SCTP_SESSION_EVENT_NONE || written != 0u)
+    return -1;
+  written = sizeof(wire);
+  if (cnet_sctp_session_advance(session, now, wire,
+          sizeof(wire), &written) != CNET_SCTP_SESSION_OWNER ||
+      written != 0u)
+    return -1;
+  if (cnet_sctp_session_next_deadline(session, &deadline,
+          &has_deadline) != CNET_SCTP_SESSION_OWNER)
+    return -1;
+  written = sizeof(wire);
+  if (cnet_sctp_session_send_reliable_tracked(session, now,
+          0u, original_generation, 1, "stale", 5u,
+          wire, sizeof(wire), &written, &ticket) !=
+          CNET_SCTP_SESSION_OWNER || written != 0u || ticket != 0u)
+    return -1;
+  if (cnet_sctp_session_cancel_unsent_message(session, now,
+          0u, original_generation, &cancelled) !=
+          CNET_SCTP_SESSION_OWNER || cancelled.generation != 0u ||
+      cancelled.ticket != 0u)
+    return -1;
+  if (cnet_sctp_session_take_reliable_ack(session, &ack) !=
+          CNET_SCTP_SESSION_OWNER || ack.ticket != 0u)
+    return -1;
+  if (cnet_sctp_session_take_forward_progress(session, &progress) !=
+          CNET_SCTP_SESSION_OWNER || progress.generation != 0u)
+    return -1;
+  if (cnet_sctp_session_take_terminal_failure(session, &failure) !=
+          CNET_SCTP_SESSION_OWNER || failure.generation != 0u)
+    return -1;
+  written = sizeof(reason);
+  if (cnet_sctp_session_take_peer_abort(session, &abort_info,
+          reason, sizeof(reason), &written) != CNET_SCTP_SESSION_OWNER ||
+      written != 0u || abort_info.has_user_reason != 0u)
+    return -1;
+  if (cnet_sctp_session_stop(session) != CNET_SCTP_SESSION_OWNER)
+    return -1;
+  /* Destroy denial MUST retain the same live handle for explicit Owner
+   * hand-back at the fixture's normal cleanup. Call this LAST: an unsafe
+   * success would have freed it and is a hard test failure. */
+  if (cnet_sctp_session_destroy(session) != CNET_SCTP_SESSION_OWNER)
+    return -1;
+  return 0;
+}
+
 int main(int argc, char **argv) {
   oracle_context context = {
     UINT32_C(0x11223344), UINT32_C(0x10203040),
@@ -357,6 +432,14 @@ int main(int argc, char **argv) {
             }
             revoked = 1;
             puts("C11_DTLS_OWNER_GENERATION_REVOKED");
+            fflush(stdout);
+            if (qualify_revoked_owner_facade(session, now,
+                    original_generation) != 0) {
+              fprintf(stderr,
+                  "C11 revoked authenticated DTLS Owner crossed public facade\n");
+              failure = 38; break;
+            }
+            puts("C11_DTLS_OWNER_REVOKED_PUBLIC_API_REFUSALS_PASS");
             fflush(stdout);
           }
           if (event.kind == CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN) {

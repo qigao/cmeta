@@ -339,6 +339,8 @@ func main() {
 	// is refused by the stale C11 Owner, without a second message being
 	// delivered, and without changing the accepted peer's certificate.
 	if revokeOwner {
+		expect(lines, "C11_DTLS_OWNER_REVOKED_PUBLIC_API_REFUSALS_PASS",
+			5*time.Second)
 		late := []byte("pion-data-after-revoke")
 		n, err = stream.WriteSCTP(late, sctp.PayloadTypeWebRTCBinary)
 		require(err == nil && n == len(late),
