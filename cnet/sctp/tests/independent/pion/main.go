@@ -52,8 +52,9 @@ func expect(lines <-chan string, prefix string, timeout time.Duration) string {
 
 func main() {
 	require(len(os.Args) >= 2 && len(os.Args) <= 4,
-		"expected C11 oracle binary [drop-first-iforward] [dtls|dtls-bad-server-fingerprint|dtls-bad-client-fingerprint]")
+		"expected C11 oracle binary [drop-first-iforward] [dtls|dtls-bad-server-fingerprint|dtls-bad-client-fingerprint|dtls-revoke-owner]")
 	dropFirstForward, useDTLS, badServerFingerprint, badClientFingerprint := false, false, false, false
+	revokeOwner := false
 	for _, option := range os.Args[2:] {
 		switch option {
 		case "drop-first-iforward":
@@ -68,13 +69,16 @@ func main() {
 		case "dtls-bad-client-fingerprint":
 			require(!useDTLS, "duplicate DTLS option")
 			useDTLS, badClientFingerprint = true, true
+		case "dtls-revoke-owner":
+			require(!useDTLS, "duplicate DTLS option")
+			useDTLS, revokeOwner = true, true
 		default:
 			require(false, "unknown mode %s", option)
 		}
 	}
-	require((!badServerFingerprint && !badClientFingerprint) ||
-			!dropFirstForward,
-		"wrong-fingerprint test must not run SCTP loss scenarios")
+	require((!badServerFingerprint && !badClientFingerprint &&
+			!revokeOwner) || !dropFirstForward,
+		"negative DTLS tests must not run loss-of-FORWARD scenario")
 	peerArgs := []string{"49571", "49572"}
 	var certificate tls.Certificate
 	if useDTLS {
@@ -92,6 +96,8 @@ func main() {
 			hex.EncodeToString(clientFingerprint[:]))
 		if dropFirstForward {
 			peerArgs = append(peerArgs, "drop-first-iforward")
+		} else if revokeOwner {
+			peerArgs = append(peerArgs, "revoke-owner")
 		}
 	} else if dropFirstForward {
 		peerArgs = append(peerArgs, "drop-first-iforward")
@@ -274,12 +280,12 @@ func main() {
 	expected := "MESSAGE=0:" + hex.EncodeToString(payload)
 	seenIData, seenMessage, seenForward, seenDrop, seenConfirmed := false, false, false, false, false
 	seenForwardLoss, seenForwardRetry, seenPinnedClient := false, false, false
-	seenBoundGeneration, seenEqualGeneration := false, false
+	seenBoundGeneration, seenEqualGeneration, seenOwnerRevoked := false, false, false
 	limit := time.After(6 * time.Second)
 	for !seenIData || !seenMessage || !seenForward || !seenDrop ||
 		!seenConfirmed || (dropFirstForward && (!seenForwardLoss || !seenForwardRetry)) ||
 		(useDTLS && (!seenPinnedClient || !seenBoundGeneration ||
-			!seenEqualGeneration)) {
+			!seenEqualGeneration)) || (revokeOwner && !seenOwnerRevoked) {
 		select {
 		case line, open := <-lines:
 			require(open, "C11 peer terminated during I-DATA")
@@ -304,6 +310,11 @@ func main() {
 					"OpenSSL Session created before verified RFC5705 generation")
 				seenBoundGeneration = true
 			}
+			if line == "C11_DTLS_OWNER_GENERATION_REVOKED" {
+				require(useDTLS && revokeOwner && seenBoundGeneration,
+					"C11 test revoked Owner before authenticated Session")
+				seenOwnerRevoked = true
+			}
 			if line == "RX_TYPE=64" { seenIData = true }
 			if line == expected { seenMessage = true }
 			if line == "C11_REAL_I_FORWARD_TSN_194" { seenForward = true }
@@ -324,8 +335,20 @@ func main() {
 				seenForwardLoss, seenForwardRetry)
 		}
 	}
-	// Real SCTP RFC8260 I-DATA and I-FORWARD peer recovery over *test-only*
-	// UDP datagrams. This is NOT authenticated DTLS/ICE/browser evidence.
+	// Verify that a genuinely authenticated subsequent Pion DTLS record
+	// is refused by the stale C11 Owner, without a second message being
+	// delivered, and without changing the accepted peer's certificate.
+	if revokeOwner {
+		late := []byte("pion-data-after-revoke")
+		n, err = stream.WriteSCTP(late, sctp.PayloadTypeWebRTCBinary)
+		require(err == nil && n == len(late),
+			"could not send encrypted stale-generation Pion DATA: %v", err)
+		expect(lines, "C11_DTLS_OWNER_STALE_GENERATION_REJECTED",
+			5*time.Second)
+		fmt.Println("PION_DTLS_VERIFIED_RECORD_DENIED_BY_REVOKED_OWNER")
+	}
+	// Real SCTP RFC8260 I-DATA and I-FORWARD peer recovery over bounded
+	// test-only UDP or authenticated DTLS; not browser/ICE evidence.
 	mode := "baseline"
 	if dropFirstForward {
 		mode = "lost-first-iforward"

@@ -165,6 +165,9 @@ int main(int argc, char **argv) {
   uint64_t original_generation = 0u;
   unsigned int stage = 0u;
   int original_abandoned = 0;
+  int revoke_after_message = 0;
+  int revoked = 0;
+  int revoked_input_refused = 0;
   uint8_t packet[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t encrypted[4096];
   uint8_t reply[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
@@ -176,12 +179,16 @@ int main(int argc, char **argv) {
        !(argc == 4 && strcmp(argv[3], "drop-first-iforward") == 0) &&
        !(argc == 5 && strcmp(argv[3], "dtls") == 0) &&
        !(argc == 6 && strcmp(argv[3], "dtls") == 0 &&
-           strcmp(argv[5], "drop-first-iforward") == 0))) {
-    fprintf(stderr, "usage: pion_oracle_peer UDP_LISTEN_PORT UDP_PEER_PORT [drop-first-iforward] | [dtls CLIENT_SHA256_HEX [drop-first-iforward]]\n");
+           (strcmp(argv[5], "drop-first-iforward") == 0 ||
+            strcmp(argv[5], "revoke-owner") == 0)))) {
+    fprintf(stderr, "usage: pion_oracle_peer UDP_LISTEN_PORT UDP_PEER_PORT [drop-first-iforward] | [dtls CLIENT_SHA256_HEX [drop-first-iforward|revoke-owner]]\n");
     return 2;
   }
   use_real_dtls = argc >= 5;
-  drop_first_iforward = (argc == 4 || argc == 6);
+  drop_first_iforward = (argc == 4 ||
+      (argc == 6 && strcmp(argv[5], "drop-first-iforward") == 0));
+  revoke_after_message = (argc == 6 && use_real_dtls &&
+      strcmp(argv[5], "revoke-owner") == 0);
   local_port = (unsigned int)strtoul(argv[1], NULL, 10);
   peer_port = (unsigned int)strtoul(argv[2], NULL, 10);
   if (local_port == 0u || peer_port == 0u ||
@@ -299,6 +306,16 @@ int main(int argc, char **argv) {
       status = cnet_sctp_session_input(session, now, packet,
           plaintext_size, reply, sizeof(reply), &written);
       if (status != CNET_SCTP_SESSION_OK) {
+        if (revoke_after_message && revoked && !revoked_input_refused &&
+            status == CNET_SCTP_SESSION_OWNER && written == 0u) {
+          /* OpenSSL authenticated/decrypted this real DTLS record, but
+           * the stale C11 Owner generation refuses it BEFORE any ULP
+           * event is admitted. Test-only single-threaded lease. */
+          revoked_input_refused = 1;
+          puts("C11_DTLS_OWNER_STALE_GENERATION_REJECTED");
+          fflush(stdout);
+          continue;
+        }
         fprintf(stderr, "C11 oracle input refused: status=%d chunk=%u\n",
             (int)status, (unsigned)packet[12]);
         failure = 10; break;
@@ -322,6 +339,25 @@ int main(int argc, char **argv) {
           trace_event(&event, body);
           if (publish(fd, &destination, reply, written) != 0) {
             failure = 13; break;
+          }
+          if (revoke_after_message && !revoked &&
+              event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE &&
+              stage == 4u) {
+            static const char confirmed[] = "pion-independent-idata";
+            if (event.generation != original_generation ||
+                event.stream_id != 0u || event.ppid != 53u ||
+                event.message_size != sizeof(confirmed) - 1u ||
+                memcmp(body, confirmed, sizeof(confirmed) - 1u) != 0) {
+              failure = 36; break;
+            }
+            context.admitted_generation ^= UINT64_C(1);
+            if (context.admitted_generation ==
+                secure_transport.generation) {
+              failure = 37; break;
+            }
+            revoked = 1;
+            puts("C11_DTLS_OWNER_GENERATION_REVOKED");
+            fflush(stdout);
           }
           if (event.kind == CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN) {
             if (stage != 0u || event.stream_id != 0u ||
@@ -393,7 +429,7 @@ int main(int argc, char **argv) {
         }
       }
     }
-    if (!session) continue;
+    if (!session || (revoke_after_message && revoked)) continue;
     {
       int has_deadline = 0;
       uint64_t due = 0u;
@@ -514,6 +550,10 @@ int main(int argc, char **argv) {
   }
 done:
   if (session) {
+    /* Test-only synchronous Owner hand-back to explicitly stop and drain
+     * after proving a stale authenticated datagram cannot be delivered. */
+    if (revoke_after_message && revoked)
+      context.admitted_generation = secure_transport.generation;
     if (cnet_sctp_session_stop(session) != CNET_SCTP_SESSION_OK ||
         !cnet_sctp_session_drained(session) ||
         cnet_sctp_session_destroy(session) != CNET_SCTP_SESSION_OK)
