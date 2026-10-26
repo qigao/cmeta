@@ -475,6 +475,24 @@ ARM64, mixed GCC/TCC shared ABI qualification or an installed SDK
 admission. TinyCC remains experimental, separately pinned on Linux
 x64, and the strict `__STDC_NO_ATOMICS__` gate stays unchanged.
 
+## Pinned TinyCC native ARM64 diagnostic
+
+The same exact upstream `TinyCC/tinycc@e23dabed154a8495f3ac1ff3cc9d04fa1c207893`
+contains an AArch64 code generator and native `arm64` Makefile target.
+The experimental CI builds that revision **on a native
+`ubuntu-24.04-arm` runner** and independently attempts its own scalar
+atomics, Salts private intrinsic storage contract, the unmodified
+SPSC source, and the opaque Disruptor 4×4 MPMC source. Each diagnostic
+step retains its distinct result instead of pretending one passing
+scalar opcode certifies the whole backend.
+
+The final strict compiler CTest compile remains fail-closed for
+`__STDC_NO_ATOMICS__=1`. That admission failure is not overridden
+by any of these narrower runtime tests. The entire ARM64 TinyCC job
+is marked experimental and non-blocking; real GCC/Clang ARM64 tests
+are separate, mandatory baseline jobs. No TCC-built ARM64 artifact
+is installed or offered as an SDK.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:
