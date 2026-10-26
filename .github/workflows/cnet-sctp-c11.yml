@@ -173,28 +173,49 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
-          cmake -S cnet/sctp -B build-sctp-pion-oracle \
+          prefix="$GITHUB_WORKSPACE/sctp-c11-pion-installed-sdk"
+          cmake -S cnet/sctp -B build-sctp-pion-oracle-sdk \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
-            -DCNET_SCTP_TEST_PION_ORACLE=ON -DCNET_SCTP_TEST_GMSSL=OFF
-          cmake --build build-sctp-pion-oracle \
-            --target cnet_sctp_pion_oracle_peer --parallel 2
+            -DCNET_SCTP_TEST_PION_ORACLE=OFF -DCNET_SCTP_TEST_GMSSL=OFF
+          cmake --build build-sctp-pion-oracle-sdk --parallel 2
+          cmake --install build-sctp-pion-oracle-sdk --prefix "$prefix"
+          test -f "$prefix/include/cnet/sctp_session.h"
+          test ! -e "$prefix/include/cnet/sctp_session_internal.h"
+          test ! -e "$prefix/include/cnet/sctp_assoc_internal.h"
+          test ! -e "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          test -f "$prefix/lib/cmake/CNetSctpPrototype/CNetSctpPrototypeTargets.cmake"
+          cmake -S cnet/sctp/tests/independent/pion_sdk \
+            -B build-sctp-pion-installed-consumer \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build build-sctp-pion-installed-consumer --parallel 2
+          test -x build-sctp-pion-installed-consumer/cnet_sctp_pion_oracle_peer
           cd cnet/sctp/tests/independent/pion
           test "$(go list -m -mod=mod -f '{{.Version}}' github.com/pion/sctp)" = "v1.10.0"
           go build -mod=mod -o "$RUNNER_TEMP/pion-independent-oracle" .
           timeout 35s "$RUNNER_TEMP/pion-independent-oracle" \
-            "$GITHUB_WORKSPACE/build-sctp-pion-oracle/cnet_sctp_pion_oracle_peer"
+            "$GITHUB_WORKSPACE/build-sctp-pion-installed-consumer/cnet_sctp_pion_oracle_peer"
           timeout 35s "$RUNNER_TEMP/pion-independent-oracle" \
-            "$GITHUB_WORKSPACE/build-sctp-pion-oracle/cnet_sctp_pion_oracle_peer" \
+            "$GITHUB_WORKSPACE/build-sctp-pion-installed-consumer/cnet_sctp_pion_oracle_peer" \
             drop-first-iforward
           # Real independently implemented DTLS 1.2 between Pion DTLS v3
           # and OpenSSL; the SAME two RFC8260 packet-loss tests must pass.
           timeout 35s "$RUNNER_TEMP/pion-independent-oracle" \
-            "$GITHUB_WORKSPACE/build-sctp-pion-oracle/cnet_sctp_pion_oracle_peer" \
+            "$GITHUB_WORKSPACE/build-sctp-pion-installed-consumer/cnet_sctp_pion_oracle_peer" \
             dtls
           timeout 35s "$RUNNER_TEMP/pion-independent-oracle" \
-            "$GITHUB_WORKSPACE/build-sctp-pion-oracle/cnet_sctp_pion_oracle_peer" \
+            "$GITHUB_WORKSPACE/build-sctp-pion-installed-consumer/cnet_sctp_pion_oracle_peer" \
             dtls drop-first-iforward
           go mod verify
+          # The model cannot silently upgrade modules or generate untracked
+          # security checksum entries in CI. Print the exact proposed patch
+          # to make the dependency graph reproducible, then refuse a
+          # noncommitted module/lockfile change.
+          git -C "$GITHUB_WORKSPACE" diff -- \
+            cnet/sctp/tests/independent/pion/go.mod \
+            cnet/sctp/tests/independent/pion/go.sum
+          git -C "$GITHUB_WORKSPACE" diff --exit-code -- \
+            cnet/sctp/tests/independent/pion/go.mod \
+            cnet/sctp/tests/independent/pion/go.sum
 
   dtls-opaque-installed-session:
     name: Real DTLS 1.2 encrypted records through installed C11 Session
