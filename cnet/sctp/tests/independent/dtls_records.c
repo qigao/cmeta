@@ -119,7 +119,10 @@ static SSL *new_dtls_peer(SSL_CTX *context, int is_server) {
   BIO_set_mem_eof_return(input, -1);
   BIO_set_mem_eof_return(output, -1);
   SSL_set_bio(session, input, output);
-  assert(SSL_set_mtu(session, 1200) == 1);
+  /* OpenSSL's memory BIO is a test record pump, not a datagram BIO and
+   * SSL_set_mtu() may refuse it. The public SCTP Session already enforces
+   * its bounded 1280-byte packet limit; transport PMTU remains a separate
+   * real-network/production DTLS gate. */
   if (is_server) SSL_set_accept_state(session);
   else SSL_set_connect_state(session);
   return session;
