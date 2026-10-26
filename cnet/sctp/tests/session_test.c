@@ -902,7 +902,16 @@ static void peer_abort_preserves_unread_local_abandonment(void) {
     assert(a.association.data.abandon_event_count == 1u);
     abandoned_tsn = a.association.data.abandon_events[
         a.association.data.abandon_event_head].last_tsn;
-    /* Deliberately leave the original local event unread across ABORT. */
+    /* Deliberately leave the original local event unread across ABORT.
+     * Deliberately reuse the DCEP generation WITHOUT performing a real
+     * reset: a test-only invariant violation that proves ABORT may not
+     * misattribute the already-admitted original message to a new SID
+     * lifetime. Real RFC6525 reuse has stricter Owner fences. */
+    assert(a.association.data.abandon_events[
+        a.association.data.abandon_event_head].admission_generation == ga);
+    if (mode == 0u) {
+      a.dcep.channels[2].generation = ga + 900u;
+    }
     if (mode == 0u) {
       /* A full table of UNCONFIRMED prior forward placeholders can never
        * complete after ABORT and must not make the original event stuck. */
@@ -1064,6 +1073,7 @@ static void peer_abort_snapshot_full_wrapped_fifo(void) {
     entry->stream_id = (uint16_t)((i % 2u) ? 2u : 0u);
     entry->ppid = 53u;
     entry->message_identifier = (uint32_t)(100u + i);
+    entry->admission_generation = (i % 2u) ? g2 : g0;
     entry->message_size = 7u + i;
     entry->first_tsn = base_tsn + (uint32_t)i;
     entry->last_tsn = entry->first_tsn;
@@ -1150,6 +1160,7 @@ static void peer_abort_snapshot_progress_capacity_is_atomic(void) {
   memset(pending, 0, sizeof(*pending));
   pending->stream_id = 2u;
   pending->ppid = 53u;
+  pending->admission_generation = ga;
   pending->message_size = 9u;
   pending->has_tsn = 1u;
   pending->first_tsn = a.association.data.last_ack;
