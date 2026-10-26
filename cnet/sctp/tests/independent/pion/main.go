@@ -96,18 +96,33 @@ func main() {
 	require(err == nil && n == len(open), "DCEP OPEN send: n=%d err=%v", n, err)
 	_ = stream.SetReadDeadline(time.Now().Add(10 * time.Second))
 	p := make([]byte, 128)
-	n, ppi, err := stream.ReadSCTP(p)
-	require(err == nil && n == 1 && p[0] == 2 &&
-		ppi == sctp.PayloadTypeWebRTCDCEP,
-		"expected C11 DCEP ACK, got n=%d ppi=%d err=%v", n, ppi, err)
+	// The RFC8832 ACK is ordered/reliable PPID50, while the newly opened
+	// application's I-DATA is TIMED+UNORDERED PPID53. Independent SCTP
+	// implementations may surface those separate message spaces in either
+	// order. Require BOTH exactly once, never assume ACK comes first.
+	seenAck, seenNominal := false, false
+	for i := 0; i < 2; i++ {
+		n0, ppi0, readErr := stream.ReadSCTP(p)
+		require(readErr == nil, "independent Pion read ACK/nominal: %v", readErr)
+		switch {
+		case ppi0 == sctp.PayloadTypeWebRTCDCEP:
+			require(!seenAck && n0 == 1 && p[0] == 2,
+				"duplicate/bad DCEP ACK n=%d", n0)
+			seenAck = true
+		case ppi0 == sctp.PayloadTypeWebRTCBinary:
+			require(!seenNominal && string(p[:n0]) == "c11-nominal",
+				"unexpected pre-FORWARD data %q", p[:n0])
+			seenNominal = true
+		default:
+			require(false, "unexpected PPID %d during DCEP+I-DATA", ppi0)
+		}
+	}
+	require(seenAck && seenNominal, "DCEP ACK or nominal I-DATA missing")
 	fmt.Println("PION_DCEP_ACK_OK")
-	// The first C11 DATA must be decoded by the independent Go peer.
-	n, ppi, err = stream.ReadSCTP(p)
-	require(err == nil && ppi == sctp.PayloadTypeWebRTCBinary &&
-		string(p[:n]) == "c11-nominal",
-		"independent Pion did not receive nominal: n=%d ppi=%d err=%v value=%q",
-		n, ppi, err, p[:n])
 	fmt.Println("PION_RECEIVED_C11_NOMINAL_IDATA")
+	// The next C11 DATA must be released only by real I-FORWARD-TSN.
+	var n int
+	var ppi sctp.PayloadProtocolIdentifier
 	// The C11 sender committed one subsequent DATA TSN but our test-only
 	// datagram transport dropped it. Pion must process the real RFC8260
 	// I-FORWARD-TSN and deliver ONLY the distinct following message.
