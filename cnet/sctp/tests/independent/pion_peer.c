@@ -194,6 +194,46 @@ static int qualify_revoked_owner_facade(cnet_sctp_session *session,
   if (cnet_sctp_session_next_deadline(session, &deadline,
           &has_deadline) != CNET_SCTP_SESSION_OWNER)
     return -1;
+  /* Revoking the authenticated DTLS Owner must block EVERY public wire
+   * mutation, not only ingress and receipt reads. Preserve the opaque
+   * Session for an explicit successful Owner hand-back at teardown. */
+  if (cnet_sctp_session_start(session, now, wire,
+          sizeof(wire), &written) != CNET_SCTP_SESSION_OWNER)
+    return -1;
+  written = sizeof(wire);
+  if (cnet_sctp_session_open_channel(session, now, 2u,
+          CNET_SCTP_SESSION_CHANNEL_RELIABLE_ORDERED,
+          0u, 0u, "stale", 5u, NULL, 0u,
+          wire, sizeof(wire), &written) != CNET_SCTP_SESSION_OWNER ||
+      written != 0u)
+    return -1;
+  written = sizeof(wire);
+  if (cnet_sctp_session_send(session, now, 0u, 1,
+          "stale", 5u, wire, sizeof(wire),
+          &written) != CNET_SCTP_SESSION_OWNER || written != 0u)
+    return -1;
+  if (cnet_sctp_session_queue_message(session, now, 0u, 1,
+          "stale", 5u) != CNET_SCTP_SESSION_OWNER)
+    return -1;
+  ticket = UINT64_C(9876);
+  if (cnet_sctp_session_queue_reliable_tracked(session, now, 0u,
+          original_generation, 1, "stale", 5u,
+          &ticket) != CNET_SCTP_SESSION_OWNER || ticket != 0u)
+    return -1;
+  written = sizeof(wire);
+  if (cnet_sctp_session_pump_message(session, now, wire,
+          sizeof(wire), &written) != CNET_SCTP_SESSION_OWNER ||
+      written != 0u)
+    return -1;
+  {
+    uint64_t close_generation = 0u;
+    written = sizeof(wire);
+    if (cnet_sctp_session_close_channel(session, now, 0u,
+            wire, sizeof(wire), &written,
+            &close_generation) != CNET_SCTP_SESSION_OWNER ||
+        written != 0u || close_generation != 0u)
+      return -1;
+  }
   written = sizeof(wire);
   if (cnet_sctp_session_send_reliable_tracked(session, now,
           0u, original_generation, 1, "stale", 5u,
