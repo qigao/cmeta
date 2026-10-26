@@ -318,8 +318,7 @@ int main(int argc, char **argv) {
           puts("C11_REAL_I_FORWARD_TSN_194");
           fflush(stdout);
         } else if (written != 0u && reply[12u] == 192u) {
-          fprintf(stderr, "C11 emitted legacy FORWARD instead of I-FORWARD
-");
+          fprintf(stderr, "C11 emitted legacy FORWARD instead of I-FORWARD\n");
           failure = 25; break;
         }
         if (publish(fd, &destination, reply, written) != 0) {
