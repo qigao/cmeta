@@ -1337,6 +1337,73 @@ static void pr_admission_generation_is_immutable(void) {
 }
 
 
+/* A copied message is owned by its original generation at queue admission.
+ * Under test-only incorrect DCEP SID reuse, neither a caller using the new
+ * generation nor one using the stale old token may silently cancel it.
+ * Restore the real generation and the Owner can cancel exactly once,
+ * including its original tracked reliable ticket where applicable. */
+static void queued_cancel_rejects_reused_dcep_generation(void) {
+  unsigned int reliable;
+  for (reliable = 0u; reliable < 2u; ++reliable) {
+    cnet_sctp_session a = {0}, b = {0};
+    test_context ca = {0}, cb = {0};
+    cnet_sctp_session_unsent_cancelled cancelled = {0};
+    cnet_sctp_session_reliable_ack ack = {0};
+    uint16_t sid = reliable ? 0u : 2u;
+    uint64_t ga = 0u, gb = 0u, ticket = 0u;
+    uint32_t before_tsn;
+
+    ready_pair(&a, &b, &ca, &cb);
+    open_channel_with_policy(&a, &b, 6u, sid,
+        reliable ? 0x80u : 0x02u, reliable ? 0u : 1000u, &ga, &gb);
+    before_tsn = a.association.data.next_tsn;
+    if (reliable)
+      assert(cnet_sctp_session_queue_reliable_tracked(&a, 20u,
+          sid, ga, 1, "copy", 4u, &ticket) == CNET_SCTP_SESSION_OK &&
+          ticket != 0u);
+    else
+      assert(cnet_sctp_session_queue_message(&a, 20u, sid, 1,
+          "copy", 4u) == CNET_SCTP_SESSION_OK && ticket == 0u);
+    assert(a.association.data.pending.active &&
+        a.association.data.pending.admission_generation == ga &&
+        a.association.data.next_tsn == before_tsn);
+
+    a.dcep.channels[sid].generation = ga + 11u;
+    assert(cnet_sctp_session_cancel_unsent_message(&a, 21u, sid,
+        ga + 11u, &cancelled) == CNET_SCTP_SESSION_STALE &&
+        cancelled.generation == 0u && cancelled.ticket == 0u &&
+        a.association.data.pending.active &&
+        a.association.data.pending.admission_generation == ga &&
+        a.association.data.next_tsn == before_tsn);
+    assert(cnet_sctp_session_cancel_unsent_message(&a, 21u, sid,
+        ga, &cancelled) == CNET_SCTP_SESSION_STALE &&
+        a.association.data.pending.active);
+    a.dcep.channels[sid].generation = ga;
+
+    ca.owner = 0;
+    assert(cnet_sctp_session_cancel_unsent_message(&a, 21u, sid,
+        ga, &cancelled) == CNET_SCTP_SESSION_OWNER &&
+        cancelled.generation == 0u);
+    ca.owner = 1;
+    assert(cnet_sctp_session_cancel_unsent_message(&a, 21u, sid,
+        ga, &cancelled) == CNET_SCTP_SESSION_OK &&
+        cancelled.generation == ga && cancelled.stream_id == sid &&
+        cancelled.ticket == ticket && cancelled.ppid == 53u &&
+        cancelled.message_size == 4u &&
+        !a.association.data.pending.active &&
+        a.association.data.next_tsn == before_tsn);
+    if (reliable)
+      assert(cnet_sctp_session_take_reliable_ack(&a, &ack) ==
+          CNET_SCTP_SESSION_EMPTY && ack.ticket == 0u);
+    assert(gb != 0u &&
+        cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK &&
+        cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK &&
+        cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK &&
+        cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+  }
+}
+
+
 int main(void) {
   session_open_message_reset_reuse();
   partial_loss_reports_abandonment_then_reliable_continues();
@@ -1350,6 +1417,7 @@ int main(void) {
   peer_abort_snapshot_full_wrapped_fifo();
   peer_abort_snapshot_progress_capacity_is_atomic();
   pr_admission_generation_is_immutable();
+  queued_cancel_rejects_reused_dcep_generation();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }
