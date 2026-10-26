@@ -1313,9 +1313,30 @@ static void pr_admission_generation_is_immutable(void) {
     a.dcep.channels[2u].generation = ga + 700u; /* injected old-SID reuse */
     assert(cnet_sctp_session_next_deadline(&a, &deadline, &has_deadline) ==
         CNET_SCTP_SESSION_OK && has_deadline && deadline >= 20u);
-    forward_n = 123u;
+    /* The egress guard must refuse this artificial stale lifetime BEFORE
+     * mutating DATA or writing a network packet, not merely preserve the
+     * resulting event's old generation while transmitting under the wrong
+     * one. Restore the original SID lifetime before real Owner advance. */
+    {
+      cnet_sctp_data before;
+      memcpy(&before, &a.association.data, sizeof(before));
+      memset(forward, 0xA5, sizeof(forward));
+      forward_n = 123u;
+      assert(cnet_sctp_session_advance(&a, deadline, forward,
+          sizeof(forward), &forward_n) == CNET_SCTP_SESSION_STALE &&
+          forward_n == 0u &&
+          memcmp(&before, &a.association.data, sizeof(before)) == 0);
+      for (i = 0u; i < sizeof(forward); ++i)
+        assert(forward[i] == 0xA5u);
+    }
+    a.dcep.channels[2u].generation = ga;
+    forward_n = 0u;
     assert(cnet_sctp_session_advance(&a, deadline, forward,
         sizeof(forward), &forward_n) == CNET_SCTP_SESSION_OK);
+    /* Original generation belongs to the admitted message, not the
+     * current channel. Mutation after real abandonment may not relabel it
+     * when the application eventually polls its copied local event. */
+    a.dcep.channels[2u].generation = ga + 700u;
     if (mode == 2u)
       assert(forward_n == 0u);
     else
