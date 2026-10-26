@@ -190,7 +190,31 @@ cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
     void *reply, size_t capacity, size_t *written) {
   cnet_sctp_session_status status = guard(session);
   cnet_sctp_assoc_status as;
+  /* Stage a fixed, copy-owned FIFO BEFORE input: an accepted peer ABORT
+   * destroys the DATA TCB, including its unread local abandonment records.
+   * A rejected packet may never transfer or consume any staged result. */
+  cnet_sctp_session_abort_abandoned
+      staged[CNET_SCTP_DATA_TX_SLOTS] = {{0}};
+  size_t staged_count = 0u, i;
   if (status != CNET_SCTP_SESSION_OK) return status;
+  if (session->association.data_ready) {
+    const cnet_sctp_data *data = &session->association.data;
+    staged_count = data->abandon_event_count;
+    if (staged_count > CNET_SCTP_DATA_TX_SLOTS)
+      return CNET_SCTP_SESSION_PROTOCOL;
+    for (i = 0u; i < staged_count; ++i) {
+      const cnet_sctp_data_abandon_event *event =
+          &data->abandon_events[(data->abandon_event_head + i) %
+              CNET_SCTP_DATA_TX_SLOTS];
+      uint16_t sid = event->stream_id;
+      staged[i].data = *event;
+      /* A zero token is a fail-closed invariant violation at later poll,
+       * NEVER a guessed new SID lifetime. No callback runs in this snapshot. */
+      if (sid < session->dcep.streams &&
+          session->dcep.channels[sid].state != 0u)
+        staged[i].generation = session->dcep.channels[sid].generation;
+    }
+  }
   as = cnet_sctp_assoc_input(&session->association, now_ms,
       (const uint8_t *)packet, packet_size, (uint8_t *)reply, capacity,
       written);
@@ -198,13 +222,30 @@ cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
     if (session->association.state == CNET_SCTP_ASSOC_FAILED &&
         session->association.peer_abort_pending &&
         !session->association.data_ready) {
-      /* A valid SACK before peer ABORT may cumulatively confirm existing
-       * original-generation tickets even though DATA is now destroyed.
-       * Unacknowledged tickets remain unconfirmed, NOT locally exhausted. */
+      /* A valid T=0 prefix SACK can confirm pre-ABORT DATA; a reflected
+       * T=1 prefix cannot. ABORT alone never acknowledges user traffic. */
       session->peer_abort_seen = 1u;
-      if (session->association.peer_abort_info.has_tsn)
-        latch_cumulative_progress(session,
-            session->association.peer_abort_info.last_acked_tsn);
+      session->peer_abort_has_tsn =
+          session->association.peer_abort_info.has_tsn;
+      session->peer_abort_last_ack =
+          session->association.peer_abort_info.last_acked_tsn;
+      if (session->peer_abort_has_tsn)
+        latch_cumulative_progress(session, session->peer_abort_last_ack);
+      /* No post-ABORT SACK can complete an unconfirmed FORWARD result.
+       * Retire only these non-success placeholders; retain all genuinely
+       * confirmed, copied results for Owner retrieval. This also prevents
+       * stale placeholders from permanently saturating the result table. */
+      for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+        if (session->forward_tracks[i].used &&
+            !session->forward_tracks[i].cumul_confirmed)
+          memset(&session->forward_tracks[i], 0,
+              sizeof(session->forward_tracks[i]));
+      if (staged_count != 0u) {
+        memcpy(session->abort_abandoned, staged,
+            staged_count * sizeof(staged[0]));
+        session->abort_abandoned_head = 0u;
+        session->abort_abandoned_count = (uint8_t)staged_count;
+      }
     } else {
       latch_reliable_cumulative_ack(session);
     }
@@ -801,18 +842,42 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
     return send_pending_ack(session, now_ms, event, packet,
         packet_capacity, packet_size);
 
-  /* Deliver abandonment before reset completion can retire the DCEP record
-   * that owns its generation. The DATA layer reserves this fixed event slot
-   * at admission, so no allocation or callback is needed here. */
-  /* Reserve an additional progress slot BEFORE consuming a DATA abandon
-   * event, otherwise result saturation could silently lose the original
-   * generation. Pre-TSN expiry has no FORWARD and needs no slot. */
-  if (session->association.data_ready) {
-    const cnet_sctp_data *data = &session->association.data;
-    if (data->abandon_event_count) {
-      const cnet_sctp_data_abandon_event *next =
-          &data->abandon_events[data->abandon_event_head];
-      if (next->has_tsn) {
+  /* The terminal peer-ABORT snapshot is independent of the now-destroyed
+   * DATA TCB and independent of the one-shot peer ABORT reason receipt.
+   * The original DCEP generation was copied before the destructive input.
+   * Ordinary live DATA still uses its existing bounded FIFO. */
+  {
+    const cnet_sctp_data_abandon_event *next = NULL;
+    const cnet_sctp_session_abort_abandoned *saved = NULL;
+    uint64_t generation = 0u;
+    int from_abort = session->abort_abandoned_count != 0u;
+    int record_forward = 0;
+    if (from_abort) {
+      saved = &session->abort_abandoned[session->abort_abandoned_head];
+      next = &saved->data;
+      generation = saved->generation;
+      if (generation == 0u) return CNET_SCTP_SESSION_STALE;
+    } else if (session->association.data_ready) {
+      const cnet_sctp_data *data = &session->association.data;
+      if (data->abandon_event_count != 0u) {
+        next = &data->abandon_events[data->abandon_event_head];
+        /* Preflight generation BEFORE the destructive DATA take; a failed
+         * lookup cannot silently consume an original local event. */
+        ds = cnet_sctp_dcep_generation(&session->dcep, next->stream_id,
+            &generation);
+        if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
+      }
+    }
+    if (next) {
+      /* Post-ABORT no future SACK can confirm the abandoned DATA. Only a
+       * genuine pre-ABORT cumulative SACK admits a peer-progress receipt.
+       * Unconfirmed local abandons still drain without consuming a forward
+       * result slot or being mislabeled LOCAL_RETRY_EXHAUSTED. */
+      record_forward = next->has_tsn &&
+          (!from_abort || (session->peer_abort_has_tsn &&
+            (uint32_t)(session->peer_abort_last_ack -
+                next->last_tsn) < UINT32_C(0x80000000)));
+      if (record_forward) {
         size_t index;
         for (index = 0u; index < CNET_SCTP_DATA_TX_SLOTS; ++index) {
           cnet_sctp_session_forward_track *slot =
@@ -825,51 +890,62 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
         if (!reserved_forward) return CNET_SCTP_SESSION_CAPACITY;
       }
     }
-  }
-  as = cnet_sctp_assoc_take_abandoned(&session->association, &abandoned);
-  if (as == CNET_SCTP_ASSOC_OK) {
-    ds = cnet_sctp_dcep_generation(&session->dcep, abandoned.stream_id,
-        &event->generation);
-    if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
-    event->kind = CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED;
-    event->stream_id = abandoned.stream_id;
-    event->message_size = abandoned.message_size;
-    event->message_identifier = abandoned.message_identifier;
-    event->ppid = abandoned.ppid;
-    event->first_tsn = abandoned.first_tsn;
-    event->last_tsn = abandoned.last_tsn;
-    event->reliability.mode =
-        (cnet_sctp_session_reliability_mode)abandoned.reliability.mode;
-    event->reliability.value = abandoned.reliability.value;
-    event->abandon_reason =
-        (cnet_sctp_session_abandon_reason)abandoned.reason;
-    event->unordered = abandoned.unordered;
-    event->interleaved = abandoned.interleaved;
-    event->has_tsn = abandoned.has_tsn;
-    event->binary = abandoned.ppid == 53u || abandoned.ppid == 57u;
-    event->locally_initiated = 1u;
-    if (abandoned.has_tsn) {
-      if (!reserved_forward) return CNET_SCTP_SESSION_PROTOCOL;
-      reserved_forward->result.generation = event->generation;
-      reserved_forward->result.stream_id = event->stream_id;
-      reserved_forward->result.first_tsn = event->first_tsn;
-      reserved_forward->result.last_tsn = event->last_tsn;
-      reserved_forward->result.ppid = event->ppid;
-      reserved_forward->result.message_identifier =
-          event->message_identifier;
-      reserved_forward->result.message_size = event->message_size;
-      reserved_forward->result.reliability = event->reliability;
-      reserved_forward->result.abandon_reason = event->abandon_reason;
-      reserved_forward->result.binary = event->binary;
-      reserved_forward->result.unordered = event->unordered;
-      reserved_forward->result.interleaved = event->interleaved;
-      reserved_forward->used = 1u;
-      if (session->association.data_ready &&
-          (uint32_t)(session->association.data.last_ack -
-              event->last_tsn) < UINT32_C(0x80000000))
-        reserved_forward->cumul_confirmed = 1u;
+    if (from_abort) {
+      abandoned = saved->data;
+      memset(&session->abort_abandoned[session->abort_abandoned_head], 0,
+          sizeof(session->abort_abandoned[0]));
+      session->abort_abandoned_head = (uint8_t)(
+          (session->abort_abandoned_head + 1u) % CNET_SCTP_DATA_TX_SLOTS);
+      --session->abort_abandoned_count;
+      as = CNET_SCTP_ASSOC_OK;
+    } else {
+      as = cnet_sctp_assoc_take_abandoned(&session->association, &abandoned);
     }
-    return CNET_SCTP_SESSION_OK;
+    if (as == CNET_SCTP_ASSOC_OK) {
+      event->generation = generation;
+      event->kind = CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED;
+      event->stream_id = abandoned.stream_id;
+      event->message_size = abandoned.message_size;
+      event->message_identifier = abandoned.message_identifier;
+      event->ppid = abandoned.ppid;
+      event->first_tsn = abandoned.first_tsn;
+      event->last_tsn = abandoned.last_tsn;
+      event->reliability.mode =
+          (cnet_sctp_session_reliability_mode)abandoned.reliability.mode;
+      event->reliability.value = abandoned.reliability.value;
+      event->abandon_reason =
+          (cnet_sctp_session_abandon_reason)abandoned.reason;
+      event->unordered = abandoned.unordered;
+      event->interleaved = abandoned.interleaved;
+      event->has_tsn = abandoned.has_tsn;
+      event->binary = abandoned.ppid == 53u || abandoned.ppid == 57u;
+      event->locally_initiated = 1u;
+      if (record_forward) {
+        if (!reserved_forward) return CNET_SCTP_SESSION_PROTOCOL;
+        reserved_forward->result.generation = event->generation;
+        reserved_forward->result.stream_id = event->stream_id;
+        reserved_forward->result.first_tsn = event->first_tsn;
+        reserved_forward->result.last_tsn = event->last_tsn;
+        reserved_forward->result.ppid = event->ppid;
+        reserved_forward->result.message_identifier =
+            event->message_identifier;
+        reserved_forward->result.message_size = event->message_size;
+        reserved_forward->result.reliability = event->reliability;
+        reserved_forward->result.abandon_reason = event->abandon_reason;
+        reserved_forward->result.binary = event->binary;
+        reserved_forward->result.unordered = event->unordered;
+        reserved_forward->result.interleaved = event->interleaved;
+        reserved_forward->used = 1u;
+        if ((from_abort && session->peer_abort_has_tsn &&
+            (uint32_t)(session->peer_abort_last_ack -
+                event->last_tsn) < UINT32_C(0x80000000)) ||
+            (session->association.data_ready &&
+            (uint32_t)(session->association.data.last_ack -
+                event->last_tsn) < UINT32_C(0x80000000)))
+          reserved_forward->cumul_confirmed = 1u;
+      }
+      return CNET_SCTP_SESSION_OK;
+    }
   }
   if (as != CNET_SCTP_ASSOC_EMPTY) return map_assoc(as);
 
@@ -971,6 +1047,11 @@ cnet_sctp_session_status cnet_sctp_session_stop(cnet_sctp_session *session) {
   session->pending_dcep_ack = 0u;
   session->terminal_retry_exhausted = 0u;
   session->peer_abort_seen = 0u;
+  session->peer_abort_has_tsn = 0u;
+  session->peer_abort_last_ack = 0u;
+  session->abort_abandoned_head = 0u;
+  session->abort_abandoned_count = 0u;
+  memset(session->abort_abandoned, 0, sizeof(session->abort_abandoned));
   memset(session->tracked, 0, sizeof(session->tracked));
   memset(session->forward_tracks, 0, sizeof(session->forward_tracks));
   memset(session->closing_generation, 0, sizeof(session->closing_generation));

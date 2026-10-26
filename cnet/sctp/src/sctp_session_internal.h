@@ -29,14 +29,28 @@ typedef struct cnet_sctp_session_forward_track {
   uint8_t cumul_confirmed;
 } cnet_sctp_session_forward_track;
 
+/* Fixed post-ABORT, copy-owned transfer of DATA's already queued, LOCAL
+ * PR abandonment records. The original SID generation is snapshotted
+ * before the Association can destroy its DATA TCB; no payload is borrowed
+ * and no new abandonment is fabricated for other in-flight messages. */
+typedef struct cnet_sctp_session_abort_abandoned {
+  cnet_sctp_data_abandon_event data;
+  uint64_t generation;
+} cnet_sctp_session_abort_abandoned;
+
 typedef struct cnet_sctp_session {
   cnet_sctp_assoc association;
   cnet_sctp_dcep dcep;
   cnet_sctp_session_reliable_track tracked[CNET_SCTP_DATA_TX_SLOTS];
   cnet_sctp_session_forward_track forward_tracks[CNET_SCTP_DATA_TX_SLOTS];
+  cnet_sctp_session_abort_abandoned
+      abort_abandoned[CNET_SCTP_DATA_TX_SLOTS];
   uint64_t next_tracked_ticket;
+  uint32_t peer_abort_last_ack;
   uint8_t terminal_retry_exhausted; /* set ONLY by genuine advance EXPIRED */
   uint8_t peer_abort_seen; /* valid after peer ABORT until explicit stop */
+  uint8_t peer_abort_has_tsn;
+  uint8_t abort_abandoned_head, abort_abandoned_count;
   uint64_t closing_generation[CNET_SCTP_DCEP_STREAMS];
   uint16_t pending_dcep_ack;
   uint32_t magic;
