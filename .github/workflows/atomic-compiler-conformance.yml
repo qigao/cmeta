@@ -259,6 +259,377 @@ jobs:
           COMPILER_A=gcc COMPILER_B=clang BUILD_ROOT=build/plugin-dso-native \
             bash tests/compiler/run_plugin_dso_smoke.sh
 
+  tcc-disruptor-archive:
+    name: TinyCC Disruptor ASM / ${{ matrix.os }} / real linked library
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    # Unlike the full C11 compiler-admission experiment, THIS is a required
+    # component-scoped job: build actual .a, run actual client executables;
+    # fail on any rejection, crash, malformed output or missing static archive.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify native CPU and build pinned TinyCC
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64|aarch64) ;;
+            *) echo "Unsupported non-native architecture" >&2; exit 1 ;;
+          esac
+          git clone --quiet https://github.com/TinyCC/tinycc.git "$RUNNER_TEMP/tinycc-disruptor"
+          git -C "$RUNNER_TEMP/tinycc-disruptor" checkout --detach e23dabed154a8495f3ac1ff3cc9d04fa1c207893
+          cd "$RUNNER_TEMP/tinycc-disruptor"
+          ./configure --prefix="$RUNNER_TEMP/tcc-disruptor-install"
+          make -j2
+          make install
+          echo "$RUNNER_TEMP/tcc-disruptor-install/bin" >> "$GITHUB_PATH"
+      - name: Build real Disruptor+Platform C with TCC and canonical native GAS Atomic
+        shell: bash
+        run: |
+          set -euo pipefail
+          tcc -v
+          gcc --version
+          cmake -S concurrency/tcc -B build/tcc-disruptor-required -G Ninja \
+            -DCMAKE_C_COMPILER=tcc -DCMAKE_ASM_COMPILER=gcc
+          cmake --build build/tcc-disruptor-required --parallel 2
+          test -s build/tcc-disruptor-required/libsalts_tcc_disruptor.a
+          nm --defined-only build/tcc-disruptor-required/libsalts_tcc_disruptor.a \
+            | grep -Eq '[[:space:]]T[[:space:]]disruptor_create
+    name: Pinned TinyCC ARM64 / native runtime diagnostics (not admitted)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    # TinyCC advertises __STDC_NO_ATOMICS__=1. Keep strict native C11
+    # qualification red until its compiler + ABI contract is actually fixed.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify hardware architecture and build pinned ARM64 TinyCC
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          git clone --quiet https://github.com/TinyCC/tinycc.git "$RUNNER_TEMP/tinycc-arm64"
+          git -C "$RUNNER_TEMP/tinycc-arm64" checkout --detach e23dabed154a8495f3ac1ff3cc9d04fa1c207893
+          cd "$RUNNER_TEMP/tinycc-arm64"
+          ./configure --prefix="$RUNNER_TEMP/tcc-arm64-install"
+          make -j2
+          make install
+          echo "$RUNNER_TEMP/tcc-arm64-install/bin" >> "$GITHUB_PATH"
+      - name: Verify TCC AArch64 target and native scalar atomic operations
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/tcc-arm64
+          tcc -v
+          tcc -std=c11 tests/compiler/tcc_atomic_probe.c \
+            -o build/tcc-arm64/scalar-atomic
+          timeout 30s build/tcc-arm64/scalar-atomic
+      - name: Qualify isolated GNU intrinsic atomic backend on ARM64
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/tcc-arm64
+          tcc -std=c11 -Iplatform/include \
+            tests/compiler/intrinsic_atomic_conformance.c \
+            -lpthread -o build/tcc-arm64/intrinsic-conformance
+          timeout 30s build/tcc-arm64/intrinsic-conformance
+      - name: Run unchanged Salts SPSC C11 source under TCC ARM64
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/tcc-arm64
+          tcc -std=c11 -D_POSIX_C_SOURCE=200809L -Iconcurrency/include \
+            concurrency/src/spsc_ring.c tests/compiler/spsc_real_source_conformance.c \
+            -lpthread -o build/tcc-arm64/spsc-conformance
+          timeout 40s build/tcc-arm64/spsc-conformance
+      - name: Run opaque Salts Disruptor MPMC source under TCC ARM64
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/tcc-arm64
+          tcc -std=c11 -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L \
+            -D_XOPEN_SOURCE=700 -DSALTS_THREAD_LOCAL=_Thread_local \
+            -Iconcurrency/include -Iutils/include -Iplatform/include \
+            concurrency/src/disruptor.c platform/src/thread_posix.c \
+            tests/compiler/disruptor_mpmc_real_source.c -lpthread \
+            -o build/tcc-arm64/disruptor-mpmc
+          timeout 40s build/tcc-arm64/disruptor-mpmc
+      - name: Assemble native AArch64 atomics and link with pinned ARM64 TCC
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/tcc-arm64/asm
+          gcc -c -x assembler-with-cpp \
+            tests/compiler/asm-atomic/asm_atomic_aarch64.S \
+            -o build/tcc-arm64/asm/atomic_backend.o
+          tcc -std=c11 tests/compiler/asm-atomic/asm_atomic_conformance.c \
+            build/tcc-arm64/asm/atomic_backend.o -lpthread \
+            -o build/tcc-arm64/asm/conformance
+          timeout 30s build/tcc-arm64/asm/conformance
+      - name: Audit AArch64 external ASM ELF and non-executable stack
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          readelf -h build/tcc-arm64/asm/atomic_backend.o
+          readelf -W -S build/tcc-arm64/asm/atomic_backend.o | grep -F '.note.GNU-stack'
+          readelf -W -l build/tcc-arm64/asm/conformance | grep GNU_STACK
+
+      - name: Execute SEQ_CST store-buffering and release/acquire litmus with pinned TinyCC ARM64
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          tcc -std=c11 tests/compiler/asm-atomic/asm_atomic_litmus.c \
+            build/tcc-arm64/asm/atomic_backend.o -lpthread \
+            -o build/tcc-arm64/asm/litmus
+          timeout 40s build/tcc-arm64/asm/litmus
+      - name: Exercise original Disruptor against GAS Atomic slots with TinyCC AArch64
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_ROOT=build/asm-disruptor-tcc-arm64 \
+            bash tests/compiler/asm-atomic/run_disruptor_tcc.sh \
+            2>&1 | tee build/asm-disruptor-tcc-arm64.log
+      - name: Exercise order-specialized ASM Disruptor with pinned TinyCC ARM64
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          SALTS_TEST_ASM_ORDERED=1 BUILD_ROOT=build/asm-disruptor-ordered-tcc-arm64 \
+            bash tests/compiler/asm-atomic/run_disruptor_tcc.sh \
+            2>&1 | tee build/asm-disruptor-ordered-tcc-arm64.log
+      - name: Build native ARM64 TinyCC Disruptor static library and link consumers
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S concurrency/tcc -B build/tcc-disruptor-arm64 -G Ninja \
+            -DCMAKE_C_COMPILER=tcc -DCMAKE_ASM_COMPILER=gcc
+          cmake --build build/tcc-disruptor-arm64 --parallel 2
+          test -s build/tcc-disruptor-arm64/libsalts_tcc_disruptor.a
+          ctest --test-dir build/tcc-disruptor-arm64 \
+            --repeat until-fail:5 --output-on-failure
+      - name: Verify strict C11 compiler admission (no atomics fallback)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S tests/compiler -B build/tcc-arm64/strict \
+            -G Ninja -DCMAKE_C_COMPILER=tcc
+          cmake --build build/tcc-arm64/strict --parallel 2
+      - name: Preserve ARM64 TinyCC diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcc-arm64-atomic-diagnostics
+          if-no-files-found: ignore
+          path: |
+            build/asm-disruptor-tcc-arm64.log
+            build/asm-disruptor-ordered-tcc-arm64.log
+            build/tcc-disruptor-arm64/Testing/Temporary/LastTest.log
+            build/tcc-arm64/strict/CMakeFiles/CMakeConfigureLog.yaml
+            build/tcc-arm64/strict/Testing/Temporary/LastTest.log
+
+  tcc-experimental:
+    name: TCC / pinned mob / experimental
+    runs-on: ubuntu-latest
+    # This job is evidence gathering only. TCC is NOT an admitted Salts SDK
+    # compiler until its native atomics, ABI, and concurrency are qualified.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pinned TinyCC (not the old distro release)
+        shell: bash
+        run: |
+          git clone https://github.com/TinyCC/tinycc.git "$RUNNER_TEMP/tinycc"
+          git -C "$RUNNER_TEMP/tinycc" checkout --detach e23dabed154a8495f3ac1ff3cc9d04fa1c207893
+          cd "$RUNNER_TEMP/tinycc"
+          ./configure --prefix="$RUNNER_TEMP/tcc-install"
+          make -j2
+          make install
+          echo "$RUNNER_TEMP/tcc-install/bin" >> "$GITHUB_PATH"
+      - name: Record exact compiler revision
+        run: tcc -v
+      - name: Diagnostic TCC atomics and mixed-compiler ABI (not admission)
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p build/atomic-probe
+          bash tests/compiler/run_tcc_diagnostics.sh 2>&1 | tee build/atomic-probe/diagnostics.log
+      - name: Diagnostic complete CMeta/CSTL source and linked consumer
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p build/tcc-cmeta-cstl
+          CC=tcc BUILD_ROOT=build/tcc-cmeta-cstl \
+            bash tests/compiler/run_cmeta_cstl_qualification.sh 2>&1 | tee build/tcc-cmeta-cstl/build.log
+      - name: Diagnostic mixed GCC/TCC CMeta/CSTL archives and consumers
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p build/mixed-tcc-gcc
+          CC=gcc BUILD_ROOT=build/mixed-gcc-in-tcc \
+            bash tests/compiler/run_cmeta_cstl_qualification.sh
+          BUILD_A=build/mixed-gcc-in-tcc BUILD_B=build/tcc-cmeta-cstl \
+            CC_A=gcc CC_B=tcc LINKER=gcc BUILD_ROOT=build/mixed-tcc-gcc \
+            EXTRA_LINK_FLAGS="-Wl,--no-eh-frame-hdr -Wl,-z,noexecstack" \
+            bash tests/compiler/run_cmeta_cstl_mixed_abi.sh \
+              2>&1 | tee build/mixed-tcc-gcc/build.log
+      - name: Diagnostic TCC CMeta/Plugin public declaration macros
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p build/tcc-macros
+          CC=tcc BUILD_ROOT=build/tcc-macros \
+            CMETA_LIBRARY=build/tcc-cmeta-cstl/libcmeta_compiler.a \
+            bash tests/compiler/run_cmeta_macro_probes.sh \
+              2>&1 | tee build/tcc-macros/build.log
+      - name: Diagnostic GCC/TCC explicit Plugin shared-object bootstrap
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p build/plugin-dso-tcc
+          COMPILER_A=gcc COMPILER_B=tcc BUILD_ROOT=build/plugin-dso-tcc \
+            bash tests/compiler/run_plugin_dso_smoke.sh \
+              2>&1 | tee build/plugin-dso-tcc/build.log
+      - name: Compare pinned upstream c-threads catomics.h (diagnostic only)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet https://github.com/zelang-dev/c-threads.git "$RUNNER_TEMP/c-threads-reference"
+          git -C "$RUNNER_TEMP/c-threads-reference" checkout --detach d7cbefa0099044d6d834939290eb62e02ed8bb1b
+          mkdir -p build/catomics-upstream
+          failures=0
+          for cc in gcc clang tcc; do
+            if "$cc" -std=c11 -I"$RUNNER_TEMP/c-threads-reference/include" \
+                  tests/compiler/catomics_reference_probe.c \
+                  -o "build/catomics-upstream/probe-$cc" \
+                  >"build/catomics-upstream/$cc.log" 2>&1 &&
+               timeout 30s "build/catomics-upstream/probe-$cc" \
+                  >>"build/catomics-upstream/$cc.log" 2>&1; then
+              echo "$cc: upstream catomics reference PASS (not admission)"
+            else
+              echo "$cc: upstream catomics reference FAILED (diagnostic)"
+              failures=$((failures + 1))
+            fi
+            cat "build/catomics-upstream/$cc.log"
+          done
+          echo "upstream catomics reference failures: $failures"
+          test "$failures" -eq 0
+      - name: Assemble native x64 atomic entrypoints and link with pinned TCC
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/asm-tcc-x64
+          gcc -c -x assembler-with-cpp \
+            tests/compiler/asm-atomic/asm_atomic_x86_64.S \
+            -o build/asm-tcc-x64/atomic_backend.o
+          tcc -std=c11 tests/compiler/asm-atomic/asm_atomic_conformance.c \
+            build/asm-tcc-x64/atomic_backend.o -lpthread \
+            -o build/asm-tcc-x64/conformance
+          timeout 30s build/asm-tcc-x64/conformance
+      - name: Audit external ASM ELF and non-executable stack
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          readelf -h build/asm-tcc-x64/atomic_backend.o
+          readelf -W -S build/asm-tcc-x64/atomic_backend.o | grep -F '.note.GNU-stack'
+          readelf -W -l build/asm-tcc-x64/conformance | grep GNU_STACK
+
+      - name: Execute SEQ_CST store-buffering and release/acquire litmus with pinned TinyCC x86-64
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          tcc -std=c11 tests/compiler/asm-atomic/asm_atomic_litmus.c \
+            build/asm-tcc-x64/atomic_backend.o -lpthread \
+            -o build/asm-tcc-x64/litmus
+          timeout 40s build/asm-tcc-x64/litmus
+      - name: Exercise original Disruptor compiled by TinyCC against GAS Atomic slots
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_ROOT=build/asm-disruptor-tcc-x64 \
+            bash tests/compiler/asm-atomic/run_disruptor_tcc.sh \
+            2>&1 | tee build/asm-disruptor-tcc-x64.log
+      - name: Exercise order-specialized ASM Disruptor with pinned TinyCC x86-64
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          SALTS_TEST_ASM_ORDERED=1 BUILD_ROOT=build/asm-disruptor-ordered-tcc-x64 \
+            bash tests/compiler/asm-atomic/run_disruptor_tcc.sh \
+            2>&1 | tee build/asm-disruptor-ordered-tcc-x64.log
+      - name: Build real TinyCC-only Disruptor static library and link consumers
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S concurrency/tcc -B build/tcc-disruptor-x64 -G Ninja \
+            -DCMAKE_C_COMPILER=tcc -DCMAKE_ASM_COMPILER=gcc
+          cmake --build build/tcc-disruptor-x64 --parallel 2
+          test -s build/tcc-disruptor-x64/libsalts_tcc_disruptor.a
+          ctest --test-dir build/tcc-disruptor-x64 \
+            --repeat until-fail:5 --output-on-failure
+      - name: Configure standalone C11 conformance
+        run: cmake -S tests/compiler -B build/atomic-tcc -G Ninja -DCMAKE_C_COMPILER=tcc
+      - name: Compile
+        run: cmake --build build/atomic-tcc --parallel 2
+      - name: Execute real atomic tests
+        run: ctest --test-dir build/atomic-tcc --output-on-failure
+      - name: Preserve experimental diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcc-atomic-conformance-logs
+          if-no-files-found: ignore
+          path: |
+            build/mixed-tcc-gcc/build.log
+            build/mixed-tcc-gcc/*.log
+            build/plugin-dso-tcc/build.log
+            build/plugin-dso-tcc/*.log
+            build/tcc-macros/build.log
+            build/tcc-macros/*.log
+            build/tcc-cmeta-cstl/build.log
+            build/tcc-cmeta-cstl/cmeta/*.log
+            build/tcc-cmeta-cstl/cstl/*.log
+            build/asm-disruptor-tcc-x64.log
+            build/asm-disruptor-ordered-tcc-x64.log
+            build/tcc-disruptor-x64/Testing/Temporary/LastTest.log
+            build/catomics-upstream/*.log
+            build/atomic-probe/diagnostics.log
+            build/atomic-tcc/CMakeFiles/CMakeConfigureLog.yaml
+            build/atomic-tcc/CMakeFiles/CMakeError.log
+            build/atomic-tcc/Testing/Temporary/LastTest.log
+
+      - name: Require three real linked-client tests with five consecutive passes each
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/tcc-disruptor-required \
+            --repeat until-fail:5 --output-on-failure
+      - name: Preserve exact-head build and consumer results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tcc-disruptor-linked-regression-${{ matrix.os }}
+          if-no-files-found: ignore
+          path: build/tcc-disruptor-required/Testing/Temporary/LastTest.log
+
   tcc-arm64-experimental:
     name: Pinned TinyCC ARM64 / native runtime diagnostics (not admitted)
     runs-on: ubuntu-24.04-arm
