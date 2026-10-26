@@ -31,9 +31,17 @@ enum { DATAGRAM_CAPACITY = CNET_SCTP_SESSION_MAX_PACKET_BYTES };
 typedef struct test_owner {
   unsigned char cookie_key[32];
   uint64_t generation;
+  uint64_t bound_generation;
 } test_owner;
 
-static int is_owner(void *p) { return p != NULL; }
+/* Test-only external Owner lease gate: a new DTLS generation can revoke
+ * admission before a decrypted SCTP record reaches the old C11 Session.
+ * This does not supply production locking, cancellation or DSO draining. */
+static int is_owner(void *p) {
+  const test_owner *owner = (const test_owner *)p;
+  return owner != NULL && owner->generation != 0u &&
+      owner->generation == owner->bound_generation;
+}
 static int entropy(void *p, uint8_t *output, size_t n) {
   (void)p;
   return output && n <= (size_t)INT_MAX &&
@@ -256,6 +264,28 @@ static size_t input_over_verified_dtls(cnet_sctp_session *recipient,
   assert(status == CNET_SCTP_SESSION_OK);
   return n;
 }
+
+/* The receiving DTLS stack must not expose any decrypted plaintext after
+ * a deliberately corrupted ciphertext record. We run this only AFTER
+ * the positive SCTP checks because an authenticated-record failure may
+ * legitimately close the OpenSSL association. */
+static void reject_modified_dtls_ciphertext(SSL *sender, SSL *receiver,
+    const uint8_t *plaintext, size_t bytes) {
+  uint8_t ciphertext[DATAGRAM_CAPACITY], output[DATAGRAM_CAPACITY];
+  int length, result;
+  assert(bytes > 0u && bytes < (size_t)DATAGRAM_CAPACITY);
+  assert(SSL_write(sender, plaintext, (int)bytes) == (int)bytes);
+  length = BIO_read(SSL_get_wbio(sender),
+      ciphertext, sizeof(ciphertext));
+  assert(length > (int)bytes && ciphertext[0] == 23u);
+  ciphertext[length - 1] ^= UINT8_C(0x80);
+  assert(BIO_write(SSL_get_rbio(receiver), ciphertext, length) == length);
+  memset(output, 0xA5, sizeof(output));
+  result = SSL_read(receiver, output, (int)sizeof(output));
+  assert(result <= 0); /* no decrypted SCTP bytes passed to the Owner */
+  puts("REAL_DTLS_CORRUPTED_CIPHERTEXT_REJECTED");
+}
+
 static void test_actual_dtls_application_records(void) {
   uint8_t client_fp[32], server_fp[32], incorrect[32];
   SSL_CTX *client_context = new_identity(client_fp);
@@ -263,7 +293,7 @@ static void test_actual_dtls_application_records(void) {
   SSL *client_dtls = new_dtls_peer(client_context, 0);
   SSL *server_dtls = new_dtls_peer(server_context, 1);
   uint64_t peer_generation;
-  test_owner a = {{0}, 0u}, b = {{0}, 0u};
+  test_owner a = {0}, b = {0};
   cnet_sctp_session_create_config ca, cb;
   cnet_sctp_session *client = NULL, *server = NULL;
   cnet_sctp_session_event event = {0};
@@ -281,7 +311,8 @@ static void test_actual_dtls_application_records(void) {
   incorrect[0] ^= 1u;
   assert(!peer_matches(client_dtls, incorrect));
   peer_generation = bound_peer_generation(client_fp, server_fp);
-  a.generation = b.generation = peer_generation;
+  a.generation = a.bound_generation = peer_generation;
+  b.generation = b.bound_generation = peer_generation;
   assert(RAND_bytes(a.cookie_key, sizeof(a.cookie_key)) == 1);
   assert(RAND_bytes(b.cookie_key, sizeof(b.cookie_key)) == 1);
   ca = config(5000u, peer_generation, 1, &a);
@@ -362,6 +393,24 @@ static void test_actual_dtls_application_records(void) {
       memcmp(application, message, sizeof(message) - 1u) == 0);
   puts("REAL_DTLS_OPAQUE_I_DATA_PPID53_RECEIVED");
 
+  /* Real DTLS decryption can still succeed after the Session's external
+   * generation lease has been revoked. The test Owner must refuse it and
+   * zero the public input output size without mutating old C11 storage. */
+  {
+    uint8_t authenticated[DATAGRAM_CAPACITY];
+    const size_t bytes = decrypt_packet(client_dtls, server_dtls,
+        first, n1, authenticated);
+    size_t discarded = 123u;
+    b.generation ^= UINT64_C(1);
+    assert(bytes == n1 && b.generation != b.bound_generation);
+    assert(cnet_sctp_session_input(server, 17u,
+        authenticated, bytes, fourth, sizeof(fourth),
+        &discarded) == CNET_SCTP_SESSION_OWNER &&
+        discarded == 0u);
+    b.generation = b.bound_generation;
+  }
+  puts("REAL_DTLS_STALE_GENERATION_OWNER_REFUSED");
+
   /* Test a FRESH encrypted DTLS record carrying old SCTP DATA after the
    * C11 receiving Owner has performed explicit abortive stop. The record
    * still decrypts correctly, but cannot resurrect the old Session/DTLS
@@ -373,13 +422,14 @@ static void test_actual_dtls_application_records(void) {
         first, n1, authenticated);
     size_t discarded = 123u;
     assert(bytes == n1);
-    assert(cnet_sctp_session_input(server, 17u,
+    assert(cnet_sctp_session_input(server, 18u,
         authenticated, bytes, fourth, sizeof(fourth),
         &discarded) == CNET_SCTP_SESSION_CLOSED &&
         discarded == 0u);
   }
   puts("REAL_DTLS_LATE_OLD_GENERATION_REJECTED");
   assert(cnet_sctp_session_stop(client) == CNET_SCTP_SESSION_OK);
+  reject_modified_dtls_ciphertext(client_dtls, server_dtls, first, n1);
   assert(cnet_sctp_session_drained(client) != 0);
   assert(cnet_sctp_session_drained(server) != 0);
   assert(cnet_sctp_session_destroy(client) == CNET_SCTP_SESSION_OK);
