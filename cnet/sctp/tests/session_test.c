@@ -1212,15 +1212,17 @@ static void peer_abort_snapshot_progress_capacity_is_atomic(void) {
 
 /* Exercise the real Session -> Association -> DATA admission-generation
  * propagation, not merely a synthetic injected abandonment FIFO.
- * 0: direct maxRTX0; 1: copied 2100-byte message with two emitted fragments
- * and an unsent suffix; 2: TIMED copied message abandoned BEFORE any TSN.
+ * 0: direct maxRTX0 on negotiated I-DATA; 1: copied 2100-byte I-DATA
+ * with two emitted fragments and an unsent suffix; 2: TIMED copied
+ * message abandoned BEFORE any TSN; 3: test-only forced legacy DATA
+ * framing on the bounded sender, NOT independent-peer negotiation evidence.
  * Capacity/Owner refusals must not reserve identity or consume a DATA TSN.
  * Test-only DCEP generation mutation simulates forbidden old-SID reuse after
  * successful admission: original DATA and the resulting abandonment event
  * must retain the old generation, never requery the current SID. */
 static void pr_admission_generation_is_immutable(void) {
   unsigned int mode;
-  for (mode = 0u; mode < 3u; ++mode) {
+  for (mode = 0u; mode < 4u; ++mode) {
     cnet_sctp_session a = {0}, b = {0};
     test_context ca = {0}, cb = {0};
     cnet_sctp_session_event event = {0};
@@ -1237,13 +1239,15 @@ static void pr_admission_generation_is_immutable(void) {
     ready_pair(&a, &b, &ca, &cb);
     open_channel_with_policy(&a, &b, 6u, 2u, channel_type, policy_value,
         &ga, &gb);
+    if (mode == 3u)
+      a.association.data.config.interleaving_supported = 0u;
     original_next_tsn = a.association.data.next_tsn;
 
     /* No fallback on a full fixed 16-entry PR event reservation ledger. */
     a.association.data.abandon_event_count = CNET_SCTP_DATA_TX_SLOTS;
     wire_n = 123u;
     memset(wire, 0xCC, sizeof(wire));
-    if (mode == 0u)
+    if (mode == 0u || mode == 3u)
       assert(cnet_sctp_session_send(&a, 20u, 2u, 1, body, size,
           wire, sizeof(wire), &wire_n) == CNET_SCTP_SESSION_CAPACITY &&
           wire_n == 0u);
@@ -1258,7 +1262,7 @@ static void pr_admission_generation_is_immutable(void) {
     a.association.data.abandon_event_head = 0u;
 
     ca.owner = 0;
-    if (mode == 0u)
+    if (mode == 0u || mode == 3u)
       assert(cnet_sctp_session_send(&a, 20u, 2u, 1, body, size,
           wire, sizeof(wire), &wire_n) == CNET_SCTP_SESSION_OWNER);
     else
@@ -1268,7 +1272,7 @@ static void pr_admission_generation_is_immutable(void) {
     assert(a.association.data.next_tsn == original_next_tsn &&
         !a.association.data.pending.active);
 
-    if (mode == 0u) {
+    if (mode == 0u || mode == 3u) {
       assert(cnet_sctp_session_send(&a, 20u, 2u, 1, body, size,
           wire, sizeof(wire), &wire_n) == CNET_SCTP_SESSION_OK &&
           wire_n != 0u);
@@ -1308,7 +1312,8 @@ static void pr_admission_generation_is_immutable(void) {
     if (mode == 2u)
       assert(forward_n == 0u);
     else
-      assert(forward_n != 0u && forward[12u] == 194u);
+      assert(forward_n != 0u && forward[12u] ==
+          (uint8_t)(mode == 3u ? 192u : 194u));
     assert(a.association.data.abandon_event_count == 1u &&
         a.association.data.abandon_events[
             a.association.data.abandon_event_head].admission_generation ==
@@ -1321,7 +1326,8 @@ static void pr_admission_generation_is_immutable(void) {
         event.message_size == size && event.ppid == 53u &&
         event.reliability.mode == (mode == 2u ?
             CNET_SCTP_SESSION_TIMED : CNET_SCTP_SESSION_RETRANSMITS) &&
-        event.has_tsn == (mode != 2u));
+        event.has_tsn == (mode != 2u) &&
+        event.interleaved == (mode != 3u));
     assert(gb != 0u &&
         cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK &&
         cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK &&
