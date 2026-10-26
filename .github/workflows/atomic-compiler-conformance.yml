@@ -84,10 +84,11 @@ jobs:
           cmake -S tests/compiler -B build/asm-compare
           -G Ninja -DCMAKE_C_COMPILER=${{ matrix.compiler }}
           -DCMAKE_BUILD_TYPE=Release
-      - name: Build C11 and ASM backends with identical native C compiler flags
+      - name: Build matched C11 and ASM throughput and timestamped latency binaries
         run: >-
           cmake --build build/asm-compare --parallel 2
           --target salts_disruptor_native_benchmark salts_disruptor_asm_benchmark
+          salts_disruptor_native_latency salts_disruptor_asm_latency
       - name: Compare paired warm and sampled runs (no performance threshold)
         env:
           CC: ${{ matrix.compiler }}
@@ -99,13 +100,26 @@ jobs:
             --asm build/asm-compare/salts_disruptor_asm_benchmark \
             --samples 7 --warmups 2 \
             --output build/asm-compare/paired-benchmark.json
-      - name: Upload raw measurements, no release performance claims
+      - name: Compare real publish-to-claim per-message age quantiles
+        env:
+          CC: ${{ matrix.compiler }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/compiler/asm-atomic/compare_disruptor_latency.py \
+            --native build/asm-compare/salts_disruptor_native_latency \
+            --asm build/asm-compare/salts_disruptor_asm_latency \
+            --samples 7 --warmups 2 \
+            --output build/asm-compare/paired-latency.json
+      - name: Upload raw throughput and latency measurements (no performance thresholds)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: asm-disruptor-${{ matrix.os }}-${{ matrix.compiler }}
           if-no-files-found: ignore
-          path: build/asm-compare/paired-benchmark.json
+          path: |
+            build/asm-compare/paired-benchmark.json
+            build/asm-compare/paired-latency.json
 
   native-interop:
     name: Native GCC/Clang cross-compiler atomic ABI

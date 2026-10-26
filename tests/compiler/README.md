@@ -616,6 +616,40 @@ instrumented packet timestamped harness. Do not infer p50/p99 latency
 from throughput alone. Correctness and native C11 source sanitizer
 gates remain separate from the uninstrumented foreign ASM backend.
 
+## True per-message publish-to-claim handoff age
+
+The original throughput benchmark printed `mean_wall_ns_per_msg`,
+which is an **aggregate throughput-derived number**, not a
+message-specific latency sample. It cannot produce real p50/p95/p99.
+
+A separate `SALTS_COMPILER_MPMC_LATENCY` mode in the **same**
+`disruptor_mpmc_real_source.c` now uses a 16-byte payload containing
+the integrity-checked sequence value and `CLOCK_MONOTONIC`
+timestamp taken **immediately before** `disruptor_publisher_publish`.
+A worker records another monotonic timestamp immediately after
+successful claim and access, before taking the test-verdict mutex.
+It computes the nonnegative age of **each** of 16,000 distinct messages
+(4 producers, 4 workers, 64-slot ring), refuses to emit a result
+unless every sequence was uniquely and correctly retired, then
+sorts the samples after pthread join to report actual per-message
+p50, p95, p99 and max for the individual run.
+
+This is specifically a **pre-publish-to-post-claim age**. It
+includes publication function execution, consumer claim, scheduler
+delays, timestamp overhead and any ring wait. It is not a pure
+enqueue API latency, is not an isolated clock-cycle measurement,
+and does not represent network or service end-to-end latency.
+
+The `compare_disruptor_latency.py` driver alternates native C11 and
+ASM order with two warm-ups and seven measured paired runs, and
+retains each run's real quantile and raw message count in JSON.
+It reports medians **of the seven per-run quantiles**, not a pooled
+p99 or a p99 inferred from aggregate throughput. Both compiled
+targets use `-O2`, the same timestamped packet layout, payload
+validation and concurrency harness; only the internal atomic
+backend changes. This is observational: no speedup threshold and
+no promotion of ASM as a TSan-validated production backend.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:
