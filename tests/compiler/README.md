@@ -1,5 +1,35 @@
 # C11 atomic compiler conformance (experimental TCC qualification)
 
+## TCC can now build a REAL Disruptor archive with ASM Atomics
+
+The actual `concurrency/src/disruptor.c` has a **compile-time backend
+selector**, `SALTS_DISRUPTOR_BACKEND_ASM=1`. It selects the self-owned
+private 32/64-bit external GAS Atomic types and C ABI; native GCC/Clang
+builds remain on the original C11 `stdatomic.h` backend. No
+`__STDC_NO_ATOMICS__` or `__STDC_NO_THREADS__` feature advertisements
+are falsified. There is **no implicit global fallback**.
+
+The standalone production-source target in
+[`concurrency/tcc/`](../../concurrency/tcc/README.md) builds
+`libsalts_tcc_disruptor.a` from the ACTUAL Disruptor and POSIX
+Platform C sources compiled by TinyCC, plus the canonical
+x86-64/AArch64 GAS backend assembled by GCC. Real public-API consumer
+tests link *against the archive*, not the old test-only inclusion
+wrapper. The earlier ASM tests now reference these same canonical
+production-private assembly files and backend selector, preventing
+test-versus-production drift.
+
+This is a useful bounded TCC capability, **not Salts::Concurrency or
+a full Salts SDK package**. SPSC's public `_Atomic` fields, all other
+native Atomic consumers and the strict C11 compiler conformance gate
+remain unaffected. The library is not installed or exported. A
+separate CTest verifies the actual TinyCC-built artifact with
+Broadcast/Worker Pool, reverse completion, 4×4 MPMC and real
+park/wake/cancel, including repeated runs on Linux x86-64 and AArch64.
+It does not claim sanitizer coverage of foreign GAS, cross-DSO ABI
+or complete TLS semantics.
+
+
 This is a standalone, dependency-free compiler qualification suite for Salts.
 It does not implement atomics, replace the Salts::Concurrency contract,
 install a runtime, or enable an unverified compiler backend.

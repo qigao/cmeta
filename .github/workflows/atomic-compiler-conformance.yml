@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - 'tests/compiler/**'
+      - 'concurrency/src/disruptor.c'
+      - 'concurrency/src/disruptor_atomic_asm.h'
+      - 'concurrency/src/asm-atomic/**'
+      - 'concurrency/tcc/**'
       - '.github/workflows/atomic-compiler-conformance.yml'
   workflow_dispatch:
 
@@ -366,6 +370,17 @@ jobs:
           SALTS_TEST_ASM_ORDERED=1 BUILD_ROOT=build/asm-disruptor-ordered-tcc-arm64 \
             bash tests/compiler/asm-atomic/run_disruptor_tcc.sh \
             2>&1 | tee build/asm-disruptor-ordered-tcc-arm64.log
+      - name: Build native ARM64 TinyCC Disruptor static library and link consumers
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S concurrency/tcc -B build/tcc-disruptor-arm64 -G Ninja \
+            -DCMAKE_C_COMPILER=tcc -DCMAKE_ASM_COMPILER=gcc
+          cmake --build build/tcc-disruptor-arm64 --parallel 2
+          test -s build/tcc-disruptor-arm64/libsalts_tcc_disruptor.a
+          ctest --test-dir build/tcc-disruptor-arm64 \
+            --repeat until-fail:5 --output-on-failure
       - name: Verify strict C11 compiler admission (no atomics fallback)
         shell: bash
         run: |
@@ -382,6 +397,7 @@ jobs:
           path: |
             build/asm-disruptor-tcc-arm64.log
             build/asm-disruptor-ordered-tcc-arm64.log
+            build/tcc-disruptor-arm64/Testing/Temporary/LastTest.log
             build/tcc-arm64/strict/CMakeFiles/CMakeConfigureLog.yaml
             build/tcc-arm64/strict/Testing/Temporary/LastTest.log
 
@@ -519,6 +535,17 @@ jobs:
           SALTS_TEST_ASM_ORDERED=1 BUILD_ROOT=build/asm-disruptor-ordered-tcc-x64 \
             bash tests/compiler/asm-atomic/run_disruptor_tcc.sh \
             2>&1 | tee build/asm-disruptor-ordered-tcc-x64.log
+      - name: Build real TinyCC-only Disruptor static library and link consumers
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S concurrency/tcc -B build/tcc-disruptor-x64 -G Ninja \
+            -DCMAKE_C_COMPILER=tcc -DCMAKE_ASM_COMPILER=gcc
+          cmake --build build/tcc-disruptor-x64 --parallel 2
+          test -s build/tcc-disruptor-x64/libsalts_tcc_disruptor.a
+          ctest --test-dir build/tcc-disruptor-x64 \
+            --repeat until-fail:5 --output-on-failure
       - name: Configure standalone C11 conformance
         run: cmake -S tests/compiler -B build/atomic-tcc -G Ninja -DCMAKE_C_COMPILER=tcc
       - name: Compile
@@ -543,6 +570,7 @@ jobs:
             build/tcc-cmeta-cstl/cstl/*.log
             build/asm-disruptor-tcc-x64.log
             build/asm-disruptor-ordered-tcc-x64.log
+            build/tcc-disruptor-x64/Testing/Temporary/LastTest.log
             build/catomics-upstream/*.log
             build/atomic-probe/diagnostics.log
             build/atomic-tcc/CMakeFiles/CMakeConfigureLog.yaml

@@ -1,7 +1,8 @@
-/* Compile the unmodified production Disruptor C translation unit exactly
- * once with separately owned GAS atomic storage. All function declarations
- * stay in the original public opaque header. No production files are edited.
+/* Test the ACTUAL backend selector in the ACTUAL production Disruptor TU.
+ * Public opaque API, no alternate algorithm or test copy of Atomic macros.
  */
-#define SALTS_TEST_ONLY_ASM_DISRUPTOR 1
-#include "disruptor_asm_adapter.h"
+#define SALTS_DISRUPTOR_BACKEND_ASM 1
+#if defined(SALTS_TEST_ASM_ORDERED)
+#define SALTS_DISRUPTOR_ASM_ORDERED 1
+#endif
 #include "../../../concurrency/src/disruptor.c"
