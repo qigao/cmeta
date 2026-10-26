@@ -616,7 +616,7 @@ static void cnet_owner_test_expired_partial_send(native_io_backend_kind backend_
 }
 
 static void cnet_owner_test_expired_partial_vector_send(
-    native_io_backend_kind backend_kind) {
+    native_io_backend_kind backend_kind, bool expire_before_observe) {
   enum { PAYLOAD_BYTES = 8, WRITE_TIMEOUT_MS = 10 };
   cnet_session_table sessions = {0};
   cnet_command_queue commands = {0};
@@ -714,20 +714,39 @@ static void cnet_owner_test_expired_partial_vector_send(
                 (unsigned char)0x5a);
 
   check_equal(cnet_owner_test_process_session_work(&owner), SALTS_OK);
+  if (expire_before_observe) {
+    /* Cancel first while NativeIO owns the real submitted write, without
+     * previously observing its completion. A raced native success is valid,
+     * but neither outcome may retire CNet's backing prematurely. */
+    clock.now_ms += WRITE_TIMEOUT_MS + 1u;
+    clock.next_ms = clock.now_ms;
+    check_equal(cnet_owner_test_process_deadlines(&owner), SALTS_ENOENT);
+  }
   check_equal(cnet_owner_test_observe_raw(&owner, &completion, 1u,
                                          CNET_OWNER_TEST_TIMEOUT_MS, &count),
               SALTS_OK);
   check_equal(count, 1u);
-  check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
-  check_equal(completion.bytes, 1u);
+  if (!expire_before_observe) {
+    check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
+    check_equal(completion.bytes, 1u);
+  } else {
+    /* Cancellation may win or the original one-byte kernel completion
+     * may have already won; neither authorizes an eight-byte logical send. */
+    check_true(completion.kind == NATIVE_IO_COMPLETION_OK ||
+               completion.kind == NATIVE_IO_COMPLETION_CANCELLED);
+    if (completion.kind == NATIVE_IO_COMPLETION_OK)
+      check_equal(completion.bytes, 1u);
+  }
   /* The real first-byte kernel completion is retrieved, but has not been
    * dispatched to CNet. Even here no pooled buffer may be recycled. */
   check_equal(mem_buffer_ref_count(original_buffer), UINT32_C(1));
   check_true(cnet_owner_test_backend_stats(&owner, &before, &coroutine));
 
-  clock.now_ms += WRITE_TIMEOUT_MS + 1u;
-  clock.next_ms = clock.now_ms;
-  check_equal(cnet_owner_test_process_deadlines(&owner), SALTS_ENOENT);
+  if (!expire_before_observe) {
+    clock.now_ms += WRITE_TIMEOUT_MS + 1u;
+    clock.next_ms = clock.now_ms;
+    check_equal(cnet_owner_test_process_deadlines(&owner), SALTS_ENOENT);
+  }
   check_equal(cnet_owner_test_process_completion_batch(&owner, &completion, count), SALTS_OK);
   check_true(cnet_owner_test_backend_stats(&owner, &after, &coroutine));
   check_equal(after.submitted, before.submitted);
@@ -1726,7 +1745,8 @@ spec("CNet owner shard") {
     const size_t count = cnet_owner_test_backends(backends);
     check_equal(cnet_module_init(), SALTS_OK);
     for (size_t index = 0u; index < count; ++index)
-      cnet_owner_test_expired_partial_vector_send(backends[index]);
+      cnet_owner_test_expired_partial_vector_send(backends[index], false);
+      cnet_owner_test_expired_partial_vector_send(backends[index], true);
     check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 
