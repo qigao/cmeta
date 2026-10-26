@@ -1815,6 +1815,148 @@ cleanup:
   return result;
 }
 
+/* Public installed opaque Session-only regression: the peer ABORT must NOT
+ * consume an unpolled local PR-SCTP abandonment when it destroys DATA.
+ * Peer ABORT, the original SID-generation event and FORWARD progress are
+ * three different kinds of result; neither missing ACK nor ABORT alone
+ * fabricates a local retry-exhaustion failure. */
+static int session_peer_abort_with_unread_pr(void) {
+  test_context cc = {UINT32_C(0x11223344), UINT32_C(0x10203040),
+      UINT32_C(0x13579bdf), 1};
+  test_context sc = {UINT32_C(0x55667788), UINT32_C(0x50607080),
+      UINT32_C(0x13579bdf), 1};
+  cnet_sctp_session_create_config cfg = session_config(5000u, 1, &cc);
+  cnet_sctp_session_create_config peer = session_config(5001u, 0, &sc);
+  cnet_sctp_session *client = NULL, *server = NULL;
+  cnet_sctp_session_event event = {0};
+  cnet_sctp_session_peer_abort abort_info = {0};
+  cnet_sctp_session_forward_progress progress = {0};
+  cnet_sctp_session_terminal_failure failure = {0};
+  static const uint8_t cause[] = {
+      0u, 12u, 0u, 8u, 's', 't', 'o', 'p'
+  };
+  const cnet_sctp_wire_chunk abort_chunk = {6u, 0u, cause, sizeof(cause)};
+  uint8_t first[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t second[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t third[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t fourth[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t message[32], reason[8] = {0};
+  size_t nf = 0u, ns = 0u, nt = 0u, nq = 0u, reason_n = 0u;
+  uint64_t generation = 0u, deadline = 0u;
+  int has_deadline = 0, stage = 0, result = 50;
+
+  if (cnet_sctp_session_create(&cfg, 0u, &client) !=
+          CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_create(&peer, 0u, &server) !=
+          CNET_SCTP_SESSION_OK)
+    goto cleanup;
+  stage = 1;
+  if (cnet_sctp_session_start(client, 1u, first,
+          sizeof(first), &nf) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(server, 2u, first, nf, second,
+          sizeof(second), &ns) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(client, 3u, second, ns, third,
+          sizeof(third), &nt) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(server, 4u, third, nt, fourth,
+          sizeof(fourth), &nq) != CNET_SCTP_SESSION_OK ||
+      cnet_sctp_session_input(client, 5u, fourth, nq, first,
+          sizeof(first), &nf) != CNET_SCTP_SESSION_OK || nf != 0u)
+    goto cleanup;
+  stage = 2;
+  nf = 0u;
+  if (cnet_sctp_session_open_channel(client, 6u, 2u,
+          CNET_SCTP_SESSION_CHANNEL_RETRANSMIT_ORDERED,
+          0u, 0u, "pr", 2u, NULL, 0u, first,
+          sizeof(first), &nf) != CNET_SCTP_SESSION_OK ||
+      nf == 0u || deliver(server, client, 7u, first, nf) != 0 ||
+      cnet_sctp_session_poll(server, 9u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &ns) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.stream_id != 2u || ns == 0u ||
+      deliver(client, server, 10u, second, ns) != 0 ||
+      cnet_sctp_session_poll(client, 12u, &event,
+          message, sizeof(message), first, sizeof(first),
+          &nf) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
+      event.stream_id != 2u || event.generation == 0u)
+    goto cleanup;
+  generation = event.generation;
+  stage = 3;
+  nf = 0u;
+  if (cnet_sctp_session_send(client, 20u, 2u, 1,
+          "drop", 4u, first, sizeof(first), &nf) !=
+          CNET_SCTP_SESSION_OK || nf == 0u ||
+      cnet_sctp_session_next_deadline(client, &deadline,
+          &has_deadline) != CNET_SCTP_SESSION_OK || !has_deadline)
+    goto cleanup;
+  nt = 0u;
+  if (cnet_sctp_session_advance(client, deadline, third,
+          sizeof(third), &nt) != CNET_SCTP_SESSION_OK ||
+      nt <= 12u || (third[12u] != 194u && third[12u] != 192u))
+    goto cleanup;
+  /* Deliberately do NOT poll the local abandonment before peer ABORT. */
+  stage = 4;
+  if (cnet_sctp_wire_encode(5001u, 5000u, cc.tag, &abort_chunk,
+          1u, second, sizeof(second), &ns) != CNET_SCTP_WIRE_OK)
+    goto cleanup;
+  nq = 123u;
+  if (cnet_sctp_session_input(client, deadline + 1u, second,
+          ns, fourth, sizeof(fourth), &nq) != CNET_SCTP_SESSION_OK ||
+      nq != 0u ||
+      cnet_sctp_session_take_peer_abort(client, &abort_info,
+          reason, sizeof(reason), &reason_n) != CNET_SCTP_SESSION_OK ||
+      !abort_info.has_user_reason || reason_n != 4u ||
+      memcmp(reason, "stop", 4u) != 0)
+    goto cleanup;
+  stage = 5;
+  cc.owner_admitted = 0;
+  nq = 123u;
+  {
+    cnet_sctp_session_status denied = cnet_sctp_session_poll(client,
+        deadline + 1u, &event, message, sizeof(message),
+        fourth, sizeof(fourth), &nq);
+    cc.owner_admitted = 1;
+    if (denied != CNET_SCTP_SESSION_OWNER || nq != 0u ||
+        event.kind != CNET_SCTP_SESSION_EVENT_NONE)
+      goto cleanup;
+  }
+  nq = 123u;
+  if (cnet_sctp_session_poll(client, deadline + 1u, &event,
+          message, sizeof(message), fourth, sizeof(fourth),
+          &nq) != CNET_SCTP_SESSION_OK ||
+      nq != 0u ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED ||
+      event.stream_id != 2u || event.generation != generation ||
+      event.ppid != 53u || event.message_size != 4u ||
+      !event.has_tsn ||
+      event.abandon_reason != CNET_SCTP_SESSION_ABANDON_RETRANSMITS ||
+      cnet_sctp_session_take_forward_progress(client, &progress) !=
+          CNET_SCTP_SESSION_EMPTY ||
+      cnet_sctp_session_take_terminal_failure(client, &failure) !=
+          CNET_SCTP_SESSION_EMPTY)
+    goto cleanup;
+  stage = 6;
+  result = 0;
+cleanup:
+  if (result != 0)
+    fprintf(stderr, "installed unread PR after peer ABORT failed stage %d\n",
+        stage);
+  if (client) {
+    if (cnet_sctp_session_stop(client) != CNET_SCTP_SESSION_OK ||
+        !cnet_sctp_session_drained(client) ||
+        cnet_sctp_session_destroy(client) != CNET_SCTP_SESSION_OK)
+      result = 51;
+  }
+  if (server) {
+    if (cnet_sctp_session_stop(server) != CNET_SCTP_SESSION_OK ||
+        !cnet_sctp_session_drained(server) ||
+        cnet_sctp_session_destroy(server) != CNET_SCTP_SESSION_OK)
+      result = 52;
+  }
+  return result;
+}
+
 int main(void) {
   const uint8_t payload[] = {1u, 2u, 3u};
   const cnet_sctp_wire_chunk chunk = {0u, 0u, payload, sizeof(payload)};
@@ -1856,5 +1998,9 @@ int main(void) {
     const int terminal_forward = session_terminal_retry_failure(1);
     if (terminal_forward != 0) return terminal_forward;
   }
-  return session_peer_abort_reason();
+  {
+    const int abort_reason = session_peer_abort_reason();
+    if (abort_reason != 0) return abort_reason;
+  }
+  return session_peer_abort_with_unread_pr();
 }

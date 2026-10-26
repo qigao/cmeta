@@ -859,6 +859,171 @@ static void peer_abort_prefix_sack_is_not_a_fake_ack(void) {
   }
 }
 
+/* An already emitted local PR-SCTP abandonment is neither a new peer ABORT
+ * nor a new LOCAL_RETRY_EXHAUSTED result. It must survive a real ABORT that
+ * destroys DATA, even when the original Owner has not yet polled it.
+ * Mode 0: plain ABORT without SACK plus saturated unconfirmed forward slots.
+ * Mode 1: verified cumulative SACK before ordinary ABORT (real progress).
+ * Mode 2: same SACK before reflected T=1 ABORT (no false progress).
+ * Mode 3: explicit stop discards unread copied events. */
+static void peer_abort_preserves_unread_local_abandonment(void) {
+  unsigned int mode;
+  for (mode = 0u; mode < 4u; ++mode) {
+    cnet_sctp_session a = {0}, b = {0};
+    test_context ca = {0}, cb = {0};
+    cnet_sctp_session_event local = {0};
+    cnet_sctp_session_forward_progress progress = {0};
+    cnet_sctp_session_peer_abort abort_info = {0};
+    cnet_sctp_session_terminal_failure failure = {0};
+    static const uint8_t cause[] = {
+        0u, 12u, 0u, 8u, 'h', 'a', 'l', 't'
+    };
+    cnet_sctp_wire_chunk chunks[2] = {{0}};
+    cnet_sctp_wire_header sack_header = {0};
+    cnet_sctp_wire_decoder sack_decoder = {0};
+    uint8_t data[1200], forward[1200], sack[1200];
+    uint8_t abort_packet[1200], output[1200], message[32], reason[8];
+    size_t data_n = 0u, forward_n = 0u, sack_n = 0u;
+    size_t abort_n = 0u, output_n = 0u, reason_n = 0u, i;
+    uint64_t ga = 0u, gb = 0u, deadline = 0u;
+    uint32_t abandoned_tsn;
+    int has_deadline = 0;
+
+    ready_pair(&a, &b, &ca, &cb);
+    open_channel_with_policy(&a, &b, 6u, 2u, 0x01u, 0u, &ga, &gb);
+    assert(cnet_sctp_session_send(&a, 20u, 2u, 1,
+        "drop", 4u, data, sizeof(data), &data_n) ==
+        CNET_SCTP_SESSION_OK && data_n != 0u);
+    assert(cnet_sctp_session_next_deadline(&a, &deadline,
+        &has_deadline) == CNET_SCTP_SESSION_OK && has_deadline);
+    assert(cnet_sctp_session_advance(&a, deadline, forward,
+        sizeof(forward), &forward_n) == CNET_SCTP_SESSION_OK &&
+        forward_n > 12u && forward[12u] == 194u);
+    assert(a.association.data.abandon_event_count == 1u);
+    abandoned_tsn = a.association.data.abandon_events[
+        a.association.data.abandon_event_head].last_tsn;
+    /* Deliberately leave the original local event unread across ABORT. */
+    if (mode == 0u) {
+      /* A full table of UNCONFIRMED prior forward placeholders can never
+       * complete after ABORT and must not make the original event stuck. */
+      for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+        a.forward_tracks[i].used = 1u;
+        a.forward_tracks[i].result.last_tsn =
+            a.association.data.next_tsn + 100u;
+      }
+    }
+    if (mode == 1u || mode == 2u) {
+      assert(cnet_sctp_session_input(&b, deadline + 1u, forward,
+          forward_n, sack, sizeof(sack), &sack_n) ==
+          CNET_SCTP_SESSION_OK && sack_n != 0u);
+      assert(cnet_sctp_wire_decode(sack, sack_n, &sack_header,
+          &sack_decoder) == CNET_SCTP_WIRE_OK &&
+          sack_header.chunk_count == 1u);
+      assert(cnet_sctp_wire_next_chunk(&sack_decoder, &chunks[0]) ==
+          CNET_SCTP_WIRE_OK && chunks[0].type == 3u);
+    }
+    chunks[(mode == 1u || mode == 2u) ? 1u : 0u].type = 6u;
+    chunks[(mode == 1u || mode == 2u) ? 1u : 0u].flags =
+        (uint8_t)(mode == 2u);
+    chunks[(mode == 1u || mode == 2u) ? 1u : 0u].value = cause;
+    chunks[(mode == 1u || mode == 2u) ? 1u : 0u].value_size =
+        sizeof(cause);
+    assert(cnet_sctp_wire_encode(5001u, 5000u,
+        mode == 2u ? a.association.peer_tag : a.association.local_tag,
+        chunks, (mode == 1u || mode == 2u) ? 2u : 1u,
+        abort_packet, sizeof(abort_packet), &abort_n) ==
+        CNET_SCTP_WIRE_OK);
+    /* A wrong-tag attempt must be transactionally refused, leaving DATA
+     * and its unread abandonment FIFO completely intact. */
+    if (mode == 0u) {
+      size_t invalid_n = 0u;
+      assert(cnet_sctp_wire_encode(5001u, 5000u,
+          a.association.local_tag + 1u, chunks, 1u,
+          abort_packet, sizeof(abort_packet), &invalid_n) ==
+          CNET_SCTP_WIRE_OK);
+      output_n = 123u;
+      assert(cnet_sctp_session_input(&a, deadline + 2u,
+          abort_packet, invalid_n, output, sizeof(output), &output_n) ==
+          CNET_SCTP_SESSION_PROTOCOL && output_n == 0u &&
+          a.association.data_ready &&
+          a.association.data.abandon_event_count == 1u &&
+          a.abort_abandoned_count == 0u);
+      assert(cnet_sctp_wire_encode(5001u, 5000u,
+          a.association.local_tag, chunks, 1u,
+          abort_packet, sizeof(abort_packet), &abort_n) ==
+          CNET_SCTP_WIRE_OK);
+    }
+    output_n = 123u;
+    assert(cnet_sctp_session_input(&a, deadline + 2u,
+        abort_packet, abort_n, output, sizeof(output), &output_n) ==
+        CNET_SCTP_SESSION_OK && output_n == 0u &&
+        a.peer_abort_seen && !a.association.data_ready &&
+        a.abort_abandoned_count == 1u &&
+        a.abort_abandoned[0].data.last_tsn == abandoned_tsn &&
+        a.abort_abandoned[0].generation == ga);
+    if (mode == 0u) {
+      for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+        assert(!a.forward_tracks[i].used);
+    }
+    if (mode == 3u) {
+      assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK &&
+          !a.peer_abort_seen && a.abort_abandoned_count == 0u);
+      for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+        assert(a.abort_abandoned[i].generation == 0u &&
+            a.abort_abandoned[i].data.message_size == 0u);
+    } else {
+      /* The ABORT reason and original local event are distinct receipts;
+       * taking the ABORT reason first cannot destroy the copied FIFO. */
+      assert(cnet_sctp_session_take_peer_abort(&a, &abort_info,
+          reason, sizeof(reason), &reason_n) == CNET_SCTP_SESSION_OK &&
+          reason_n == 4u && abort_info.has_user_reason &&
+          memcmp(reason, "halt", 4u) == 0 &&
+          a.abort_abandoned_count == 1u);
+      ca.owner = 0;
+      output_n = 123u;
+      assert(cnet_sctp_session_poll(&a, deadline + 2u, &local,
+          message, sizeof(message), output, sizeof(output), &output_n) ==
+          CNET_SCTP_SESSION_OWNER && output_n == 0u &&
+          local.kind == CNET_SCTP_SESSION_EVENT_NONE &&
+          a.abort_abandoned_count == 1u);
+      ca.owner = 1;
+      output_n = 123u;
+      assert(cnet_sctp_session_poll(&a, deadline + 2u, &local,
+          message, sizeof(message), output, sizeof(output), &output_n) ==
+          CNET_SCTP_SESSION_OK && output_n == 0u &&
+          local.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED &&
+          local.stream_id == 2u && local.generation == ga &&
+          local.ppid == 53u && local.message_size == 4u &&
+          local.has_tsn && local.last_tsn == abandoned_tsn &&
+          local.abandon_reason == CNET_SCTP_SESSION_ABANDON_RETRANSMITS &&
+          a.abort_abandoned_count == 0u);
+      if (mode == 1u) {
+        assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+            CNET_SCTP_SESSION_OK && progress.generation == ga &&
+            progress.last_tsn == abandoned_tsn &&
+            progress.stream_id == 2u &&
+            cnet_sctp_session_take_forward_progress(&a, &progress) ==
+            CNET_SCTP_SESSION_EMPTY);
+      } else {
+        assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+            CNET_SCTP_SESSION_EMPTY && progress.generation == 0u);
+      }
+      assert(cnet_sctp_session_take_terminal_failure(&a, &failure) ==
+          CNET_SCTP_SESSION_EMPTY && failure.generation == 0u &&
+          cnet_sctp_session_take_peer_abort(&a, &abort_info,
+              reason, sizeof(reason), &reason_n) ==
+          CNET_SCTP_SESSION_EMPTY && reason_n == 0u);
+      assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK);
+    }
+    assert(gb != 0u);
+    assert(cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK);
+    assert(cnet_sctp_session_destroy_in_place(&a) ==
+        CNET_SCTP_SESSION_OK);
+    assert(cnet_sctp_session_destroy_in_place(&b) ==
+        CNET_SCTP_SESSION_OK);
+  }
+}
+
 int main(void) {
   session_open_message_reset_reuse();
   partial_loss_reports_abandonment_then_reliable_continues();
@@ -868,6 +1033,7 @@ int main(void) {
   unread_abandonment_after_failed_is_not_lost();
   peer_abort_retains_unread_confirmed_results();
   peer_abort_prefix_sack_is_not_a_fake_ack();
+  peer_abort_preserves_unread_local_abandonment();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }
