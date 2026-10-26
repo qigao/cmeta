@@ -2,12 +2,23 @@
 
 Independent RFC-first protocol workstream for [Salts #1181](https://github.com/qigao/salts/issues/1181) and upstream prerequisite for [TurboMedia #227](https://github.com/qigao/turbomedia/issues/227).
 
-**Research only. This is not a complete SCTP engine or authenticated production transport.** Public-Janus SCTP-over-real-DTLS experiments qualify a bounded **legacy RFC3758** subset. Separately, pinned Pion SCTP v1.10.0 interoperates with the opaque C11 Session over **test-only localhost UDP SCTP datagrams**, including independently negotiated RFC8260 I-DATA/I-FORWARD-TSN, exact loss, I-FORWARD control replay, peer cumulative confirmation and exact successor delivery. An additional, separately installed opaque Session consumer now operates
-through real **OpenSSL DTLS 1.2** encrypted application records inside a
-single-process test with SHA-256 certificate fingerprints and negative
-Generation/Owner/ciphertext cases. These are distinct evidence lanes;
-**independent RFC8260 SCTP-over-DTLS/ICE/browser** and production Owner/DTLS
-generation leases remain unqualified. No Rust/C++ protocol source, FFI or runtime is involved. No production CNet or TurboMedia target uses these objects.
+**Research only. This is not the production SCTP transport.** There are
+three distinct, bounded interoperability lanes: **Janus** over real ICE/DTLS
+qualifies **legacy RFC 3758 FORWARD-TSN (type 192)**; independent
+**Pion SCTP v1.10.0** qualifies RFC 8260 I-DATA/I-FORWARD-TSN (types
+64/194) with controlled loss and retransmission over both test-only UDP
+and **real Pion DTLS v3.1.15 ↔ OpenSSL DTLS 1.2** (two independent
+SCTP/DTLS processes on localhost); and a separate single-process OpenSSL
+DTLS consumer qualifies the **installed public opaque Session** with
+ASan/UBSan, ciphertext rejection and test Owner-generation refusal.
+The Pion/OpenSSL DTLS path now proves **both SHA-256 certificate pins**,
+identical independent RFC 5705 export-derived non-secret generation
+identities, **creation of the native Session only AFTER DTLS authentication**,
+and refusal of otherwise authenticated late DATA after test Owner revocation.
+None of these paths installs Go/OpenSSL adapters or changes production
+`Salts::CNet`/TurboMedia usrsctp. Browser ICE/DataChannel, production
+DTLS Owner/DSO lifecycle, mobile device execution and full six-RID release
+remain unqualified. No exactly-once/no-loss production claim is made.
 
 ## Isolation and build
 
@@ -26,12 +37,16 @@ ctest --test-dir build-cnet-sctp-consumer -C Release --output-on-failure
 
 ## Independent RFC8260 Pion wire oracle (isolated test only)
 
-The opt-in `CNET_SCTP_TEST_PION_ORACLE=ON` target builds a POSIX
-datagram adapter using only the public opaque `CNetSctpPrototype::Session`.
-The peer is a distinct **Pion SCTP v1.10.0** Go process, pinned in the
-test directory's `go.mod` and `go.sum`. No Go engine, test adapter,
-native socket, fallback or additional runtime enters the installed
-Session library or production `SaltsTargets`.
+The experimental `CNET_SCTP_TEST_PION_ORACLE=ON` target remains available
+for source-tree research, but CI builds a stricter **separate consumer
+at `cnet/sctp/tests/independent/pion_sdk`** that finds and links only
+the *previously installed* `CNetSctpPrototype::Session` public
+package. Its distinct Go peer pins **Pion SCTP v1.10.0** and **Pion DTLS
+v3.1.15**, including direct and transitive checksum entries in
+`go.mod`/`go.sum`. The job fails if Go mutates either lock file.
+The native consumer optionally links OpenSSL **only as a test transport**;
+no Pion, native socket, DTLS object, fallback or test target enters
+the installed library, `SaltsTargets`, or production CNet.
 
 [Exact-head CNet C11 #40275477236](https://github.com/qigao/salts/actions/runs/40275477236)
 passed two independent Pion cases: a dropped application I-DATA TSN
@@ -43,9 +58,30 @@ delivery of the abandoned TSN and false early forward retirement.
 DCEP PPID50, binary PPID53, original abandonment generation/TSN and
 the confirmed FORWARD's original TSN are checked.
 
-This is independent SCTP RFC8260 wire interoperability but **not**
-SCTP-over-DTLS/ICE, browser qualification, mobile device execution,
-a production DTLS Generation owner, or release approval.
+**New independently implemented RFC 8260-over-DTLS evidence:** the SAME
+two positive loss/recovery scenarios also pass with real **Pion DTLS 1.2
+on the Go side** and **OpenSSL DTLS 1.2 on the installed C11 Session
+side**, using ephemeral P-256 certificates and explicitly pinned mutual
+SHA-256 leaf fingerprints. OpenSSL's RFC 5705 exporter and Pion's
+independent exporter must agree on the complete **64-bit non-secret
+Owner Generation token** before the native SCTP Session is even created.
+The negative identity cases reject a wrong expected server fingerprint
+at Pion, and a wrong expected client fingerprint at OpenSSL **before
+C11 Session creation**. A third negative runs an actual DTLS-encrypted
+PPID53 message after the isolated Owner generation is revoked: OpenSSL
+authenticates/decrypts, but C11 `session_input()` returns
+`CNET_SCTP_SESSION_OWNER` with zero reply, never publishing that ULP.
+
+[Exact-head CNet SCTP CI #40288797102](https://github.com/qigao/salts/actions/runs/40288797102)
+passes **12/12** jobs: four native C11+installed SDK consumer environments,
+Android/iOS ARM64 cross-linked standalone SDK consumers (NOT device-run),
+the six-case Pion SCTP/DTLS oracle (two UDP, two real DTLS, two bad-pin
+cases, plus a seventh isolated late-Owner-revocation scenario), source
+ASan/UBSan, effective-source Owner/provider DSO TSan, pinned GmSSL
+Cookie MAC and separate real OpenSSL DTLS consumer under ASan/UBSan ×10.
+This is an independent localhost SCTP-over-DTLS proof, **not ICE or
+browser/libwebrtc DataChannel**, not concurrent production DTLS lease
+or DSO unload, and not six-RID production SDK/release qualification.
 
 ## Real DTLS 1.2 application records — installed opaque Session (test only)
 
