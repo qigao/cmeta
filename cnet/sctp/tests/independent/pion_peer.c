@@ -349,6 +349,37 @@ int main(int argc, char **argv) {
             failure = 16; break;
           }
         }
+        /* Owner advance() can publish the local PR abandonment without any
+         * incoming UDP packet. Drain its copied original-generation result
+         * now, before trying to collect real Pion acknowledgement of the
+         * I-FORWARD control. Never rely on a future ingress to poll events. */
+        if (stage == 3u) {
+          unsigned int i;
+          for (i = 0u; i < 16u; ++i) {
+            cnet_sctp_session_event event = {0};
+            size_t reply_size = 0u;
+            status = cnet_sctp_session_poll(session, now, &event,
+                body, sizeof(body), reply, sizeof(reply), &reply_size);
+            if (status == CNET_SCTP_SESSION_EMPTY) break;
+            if (status != CNET_SCTP_SESSION_OK ||
+                event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED ||
+                event.stream_id != 0u ||
+                event.generation != original_generation ||
+                event.abandon_reason != CNET_SCTP_SESSION_ABANDON_TIMED ||
+                event.message_size != strlen("c11-drop")) {
+              fprintf(stderr, "C11 oracle local abandonment wrong: %d/%d\n",
+                  (int)status, (int)event.kind);
+              failure = 27; break;
+            }
+            original_abandoned = 1;
+            puts("C11_LOCAL_ABANDONMENT");
+            fflush(stdout);
+            if (publish(fd, &destination, reply, reply_size) != 0) {
+              failure = 28; break;
+            }
+          }
+          if (failure != 0) break;
+        }
       }
     }
   }
