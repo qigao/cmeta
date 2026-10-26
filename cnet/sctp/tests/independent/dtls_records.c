@@ -189,20 +189,35 @@ static int peer_matches(SSL *peer, const uint8_t expected[32]) {
   X509_free(cert);
   return same;
 }
-static uint64_t bound_peer_generation(const uint8_t client[32],
-    const uint8_t server[32]) {
-  /* The immutable Owner generation ID derives from the two verified DTLS
-   * certificate fingerprints. It is not a security key or MAC provider. */
-  uint64_t value = UINT64_C(0xcbf29ce484222325);
+static uint64_t bound_peer_generation(SSL *client, SSL *server,
+    const uint8_t client_fingerprint[32],
+    const uint8_t server_fingerprint[32]) {
+  static const char label[] = "CNetSctpPrototype-test-Owner-Generation";
+  uint8_t client_exporter[32] = {0}, server_exporter[32] = {0};
+  uint64_t value = 0u;
   size_t i;
-  for (i = 0u; i < 32u; ++i) {
-    value ^= client[i];
-    value *= UINT64_C(0x100000001b3);
-  }
-  for (i = 0u; i < 32u; ++i) {
-    value ^= server[i];
-    value *= UINT64_C(0x100000001b3);
-  }
+  /* Reusing the SAME pinned certificate in a new DTLS handshake must not
+   * resurrect the old SCTP Owner Generation. A certificate fingerprint
+   * proves peer identity, NOT the identity of one DTLS session. */
+  assert(client && server &&
+      SSL_is_init_finished(client) && SSL_is_init_finished(server));
+  assert(peer_matches(client, server_fingerprint) &&
+      peer_matches(server, client_fingerprint));
+  assert(SSL_export_keying_material(client, client_exporter,
+      sizeof(client_exporter), label, sizeof(label) - 1u,
+      NULL, 0u, 0) == 1);
+  assert(SSL_export_keying_material(server, server_exporter,
+      sizeof(server_exporter), label, sizeof(label) - 1u,
+      NULL, 0u, 0) == 1);
+  assert(CRYPTO_memcmp(client_exporter, server_exporter,
+      sizeof(client_exporter)) == 0);
+  /* Non-secret, bounded handshake identity only; NEVER a MAC key or
+   * production DTLS lease implementation. Mirrors the independent Pion
+   * RFC5705 test exporter, including its first-eight-byte big-endian ID. */
+  for (i = 0u; i < sizeof(value); ++i)
+    value = (value << 8u) | client_exporter[i];
+  OPENSSL_cleanse(client_exporter, sizeof(client_exporter));
+  OPENSSL_cleanse(server_exporter, sizeof(server_exporter));
   assert(value != 0u);
   return value;
 }
@@ -292,7 +307,9 @@ static void test_actual_dtls_application_records(void) {
   SSL_CTX *server_context = new_identity(server_fp);
   SSL *client_dtls = new_dtls_peer(client_context, 0);
   SSL *server_dtls = new_dtls_peer(server_context, 1);
-  uint64_t peer_generation;
+  SSL *reconnected_client_dtls = new_dtls_peer(client_context, 0);
+  SSL *reconnected_server_dtls = new_dtls_peer(server_context, 1);
+  uint64_t peer_generation, reconnected_generation;
   test_owner a = {0}, b = {0};
   cnet_sctp_session_create_config ca, cb;
   cnet_sctp_session *client = NULL, *server = NULL;
@@ -310,7 +327,18 @@ static void test_actual_dtls_application_records(void) {
   memcpy(incorrect, server_fp, sizeof(incorrect));
   incorrect[0] ^= 1u;
   assert(!peer_matches(client_dtls, incorrect));
-  peer_generation = bound_peer_generation(client_fp, server_fp);
+  peer_generation = bound_peer_generation(client_dtls, server_dtls,
+      client_fp, server_fp);
+  /* A second full authenticated handshake uses the SAME identities and
+   * fingerprints. Its handshake exporter MUST differ from the first:
+   * fingerprint-only or pointer-based Generation binding would fail here. */
+  handshake(reconnected_client_dtls, reconnected_server_dtls);
+  assert(peer_matches(reconnected_client_dtls, server_fp) &&
+      peer_matches(reconnected_server_dtls, client_fp));
+  reconnected_generation = bound_peer_generation(
+      reconnected_client_dtls, reconnected_server_dtls, client_fp, server_fp);
+  assert(reconnected_generation != peer_generation);
+  puts("REAL_DTLS_SAME_CERT_RECONNECT_NEW_GENERATION");
   a.generation = a.bound_generation = peer_generation;
   b.generation = b.bound_generation = peer_generation;
   assert(RAND_bytes(a.cookie_key, sizeof(a.cookie_key)) == 1);
@@ -401,7 +429,11 @@ static void test_actual_dtls_application_records(void) {
     const size_t bytes = decrypt_packet(client_dtls, server_dtls,
         first, n1, authenticated);
     size_t discarded = 123u;
-    b.generation ^= UINT64_C(1);
+    /* The old DTLS application record remains genuinely decryptable by its
+     * old peer. The external Owner already moved to a SECOND authenticated
+     * DTLS session using the SAME certificate, so it must reject the old
+     * Session even though the signature/fingerprint did not change. */
+    b.generation = reconnected_generation;
     assert(bytes == n1 && b.generation != b.bound_generation);
     assert(cnet_sctp_session_input(server, 17u,
         authenticated, bytes, fourth, sizeof(fourth),
@@ -438,6 +470,8 @@ static void test_actual_dtls_application_records(void) {
   OPENSSL_cleanse(b.cookie_key, sizeof(b.cookie_key));
   SSL_free(client_dtls);
   SSL_free(server_dtls);
+  SSL_free(reconnected_client_dtls);
+  SSL_free(reconnected_server_dtls);
   SSL_CTX_free(client_context);
   SSL_CTX_free(server_context);
 }
