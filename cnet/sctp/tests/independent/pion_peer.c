@@ -383,6 +383,12 @@ int main(int argc, char **argv) {
             puts("C11_LOCAL_ABANDONMENT");
             fflush(stdout);
           }
+          /* After revoking the test Owner's immutable DTLS generation,
+           * even a redundant poll is correctly rejected with OWNER.
+           * Stop scheduling/reading the old Session immediately; the next
+           * decrypted Pion datagram is checked only by input() for a
+           * failure-atomic OWNER refusal. */
+          if (revoke_after_message && revoked) break;
         }
         if (failure != 0) break;
       }
