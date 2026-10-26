@@ -1217,7 +1217,8 @@ static int session_forward_progress(void) {
   uint8_t message[128];
   size_t nf = 0u, ns = 0u, nt = 0u, nq = 0u;
   uint64_t old_generation = 0u, new_generation = 0u;
-  uint64_t peer_generation = 0u, close_generation = 0u, deadline = 0u;
+  uint64_t peer_generation = 0u, fresh_peer_generation = 0u;
+  uint64_t close_generation = 0u, deadline = 0u;
   uint32_t original_tsn = 0u;
   int has_deadline = 0, stage = 0, result = 40;
 
@@ -1350,8 +1351,10 @@ static int session_forward_progress(void) {
           &ns) != CNET_SCTP_SESSION_OK ||
       event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN ||
       event.generation == peer_generation || event.stream_id != 2u ||
-      ns == 0u ||
-      deliver(client, server, deadline + 14u, second, ns) != 0 ||
+      ns == 0u)
+    goto cleanup;
+  fresh_peer_generation = event.generation;
+  if (deliver(client, server, deadline + 14u, second, ns) != 0 ||
       cnet_sctp_session_poll(client, deadline + 16u, &event,
           message, sizeof(message), fourth, sizeof(fourth),
           &nq) != CNET_SCTP_SESSION_OK ||
@@ -1375,6 +1378,29 @@ static int session_forward_progress(void) {
       cnet_sctp_session_take_forward_progress(client, &progress) !=
           CNET_SCTP_SESSION_EMPTY ||
       progress.generation != 0u)
+    goto cleanup;
+  /* New generation MUST be able to send after actual bilateral reset and
+   * same-SID DCEP OPEN while the old confirmed forward receipt was retained
+   * independently. This is real SCTP DATA/SACK through the installed public
+   * Session ABI; neither the new send nor its peer receive inherits old
+   * PR policy, generation or message identifier. */
+  stage = 9;
+  nf = 0u;
+  if (cnet_sctp_session_send(client, deadline + 17u, 2u, 1,
+          "fresh", 5u, first, sizeof(first), &nf) !=
+          CNET_SCTP_SESSION_OK || nf == 0u ||
+      deliver(server, client, deadline + 18u, first, nf) != 0 ||
+      cnet_sctp_session_poll(server, deadline + 20u, &event,
+          message, sizeof(message), second, sizeof(second),
+          &ns) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE ||
+      event.generation != fresh_peer_generation ||
+      event.generation == peer_generation ||
+      event.stream_id != 2u || event.ppid != 53u ||
+      event.message_size != 5u || !event.binary ||
+      memcmp(message, "fresh", 5u) != 0 ||
+      cnet_sctp_session_take_forward_progress(client, &progress) !=
+          CNET_SCTP_SESSION_EMPTY || progress.generation != 0u)
     goto cleanup;
   result = 0;
 
