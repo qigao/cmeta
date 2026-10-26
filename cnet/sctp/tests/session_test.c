@@ -1791,6 +1791,161 @@ static void stale_generation_denies_old_data_egress(void) {
 }
 
 
+/* LOCAL FORWARD retransmission exhaustion can precede a later valid peer
+ * ABORT. That ABORT destroys DATA but MUST NOT erase the earlier local
+ * failure or the still-unread original PR abandonment. Separate scenarios:
+ * ordinary unread FIFO enforces terminal BUSY-before-poll; a full prior
+ * unconfirmed FORWARD ledger permits ONE already-existing failure to retire
+ * and free the slot needed by poll(), without returning a premature EMPTY.
+ * Both paths use actual DATA, RFC3758 FORWARD, Owner deadlines and ABORT
+ * wire packets, not a synthetic local-failure bit. */
+static void peer_abort_after_local_retry_exhaustion(void) {
+  unsigned int saturated;
+  for (saturated = 0u; saturated < 2u; ++saturated) {
+    cnet_sctp_session a = {0}, b = {0};
+    test_context ca = {0}, cb = {0};
+    cnet_sctp_session_event event = {0};
+    cnet_sctp_session_terminal_failure terminal = {0};
+    cnet_sctp_session_forward_progress progress = {0};
+    cnet_sctp_session_peer_abort abort_info = {0};
+    const uint8_t cause[] = {
+        0u, 12u, 0u, 8u, 'l', 'a', 't', 'e'
+    };
+    const cnet_sctp_wire_chunk chunk = {6u, 0u, cause, sizeof(cause)};
+    uint8_t lost[1200], forward[1200], retry[1200], wire[1200];
+    uint8_t reply[1200], reason[8] = {0}, body[32];
+    size_t lost_n = 0u, forward_n = 0u, retry_n = 0u;
+    size_t wire_n = 0u, reply_n = 0u, reason_n = 0u, i;
+    uint64_t ga = 0u, gb = 0u, deadline = 0u;
+    uint32_t original_tsn = 0u;
+    unsigned int terminal_count = 0u, original_failures = 0u;
+    int has_deadline = 0;
+
+    ready_pair(&a, &b, &ca, &cb);
+    open_channel_with_policy(&a, &b, 6u, 2u, 0x01u, 0u, &ga, &gb);
+    a.association.config.max_retransmits = 1u;
+    a.association.data.config.max_retransmits = 1u;
+    assert(cnet_sctp_session_send(&a, 20u, 2u, 1, "lost", 4u,
+        lost, sizeof(lost), &lost_n) == CNET_SCTP_SESSION_OK &&
+        lost_n != 0u);
+    assert(cnet_sctp_session_next_deadline(&a, &deadline, &has_deadline) ==
+        CNET_SCTP_SESSION_OK && has_deadline);
+    assert(cnet_sctp_session_advance(&a, deadline, forward,
+        sizeof(forward), &forward_n) == CNET_SCTP_SESSION_OK &&
+        forward_n != 0u && forward[12u] == 194u &&
+        a.association.data.abandon_event_count == 1u);
+    original_tsn = a.association.data.abandon_events[
+        a.association.data.abandon_event_head].last_tsn;
+    assert(a.association.data.abandon_events[
+        a.association.data.abandon_event_head].admission_generation == ga);
+    assert(cnet_sctp_session_next_deadline(&a, &deadline, &has_deadline) ==
+        CNET_SCTP_SESSION_OK && has_deadline);
+    assert(cnet_sctp_session_advance(&a, deadline, retry,
+        sizeof(retry), &retry_n) == CNET_SCTP_SESSION_OK &&
+        retry_n == forward_n && memcmp(retry, forward, forward_n) == 0);
+    assert(cnet_sctp_session_next_deadline(&a, &deadline, &has_deadline) ==
+        CNET_SCTP_SESSION_OK && has_deadline);
+    reply_n = sizeof(reply);
+    assert(cnet_sctp_session_advance(&a, deadline, reply,
+        sizeof(reply), &reply_n) == CNET_SCTP_SESSION_TRANSPORT &&
+        reply_n == 0u && a.association.state == CNET_SCTP_ASSOC_FAILED &&
+        a.association.data_ready && a.terminal_retry_exhausted &&
+        a.association.data.abandon_event_count == 1u);
+    assert(cnet_sctp_session_take_terminal_failure(&a, &terminal) ==
+        CNET_SCTP_SESSION_BUSY && terminal.generation == 0u);
+
+    if (saturated) {
+      /* Test-only capacity saturation with previous ORIGINAL-generation,
+       * already-polled, genuinely LOCAL terminal-eligible records. This
+       * isolates the same bounded release ordering as a busy application. */
+      for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+        cnet_sctp_session_forward_track *slot = &a.forward_tracks[i];
+        slot->used = 1u;
+        slot->result.generation = ga;
+        slot->result.stream_id = 2u;
+        slot->result.ppid = 53u;
+        slot->result.last_tsn = a.association.data.next_tsn + 100u +
+            (uint32_t)i;
+        slot->result.message_size = i + 1u;
+      }
+    }
+    assert(cnet_sctp_wire_encode(5001u, 5000u, a.association.local_tag,
+        &chunk, 1u, wire, sizeof(wire), &wire_n) == CNET_SCTP_WIRE_OK);
+    reply_n = 123u;
+    assert(cnet_sctp_session_input(&a, deadline + 1u, wire, wire_n,
+        reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_OK &&
+        reply_n == 0u && !a.association.data_ready &&
+        a.peer_abort_seen && a.terminal_retry_exhausted &&
+        a.abort_abandoned_count == 1u &&
+        a.abort_abandoned[0].generation == ga &&
+        a.abort_abandoned[0].data.last_tsn == original_tsn);
+    if (saturated) {
+      /* An all-unconfirmed full ledger cannot be consumed through the
+       * success API. One earlier legitimate failure must free capacity. */
+      assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+          CNET_SCTP_SESSION_EMPTY &&
+          cnet_sctp_session_take_terminal_failure(&a, &terminal) ==
+          CNET_SCTP_SESSION_OK &&
+          terminal.kind == CNET_SCTP_SESSION_TERMINAL_FORWARD_UNCONFIRMED &&
+          terminal.generation == ga &&
+          terminal.last_tsn != original_tsn &&
+          a.abort_abandoned_count == 1u);
+      ++terminal_count;
+    } else {
+      assert(cnet_sctp_session_take_terminal_failure(&a, &terminal) ==
+          CNET_SCTP_SESSION_BUSY && terminal.generation == 0u);
+    }
+    ca.owner = 0;
+    reply_n = 123u;
+    assert(cnet_sctp_session_poll(&a, deadline + 1u, &event, body,
+        sizeof(body), reply, sizeof(reply), &reply_n) ==
+        CNET_SCTP_SESSION_OWNER && event.kind == CNET_SCTP_SESSION_EVENT_NONE &&
+        reply_n == 0u && a.abort_abandoned_count == 1u);
+    ca.owner = 1;
+    reply_n = 123u;
+    assert(cnet_sctp_session_poll(&a, deadline + 1u, &event, body,
+        sizeof(body), reply, sizeof(reply), &reply_n) ==
+        CNET_SCTP_SESSION_OK && reply_n == 0u &&
+        event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED &&
+        event.generation == ga && event.stream_id == 2u &&
+        event.message_size == 4u && event.has_tsn &&
+        event.last_tsn == original_tsn &&
+        a.abort_abandoned_count == 0u);
+    assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
+        CNET_SCTP_SESSION_EMPTY && progress.generation == 0u);
+    for (;;) {
+      cnet_sctp_session_status result =
+          cnet_sctp_session_take_terminal_failure(&a, &terminal);
+      if (result == CNET_SCTP_SESSION_EMPTY) break;
+      assert(result == CNET_SCTP_SESSION_OK &&
+          terminal.kind == CNET_SCTP_SESSION_TERMINAL_FORWARD_UNCONFIRMED &&
+          terminal.reason == CNET_SCTP_SESSION_TERMINAL_LOCAL_RETRY_EXHAUSTED &&
+          terminal.generation == ga && terminal.stream_id == 2u &&
+          terminal.has_final_tsn);
+      if (terminal.last_tsn == original_tsn) {
+        assert(terminal.message_size == 4u && terminal.ppid == 53u);
+        ++original_failures;
+      }
+      ++terminal_count;
+      assert(terminal_count <= CNET_SCTP_DATA_TX_SLOTS + 1u);
+    }
+    assert(original_failures == 1u &&
+        terminal_count == (saturated ? CNET_SCTP_DATA_TX_SLOTS + 1u : 1u));
+    assert(cnet_sctp_session_take_peer_abort(&a, &abort_info, reason,
+        sizeof(reason), &reason_n) == CNET_SCTP_SESSION_OK &&
+        abort_info.has_user_reason && reason_n == 4u &&
+        memcmp(reason, "late", 4u) == 0 &&
+        cnet_sctp_session_take_peer_abort(&a, &abort_info, reason,
+            sizeof(reason), &reason_n) == CNET_SCTP_SESSION_EMPTY);
+    assert(gb != 0u &&
+        cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK &&
+        cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK &&
+        cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK &&
+        cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+  }
+}
+
+
 int main(void) {
   session_open_message_reset_reuse();
   partial_loss_reports_abandonment_then_reliable_continues();
@@ -1809,6 +1964,7 @@ int main(void) {
   tx_usage_refuses_old_generation_tickets();
   peer_abort_preempts_reset_without_losing_pr_events();
   stale_generation_denies_old_data_egress();
+  peer_abort_after_local_retry_exhaustion();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }
