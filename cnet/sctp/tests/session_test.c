@@ -1458,6 +1458,84 @@ static void peer_abort_unbound_generation_fails_closed(void) {
 }
 
 
+/* The read-only public TX snapshot must not attribute bytes or fragment
+ * tickets admitted by SID generation N to generation N+1. Even if another
+ * layer violates the normal RFC6525 SID-reuse fences, the response is STALE
+ * with zeroed output (never falsely zero retained bytes of the new lifetime).
+ * Real DATA admission is used for direct, copied unsent and partly pumped PR. */
+static void tx_usage_refuses_old_generation_tickets(void) {
+  unsigned int mode;
+  for (mode = 0u; mode < 3u; ++mode) {
+    cnet_sctp_session a = {0}, b = {0};
+    test_context ca = {0}, cb = {0};
+    cnet_sctp_session_tx_usage usage = {0}, zero = {0};
+    uint8_t packet[1200], message[1800];
+    size_t packet_n = 0u, expected_queued = 0u, expected_retained = 0u;
+    uint64_t original = 0u, peer = 0u;
+    uint32_t original_next_tsn;
+    size_t i;
+
+    memset(message, 0x5A, sizeof(message));
+    ready_pair(&a, &b, &ca, &cb);
+    open_channel_with_policy(&a, &b, 6u, 2u, 0x01u, 0u,
+        &original, &peer);
+    if (mode == 0u) {
+      assert(cnet_sctp_session_send(&a, 20u, 2u, 1, "data", 4u,
+          packet, sizeof(packet), &packet_n) == CNET_SCTP_SESSION_OK &&
+          packet_n != 0u);
+      expected_retained = 4u;
+    } else {
+      assert(cnet_sctp_session_queue_message(&a, 20u, 2u, 1,
+          message, sizeof(message)) == CNET_SCTP_SESSION_OK);
+      if (mode == 2u) {
+        assert(cnet_sctp_session_pump_message(&a, 21u,
+            packet, sizeof(packet), &packet_n) == CNET_SCTP_SESSION_OK &&
+            packet_n != 0u);
+        expected_retained = CNET_SCTP_DATA_PAYLOAD_MAX;
+      }
+      expected_queued = sizeof(message) - expected_retained;
+    }
+    original_next_tsn = a.association.data.next_tsn;
+    assert(cnet_sctp_session_get_tx_usage(&a, 2u,
+        original, &usage) == CNET_SCTP_SESSION_OK &&
+        usage.generation == original &&
+        usage.queued_bytes == expected_queued &&
+        usage.retained_bytes == expected_retained);
+    for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+      const cnet_sctp_data_tx *tx = &a.association.data.tx[i];
+      if (tx->used && tx->stream_id == 2u && tx->ppid == 53u)
+        assert(tx->admission_generation == original);
+    }
+    if (a.association.data.pending.active)
+      assert(a.association.data.pending.admission_generation == original);
+
+    /* Deliberately corrupt only the DCEP lifetime (test-only). */
+    a.dcep.channels[2u].generation = original + 99u;
+    memset(&usage, 0xCC, sizeof(usage));
+    assert(cnet_sctp_session_get_tx_usage(&a, 2u,
+        original + 99u, &usage) == CNET_SCTP_SESSION_STALE &&
+        memcmp(&usage, &zero, sizeof(usage)) == 0 &&
+        a.association.data.next_tsn == original_next_tsn);
+    memset(&usage, 0xCC, sizeof(usage));
+    assert(cnet_sctp_session_get_tx_usage(&a, 2u, original,
+        &usage) == CNET_SCTP_SESSION_STALE &&
+        memcmp(&usage, &zero, sizeof(usage)) == 0 &&
+        a.association.data.next_tsn == original_next_tsn);
+    a.dcep.channels[2u].generation = original;
+    assert(cnet_sctp_session_get_tx_usage(&a, 2u,
+        original, &usage) == CNET_SCTP_SESSION_OK &&
+        usage.generation == original &&
+        usage.queued_bytes == expected_queued &&
+        usage.retained_bytes == expected_retained);
+    assert(peer != 0u);
+    assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK &&
+        cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK &&
+        cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK &&
+        cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+  }
+}
+
+
 int main(void) {
   session_open_message_reset_reuse();
   partial_loss_reports_abandonment_then_reliable_continues();
@@ -1473,6 +1551,7 @@ int main(void) {
   pr_admission_generation_is_immutable();
   queued_cancel_rejects_reused_dcep_generation();
   peer_abort_unbound_generation_fails_closed();
+  tx_usage_refuses_old_generation_tickets();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }
