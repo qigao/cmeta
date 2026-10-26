@@ -180,6 +180,9 @@ cnet_sctp_session_status cnet_sctp_session_create(
 cnet_sctp_session_status cnet_sctp_session_start(cnet_sctp_session *session,
     uint64_t now_ms, void *packet, size_t capacity, size_t *written) {
   cnet_sctp_session_status status = guard(session);
+  /* Revoked/foreign Owner cannot leave a stale packet byte count for the
+   * DTLS output pump, even when the wire buffer itself remains untouched. */
+  if (written) *written = 0u;
   if (status != CNET_SCTP_SESSION_OK) return status;
   return map_assoc(cnet_sctp_assoc_start(&session->association, now_ms,
       (uint8_t *)packet, capacity, written));
@@ -311,6 +314,9 @@ cnet_sctp_session_status cnet_sctp_session_advance(cnet_sctp_session *session,
 cnet_sctp_session_status cnet_sctp_session_next_deadline(
     cnet_sctp_session *session, uint64_t *deadline_ms, int *has_deadline) {
   cnet_sctp_session_status status = guard(session);
+  /* A refused Owner read cannot advertise an old due timer as current. */
+  if (deadline_ms) *deadline_ms = 0u;
+  if (has_deadline) *has_deadline = 0;
   if (status != CNET_SCTP_SESSION_OK) return status;
   return map_assoc(cnet_sctp_assoc_next_deadline(&session->association,
       deadline_ms, has_deadline));
@@ -876,6 +882,8 @@ cnet_sctp_session_status cnet_sctp_session_close_channel(
   cnet_sctp_dcep_status ds;
   cnet_sctp_assoc_status as;
   if (written) *written = 0u;
+  /* A rejected close did NOT retire or create a channel lifetime. */
+  if (generation) *generation = 0u;
   if (status != CNET_SCTP_SESSION_OK) return status;
   if (!generation || stream >= session->dcep.streams)
     return CNET_SCTP_SESSION_INVALID;

@@ -275,6 +275,8 @@ cnet_sctp_session_status cnet_sctp_session_create(
 /* start emits INIT. input consumes one complete SCTP packet and may emit one
  * reply. advance emits the next due retransmission/control packet. Output is
  * copied into caller storage and its size is returned through written.
+ * On OWNER/CLOSED refusal, start() resets *written and next_deadline() resets
+ * available deadline outputs; no packet or timer admission occurs.
  * Before Owner advance(), all pending/retained APPLICATION DATA generations
  * are checked against the active DCEP SID lifetimes. If a SID was wrongly
  * reused before old DATA retired, STALE prevents even a T3 retransmission

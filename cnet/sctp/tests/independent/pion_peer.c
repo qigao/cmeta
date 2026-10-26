@@ -191,14 +191,19 @@ static int qualify_revoked_owner_facade(cnet_sctp_session *session,
           sizeof(wire), &written) != CNET_SCTP_SESSION_OWNER ||
       written != 0u)
     return -1;
+  deadline = UINT64_C(9876);
+  has_deadline = 1;
   if (cnet_sctp_session_next_deadline(session, &deadline,
-          &has_deadline) != CNET_SCTP_SESSION_OWNER)
+          &has_deadline) != CNET_SCTP_SESSION_OWNER ||
+      deadline != 0u || has_deadline != 0)
     return -1;
   /* Revoking the authenticated DTLS Owner must block EVERY public wire
    * mutation, not only ingress and receipt reads. Preserve the opaque
    * Session for an explicit successful Owner hand-back at teardown. */
+  written = sizeof(wire);
   if (cnet_sctp_session_start(session, now, wire,
-          sizeof(wire), &written) != CNET_SCTP_SESSION_OWNER)
+          sizeof(wire), &written) != CNET_SCTP_SESSION_OWNER ||
+      written != 0u)
     return -1;
   written = sizeof(wire);
   if (cnet_sctp_session_open_channel(session, now, 2u,
@@ -226,7 +231,7 @@ static int qualify_revoked_owner_facade(cnet_sctp_session *session,
       written != 0u)
     return -1;
   {
-    uint64_t close_generation = 0u;
+    uint64_t close_generation = UINT64_C(9876);
     written = sizeof(wire);
     if (cnet_sctp_session_close_channel(session, now, 0u,
             wire, sizeof(wire), &written,
