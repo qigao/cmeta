@@ -261,18 +261,17 @@ cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
           session->association.peer_abort_info.last_acked_tsn;
       if (session->peer_abort_has_tsn)
         latch_cumulative_progress(session, session->peer_abort_last_ack);
-      /* A peer ABORT by itself is NEVER a locally exhausted retry budget.
-       * Discard unresolved FORWARD placeholders only if NO prior local
-       * advance() actually exhausted its retries. Once local EXPIRED has
-       * genuinely occurred, those old copied records MUST remain eligible
-       * for a separate local terminal-failure result even if peer ABORT
-       * subsequently destroys DATA. Confirmed success always survives. */
-      if (!session->terminal_retry_exhausted)
-        for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
-          if (session->forward_tracks[i].used &&
-              !session->forward_tracks[i].cumul_confirmed)
-            memset(&session->forward_tracks[i], 0,
-                sizeof(session->forward_tracks[i]));
+      /* No post-ABORT SACK can complete an unconfirmed FORWARD result.
+       * Peer ABORT is an independent association terminal, not a LOCAL
+       * retry failure. The Association rejects further packets once local
+       * FAILED has occurred, so it cannot arrive after local exhaustion.
+       * Discard any unconfirmed placeholders, preserving only truly
+       * confirmed original-generation success records. */
+      for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+        if (session->forward_tracks[i].used &&
+            !session->forward_tracks[i].cumul_confirmed)
+          memset(&session->forward_tracks[i], 0,
+              sizeof(session->forward_tracks[i]));
       if (staged_count != 0u) {
         memcpy(session->abort_abandoned, staged,
             staged_count * sizeof(staged[0]));
@@ -483,13 +482,15 @@ cnet_sctp_session_status cnet_sctp_session_take_terminal_failure(
   status = guard(session);
   if (status != CNET_SCTP_SESSION_OK) return status;
   if (!session->terminal_retry_exhausted) return CNET_SCTP_SESSION_EMPTY;
-  /* Original PR abandonments must be published through poll() BEFORE the
-   * Owner concludes that terminal results are drained. They may still live
-   * in the failed DATA TCB, OR in a Session-owned copy after a later peer
-   * ABORT destroyed DATA. This is independent of the peer's ABORT reason. */
-  if ((session->association.data_ready &&
-       session->association.data.abandon_event_count != 0u) ||
-      session->abort_abandoned_count != 0u) {
+  /* Locally exhausted DATA retains unread PR abandonment events, and
+   * the Owner MUST publish each original message through poll() before
+   * reporting terminal EMPTY. Peer ABORT cannot enter after FAILED.
+   * A full ledger of already-polled UNCONFIRMED FORWARD records would
+   * deadlock this ordering: poll needs a forward slot but terminal take
+   * would insist on polling first. Only in that finite-capacity case,
+   * allow an existing LOCAL failure to free a slot. */
+  if (session->association.data_ready &&
+      session->association.data.abandon_event_count != 0u) {
     size_t occupied = 0u;
     int has_confirmed = 0;
     for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
@@ -964,14 +965,11 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
       }
     }
     if (next) {
-      /* Peer ABORT alone cannot confirm a FORWARD. If the local Owner
-       * already exhausted its genuine transport retry budget, however,
-       * its pre-existing abandonment MUST retain an unconfirmed terminal
-       * result after the copied event is polled. The only success source
-       * remains a validated pre-ABORT cumulative SACK. */
+      /* Post-ABORT no future SACK can confirm an abandoned DATA record.
+       * Only a genuine pre-ABORT cumulative SACK admits a peer-progress
+       * receipt; ABORT alone never fabricates local retry exhaustion. */
       record_forward = next->has_tsn &&
-          (!from_abort || session->terminal_retry_exhausted ||
-           (session->peer_abort_has_tsn &&
+          (!from_abort || (session->peer_abort_has_tsn &&
             (uint32_t)(session->peer_abort_last_ack -
                 next->last_tsn) < UINT32_C(0x80000000)));
       if (record_forward) {

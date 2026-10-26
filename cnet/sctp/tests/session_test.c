@@ -1791,15 +1791,15 @@ static void stale_generation_denies_old_data_egress(void) {
 }
 
 
-/* LOCAL FORWARD retransmission exhaustion can precede a later valid peer
- * ABORT. That ABORT destroys DATA but MUST NOT erase the earlier local
- * failure or the still-unread original PR abandonment. Separate scenarios:
- * ordinary unread FIFO enforces terminal BUSY-before-poll; a full prior
- * unconfirmed FORWARD ledger permits ONE already-existing failure to retire
- * and free the slot needed by poll(), without returning a premature EMPTY.
- * Both paths use actual DATA, RFC3758 FORWARD, Owner deadlines and ABORT
- * wire packets, not a synthetic local-failure bit. */
-static void peer_abort_after_local_retry_exhaustion(void) {
+/* After local FORWARD retry exhaustion, Association FAILED is terminal:
+ * even a valid late peer ABORT must be rejected without destroying DATA
+ * or replacing the original local failure. Ordinary unread PR requires
+ * terminal BUSY before poll. A full prior unconfirmed FORWARD ledger must
+ * allow one prior LOCAL failure to free the only slot needed by poll(),
+ * without returning premature EMPTY or fabricating an ABORT receipt.
+ * The terminal state and new abandonment come from real DATA/FORWARD
+ * packets and Owner deadlines; only the saturation fixture is injected. */
+static void late_peer_abort_is_closed_after_local_retry_exhaustion(void) {
   unsigned int saturated;
   for (saturated = 0u; saturated < 2u; ++saturated) {
     cnet_sctp_session a = {0}, b = {0};
@@ -1855,9 +1855,10 @@ static void peer_abort_after_local_retry_exhaustion(void) {
         CNET_SCTP_SESSION_BUSY && terminal.generation == 0u);
 
     if (saturated) {
-      /* Test-only capacity saturation with previous ORIGINAL-generation,
-       * already-polled, genuinely LOCAL terminal-eligible records. This
-       * isolates the same bounded release ordering as a busy application. */
+      /* Test-only 16-entry saturation of pre-existing copied failure
+       * records. The real local FAILED flag and the fresh PR abandonment
+       * come from actual Owner timers/wire; injected older placeholders
+       * solely exercise the bounded full-ledger escape path. */
       for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
         cnet_sctp_session_forward_track *slot = &a.forward_tracks[i];
         slot->used = 1u;
@@ -1872,13 +1873,19 @@ static void peer_abort_after_local_retry_exhaustion(void) {
     assert(cnet_sctp_wire_encode(5001u, 5000u, a.association.local_tag,
         &chunk, 1u, wire, sizeof(wire), &wire_n) == CNET_SCTP_WIRE_OK);
     reply_n = 123u;
+    /* The Association intentionally refuses ALL packets after an actual
+     * LOCAL retry-budget FAILED transition, including a late, well-formed
+     * peer ABORT. It cannot replace/erase the local terminal outcome. */
     assert(cnet_sctp_session_input(&a, deadline + 1u, wire, wire_n,
-        reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_OK &&
-        reply_n == 0u && !a.association.data_ready &&
-        a.peer_abort_seen && a.terminal_retry_exhausted &&
-        a.abort_abandoned_count == 1u &&
-        a.abort_abandoned[0].generation == ga &&
-        a.abort_abandoned[0].data.last_tsn == original_tsn);
+        reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_CLOSED &&
+        reply_n == 0u && a.association.data_ready &&
+        a.association.state == CNET_SCTP_ASSOC_FAILED &&
+        !a.peer_abort_seen && !a.association.peer_abort_pending &&
+        a.terminal_retry_exhausted && a.abort_abandoned_count == 0u &&
+        a.association.data.abandon_event_count == 1u &&
+        a.association.data.abandon_events[
+            a.association.data.abandon_event_head].last_tsn ==
+                original_tsn);
     if (saturated) {
       /* An all-unconfirmed full ledger cannot be consumed through the
        * success API. One earlier legitimate failure must free capacity. */
@@ -1889,7 +1896,7 @@ static void peer_abort_after_local_retry_exhaustion(void) {
           terminal.kind == CNET_SCTP_SESSION_TERMINAL_FORWARD_UNCONFIRMED &&
           terminal.generation == ga &&
           terminal.last_tsn != original_tsn &&
-          a.abort_abandoned_count == 1u);
+          a.association.data.abandon_event_count == 1u);
       ++terminal_count;
     } else {
       assert(cnet_sctp_session_take_terminal_failure(&a, &terminal) ==
@@ -1900,7 +1907,8 @@ static void peer_abort_after_local_retry_exhaustion(void) {
     assert(cnet_sctp_session_poll(&a, deadline + 1u, &event, body,
         sizeof(body), reply, sizeof(reply), &reply_n) ==
         CNET_SCTP_SESSION_OWNER && event.kind == CNET_SCTP_SESSION_EVENT_NONE &&
-        reply_n == 0u && a.abort_abandoned_count == 1u);
+        reply_n == 0u &&
+        a.association.data.abandon_event_count == 1u);
     ca.owner = 1;
     reply_n = 123u;
     assert(cnet_sctp_session_poll(&a, deadline + 1u, &event, body,
@@ -1910,7 +1918,7 @@ static void peer_abort_after_local_retry_exhaustion(void) {
         event.generation == ga && event.stream_id == 2u &&
         event.message_size == 4u && event.has_tsn &&
         event.last_tsn == original_tsn &&
-        a.abort_abandoned_count == 0u);
+        a.association.data.abandon_event_count == 0u);
     assert(cnet_sctp_session_take_forward_progress(&a, &progress) ==
         CNET_SCTP_SESSION_EMPTY && progress.generation == 0u);
     for (;;) {
@@ -1932,11 +1940,8 @@ static void peer_abort_after_local_retry_exhaustion(void) {
     assert(original_failures == 1u &&
         terminal_count == (saturated ? CNET_SCTP_DATA_TX_SLOTS + 1u : 1u));
     assert(cnet_sctp_session_take_peer_abort(&a, &abort_info, reason,
-        sizeof(reason), &reason_n) == CNET_SCTP_SESSION_OK &&
-        abort_info.has_user_reason && reason_n == 4u &&
-        memcmp(reason, "late", 4u) == 0 &&
-        cnet_sctp_session_take_peer_abort(&a, &abort_info, reason,
-            sizeof(reason), &reason_n) == CNET_SCTP_SESSION_EMPTY);
+        sizeof(reason), &reason_n) == CNET_SCTP_SESSION_EMPTY &&
+        !abort_info.has_user_reason && reason_n == 0u);
     assert(gb != 0u &&
         cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK &&
         cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK &&
@@ -1964,7 +1969,7 @@ int main(void) {
   tx_usage_refuses_old_generation_tickets();
   peer_abort_preempts_reset_without_losing_pr_events();
   stale_generation_denies_old_data_egress();
-  peer_abort_after_local_retry_exhaustion();
+  late_peer_abort_is_closed_after_local_retry_exhaustion();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }
