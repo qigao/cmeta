@@ -651,6 +651,9 @@ static void cnet_owner_test_expired_partial_vector_send(
   native_io_backend_stats before = {0}, after = {0};
   native_io_coroutine_stats coroutine = NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
   mem_buffer_t *buffer = NULL;
+  mem_buffer_t *original_buffer = NULL;
+  mem_buffer_t *recycled_buffer = NULL;
+  mem_buffer_t *competing[4] = {0};
   mem_slice_t slices[2] = {{0}};
   size_t count = 0u;
 
@@ -690,6 +693,26 @@ static void cnet_owner_test_expired_partial_vector_send(
   mem_slice_release(&slices[1]);
   check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
 
+  /* After the caller releases its final reference, the *native CNet Owner*
+   * is the sole keeper of the original pooled backing. It must not be
+   * returned to the pool while the real partial send is still outstanding.
+   * Keep each competing allocation alive so no unrelated free can satisfy
+   * the later exact-block recycle check. No sleeps or synthetic I/O. */
+  original_buffer = buffer;
+  mem_buffer_release(buffer);
+  buffer = NULL;
+  check_equal(mem_buffer_ref_count(original_buffer), UINT32_C(1));
+  for (size_t index = 0u; index < 4u; ++index) {
+    competing[index] = mem_get_buffer(&pool, PAYLOAD_BYTES);
+    check_not_null(competing[index]);
+    check_not_equal(competing[index], original_buffer);
+    memset(mem_buffer_data(competing[index]), 0xa5, PAYLOAD_BYTES);
+    mem_set_used(competing[index], PAYLOAD_BYTES);
+  }
+  for (size_t index = 0u; index < PAYLOAD_BYTES; ++index)
+    check_equal((unsigned char)mem_buffer_const_data(original_buffer)[index],
+                (unsigned char)0x5a);
+
   check_equal(cnet_owner_test_process_session_work(&owner), SALTS_OK);
   check_equal(cnet_owner_test_observe_raw(&owner, &completion, 1u,
                                          CNET_OWNER_TEST_TIMEOUT_MS, &count),
@@ -697,6 +720,9 @@ static void cnet_owner_test_expired_partial_vector_send(
   check_equal(count, 1u);
   check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
   check_equal(completion.bytes, 1u);
+  /* The real first-byte kernel completion is retrieved, but has not been
+   * dispatched to CNet. Even here no pooled buffer may be recycled. */
+  check_equal(mem_buffer_ref_count(original_buffer), UINT32_C(1));
   check_true(cnet_owner_test_backend_stats(&owner, &before, &coroutine));
 
   clock.now_ms += WRITE_TIMEOUT_MS + 1u;
@@ -706,7 +732,18 @@ static void cnet_owner_test_expired_partial_vector_send(
   check_true(cnet_owner_test_backend_stats(&owner, &after, &coroutine));
   check_equal(after.submitted, before.submitted);
   check_equal(after.active_requests, 0u);
-  check_equal(mem_buffer_ref_count(buffer), UINT32_C(1));
+
+  /* The write deadline and original native completion have both been
+   * settled. The sole recyclable backing in this private pool must now be
+   * the exact block CNet had retained until the terminal. Its fresh ref=1
+   * also rejects a missing release and avoids dereferencing retired bytes. */
+  recycled_buffer = mem_get_buffer(&pool, PAYLOAD_BYTES);
+  check_not_null(recycled_buffer);
+  check_true(recycled_buffer == original_buffer);
+  check_equal(mem_buffer_ref_count(recycled_buffer), UINT32_C(1));
+  check_equal(mem_buffer_used(recycled_buffer), (size_t)0u);
+  memset(mem_buffer_data(recycled_buffer), 0x3c, PAYLOAD_BYTES);
+  mem_set_used(recycled_buffer, PAYLOAD_BYTES);
 
   check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), SALTS_OK);
   check_equal(terminal.status, SALTS_ETIMEDOUT);
@@ -717,8 +754,12 @@ static void cnet_owner_test_expired_partial_vector_send(
   check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
   check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
 
-  mem_buffer_release(buffer);
-  buffer = NULL;
+  mem_buffer_release(recycled_buffer);
+  recycled_buffer = NULL;
+  for (size_t index = 0u; index < 4u; ++index) {
+    mem_buffer_release(competing[index]);
+    competing[index] = NULL;
+  }
   check_equal(cnet_owner_test_set_send_chunk_bytes(&owner, 0u), SALTS_OK);
   cnet_owner_test_close_socket(accepted);
   cnet_owner_test_close_socket(listener);
