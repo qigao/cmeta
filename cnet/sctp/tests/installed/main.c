@@ -1272,27 +1272,16 @@ static int session_forward_progress(void) {
       cnet_sctp_session_take_forward_progress(client, &progress) !=
           CNET_SCTP_SESSION_EMPTY || progress.generation != 0u)
     goto cleanup;
-  /* Withhold the actual admitted DATA; the real Owner must expire RTX0
-   * and send negotiated RFC3758/RFC8260 forward control, not retry DATA. */
+  /* Withhold admitted DATA; its real RTX0 deadline emits negotiated
+   * FORWARD. Deliberately leave the original local PR abandonment UNREAD
+   * while the peer confirms FORWARD and real RFC6525 close begins. */
   stage = 4;
   nf = 0u;
   if (cnet_sctp_session_advance(client, deadline, first,
           sizeof(first), &nf) != CNET_SCTP_SESSION_OK ||
       nf == 0u || (first[12u] != 192u && first[12u] != 194u) ||
-      cnet_sctp_session_poll(client, deadline, &event,
-          message, sizeof(message), second, sizeof(second),
-          &ns) != CNET_SCTP_SESSION_OK ||
-      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED ||
-      event.stream_id != 2u || event.generation != old_generation ||
-      !event.has_tsn || event.message_size != 4u ||
-      event.first_tsn != event.last_tsn)
-    goto cleanup;
-  original_tsn = event.last_tsn;
-  if (cnet_sctp_session_take_forward_progress(client, &progress) !=
-          CNET_SCTP_SESSION_EMPTY || progress.last_tsn != 0u ||
-      cnet_sctp_session_poll(client, deadline, &event,
-          message, sizeof(message), second, sizeof(second),
-          &ns) != CNET_SCTP_SESSION_EMPTY)
+      cnet_sctp_session_take_forward_progress(client, &progress) !=
+          CNET_SCTP_SESSION_EMPTY || progress.last_tsn != 0u)
     goto cleanup;
 
   stage = 5;
@@ -1303,8 +1292,10 @@ static int session_forward_progress(void) {
           sizeof(third), &nt) != CNET_SCTP_SESSION_OK || nt != 0u)
     goto cleanup;
 
-  /* Deliberately leave the already cumulative-ACK-qualified progress
-   * result unread, then retire and reopen its DCEP SID generation. */
+  /* Both the ORIGINAL local abandonment and independently confirmed
+   * FORWARD progress are still unread as the real bilateral RFC6525
+   * request is admitted. Closing must neither relabel the old event nor
+   * bypass the Owner's abandonment-before-reset-event ordering. */
   stage = 6;
   nf = 0u;
   if (cnet_sctp_session_close_channel(client, deadline + 3u, 2u,
@@ -1319,8 +1310,21 @@ static int session_forward_progress(void) {
           &nq) != CNET_SCTP_SESSION_EMPTY ||
       cnet_sctp_session_input(client, deadline + 6u, second, ns,
           third, sizeof(third), &nt) != CNET_SCTP_SESSION_OK ||
-      nt == 0u ||
-      cnet_sctp_session_poll(client, deadline + 7u, &event,
+      nt == 0u)
+    goto cleanup;
+  /* The original PR DATA abandonment must precede the close result even
+   * though reset response processing has already completed. */
+  nq = 123u;
+  if (cnet_sctp_session_poll(client, deadline + 7u, &event,
+          message, sizeof(message), fourth, sizeof(fourth),
+          &nq) != CNET_SCTP_SESSION_OK ||
+      event.kind != CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED ||
+      event.stream_id != 2u || event.generation != old_generation ||
+      !event.has_tsn || event.message_size != 4u ||
+      event.first_tsn != event.last_tsn || nq != 0u)
+    goto cleanup;
+  original_tsn = event.last_tsn;
+  if (cnet_sctp_session_poll(client, deadline + 7u, &event,
           message, sizeof(message), fourth, sizeof(fourth),
           &nq) != CNET_SCTP_SESSION_OK ||
       event.kind != CNET_SCTP_SESSION_EVENT_CHANNEL_CLOSED ||
