@@ -7,6 +7,9 @@
  * Public SALTS_SPSC_ATOMIC_SIZE_T and salts/atomic.h remain unchanged.
  */
 #if defined(SALTS_DISRUPTOR_BACKEND_ASM)
+  #if SALTS_DISRUPTOR_BACKEND_ASM != 1
+    #error "SALTS_DISRUPTOR_BACKEND_ASM must be exactly 1 when explicitly selected"
+  #endif
   #include "disruptor_atomic_asm.h"
 #else
   #if defined(__STDC_NO_ATOMICS__)

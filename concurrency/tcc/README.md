@@ -1,5 +1,11 @@
 # TinyCC Disruptor with explicit ASM Atomic backend
 
+Both the compiler and private header explicitly require
+`SALTS_DISRUPTOR_BACKEND_ASM=1`; defining it as `0` or another value
+fails compilation rather than silently selecting the wrong backend.
+The dedicated CI also verifies that this invalid value and a
+non-TinyCC compiler are rejected before running clients.
+
 The standalone `concurrency/tcc` CMake project builds a real
 `libsalts_tcc_disruptor.a` static archive from the original
 `concurrency/src/disruptor.c`, `platform/src/thread_posix.c`,

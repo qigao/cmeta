@@ -16,8 +16,11 @@
  * spellings WITHOUT pretending TinyCC supports standard <stdatomic.h>.
  * Feature macros remain untouched; unrelated consumers fail closed.
  */
-#ifndef SALTS_DISRUPTOR_BACKEND_ASM
-#error "Private ASM Atomic is only valid for an explicitly selected Disruptor backend"
+#if !defined(SALTS_DISRUPTOR_BACKEND_ASM) || SALTS_DISRUPTOR_BACKEND_ASM != 1
+#error "Private ASM Atomic requires SALTS_DISRUPTOR_BACKEND_ASM=1"
+#endif
+#if defined(SALTS_DISRUPTOR_ASM_ORDERED) && SALTS_DISRUPTOR_ASM_ORDERED != 1
+#error "SALTS_DISRUPTOR_ASM_ORDERED must be 1 when selected"
 #endif
 
 /* Declare precisely the memory-order spellings referenced by Disruptor.
