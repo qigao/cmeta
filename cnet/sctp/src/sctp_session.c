@@ -761,6 +761,22 @@ cnet_sctp_session_status cnet_sctp_session_get_tx_usage(
   if (generation != expected_generation) return CNET_SCTP_SESSION_STALE;
   if (!session->association.data_ready) return CNET_SCTP_SESSION_CLOSED;
   data = &session->association.data;
+  /* A live DCEP token must not inherit a previous SID lifetime's queued
+   * bytes or TX retransmit tickets. Validate ALL matching records BEFORE
+   * publishing any snapshot: returning a false zero-byte snapshot could
+   * be mistaken for send retirement. An unbound DATA-only record (token 0)
+   * is also inadmissible as an opaque Session-owned message. */
+  if (data->pending.active && data->pending.stream_id == stream &&
+      data->pending.ppid != CNET_SCTP_DCEP_PPID &&
+      data->pending.admission_generation != generation)
+    return CNET_SCTP_SESSION_STALE;
+  for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+    const cnet_sctp_data_tx *tx = &data->tx[i];
+    if (tx->used && tx->stream_id == stream &&
+        tx->ppid != CNET_SCTP_DCEP_PPID &&
+        tx->admission_generation != generation)
+      return CNET_SCTP_SESSION_STALE;
+  }
   usage->generation = generation;
   usage->association_forward_pending = data->forward_active ? 1u : 0u;
   if (data->pending.active && data->pending.stream_id == stream &&
