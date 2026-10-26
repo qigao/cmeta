@@ -364,7 +364,7 @@ jobs:
             -DCNET_SCTP_TEST_OWNER_THREADS=ON \
             -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -fPIE" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread -pie"
-          cmake --build build-sctp-tsan --target cnet_sctp_owner_thread_test cnet_sctp_provider_dso_test cnet_sctp_session_test --parallel 2
+          cmake --build build-sctp-tsan --target cnet_sctp_owner_thread_test cnet_sctp_provider_dso_test cnet_sctp_session_provider_dso_test cnet_sctp_session_test --parallel 2
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -374,7 +374,7 @@ jobs:
                       'sctp_dcep.c', 'sctp_webrtc.c', 'sctp_session.c',
                       'session_test.c',
                       'owner_thread_test.c', 'provider_dso_test.c',
-                      'provider_dso_fixture.c'}
+                      'session_provider_dso_test.c', 'provider_dso_fixture.c'}
           found = set()
           for entry in entries:
               name = Path(entry['file']).name
@@ -388,7 +388,7 @@ jobs:
           assert found == required, (found, required)
           print('TSan source instrumentation:', ', '.join(sorted(found)))
           PY
-          ctest --test-dir build-sctp-tsan --output-on-failure --repeat until-fail:10 -R 'cnet_sctp_(owner_thread|provider_dso|session)_test'
+          ctest --test-dir build-sctp-tsan --output-on-failure --repeat until-fail:10 -R 'cnet_sctp_(owner_thread|provider_dso|session_provider_dso|session)_test'
 
   gmssl-mac-c11:
     name: C11 cookie MAC with pinned GmSSL, no SDK export

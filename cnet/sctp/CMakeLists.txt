@@ -386,6 +386,24 @@ if(CNET_SCTP_TEST_OWNER_THREADS)
   add_test(NAME cnet_sctp_provider_dso_test
     COMMAND cnet_sctp_provider_dso_test
       $<TARGET_FILE:cnet_sctp_test_provider_dso>)
+
+  # Test-only public opaque Session + real DSO cancellation/Owner/drain.
+  # The existing private Association DSO gate remains separate.
+  add_executable(cnet_sctp_session_provider_dso_test
+    tests/session_provider_dso_test.c)
+  target_include_directories(cnet_sctp_session_provider_dso_test
+    PRIVATE tests)
+  target_link_libraries(cnet_sctp_session_provider_dso_test PRIVATE
+    CNetSctpPrototype::Session Threads::Threads ${CMAKE_DL_LIBS})
+  set_target_properties(cnet_sctp_session_provider_dso_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_compile_options(cnet_sctp_session_provider_dso_test PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(cnet_sctp_session_provider_dso_test
+    cnet_sctp_test_provider_dso)
+  add_test(NAME cnet_sctp_session_provider_dso_test
+    COMMAND cnet_sctp_session_provider_dso_test
+      $<TARGET_FILE:cnet_sctp_test_provider_dso>)
 endif()
 
 # Test-only independent Pion SCTP oracle. Real UDP datagrams to an external
