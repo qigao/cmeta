@@ -52,10 +52,11 @@ jobs:
             -Iconcurrency/include -Iutils/include -Iplatform/include \
             -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L \
             -c concurrency/src/disruptor.c -o "$RUNNER_TEMP/invalid-disruptor.o" \
-            2>"$RUNNER_TEMP/invalid-selector.log"; then
+            >"$RUNNER_TEMP/invalid-selector.log" 2>&1; then
             echo "Invalid ASM selector was admitted" >&2
             exit 1
           fi
+          cat "$RUNNER_TEMP/invalid-selector.log"
           grep -F 'SALTS_DISRUPTOR_BACKEND_ASM must be exactly 1' \
             "$RUNNER_TEMP/invalid-selector.log"
           if cmake -S concurrency/tcc -B build/invalid-native -G Ninja \
@@ -64,6 +65,7 @@ jobs:
             echo "Non-TCC compiler was incorrectly accepted" >&2
             exit 1
           fi
+          cat "$RUNNER_TEMP/invalid-native.log"
           grep -F 'requires TinyCC' "$RUNNER_TEMP/invalid-native.log"
       - name: Build real static library and run linked consumer conformance
         shell: bash
