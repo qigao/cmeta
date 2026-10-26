@@ -30,7 +30,7 @@ jobs:
       - name: Repeat real SPSC and Disruptor contention tests five times
         run: >-
           ctest --test-dir build/atomic-${{ matrix.compiler }}
-          -R 'salts_(asm_atomic_conformance|spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance|disruptor_asm_real_source_conformance|disruptor_asm_mpmc_real_source|disruptor_asm_parked_worker_conformance)'
+          -R 'salts_(asm_atomic_conformance|spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance|disruptor_asm_real_source_conformance|disruptor_asm_mpmc_real_source|disruptor_asm_parked_worker_conformance|disruptor_asm_ordered_real_source_conformance|disruptor_asm_ordered_mpmc_real_source|disruptor_asm_ordered_parked_worker_conformance)'
           --repeat until-fail:5 --output-on-failure
 
   native-arm64-atomic-conformance:
@@ -65,7 +65,7 @@ jobs:
       - name: Stress cross-thread publication, MPMC and retirement 20 times
         run: >-
           ctest --test-dir build/atomic-arm64
-          -R 'salts_(atomic_language_conformance|atomic_abi_same_compiler|intrinsic_atomic_conformance|asm_atomic_conformance|spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance|disruptor_asm_real_source_conformance|disruptor_asm_mpmc_real_source|disruptor_asm_parked_worker_conformance)'
+          -R 'salts_(atomic_language_conformance|atomic_abi_same_compiler|intrinsic_atomic_conformance|asm_atomic_conformance|spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance|disruptor_asm_real_source_conformance|disruptor_asm_mpmc_real_source|disruptor_asm_parked_worker_conformance|disruptor_asm_ordered_real_source_conformance|disruptor_asm_ordered_mpmc_real_source|disruptor_asm_ordered_parked_worker_conformance)'
           --repeat until-fail:20 --output-on-failure
 
   asm-disruptor-benchmark:
@@ -89,6 +89,7 @@ jobs:
           cmake --build build/asm-compare --parallel 2
           --target salts_disruptor_native_benchmark salts_disruptor_asm_benchmark
           salts_disruptor_native_latency salts_disruptor_asm_latency
+          salts_disruptor_asm_ordered_benchmark salts_disruptor_asm_ordered_latency
       - name: Compare paired warm and sampled runs (no performance threshold)
         env:
           CC: ${{ matrix.compiler }}
@@ -111,6 +112,30 @@ jobs:
             --asm build/asm-compare/salts_disruptor_asm_latency \
             --samples 7 --warmups 2 \
             --output build/asm-compare/paired-latency.json
+      - name: Compare order-specialized ASM throughput with the same native C11 workload
+        env:
+          CC: ${{ matrix.compiler }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/compiler/asm-atomic/compare_disruptor_benchmark.py \
+            --native build/asm-compare/salts_disruptor_native_benchmark \
+            --asm build/asm-compare/salts_disruptor_asm_ordered_benchmark \
+            --asm-policy loadstore_ordered \
+            --samples 7 --warmups 2 \
+            --output build/asm-compare/paired-benchmark-ordered.json
+      - name: Compare order-specialized ASM publish-to-claim latency
+        env:
+          CC: ${{ matrix.compiler }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/compiler/asm-atomic/compare_disruptor_latency.py \
+            --native build/asm-compare/salts_disruptor_native_latency \
+            --asm build/asm-compare/salts_disruptor_asm_ordered_latency \
+            --asm-policy loadstore_ordered \
+            --samples 7 --warmups 2 \
+            --output build/asm-compare/paired-latency-ordered.json
       - name: Upload raw throughput and latency measurements (no performance thresholds)
         if: always()
         uses: actions/upload-artifact@v4
@@ -120,6 +145,8 @@ jobs:
           path: |
             build/asm-compare/paired-benchmark.json
             build/asm-compare/paired-latency.json
+            build/asm-compare/paired-benchmark-ordered.json
+            build/asm-compare/paired-latency-ordered.json
 
   native-interop:
     name: Native GCC/Clang cross-compiler atomic ABI
@@ -351,6 +378,14 @@ jobs:
           BUILD_ROOT=build/asm-disruptor-tcc-arm64 \
             bash tests/compiler/asm-atomic/run_disruptor_tcc.sh \
             2>&1 | tee build/asm-disruptor-tcc-arm64.log
+      - name: Exercise order-specialized ASM Disruptor with pinned TinyCC ARM64
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          SALTS_TEST_ASM_ORDERED=1 BUILD_ROOT=build/asm-disruptor-ordered-tcc-arm64 \
+            bash tests/compiler/asm-atomic/run_disruptor_tcc.sh \
+            2>&1 | tee build/asm-disruptor-ordered-tcc-arm64.log
       - name: Verify strict C11 compiler admission (no atomics fallback)
         shell: bash
         run: |
@@ -366,6 +401,7 @@ jobs:
           if-no-files-found: ignore
           path: |
             build/asm-disruptor-tcc-arm64.log
+            build/asm-disruptor-ordered-tcc-arm64.log
             build/tcc-arm64/strict/CMakeFiles/CMakeConfigureLog.yaml
             build/tcc-arm64/strict/Testing/Temporary/LastTest.log
 
@@ -486,6 +522,14 @@ jobs:
           BUILD_ROOT=build/asm-disruptor-tcc-x64 \
             bash tests/compiler/asm-atomic/run_disruptor_tcc.sh \
             2>&1 | tee build/asm-disruptor-tcc-x64.log
+      - name: Exercise order-specialized ASM Disruptor with pinned TinyCC x86-64
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          SALTS_TEST_ASM_ORDERED=1 BUILD_ROOT=build/asm-disruptor-ordered-tcc-x64 \
+            bash tests/compiler/asm-atomic/run_disruptor_tcc.sh \
+            2>&1 | tee build/asm-disruptor-ordered-tcc-x64.log
       - name: Configure standalone C11 conformance
         run: cmake -S tests/compiler -B build/atomic-tcc -G Ninja -DCMAKE_C_COMPILER=tcc
       - name: Compile
@@ -509,6 +553,7 @@ jobs:
             build/tcc-cmeta-cstl/cmeta/*.log
             build/tcc-cmeta-cstl/cstl/*.log
             build/asm-disruptor-tcc-x64.log
+            build/asm-disruptor-ordered-tcc-x64.log
             build/catomics-upstream/*.log
             build/atomic-probe/diagnostics.log
             build/atomic-tcc/CMakeFiles/CMakeConfigureLog.yaml

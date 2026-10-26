@@ -7,8 +7,10 @@
  *
  * We intentionally map the two internal _Atomic typedefs to separately owned
  * assembly slots. The public opaque disruptor_t ABI remains unchanged.
- * All assembly operations use stronger SEQ_CST ordering than the original
- * relaxed/acquire/release/acq_rel operation sites. This is not a C11 shim.
+ * Default ASM uses SEQ_CST for everything. The optional ordered experiment
+ * uses corresponding relaxed/acquire/release scalar load/store instructions
+ * but retains SEQ_CST for ALL RMW and CAS operations.
+ * This is not a C11 shim.
  *
  * The included source may still include <stdatomic.h>. We load that first
  * for memory_order enumeration constants, then rebind only the operations
@@ -73,13 +75,78 @@ _Static_assert(sizeof(salts_asm_u32_slot) == sizeof(unsigned int) &&
     salts_asm_u64_slot *: salts_asm_u64_cas, \
     salts_asm_u32_slot *: salts_asm_u32_cas)
 
-/* Evaluating the original order expression preserves caller diagnostics,
- * but backend deliberately selects stronger SEQ_CST for all accesses.
+/* Optional optimized experiment: match the original Disruptor load/store
+ * memory orders exactly, while retaining the stronger seq_cst RMW/CAS.
+ * C functions serve as the narrowly typed admission boundary. Unsupported
+ * orders fail at runtime instead of silently weakening a future call site.
  */
+#ifdef SALTS_TEST_ASM_ORDERED
+#include <stdlib.h>
+static inline uint64_t salts_test_u64_load_ordered(
+    const salts_asm_u64_slot *slot, memory_order order) {
+    switch (order) {
+    case memory_order_relaxed: return salts_asm_u64_load_relaxed(slot);
+    case memory_order_consume:
+    case memory_order_acquire: return salts_asm_u64_load_acquire(slot);
+    case memory_order_seq_cst: return salts_asm_u64_load(slot);
+    default: abort();
+    }
+}
+static inline uint32_t salts_test_u32_load_ordered(
+    const salts_asm_u32_slot *slot, memory_order order) {
+    switch (order) {
+    case memory_order_relaxed: return salts_asm_u32_load_relaxed(slot);
+    case memory_order_consume:
+    case memory_order_acquire: return salts_asm_u32_load_acquire(slot);
+    case memory_order_seq_cst: return salts_asm_u32_load(slot);
+    default: abort();
+    }
+}
+static inline void salts_test_u64_store_ordered(
+    salts_asm_u64_slot *slot, uint64_t value, memory_order order) {
+    switch (order) {
+    case memory_order_relaxed: salts_asm_u64_store_relaxed(slot, value); break;
+    case memory_order_release: salts_asm_u64_store_release(slot, value); break;
+    case memory_order_seq_cst: salts_asm_u64_store(slot, value); break;
+    default: abort();
+    }
+}
+static inline void salts_test_u32_store_ordered(
+    salts_asm_u32_slot *slot, uint32_t value, memory_order order) {
+    switch (order) {
+    case memory_order_relaxed: salts_asm_u32_store_relaxed(slot, value); break;
+    case memory_order_release: salts_asm_u32_store_release(slot, value); break;
+    case memory_order_seq_cst: salts_asm_u32_store(slot, value); break;
+    default: abort();
+    }
+}
+#define SALTS_TEST_ASM_LOAD_ORDERED(p_) \
+    _Generic((p_), \
+      salts_asm_u64_slot *: salts_test_u64_load_ordered, \
+      const salts_asm_u64_slot *: salts_test_u64_load_ordered, \
+      salts_asm_u32_slot *: salts_test_u32_load_ordered, \
+      const salts_asm_u32_slot *: salts_test_u32_load_ordered)
+#define SALTS_TEST_ASM_STORE_ORDERED(p_) \
+    _Generic((p_), \
+      salts_asm_u64_slot *: salts_test_u64_store_ordered, \
+      salts_asm_u32_slot *: salts_test_u32_store_ordered)
 #define atomic_load_explicit(p_, order_) \
-  ((void)(order_), SALTS_TEST_ASM_LOAD(p_)((p_)))
+    SALTS_TEST_ASM_LOAD_ORDERED(p_)((p_), (order_))
 #define atomic_store_explicit(p_, value_, order_) \
-  ((void)(order_), SALTS_TEST_ASM_STORE(p_)((p_), (value_)))
+    SALTS_TEST_ASM_STORE_ORDERED(p_)((p_), (value_), (order_))
+#else
+/* Conservative reference variant: all loads and stores use seq_cst. */
+#define atomic_load_explicit(p_, order_) \
+    ((void)(order_), SALTS_TEST_ASM_LOAD(p_)((p_)))
+#define atomic_store_explicit(p_, value_, order_) \
+    ((void)(order_), SALTS_TEST_ASM_STORE(p_)((p_), (value_)))
+#endif
+
+/* The RMW/CAS operations remain SEQ_CST for BOTH backends, and
+ * evaluate the existing order parameters exactly once for diagnostics.
+ * Thus no original order is weakened by this experiment.
+ */
+
 #define atomic_fetch_add_explicit(p_, value_, order_) \
   ((void)(order_), SALTS_TEST_ASM_ADD(p_)((p_), (value_)))
 #define atomic_fetch_sub_explicit(p_, value_, order_) \

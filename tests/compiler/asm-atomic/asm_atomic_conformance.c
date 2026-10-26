@@ -67,11 +67,29 @@ static int basic_operations(void) {
     return 0;
 }
 
+/* Individually test the new load/store order-specific ABI entrypoints,
+ * including both widths. Contention below exercises the release/acquire
+ * publication pair before pthread_join; seq_cst RMW remains unchanged.
+ */
+static int ordered_load_store_operations(void) {
+    salts_asm_u64_slot a = {0};
+    salts_asm_u32_slot b = {0};
+    salts_asm_u64_store_relaxed(&a, UINT64_C(0x1122334455667788));
+    REQUIRE(salts_asm_u64_load_relaxed(&a) == UINT64_C(0x1122334455667788));
+    salts_asm_u64_store_release(&a, UINT64_C(0x8877665544332211));
+    REQUIRE(salts_asm_u64_load_acquire(&a) == UINT64_C(0x8877665544332211));
+    salts_asm_u32_store_relaxed(&b, UINT32_C(0x12348765));
+    REQUIRE(salts_asm_u32_load_relaxed(&b) == UINT32_C(0x12348765));
+    salts_asm_u32_store_release(&b, UINT32_C(0x98761234));
+    REQUIRE(salts_asm_u32_load_acquire(&b) == UINT32_C(0x98761234));
+    return 0;
+}
+
 static void *increment_worker(void *arg) {
     const unsigned index = *(const unsigned *)arg;
     const uint64_t begin = now_ns();
     (void)salts_asm_u32_fetch_add(&ready32, 1);
-    while (!salts_asm_u64_load(&gate64)) {
+    while (!salts_asm_u64_load_acquire(&gate64)) {
         if (expired(begin)) return (void *)(uintptr_t)1;
         (void)sched_yield();
     }
@@ -85,7 +103,7 @@ static void *increment_worker(void *arg) {
     /* This write must become visible to the consumer before the worker
      * returns; publication is observed BEFORE pthread_join. */
     payload[index] = 919u + index;
-    salts_asm_u64_store(&published[index], 1);
+    salts_asm_u64_store_release(&published[index], 1);
     return NULL;
 }
 
@@ -107,9 +125,9 @@ static int real_thread_contention(void) {
         REQUIRE(!expired(begin));
         (void)sched_yield();
     }
-    salts_asm_u64_store(&gate64, 1);
+    salts_asm_u64_store_release(&gate64, 1);
     for (unsigned i = 0; i < WORKERS; ++i) {
-        while (!salts_asm_u64_load(&published[i])) {
+        while (!salts_asm_u64_load_acquire(&published[i])) {
             REQUIRE(!expired(begin));
             (void)sched_yield();
         }
@@ -128,6 +146,7 @@ static int real_thread_contention(void) {
 
 int main(void) {
     if (basic_operations() != 0) return 1;
+    if (ordered_load_store_operations() != 0) return 1;
     if (real_thread_contention() != 0) return 1;
     puts("External GAS 32/64-bit atomics: PASS (private seq_cst, not C11 admission)");
     return 0;

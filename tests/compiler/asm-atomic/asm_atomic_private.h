@@ -62,6 +62,24 @@ int salts_asm_u32_cas(salts_asm_u32_slot *slot,
 
 void salts_asm_fence(void);
 
+/* Private load/store-only ordering specialization.
+ * Relaxed: atomic, without a cross-core ordering edge.
+ * Acquire: read orders later payload accesses.
+ * Release: prior payload accesses happen before the store.
+ *
+ * CAS / fetch-add / fetch-sub are STILL the stronger seq_cst routines.
+ * These separate ABI entrypoints are NOT installed or allowed on native
+ * _Atomic storage; caller must own the slot entirely under one backend.
+ */
+uint64_t salts_asm_u64_load_relaxed(const salts_asm_u64_slot *slot);
+uint64_t salts_asm_u64_load_acquire(const salts_asm_u64_slot *slot);
+void salts_asm_u64_store_relaxed(salts_asm_u64_slot *slot, uint64_t value);
+void salts_asm_u64_store_release(salts_asm_u64_slot *slot, uint64_t value);
+uint32_t salts_asm_u32_load_relaxed(const salts_asm_u32_slot *slot);
+uint32_t salts_asm_u32_load_acquire(const salts_asm_u32_slot *slot);
+void salts_asm_u32_store_relaxed(salts_asm_u32_slot *slot, uint32_t value);
+void salts_asm_u32_store_release(salts_asm_u32_slot *slot, uint32_t value);
+
 #ifdef __cplusplus
 }
 #endif

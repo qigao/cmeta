@@ -58,6 +58,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--native", type=Path, required=True)
     parser.add_argument("--asm", type=Path, required=True)
+    parser.add_argument("--asm-policy", choices=("seq_cst", "loadstore_ordered"), default="seq_cst")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--samples", type=int, default=7)
     parser.add_argument("--warmups", type=int, default=2)
@@ -89,13 +90,16 @@ def main() -> None:
     result = {
         "description": (
             "Observational, no performance threshold. Native C11 keeps "
-            "original relaxed/acquire/release ordering; ASM uses stronger "
-            "seq_cst-only external calls. External ASM is not TSan-visible."
+            "original relaxed/acquire/release ordering; ASM policy is in "
+            "asm_policy. In loadstore_ordered mode, ASM matches load/store "
+            "orders while retaining stronger seq_cst CAS and RMW; "
+            "external ASM is not fully TSan-visible."
         ),
         "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "architecture": platform.machine(),
         "system": platform.platform(),
         "compiler": os.environ.get("CC", "unknown"),
+        "asm_policy": args.asm_policy,
         "workload": {"producers": 4, "workers": 4, "messages": counts.pop()},
         "warmups": args.warmups,
         "samples": args.samples,
@@ -108,7 +112,7 @@ def main() -> None:
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(f"Architecture: {result['architecture']}, messages/round: {result['workload']['messages']}")
     print(f"Native C11 median: {native_median:,.0f} messages/s")
-    print(f"ASM seq_cst median: {asm_median:,.0f} messages/s")
+    print(f"ASM {args.asm_policy} median: {asm_median:,.0f} messages/s")
     print(f"ASM/native ratio: {asm_median / native_median:.3f} (observational, not release gate)")
     print(f"Evidence JSON: {args.output}")
 

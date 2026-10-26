@@ -78,6 +78,21 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_compile_definitions("salts_disruptor_asm_${_variant}" PRIVATE
           _DEFAULT_SOURCE=1 _POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700)
         set_tests_properties("salts_disruptor_asm_${_variant}" PROPERTIES TIMEOUT 60)
+        # Identical original Disruptor and identical tests with relaxed /
+        # acquire / release load-store instructions; CAS/RMW stay seq_cst.
+        salts_add_atomic_conformance("salts_disruptor_asm_ordered_${_variant}"
+          "disruptor_${_variant}.c"
+          asm-atomic/disruptor_asm_inclusion.c
+          "${CMAKE_CURRENT_LIST_DIR}/${_salts_asm_atomic_source}"
+          "${CMAKE_CURRENT_LIST_DIR}/../../platform/src/thread_posix.c")
+        target_include_directories("salts_disruptor_asm_ordered_${_variant}" PRIVATE
+          "${CMAKE_CURRENT_LIST_DIR}/../../concurrency/include"
+          "${CMAKE_CURRENT_LIST_DIR}/../../utils/include"
+          "${CMAKE_CURRENT_LIST_DIR}/../../platform/include")
+        target_compile_definitions("salts_disruptor_asm_ordered_${_variant}" PRIVATE
+          SALTS_TEST_ASM_ORDERED=1
+          _DEFAULT_SOURCE=1 _POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700)
+        set_tests_properties("salts_disruptor_asm_ordered_${_variant}" PROPERTIES TIMEOUT 60)
       endforeach()
       # Fair paired wall-time comparison: compile EXACT same 4x4 MPMC
       # harness, original Disruptor source and POSIX Platform source with
@@ -104,11 +119,23 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         asm-atomic/disruptor_asm_inclusion.c
         "${CMAKE_CURRENT_LIST_DIR}/${_salts_asm_atomic_source}"
         "${CMAKE_CURRENT_LIST_DIR}/../../platform/src/thread_posix.c")
+      add_executable(salts_disruptor_asm_ordered_benchmark
+        disruptor_mpmc_real_source.c
+        asm-atomic/disruptor_asm_inclusion.c
+        "${CMAKE_CURRENT_LIST_DIR}/${_salts_asm_atomic_source}"
+        "${CMAKE_CURRENT_LIST_DIR}/../../platform/src/thread_posix.c")
+      add_executable(salts_disruptor_asm_ordered_latency
+        disruptor_mpmc_real_source.c
+        asm-atomic/disruptor_asm_inclusion.c
+        "${CMAKE_CURRENT_LIST_DIR}/${_salts_asm_atomic_source}"
+        "${CMAKE_CURRENT_LIST_DIR}/../../platform/src/thread_posix.c")
       foreach(_benchmark_target
         salts_disruptor_native_benchmark
         salts_disruptor_asm_benchmark
         salts_disruptor_native_latency
-        salts_disruptor_asm_latency)
+        salts_disruptor_asm_latency
+        salts_disruptor_asm_ordered_benchmark
+        salts_disruptor_asm_ordered_latency)
         target_compile_features(${_benchmark_target} PRIVATE c_std_11)
         set_target_properties(${_benchmark_target} PROPERTIES
           C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -124,6 +151,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         else()
           target_compile_definitions(${_benchmark_target} PRIVATE
             SALTS_COMPILER_MPMC_BENCHMARK=1 SALTS_COMPILER_MPMC_EACH=20000)
+        endif()
+        if(_benchmark_target MATCHES "asm_ordered_")
+          target_compile_definitions(${_benchmark_target} PRIVATE
+            SALTS_TEST_ASM_ORDERED=1)
         endif()
         target_compile_options(${_benchmark_target} PRIVATE
           -O2 -Wall -Wextra -Wpedantic -Werror)

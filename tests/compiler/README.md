@@ -650,6 +650,50 @@ validation and concurrency harness; only the internal atomic
 backend changes. This is observational: no speedup threshold and
 no promotion of ASM as a TSan-validated production backend.
 
+## ASM ordering specialization A/B/C matrix
+
+The first complete Disruptor ASM implementation used **SEQ_CST for
+every operation**, even where the production source uses relaxed,
+acquire and release. It runs correctly on x86-64 and AArch64 but has
+no consistent performance advantage.
+
+A **third** isolated test variant, compiled with
+`SALTS_TEST_ASM_ORDERED=1`, uses new x86-64/AArch64 external GAS
+entrypoints for *only* these scalar operations:
+
+| Source order | x86-64 ASM | AArch64 ASM |
+|---|---|---|
+| relaxed load | aligned MOV | LDR |
+| acquire/consume load | aligned MOV | LDAR |
+| seq_cst load | original conservative seq_cst load | original DMB+LDAR+DMB |
+| relaxed store | aligned MOV | STR |
+| release store | aligned MOV | STLR |
+| seq_cst store | original XCHG | original DMB+STLR+DMB |
+
+For both ASM variants, **all compare-exchanges and fetch-add/sub
+remain the original conservative SEQ_CST-only external functions**.
+The C test adapter validates incoming scalar memory orders and calls
+`abort()` on any unsupported/invalid future order instead of silently
+weakening it. A strong CAS is an admissible implementation of weak CAS.
+No layout, public headers, production code, or compiler feature
+advertisement is modified.
+
+These constraints deliberately isolate **the effects of excessive
+Load/Store fences** from the cost of function calls and CAS/RMW fences.
+Three versions of the **same production Disruptor source and 4×4 MPMC
+tests** run independently: native C11, ASM seq_cst, and ASM
+load/store-order-specialized. Both ASM variants are C ABI calls into
+separate .S objects. Pinned TinyCC x86-64/ARM64 and GCC/Clang native
+CTest independently exercise each version. The existing throughput
+and timestamped p50/p95/p99 drivers run additional paired comparisons
+against native C11 with JSON `asm_policy=loadstore_ordered`; they
+remain **observational**, with no performance threshold.
+
+This is **not** complete order-specific C11 atomics, formal ARMv8
+weak-memory validation or sanitizer-qualified foreign assembly.
+Performance improvements are not grounds for merging #1316 while
+TinyCC still declares `__STDC_NO_ATOMICS__=1`.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:

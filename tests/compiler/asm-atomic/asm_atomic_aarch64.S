@@ -178,4 +178,65 @@ salts_asm_fence:
     ret
 .size salts_asm_fence, .-salts_asm_fence
 
+/* ARMv8 baseline ordering-specific scalar operations.
+ * AArch64 aligned ldr/str are indivisible at 32 and 64 bits and do not
+ * order unrelated payload operations. LDAR acquires, STLR releases.
+ * CAS and RMW continue to call the separate stronger SEQ_CST routines.
+ */
+.globl salts_asm_u64_load_relaxed
+.type salts_asm_u64_load_relaxed, %function
+salts_asm_u64_load_relaxed:
+    ldr x0, [x0]
+    ret
+.size salts_asm_u64_load_relaxed, .-salts_asm_u64_load_relaxed
+
+.globl salts_asm_u64_load_acquire
+.type salts_asm_u64_load_acquire, %function
+salts_asm_u64_load_acquire:
+    ldar x0, [x0]
+    ret
+.size salts_asm_u64_load_acquire, .-salts_asm_u64_load_acquire
+
+.globl salts_asm_u64_store_relaxed
+.type salts_asm_u64_store_relaxed, %function
+salts_asm_u64_store_relaxed:
+    str x1, [x0]
+    ret
+.size salts_asm_u64_store_relaxed, .-salts_asm_u64_store_relaxed
+
+.globl salts_asm_u64_store_release
+.type salts_asm_u64_store_release, %function
+salts_asm_u64_store_release:
+    stlr x1, [x0]
+    ret
+.size salts_asm_u64_store_release, .-salts_asm_u64_store_release
+
+.globl salts_asm_u32_load_relaxed
+.type salts_asm_u32_load_relaxed, %function
+salts_asm_u32_load_relaxed:
+    ldr w0, [x0]
+    ret
+.size salts_asm_u32_load_relaxed, .-salts_asm_u32_load_relaxed
+
+.globl salts_asm_u32_load_acquire
+.type salts_asm_u32_load_acquire, %function
+salts_asm_u32_load_acquire:
+    ldar w0, [x0]
+    ret
+.size salts_asm_u32_load_acquire, .-salts_asm_u32_load_acquire
+
+.globl salts_asm_u32_store_relaxed
+.type salts_asm_u32_store_relaxed, %function
+salts_asm_u32_store_relaxed:
+    str w1, [x0]
+    ret
+.size salts_asm_u32_store_relaxed, .-salts_asm_u32_store_relaxed
+
+.globl salts_asm_u32_store_release
+.type salts_asm_u32_store_release, %function
+salts_asm_u32_store_release:
+    stlr w1, [x0]
+    ret
+.size salts_asm_u32_store_release, .-salts_asm_u32_store_release
+
 .section .note.GNU-stack,"",%progbits

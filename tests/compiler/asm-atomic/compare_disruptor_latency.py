@@ -53,6 +53,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--native", type=Path, required=True)
     parser.add_argument("--asm", type=Path, required=True)
+    parser.add_argument("--asm-policy", choices=("seq_cst", "loadstore_ordered"), default="seq_cst")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--samples", type=int, default=7)
     parser.add_argument("--warmups", type=int, default=2)
@@ -91,13 +92,15 @@ def main() -> None:
             "Publisher timestamp immediately BEFORE publish, worker timestamp "
             "immediately AFTER successful claim; includes publish processing "
             "and scheduling, and timestamp overhead. Values are not individual "
-            "API call latency or queue-only waiting time. ASM has seq_cst "
-            "ordering and opaque external calls; C11 uses original ordering."
+            "API call latency or queue-only waiting time. The ASM policy is "
+            "specified in asm_policy; ordered mode matches load/store orders "
+            "but retains seq_cst CAS/RMW, and C11 uses original ordering."
         ),
         "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "architecture": platform.machine(),
         "system": platform.platform(),
         "compiler": os.environ.get("CC", "unknown"),
+        "asm_policy": args.asm_policy,
         "workload": {"publishers": 4, "workers": 4, "messages": counts.pop()},
         "warmups": args.warmups,
         "samples": args.samples,
