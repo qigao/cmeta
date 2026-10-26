@@ -1744,9 +1744,10 @@ spec("CNet owner shard") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     check_equal(cnet_module_init(), SALTS_OK);
-    for (size_t index = 0u; index < count; ++index)
+    for (size_t index = 0u; index < count; ++index) {
       cnet_owner_test_expired_partial_vector_send(backends[index], false);
       cnet_owner_test_expired_partial_vector_send(backends[index], true);
+    }
     check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 
