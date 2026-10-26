@@ -542,6 +542,48 @@ this backend. No 8/16-bit primitives, pointer ABI, ARMv8 formal memory
 model proof, Windows ABI, cross-DSO lifetime, sanitizer-compatible
 mixed ABI, installed SDK or Disruptor replacement is claimed.
 
+## Real Disruptor: original C11 vs private external ASM storage
+
+**The same unmodified production `concurrency/src/disruptor.c` is compiled
+twice** in the independent compiler qualification suite. The original
+C11 target keeps its own `atomic_uint_fast64_t`, `atomic_uint`,
+and relaxed/acquire/release/acq_rel operations. The separate
+`asm-atomic/disruptor_asm_inclusion.c` translation unit includes the
+*identical* original source after a test-only
+`asm-atomic/disruptor_asm_adapter.h` mapping of the **two private,
+internal field types** onto independently owned aligned assembly slots.
+
+The ASM mapping selects C-callable 32/64-bit functions by C11
+`_Generic`. Every atomic access routes to the independently assembled
+Linux x86-64 or AArch64 `.S` file; even weak CAS maps to the
+allowed stronger strong CAS implementation. All assembly operations
+are **SEQ_CST**, intentionally stronger than the original operation
+orders. The compiler feature macros, public opaque
+`disruptor_t` signature, and Salts's public C11 admission gate
+remain untouched.
+
+Both backends execute the *exact same* three test source programs:
+single publisher/consumer Broadcast and Worker Pool, reverse
+out-of-order publication/completion, four publishers and four
+workers with exact-once-in-test verification, and real
+`worker_claim_wait` park/wake/stop semantics. No copied or simplified
+Disruptor implementation is used.
+
+The private ASM slots **must never be substituted in the installed
+SDK or mixed inside one live C11 atomic object**. They are a
+test-specific compile-time internal representation. The native
+GCC/Clang CTest binaries run both implementations, and the pinned
+TinyCC x86-64/ARM64 diagnostic compiles the ASM-adapted
+*actual production Disruptor source* from the inclusion wrapper,
+linking the architecture-specific GNU assembler object.
+
+A green ASM run does not remove TinyCC's
+`__STDC_NO_ATOMICS__=1` declaration. Nor does a GCC source TSan
+pass instrument the unobservable external machine-code memory
+accesses. The comparison demonstrates bounded observable
+correctness in the tested executions, **not general C11 atomic
+semantic, TSan, ABI, or cross-DSO equivalence**.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:

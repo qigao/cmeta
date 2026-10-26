@@ -62,6 +62,23 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         asm-atomic/asm_atomic_conformance.c
         "${CMAKE_CURRENT_LIST_DIR}/${_salts_asm_atomic_source}")
       set_tests_properties(salts_asm_atomic_conformance PROPERTIES TIMEOUT 60)
+      # THREE identical source tests also run against the private assembly
+      # atomic slots. Original Disruptor algorithms are #included unmodified
+      # into ONE private experimental TU; consumers still use public opaque API.
+      foreach(_variant real_source_conformance mpmc_real_source parked_worker_conformance)
+        salts_add_atomic_conformance("salts_disruptor_asm_${_variant}"
+          "disruptor_${_variant}.c"
+          asm-atomic/disruptor_asm_inclusion.c
+          "${CMAKE_CURRENT_LIST_DIR}/${_salts_asm_atomic_source}"
+          "${CMAKE_CURRENT_LIST_DIR}/../../platform/src/thread_posix.c")
+        target_include_directories("salts_disruptor_asm_${_variant}" PRIVATE
+          "${CMAKE_CURRENT_LIST_DIR}/../../concurrency/include"
+          "${CMAKE_CURRENT_LIST_DIR}/../../utils/include"
+          "${CMAKE_CURRENT_LIST_DIR}/../../platform/include")
+        target_compile_definitions("salts_disruptor_asm_${_variant}" PRIVATE
+          _DEFAULT_SOURCE=1 _POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700)
+        set_tests_properties("salts_disruptor_asm_${_variant}" PROPERTIES TIMEOUT 60)
+      endforeach()
       unset(_salts_asm_atomic_source)
     endif()
   endif()

@@ -30,7 +30,7 @@ jobs:
       - name: Repeat real SPSC and Disruptor contention tests five times
         run: >-
           ctest --test-dir build/atomic-${{ matrix.compiler }}
-          -R 'salts_(asm_atomic_conformance|spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance)'
+          -R 'salts_(asm_atomic_conformance|spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance|disruptor_asm_real_source_conformance|disruptor_asm_mpmc_real_source|disruptor_asm_parked_worker_conformance)'
           --repeat until-fail:5 --output-on-failure
 
   native-arm64-atomic-conformance:
@@ -65,7 +65,7 @@ jobs:
       - name: Stress cross-thread publication, MPMC and retirement 20 times
         run: >-
           ctest --test-dir build/atomic-arm64
-          -R 'salts_(atomic_language_conformance|atomic_abi_same_compiler|intrinsic_atomic_conformance|asm_atomic_conformance|spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance)'
+          -R 'salts_(atomic_language_conformance|atomic_abi_same_compiler|intrinsic_atomic_conformance|asm_atomic_conformance|spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance|disruptor_asm_real_source_conformance|disruptor_asm_mpmc_real_source|disruptor_asm_parked_worker_conformance)'
           --repeat until-fail:20 --output-on-failure
 
   native-interop:
@@ -290,6 +290,14 @@ jobs:
           readelf -W -S build/tcc-arm64/asm/atomic_backend.o | grep -F '.note.GNU-stack'
           readelf -W -l build/tcc-arm64/asm/conformance | grep GNU_STACK
 
+      - name: Exercise original Disruptor against GAS Atomic slots with TinyCC AArch64
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_ROOT=build/asm-disruptor-tcc-arm64 \
+            bash tests/compiler/asm-atomic/run_disruptor_tcc.sh \
+            2>&1 | tee build/asm-disruptor-tcc-arm64.log
       - name: Verify strict C11 compiler admission (no atomics fallback)
         shell: bash
         run: |
@@ -304,6 +312,7 @@ jobs:
           name: tcc-arm64-atomic-diagnostics
           if-no-files-found: ignore
           path: |
+            build/asm-disruptor-tcc-arm64.log
             build/tcc-arm64/strict/CMakeFiles/CMakeConfigureLog.yaml
             build/tcc-arm64/strict/Testing/Temporary/LastTest.log
 
@@ -416,6 +425,14 @@ jobs:
           readelf -W -S build/asm-tcc-x64/atomic_backend.o | grep -F '.note.GNU-stack'
           readelf -W -l build/asm-tcc-x64/conformance | grep GNU_STACK
 
+      - name: Exercise original Disruptor compiled by TinyCC against GAS Atomic slots
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_ROOT=build/asm-disruptor-tcc-x64 \
+            bash tests/compiler/asm-atomic/run_disruptor_tcc.sh \
+            2>&1 | tee build/asm-disruptor-tcc-x64.log
       - name: Configure standalone C11 conformance
         run: cmake -S tests/compiler -B build/atomic-tcc -G Ninja -DCMAKE_C_COMPILER=tcc
       - name: Compile
@@ -438,6 +455,7 @@ jobs:
             build/tcc-cmeta-cstl/build.log
             build/tcc-cmeta-cstl/cmeta/*.log
             build/tcc-cmeta-cstl/cstl/*.log
+            build/asm-disruptor-tcc-x64.log
             build/catomics-upstream/*.log
             build/atomic-probe/diagnostics.log
             build/atomic-tcc/CMakeFiles/CMakeConfigureLog.yaml
