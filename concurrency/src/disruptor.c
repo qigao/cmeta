@@ -195,6 +195,19 @@ static uint64_t disruptor_refresh_slowest_reader(disruptor_t *disruptor, uint64_
   uint64_t slowest_sequence = DISRUPTOR_VACANT;
   uint64_t cached_sequence;
 
+  /* A publisher can reuse a payload slot solely from its acquire load of
+   * slowest_consumer, without refreshing the underlying consumer/worker
+   * cursors. Every update advancing this cached retirement frontier must
+   * therefore be a RELEASE store, completing the happens-before chain:
+   *
+   * payload read -> consumer cursor/worker-completion release ->
+   * refresh acquire -> cached frontier release -> publisher acquire ->
+   * next payload write.
+   *
+   * Relaxed publication of this cache allows an unsynchronized payload
+   * read/write across wraps; source TSan reported exactly that race.
+   * This is a private memory-order fix, not a public ABI/storage change.
+   */
   if (disruptor->mode == DISRUPTOR_MODE_WORKER_POOL) {
     slowest_sequence =
         atomic_load_explicit(&disruptor->worker_completed_cursor.sequence, memory_order_acquire);
@@ -202,7 +215,7 @@ static uint64_t disruptor_refresh_slowest_reader(disruptor_t *disruptor, uint64_
         atomic_load_explicit(&disruptor->slowest_consumer.sequence, memory_order_relaxed);
     if (slowest_sequence > cached_sequence) {
       atomic_store_explicit(&disruptor->slowest_consumer.sequence, slowest_sequence,
-                            memory_order_relaxed);
+                            memory_order_release);
     }
     return slowest_sequence;
   }
@@ -223,7 +236,7 @@ static uint64_t disruptor_refresh_slowest_reader(disruptor_t *disruptor, uint64_
       atomic_load_explicit(&disruptor->slowest_consumer.sequence, memory_order_relaxed);
   if (slowest_sequence > cached_sequence) {
     atomic_store_explicit(&disruptor->slowest_consumer.sequence, slowest_sequence,
-                          memory_order_relaxed);
+                          memory_order_release);
   }
 
   return slowest_sequence;
@@ -311,7 +324,7 @@ static uint64_t disruptor_try_advance_worker_completed_cursor(disruptor_t *disru
                                                 &expected, desired, memory_order_release,
                                                 memory_order_relaxed)) {
         atomic_store_explicit(&disruptor->slowest_consumer.sequence, desired,
-                              memory_order_relaxed);
+                              memory_order_release);
         return desired;
       }
     }
