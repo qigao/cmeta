@@ -127,6 +127,26 @@ bounded Cause-12 reason is copied without truncation and capacity rejection
 does not consume it. The report contains pre-ABORT last acknowledged/sent
 TSNs when available. It is NOT LOCAL_RETRY_EXHAUSTED and does not fabricate
 per-SID application-ticket termination. Explicit stop discards unread ABORT.
+
+An admitted peer ABORT also transfers any **already existing**, unread
+local PR-SCTP DATA abandonment FIFO into 16 fixed Session-owned copied slots,
+retaining each original SID generation before the private DATA TCB is destroyed.
+The same Owner retrieves those records through the unchanged public
+`cnet_sctp_session_poll()` API, independently of the one-shot peer ABORT
+reason. Wrong-tag/malformed incoming packets transfer no records. A full,
+wrapped 16-entry FIFO preserves order; non-Owner reads are denied and
+consuming the last record makes the subsequent poll return EMPTY, not CLOSED.
+A confirmed forward result additionally requires **real pre-ABORT cumulative
+SACK progress**, not the ABORT packet itself or an inadmissible/reflected-tag
+prefix SACK. If that fixed success ledger is full, CAPACITY retains the next
+event for Owner retry after an existing success receipt is consumed; no ULP
+event/output or generation is silently truncated. No per-message transport
+failure is fabricated for other untracked/in-flight DATA. Original generation
+metadata that cannot be resolved at transfer is fail-closed (STALE at take)
+rather than invented; admission-time per-message generation binding remains
+a distinct qualification gate. No public C ABI, heap, socket or background
+worker is introduced.
+
 General untracked per-message outcomes, provider errors, post-TSN explicit
 application cancellation and `buffered_amount` remain separate gates.
 

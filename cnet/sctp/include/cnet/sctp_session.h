@@ -413,7 +413,13 @@ cnet_sctp_session_status cnet_sctp_session_close_channel(
 
 /* Poll copies user DATA into message and never retains that buffer. packet is
  * an independent optional wire reply (for example DCEP ACK). EMPTY means no
- * ULP event is available. CAPACITY retains a pending reply/event for retry. */
+ * ULP event is available. CAPACITY retains a pending reply/event for retry.
+ * After an admitted peer ABORT destroys DATA, the Owner can still retrieve
+ * up to 16 already-queued local MESSAGE_ABANDONED records with original SID
+ * generations, from a fixed Session-owned snapshot. Once exhausted, poll
+ * returns EMPTY even though the underlying SCTP DATA state is CLOSED.
+ * ABORT itself does not imply a confirmed FORWARD or a per-message terminal
+ * failure; all such results remain on their separate take APIs. */
 cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
     uint64_t now_ms, cnet_sctp_session_event *event,
     void *message, size_t message_capacity,
