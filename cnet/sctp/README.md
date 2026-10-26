@@ -2,7 +2,12 @@
 
 Independent RFC-first protocol workstream for [Salts #1181](https://github.com/qigao/salts/issues/1181) and upstream prerequisite for [TurboMedia #227](https://github.com/qigao/turbomedia/issues/227).
 
-**Research only. This is not a complete SCTP engine or authenticated production transport.** Public-Janus SCTP-over-real-DTLS experiments qualify a bounded **legacy RFC3758** subset. Separately, pinned Pion SCTP v1.10.0 interoperates with the opaque C11 Session over **test-only localhost UDP SCTP datagrams**, including independently negotiated RFC8260 I-DATA/I-FORWARD-TSN, exact loss, I-FORWARD control replay, peer cumulative confirmation and exact successor delivery. These are distinct evidence lanes; full browser/ICE/DTLS RFC8260 interoperability and production Owner/DTLS generation leases remain unqualified. No Rust/C++ protocol source, FFI or runtime is involved. No production CNet or TurboMedia target uses these objects.
+**Research only. This is not a complete SCTP engine or authenticated production transport.** Public-Janus SCTP-over-real-DTLS experiments qualify a bounded **legacy RFC3758** subset. Separately, pinned Pion SCTP v1.10.0 interoperates with the opaque C11 Session over **test-only localhost UDP SCTP datagrams**, including independently negotiated RFC8260 I-DATA/I-FORWARD-TSN, exact loss, I-FORWARD control replay, peer cumulative confirmation and exact successor delivery. An additional, separately installed opaque Session consumer now operates
+through real **OpenSSL DTLS 1.2** encrypted application records inside a
+single-process test with SHA-256 certificate fingerprints and negative
+Generation/Owner/ciphertext cases. These are distinct evidence lanes;
+**independent RFC8260 SCTP-over-DTLS/ICE/browser** and production Owner/DTLS
+generation leases remain unqualified. No Rust/C++ protocol source, FFI or runtime is involved. No production CNet or TurboMedia target uses these objects.
 
 ## Isolation and build
 
@@ -41,6 +46,48 @@ the confirmed FORWARD's original TSN are checked.
 This is independent SCTP RFC8260 wire interoperability but **not**
 SCTP-over-DTLS/ICE, browser qualification, mobile device execution,
 a production DTLS Generation owner, or release approval.
+
+## Real DTLS 1.2 application records — installed opaque Session (test only)
+
+The independent CMake consumer at `cnet/sctp/tests/independent/dtls`
+finds **only the previously installed `CNetSctpPrototype::Session` public
+CMake package and OpenSSL 3**. No internal Association/DATA header, native
+usrsctp dependency, adapter or OpenSSL type enters the production SDK.
+
+Two ephemeral EC P-256 certificate identities negotiate actual **DTLS 1.2**
+via OpenSSL memory BIOs; after the handshake both peer SHA-256 fingerprints
+must match their expected identities (a forged fingerprint is refused).
+The fixture derives a nonzero opaque SCTP `peer_binding` from the verified
+certificate fingerprints, retains separate random HMAC-SHA256 Cookie
+providers and encrypts/authenticates every SCTP INIT/INIT-ACK/COOKIE-
+ECHO/COOKIE-ACK, DCEP OPEN/ACK and PPID53 I-DATA record with
+`SSL_write()`/`SSL_read()`. A valid decrypted old SCTP datagram is
+rejected when the **test-only external Owner Generation** no longer matches,
+and again after abortive stop; a tampered encrypted record produces **no
+decrypted SCTP plaintext**. All copied resources are destroyed before the
+OpenSSL identity and Cookie providers are released.
+
+[Exact-head CNet SCTP CI #40280847157](https://github.com/qigao/salts/actions/runs/40280847157)
+passes the installed public-only real DTLS consumer and a **second run
+under Clang 18 effective-source ASan+UBSan with ten repetitions**.
+The sanitizer job audits the compile commands of all eight C11 SCTP
+implementation files plus `dtls_records.c`. It does not claim OpenSSL's
+third-party binaries were built with the same instrumentation. This is
+a single-process encrypted-record contract test, **not** an independent
+browser/Pion-over-DTLS peer, real UDP/ICE, production DTLS Provider DSO
+unload or concurrent Owner lease.
+
+Reproduce on a Linux host with OpenSSL 3 development files:
+
+```sh
+cmake -S cnet/sctp -B build-c11 -DBUILD_TESTING=OFF
+cmake --build build-c11
+cmake --install build-c11 --prefix "$PWD/c11-installed"
+cmake -S cnet/sctp/tests/independent/dtls -B build-dtls-consumer \
+  -DCMAKE_PREFIX_PATH="$PWD/c11-installed"
+cmake --build build-dtls-consumer
+ctest --test-dir build-dtls-consumer --output-on-failure
+```
 
 ## Installed opaque Session: bounded messages
 
