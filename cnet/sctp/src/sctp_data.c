@@ -310,7 +310,7 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
     size_t *written, int zero_probe,
     const cnet_sctp_data_reliability *reliability,
     size_t message_size, uint32_t message_first_tsn,
-    uint64_t expires_at_ms) {
+    uint64_t expires_at_ms, uint64_t admission_generation) {
   cnet_sctp_data_tx *slot = NULL;
   uint8_t value[I_DATA_HEADER + CNET_SCTP_DATA_PAYLOAD_MAX];
   const size_t header_size = d->config.interleaving_supported ?
@@ -377,6 +377,7 @@ static cnet_sctp_data_status send_frame(cnet_sctp_data *d, uint64_t now,
   slot->fsn = fsn;
   slot->ppid = ppid;
   slot->message_first_tsn = message_first_tsn;
+  slot->admission_generation = admission_generation;
   slot->message_size = message_size;
   slot->unordered = (flags & DATA_U) != 0u;
   slot->interleaved = d->config.interleaving_supported;
@@ -404,6 +405,14 @@ cnet_sctp_data_status cnet_sctp_data_send_pr(cnet_sctp_data *d, uint64_t now,
     uint16_t stream, uint32_t ppid, int unordered,
     const cnet_sctp_data_reliability *reliability, const void *payload,
     size_t n, void *output, size_t cap, size_t *written) {
+  return cnet_sctp_data_send_pr_bound(d, now, stream, ppid, unordered,
+      reliability, payload, n, output, cap, written, 0u);
+}
+cnet_sctp_data_status cnet_sctp_data_send_pr_bound(cnet_sctp_data *d,
+    uint64_t now, uint16_t stream, uint32_t ppid, int unordered,
+    const cnet_sctp_data_reliability *reliability, const void *payload,
+    size_t n, void *output, size_t cap, size_t *written,
+    uint64_t admission_generation) {
   if (written) *written = 0u;
   cnet_sctp_data_status status = guard(d);
   uint32_t sequence;
@@ -429,7 +438,7 @@ cnet_sctp_data_status cnet_sctp_data_send_pr(cnet_sctp_data *d, uint64_t now,
       (const uint8_t *)payload, n, output, cap, written, 0, reliability,
       n, d->next_tsn,
       reliability->mode == CNET_SCTP_DATA_RELIABILITY_TIMED ?
-          now + reliability->value : 0u);
+          now + reliability->value : 0u, admission_generation);
   if (status == CNET_SCTP_DATA_OK) {
     if (d->config.interleaving_supported) {
       if (unordered) ++d->tx_mid_unordered[stream];
@@ -531,6 +540,13 @@ cnet_sctp_data_status cnet_sctp_data_queue_message_pr(cnet_sctp_data *d,
     uint64_t now, uint16_t stream, uint32_t ppid, int unordered,
     const cnet_sctp_data_reliability *reliability,
     const void *payload, size_t n) {
+  return cnet_sctp_data_queue_message_pr_bound(d, now, stream, ppid,
+      unordered, reliability, payload, n, 0u);
+}
+cnet_sctp_data_status cnet_sctp_data_queue_message_pr_bound(
+    cnet_sctp_data *d, uint64_t now, uint16_t stream, uint32_t ppid,
+    int unordered, const cnet_sctp_data_reliability *reliability,
+    const void *payload, size_t n, uint64_t admission_generation) {
   cnet_sctp_data_status status = guard(d);
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!payload || stream >= d->config.outbound_streams || n == 0u)
@@ -561,6 +577,7 @@ cnet_sctp_data_status cnet_sctp_data_queue_message_pr(cnet_sctp_data *d,
   d->pending.next_fsn = 0u;
   d->pending.ppid = ppid;
   d->pending.reliability = *reliability;
+  d->pending.admission_generation = admission_generation;
   d->pending.expires_at_ms =
       reliability->mode == CNET_SCTP_DATA_RELIABILITY_TIMED ?
           now + reliability->value : 0u;
@@ -628,7 +645,7 @@ cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d,
       n, output, cap, written, 0, &d->pending.reliability,
       d->pending.size,
       d->pending.has_tsn ? d->pending.first_tsn : d->next_tsn,
-      d->pending.expires_at_ms);
+      d->pending.expires_at_ms, d->pending.admission_generation);
   if (status != CNET_SCTP_DATA_OK) return status;
   if (!d->pending.has_tsn) {
     d->pending.first_tsn = d->next_tsn - 1u;
@@ -1734,6 +1751,7 @@ static cnet_sctp_data_status abandon_tx_message(cnet_sctp_data *d,
   event.stream_id = key->stream_id;
   event.ppid = key->ppid;
   event.message_identifier = key->interleaved ? key->mid : key->ssn;
+  event.admission_generation = key->admission_generation;
   event.message_size = key->message_size;
   event.first_tsn = key->message_first_tsn;
   event.last_tsn = key->tsn;
@@ -1752,6 +1770,7 @@ static cnet_sctp_data_status abandon_tx_message(cnet_sctp_data *d,
   }
   if (pending_matches_tx(&d->pending, key)) {
     event.ppid = d->pending.ppid;
+    event.admission_generation = d->pending.admission_generation;
     event.message_size = d->pending.size;
     event.last_tsn = d->next_tsn - 1u;
   }
@@ -1775,6 +1794,7 @@ static cnet_sctp_data_status abandon_unsent_pending(cnet_sctp_data *d) {
   event.ppid = d->pending.ppid;
   event.message_identifier = d->pending.interleaved ?
       d->pending.mid : d->pending.ssn;
+  event.admission_generation = d->pending.admission_generation;
   event.message_size = d->pending.size;
   event.reliability = d->pending.reliability;
   event.reason = CNET_SCTP_DATA_ABANDON_TIMED;
@@ -2039,7 +2059,7 @@ cnet_sctp_data_status cnet_sctp_data_advance(cnet_sctp_data *d, uint64_t now,
             1u, out, cap, written, 1, &d->pending.reliability,
             d->pending.size,
             d->pending.has_tsn ? d->pending.first_tsn : d->next_tsn,
-            d->pending.expires_at_ms);
+            d->pending.expires_at_ms, d->pending.admission_generation);
         if (status != CNET_SCTP_DATA_OK) return status;
         if (!d->pending.has_tsn) {
           d->pending.first_tsn = d->next_tsn - 1u;
