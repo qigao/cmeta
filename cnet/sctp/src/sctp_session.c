@@ -196,7 +196,9 @@ cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
   cnet_sctp_session_abort_abandoned staged[CNET_SCTP_DATA_TX_SLOTS];
   size_t staged_count = 0u, i;
   if (status != CNET_SCTP_SESSION_OK) return status;
-  memset(staged, 0, sizeof(staged));
+  /* The hot DATA ingress path normally has no unread abandonment. Only
+   * initialize the actually copied FIFO entries, not all 16 fixed slots
+   * for every accepted SCTP packet. The generation is always written. */
   if (session->association.data_ready) {
     const cnet_sctp_data *data = &session->association.data;
     staged_count = data->abandon_event_count;
@@ -208,6 +210,7 @@ cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
               CNET_SCTP_DATA_TX_SLOTS];
       uint16_t sid = event->stream_id;
       staged[i].data = *event;
+      staged[i].generation = 0u;
       /* A zero token is a fail-closed invariant violation at later poll,
        * NEVER a guessed new SID lifetime. No callback runs in this snapshot. */
       if (sid < session->dcep.streams &&
