@@ -208,14 +208,10 @@ cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
       const cnet_sctp_data_abandon_event *event =
           &data->abandon_events[(data->abandon_event_head + i) %
               CNET_SCTP_DATA_TX_SLOTS];
-      uint16_t sid = event->stream_id;
       staged[i].data = *event;
-      staged[i].generation = 0u;
-      /* A zero token is a fail-closed invariant violation at later poll,
-       * NEVER a guessed new SID lifetime. No callback runs in this snapshot. */
-      if (sid < session->dcep.streams &&
-          session->dcep.channels[sid].state != 0u)
-        staged[i].generation = session->dcep.channels[sid].generation;
+      /* Use immutable message-admission identity; the current DCEP SID
+       * may already be retired or reused at this ABORT ingress. */
+      staged[i].generation = event->admission_generation;
     }
   }
   as = cnet_sctp_assoc_input(&session->association, now_ms,
@@ -319,17 +315,22 @@ cnet_sctp_session_status cnet_sctp_session_send(cnet_sctp_session *session,
   int unordered = 0;
   cnet_sctp_session_status status = guard(session);
   cnet_sctp_dcep_status ds;
+  uint64_t generation = 0u;
   if (written) *written = 0u;
   if (status != CNET_SCTP_SESSION_OK) return status;
   ds = cnet_sctp_dcep_send_policy(&session->dcep, stream, &unordered,
       &reliability);
   if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
+  /* Admission pins original SID lifetime before any DATA TSN commits. */
+  ds = cnet_sctp_dcep_generation(&session->dcep, stream, &generation);
+  if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
   if (cnet_sctp_webrtc_prepare(binary, message, message_size, &payload) !=
       CNET_SCTP_WEBRTC_OK)
     return CNET_SCTP_SESSION_INVALID;
-  return map_assoc(cnet_sctp_assoc_send_message_pr(&session->association,
-      now_ms, stream, payload.ppid, unordered, &reliability,
-      payload.wire_bytes, payload.wire_size, packet, capacity, written));
+  return map_assoc(cnet_sctp_assoc_send_message_pr_bound(
+      &session->association, now_ms, stream, payload.ppid, unordered,
+      &reliability, payload.wire_bytes, payload.wire_size,
+      packet, capacity, written, generation));
 }
 
 /* The DATA sub-engine copies the entire bounded application message to a
@@ -699,6 +700,7 @@ cnet_sctp_session_status cnet_sctp_session_queue_message(
     const void *message, size_t message_size) {
   cnet_sctp_data_reliability reliability;
   cnet_sctp_webrtc_payload payload;
+  uint64_t generation = 0u;
   int unordered = 0;
   cnet_sctp_session_status status = guard(session);
   cnet_sctp_dcep_status ds;
@@ -706,12 +708,14 @@ cnet_sctp_session_status cnet_sctp_session_queue_message(
   ds = cnet_sctp_dcep_send_policy(&session->dcep, stream, &unordered,
       &reliability);
   if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
+  ds = cnet_sctp_dcep_generation(&session->dcep, stream, &generation);
+  if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
   if (cnet_sctp_webrtc_prepare(binary, message, message_size, &payload) !=
       CNET_SCTP_WEBRTC_OK)
     return CNET_SCTP_SESSION_INVALID;
-  return map_assoc(cnet_sctp_assoc_queue_message_pr(&session->association,
-      now_ms, stream, payload.ppid, unordered, &reliability,
-      payload.wire_bytes, payload.wire_size));
+  return map_assoc(cnet_sctp_assoc_queue_message_pr_bound(
+      &session->association, now_ms, stream, payload.ppid, unordered,
+      &reliability, payload.wire_bytes, payload.wire_size, generation));
 }
 
 cnet_sctp_session_status cnet_sctp_session_pump_message(
@@ -864,11 +868,9 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
       const cnet_sctp_data *data = &session->association.data;
       if (data->abandon_event_count != 0u) {
         next = &data->abandon_events[data->abandon_event_head];
-        /* Preflight generation BEFORE the destructive DATA take; a failed
-         * lookup cannot silently consume an original local event. */
-        ds = cnet_sctp_dcep_generation(&session->dcep, next->stream_id,
-            &generation);
-        if (ds != CNET_SCTP_DCEP_OK) return map_dcep(ds);
+        /* An event cannot inherit the currently active/reused SID. */
+        generation = next->admission_generation;
+        if (generation == 0u) return CNET_SCTP_SESSION_STALE;
       }
     }
     if (next) {

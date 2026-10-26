@@ -3985,6 +3985,14 @@ cnet_sctp_assoc_status cnet_sctp_assoc_send_message_pr(cnet_sctp_assoc *s,
     const cnet_sctp_data_reliability *reliability,
     const void *payload, size_t n, void *packet, size_t cap,
     size_t *written) {
+  return cnet_sctp_assoc_send_message_pr_bound(s, now, stream_id, ppid,
+      unordered, reliability, payload, n, packet, cap, written, 0u);
+}
+cnet_sctp_assoc_status cnet_sctp_assoc_send_message_pr_bound(
+    cnet_sctp_assoc *s, uint64_t now, uint16_t stream_id, uint32_t ppid,
+    int unordered, const cnet_sctp_data_reliability *reliability,
+    const void *payload, size_t n, void *packet, size_t cap,
+    size_t *written, uint64_t admission_generation) {
   if (written) *written = 0u;
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
@@ -3996,8 +4004,9 @@ cnet_sctp_assoc_status cnet_sctp_assoc_send_message_pr(cnet_sctp_assoc *s,
       (reset_blocked_streams(s) & reset_stream_bit(stream_id)) != 0u)
     return CNET_SCTP_ASSOC_BUSY;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
-  status = data_result(cnet_sctp_data_send_pr(&s->data, now, stream_id,
-      ppid, unordered, reliability, payload, n, packet, cap, written));
+  status = data_result(cnet_sctp_data_send_pr_bound(&s->data, now,
+      stream_id, ppid, unordered, reliability, payload, n,
+      packet, cap, written, admission_generation));
   if (status == CNET_SCTP_ASSOC_OK) s->last_time_ms = now;
   return status;
 }
@@ -4072,6 +4081,13 @@ cnet_sctp_assoc_status cnet_sctp_assoc_queue_message_pr(cnet_sctp_assoc *s,
     uint64_t now, uint16_t stream, uint32_t ppid, int unordered,
     const cnet_sctp_data_reliability *reliability,
     const void *payload, size_t n) {
+  return cnet_sctp_assoc_queue_message_pr_bound(s, now, stream, ppid,
+      unordered, reliability, payload, n, 0u);
+}
+cnet_sctp_assoc_status cnet_sctp_assoc_queue_message_pr_bound(
+    cnet_sctp_assoc *s, uint64_t now, uint16_t stream, uint32_t ppid,
+    int unordered, const cnet_sctp_data_reliability *reliability,
+    const void *payload, size_t n, uint64_t admission_generation) {
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (!reliability || !payload) return CNET_SCTP_ASSOC_INVALID;
@@ -4081,8 +4097,9 @@ cnet_sctp_assoc_status cnet_sctp_assoc_queue_message_pr(cnet_sctp_assoc *s,
       (reset_blocked_streams(s) & reset_stream_bit(stream)) != 0u)
     return CNET_SCTP_ASSOC_BUSY;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
-  status = data_result(cnet_sctp_data_queue_message_pr(&s->data, now,
-      stream, ppid, unordered, reliability, payload, n));
+  status = data_result(cnet_sctp_data_queue_message_pr_bound(&s->data,
+      now, stream, ppid, unordered, reliability, payload, n,
+      admission_generation));
   if (status == CNET_SCTP_ASSOC_OK) s->last_time_ms = now;
   return status;
 }

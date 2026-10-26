@@ -269,6 +269,11 @@ cnet_sctp_assoc_status cnet_sctp_assoc_send_message_pr(cnet_sctp_assoc *a,
     const cnet_sctp_data_reliability *reliability,
     const void *payload, size_t length, void *packet, size_t packet_capacity,
     size_t *packet_bytes);
+cnet_sctp_assoc_status cnet_sctp_assoc_send_message_pr_bound(
+    cnet_sctp_assoc *a, uint64_t now_ms, uint16_t stream_id, uint32_t ppid,
+    int unordered, const cnet_sctp_data_reliability *reliability,
+    const void *payload, size_t length, void *packet, size_t packet_capacity,
+    size_t *packet_bytes, uint64_t admission_generation);
 cnet_sctp_assoc_status cnet_sctp_assoc_take_message(cnet_sctp_assoc *a,
     cnet_sctp_data_message *message, void *payload,
     size_t payload_capacity, size_t *written);
@@ -291,6 +296,10 @@ cnet_sctp_assoc_status cnet_sctp_assoc_queue_message_pr(cnet_sctp_assoc *a,
     uint64_t now_ms, uint16_t sid, uint32_t ppid, int unordered,
     const cnet_sctp_data_reliability *reliability,
     const void *payload, size_t length);
+cnet_sctp_assoc_status cnet_sctp_assoc_queue_message_pr_bound(
+    cnet_sctp_assoc *a, uint64_t now_ms, uint16_t sid, uint32_t ppid,
+    int unordered, const cnet_sctp_data_reliability *reliability,
+    const void *payload, size_t length, uint64_t admission_generation);
 cnet_sctp_assoc_status cnet_sctp_assoc_pump_message(cnet_sctp_assoc *a,
     uint64_t now_ms, void *output, size_t capacity, size_t *written);
 /* Cancel a queued unsent message, with Association state/time validation. */
