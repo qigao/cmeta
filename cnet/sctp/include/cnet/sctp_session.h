@@ -112,7 +112,11 @@ typedef struct cnet_sctp_session_event {
  * retained association-level control packet (see association_forward_pending);
  * zero retained_bytes alone is NOT proof that the forward barrier is retired.
  * DCEP PPID50 is excluded. PPID56/57 wire placeholders count as a
- * byte here despite their zero logical application length. Neither this
+ * byte here despite their zero logical application length. The original
+ * admission_generation of every matching copied pending message and
+ * retained DATA ticket is checked BEFORE publishing any byte count: a
+ * malformed/stale mixed lifetime returns STALE with zeroed *usage rather
+ * than attributing old SID traffic to a reused DCEP channel. Neither this
  * snapshot nor its changes imply JavaScript buffered_amount or an exactly-
  * once per-message completion event. No borrowed output survives the call. */
 typedef struct cnet_sctp_session_tx_usage {
@@ -407,8 +411,9 @@ cnet_sctp_session_status cnet_sctp_session_pump_message(
     void *packet, size_t capacity, size_t *written);
 
 /* Only the exact active DCEP generation may read a SID's TX usage. Stale
- * generations return STALE and clear *usage; free SIDs return PROTOCOL.
- * No ticket is settled and no new timer/callback is created by this query. */
+ * expected generations OR old/unbound in-flight message generations return
+ * STALE and clear *usage; free SIDs return PROTOCOL. No ticket is settled
+ * and no new timer/callback is created by this query. */
 cnet_sctp_session_status cnet_sctp_session_get_tx_usage(
     cnet_sctp_session *session, uint16_t stream,
     uint64_t expected_generation, cnet_sctp_session_tx_usage *usage);
