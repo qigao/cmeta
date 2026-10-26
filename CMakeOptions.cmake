@@ -1,41 +1,12 @@
-include(CMakeDependentOption)
-
-set(CMAKE_COLOR_DIAGNOSTICS ON)
-
-# building the tests
-option(ENABLE_TESTS "Enable the tests" ON)
-
-# Address Sanitizer - only enabled for Debug builds
-cmake_dependent_option(ENABLE_ASAN "Enable Address Sanitizer" ON
-                       "CMAKE_BUILD_TYPE STREQUAL Debug" OFF)
-
-option(BUILD_EXAMPLES "Build example programs" ON)
-option(BUILD_TESTS "Build test suite" ON)
-option(BUILD_BENCHMARKS "Build benchmark executables" ON)
-option(NATIVE_IO_BUILD_BENCHMARKS
-       "Build NativeIO benchmark executables independently" OFF)
-option(COROUTINE_BUILD_BENCHMARKS
-       "Build Coroutine benchmark executables independently" OFF)
-option(CNET_BUILD_BENCHMARKS
-       "Build CNet benchmark executables independently" OFF)
-option(CFLOW_BUILD_BENCHMARKS
-       "Build CFlow benchmark executables independently" OFF)
-option(CONCURRENCY_BUILD_BENCHMARKS
-       "Build Concurrency benchmark executables independently" OFF)
-option(CFLOW_ENABLE_MINICORO
-       "Build the optional minicoro-backed CFlow Resumable adapter" OFF)
-option(CMETA_BUILD_BENCHMARKS
-       "Build CMeta benchmarks independently" OFF)
-option(CMETA_BUILD_NATIVE_THUNKS
-       "Build opt-in exact x86-64 native specialization" OFF)
-option(SALTS_BUILD_CRYPTO_FUZZERS
-       "Build Clang libFuzzer targets for the public crypto ABI" OFF)
-option(SALTS_ENABLE_EPOLL_READINESS
-       "Enable the Linux epoll readiness backend" OFF)
-if(SALTS_ENABLE_EPOLL_READINESS AND
-   NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  message(FATAL_ERROR
-          "SALTS_ENABLE_EPOLL_READINESS is supported only on Linux")
+# Every real Salts build is CMeta/ACE/CFlow. No legacy native profile.
+option(BUILD_TESTS "Old source-tree tests (unsupported)" OFF)
+option(BUILD_EXAMPLES "Old examples (unsupported)" OFF)
+option(BUILD_BENCHMARKS "Old benchmarks (unsupported)" OFF)
+option(CFLOW_BUILD_BENCHMARKS "Old CFlow benchmarks (unsupported)" OFF)
+option(CMETA_BUILD_NATIVE_THUNKS "Old native thunks (unsupported)" OFF)
+option(CFLOW_ENABLE_MINICORO "Second Coroutine owner (unsupported)" OFF)
+if(BUILD_TESTS OR BUILD_EXAMPLES OR BUILD_BENCHMARKS OR
+   CFLOW_BUILD_BENCHMARKS OR CMETA_BUILD_NATIVE_THUNKS OR
+   CFLOW_ENABLE_MINICORO OR BUILD_SHARED_LIBS)
+  message(FATAL_ERROR "No alternate native/compatibility Salts build; use installed SDK conformance")
 endif()
-
-set_property(GLOBAL PROPERTY USE_FOLDERS ON)
