@@ -33,19 +33,9 @@ cmake_config_target(
   EXPORT_NAME Plugin)
 
 target_compile_features(cmeta_plugin PRIVATE c_std_11)
-if(SALTS_CORE_BACKED_PROFILE)
-  if(TARGET Salts::Core OR TARGET Salts::Platform)
-    message(FATAL_ERROR "Standalone ACE cannot import old state owners")
-  endif()
-  target_compile_definitions(cmeta_plugin PRIVATE SALTS_CORE_BACKED_PROFILE=1)
-  target_link_libraries(cmeta_plugin
-    PUBLIC cmeta_plugin_abi
-    PRIVATE SaltsCore::Core SaltsCore::Platform ${CMAKE_DL_LIBS})
-else()
-  target_link_libraries(cmeta_plugin
-    PUBLIC cmeta_plugin_abi
-    PRIVATE Salts::Core Salts::Platform ${CMAKE_DL_LIBS})
-endif()
+target_link_libraries(cmeta_plugin
+  PUBLIC cmeta_plugin_abi
+  PRIVATE Salts::Core Salts::Platform ${CMAKE_DL_LIBS})
 
 install(
   TARGETS cmeta_plugin_abi cmeta_plugin

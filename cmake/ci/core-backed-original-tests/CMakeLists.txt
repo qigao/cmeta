@@ -22,35 +22,18 @@ foreach(_retained IN ITEMS CMeta ComponentABI PluginABI Plugin
     message(FATAL_ERROR "Missing installed Salts3 target: ${_retained}")
   endif()
 endforeach()
-if(TARGET Salts::TinyTest)
-  message(FATAL_ERROR "Installed 3.0 package must not export test-only TinyTest")
-endif()
-foreach(_legacy IN ITEMS Core Platform Concurrency Coroutine NativeIO CNet)
-  if(TARGET "Salts::${_legacy}")
-    message(FATAL_ERROR "Original conformance refuses old Runtime: ${_legacy}")
+foreach(_native IN ITEMS Core Platform Concurrency Coroutine NativeIO)
+  if(NOT TARGET "Salts::${_native}")
+    message(FATAL_ERROR "Missing imported native owner Salts::${_native}")
+  endif()
+  get_target_property(_kind "Salts::${_native}" TYPE)
+  get_target_property(_imported "Salts::${_native}" IMPORTED)
+  if(NOT _imported OR NOT _kind STREQUAL "SHARED_LIBRARY")
+    message(FATAL_ERROR "Core Salts::${_native} must be imported SHARED")
   endif()
 endforeach()
-foreach(_foundation IN ITEMS Core Platform Concurrency Coroutine NativeIO)
-  if(NOT TARGET "SaltsCore::${_foundation}")
-    message(FATAL_ERROR "Missing native SaltsCore::${_foundation}")
-  endif()
-  get_target_property(_kind "SaltsCore::${_foundation}" TYPE)
-  get_target_property(_imported "SaltsCore::${_foundation}" IMPORTED)
-  if(NOT _kind STREQUAL "SHARED_LIBRARY" OR NOT _imported)
-    message(FATAL_ERROR "Must import a single installed SHARED ${_foundation}")
-  endif()
-endforeach()
-
-# Only the independent conformance suite compiles TinyTest. It is deliberately
-# absent from the real production Salts 3.0 export set and ABI closure.
-add_library(salts3_original_tinytest STATIC
-  "${SALTS_SOURCE_ROOT}/tinytest/src/tinytest.c")
-target_compile_features(salts3_original_tinytest PRIVATE c_std_11)
-target_include_directories(salts3_original_tinytest PUBLIC
-  "${SALTS_SOURCE_ROOT}/tinytest/include")
-if(MSVC)
-  target_compile_options(salts3_original_tinytest PRIVATE
-    $<$<COMPILE_LANGUAGE:C>:-experimental:c11atomics>)
+if(NOT TARGET Salts::TinyTest)
+  message(FATAL_ERROR "Original conformance requires installed Core TinyTest")
 endif()
 
 function(salts3_original_case name source)
@@ -69,9 +52,9 @@ function(salts3_original_case name source)
     "${SALTS_SOURCE_ROOT}/component-runtime/tests"
     "${SALTS_SOURCE_ROOT}/cflow/src")
   target_link_libraries(salts3_original_${name} PRIVATE
-    salts3_original_tinytest Salts::CMeta Salts::CFlow Salts::ServiceHost
-    Salts::Plugin SaltsCore::Core SaltsCore::Platform
-    SaltsCore::NativeIO SaltsCore::Concurrency)
+    Salts::TinyTest Salts::CMeta Salts::CFlow Salts::ServiceHost
+    Salts::Plugin Salts::Core Salts::Platform
+    Salts::NativeIO Salts::Concurrency)
   if(WIN32)
     target_link_libraries(salts3_original_${name} PRIVATE ws2_32)
   endif()

@@ -168,23 +168,10 @@ target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
-# CFlow remains independent of CNet; no CNet-to-Actor integration target.
-if(SALTS_CORE_BACKED_PROFILE)
-  foreach(_old IN ITEMS Core Platform Concurrency Coroutine NativeIO CNet)
-    if(TARGET Salts::${_old})
-      message(FATAL_ERROR "CFlow rejects duplicate old ${_old} binary owner")
-    endif()
-  endforeach()
-  target_link_libraries(
-    ${TARGET_NAME}
-    PUBLIC Salts::CMeta SaltsCore::NativeIO SaltsCore::Platform
-    PRIVATE SaltsCore::Concurrency)
-else()
-  target_link_libraries(
-    ${TARGET_NAME}
-    PUBLIC Salts::CMeta Salts::NativeIO Salts::Platform
-    PRIVATE Salts::Concurrency)
-endif()
+# CFlow is a CMeta execution layer. Real NativeIO is always Core-owned.
+target_link_libraries(${TARGET_NAME}
+  PUBLIC Salts::CMeta Salts::NativeIO Salts::Platform
+  PRIVATE Salts::Concurrency)
 
 install(
   TARGETS ${TARGET_NAME}
