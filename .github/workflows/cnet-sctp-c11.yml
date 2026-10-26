@@ -27,10 +27,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The installed-SDK qualification must be tied to the immutable
+          # original PR HEAD, not a moving merge ref.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: Build pure C11 wire module
         shell: bash
         run: |
@@ -44,6 +49,98 @@ jobs:
           cmake -S cnet/sctp/tests/installed -B build-sctp-consumer -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PWD/sctp-c11-sdk"
           cmake --build build-sctp-consumer --config Release --parallel 2
           ctest --test-dir build-sctp-consumer -C Release --output-on-failure
+
+  # M5 test-only installed opaque C11 SDK cross builds. Android and iOS
+  # executables are linked as real device binaries, but NOT run on a host.
+  # This is not production Salts packaging, DTLS/browser interoperability,
+  # an on-device runtime PASS, or six-RID release approval.
+  c11-sdk-android-arm64:
+    name: Installed C11 Session Android arm64 (cross-compile + link only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Cross-compile separate Android arm64 Session SDK and consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          ndk="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
+          test -n "$ndk"
+          toolchain="$ndk/build/cmake/android.toolchain.cmake"
+          test -f "$toolchain"
+          prefix="$GITHUB_WORKSPACE/sctp-c11-sdk-android-arm64-v8a"
+          cmake -S cnet/sctp -B build-sctp-android-arm64 \
+            -DCMAKE_TOOLCHAIN_FILE="$toolchain" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+            -DCNET_SCTP_TEST_GMSSL=OFF
+          cmake --build build-sctp-android-arm64 --parallel 2
+          cmake --install build-sctp-android-arm64 --prefix "$prefix"
+          test -f "$prefix/include/cnet/sctp_session.h"
+          test -f "$prefix/lib/libcnet_sctp_session.a"
+          test -f "$prefix/lib/cmake/CNetSctpPrototype/CNetSctpPrototypeTargets.cmake"
+          test ! -e "$prefix/include/cnet/sctp_assoc_internal.h"
+          test ! -e "$prefix/include/cnet/sctp_session_internal.h"
+          test ! -e "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          cmake -S cnet/sctp/tests/installed -B build-sctp-consumer-android-arm64 \
+            -DCMAKE_TOOLCHAIN_FILE="$toolchain" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build build-sctp-consumer-android-arm64 --parallel 2
+          test -f build-sctp-consumer-android-arm64/cnet_sctp_installed_consumer
+          readelf="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          test -x "$readelf"
+          "$readelf" -h build-sctp-android-arm64/CMakeFiles/cnet_sctp_session.dir/src/sctp_session.c.o | grep -F AArch64
+          "$readelf" -h build-sctp-consumer-android-arm64/cnet_sctp_installed_consumer | grep -F AArch64
+          echo "Android arm64-v8a installed opaque C11 Session compiled and linked; NO device execution."
+
+  c11-sdk-ios-arm64:
+    name: Installed C11 Session iOS arm64 (cross-compile + link only)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Cross-compile separate iOS arm64 Session SDK and consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
+          test -d "$sdk"
+          prefix="$GITHUB_WORKSPACE/sctp-c11-sdk-ios-arm64"
+          cmake -S cnet/sctp -B build-sctp-ios-arm64 \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="$sdk" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+            -DCNET_SCTP_TEST_GMSSL=OFF
+          cmake --build build-sctp-ios-arm64 --parallel 2
+          cmake --install build-sctp-ios-arm64 --prefix "$prefix"
+          test -f "$prefix/include/cnet/sctp_session.h"
+          test -f "$prefix/lib/libcnet_sctp_session.a"
+          test -f "$prefix/lib/cmake/CNetSctpPrototype/CNetSctpPrototypeTargets.cmake"
+          test ! -e "$prefix/include/cnet/sctp_assoc_internal.h"
+          test ! -e "$prefix/include/cnet/sctp_session_internal.h"
+          test ! -e "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          cmake -S cnet/sctp/tests/installed -B build-sctp-consumer-ios-arm64 \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="$sdk" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build build-sctp-consumer-ios-arm64 --parallel 2
+          test -f build-sctp-consumer-ios-arm64/cnet_sctp_installed_consumer
+          xcrun lipo -archs "$prefix/lib/libcnet_sctp_session.a" | grep -w arm64
+          xcrun lipo -archs build-sctp-consumer-ios-arm64/cnet_sctp_installed_consumer | grep -w arm64
+          echo "iOS arm64 installed opaque C11 Session compiled and linked; NO device execution."
 
   sanitizer-source:
     runs-on: ubuntu-latest
