@@ -2,7 +2,7 @@
 
 Independent RFC-first protocol workstream for [Salts #1181](https://github.com/qigao/salts/issues/1181) and upstream prerequisite for [TurboMedia #227](https://github.com/qigao/turbomedia/issues/227).
 
-**Research only. This is not a complete SCTP engine or authenticated production transport.** Isolated public-Janus SCTP-over-DTLS experiments have demonstrated bounded interoperability, but full RFC8260 browser interoperability and installed production Owner/DTLS generation leases are not qualified. No Rust/C++ protocol source, FFI or runtime is involved. No production CNet or TurboMedia target uses these objects.
+**Research only. This is not a complete SCTP engine or authenticated production transport.** Public-Janus SCTP-over-real-DTLS experiments qualify a bounded **legacy RFC3758** subset. Separately, pinned Pion SCTP v1.10.0 interoperates with the opaque C11 Session over **test-only localhost UDP SCTP datagrams**, including independently negotiated RFC8260 I-DATA/I-FORWARD-TSN, exact loss, I-FORWARD control replay, peer cumulative confirmation and exact successor delivery. These are distinct evidence lanes; full browser/ICE/DTLS RFC8260 interoperability and production Owner/DTLS generation leases remain unqualified. No Rust/C++ protocol source, FFI or runtime is involved. No production CNet or TurboMedia target uses these objects.
 
 ## Isolation and build
 
@@ -18,6 +18,29 @@ cmake -S cnet/sctp/tests/installed -B build-cnet-sctp-consumer \
 cmake --build build-cnet-sctp-consumer --config Release
 ctest --test-dir build-cnet-sctp-consumer -C Release --output-on-failure
 ```
+
+## Independent RFC8260 Pion wire oracle (isolated test only)
+
+The opt-in `CNET_SCTP_TEST_PION_ORACLE=ON` target builds a POSIX
+datagram adapter using only the public opaque `CNetSctpPrototype::Session`.
+The peer is a distinct **Pion SCTP v1.10.0** Go process, pinned in the
+test directory's `go.mod` and `go.sum`. No Go engine, test adapter,
+native socket, fallback or additional runtime enters the installed
+Session library or production `SaltsTargets`.
+
+[Exact-head CNet C11 #40275477236](https://github.com/qigao/salts/actions/runs/40275477236)
+passed two independent Pion cases: a dropped application I-DATA TSN
+with valid I-FORWARD-TSN 194 followed by byte-exact successor delivery;
+and an identical application loss followed by a **deliberately dropped
+first I-FORWARD**, an immutable Owner retransmission, real Pion SACK and
+exact successor delivery. Test-only transport filtering rejects accidental
+delivery of the abandoned TSN and false early forward retirement.
+DCEP PPID50, binary PPID53, original abandonment generation/TSN and
+the confirmed FORWARD's original TSN are checked.
+
+This is independent SCTP RFC8260 wire interoperability but **not**
+SCTP-over-DTLS/ICE, browser qualification, mobile device execution,
+a production DTLS Generation owner, or release approval.
 
 ## Installed opaque Session: bounded messages
 

@@ -150,7 +150,7 @@ jobs:
           echo "iOS arm64 installed opaque C11 Session compiled and linked; NO device execution."
 
   pion-independent-rfc8260:
-    name: Independent Pion RFC8260 negotiation and I-DATA (test-only UDP)
+    name: Independent Pion RFC8260 I-DATA/I-FORWARD recovery (test-only UDP)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:

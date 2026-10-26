@@ -268,7 +268,8 @@ int main(int argc, char **argv) {
             if (stage < 2u || event.stream_id != 0u ||
                 event.generation != original_generation ||
                 event.abandon_reason != CNET_SCTP_SESSION_ABANDON_TIMED ||
-                event.message_size != strlen("c11-drop")) {
+                event.message_size != strlen("c11-drop") ||
+                !event.has_tsn || event.last_tsn != dropped_tsn) {
               failure = 19; break;
             }
             original_abandoned = 1;
@@ -308,6 +309,7 @@ int main(int argc, char **argv) {
               progress.stream_id != 0u ||
               progress.abandon_reason != CNET_SCTP_SESSION_ABANDON_TIMED ||
               progress.message_size != strlen("c11-drop") ||
+              progress.last_tsn != dropped_tsn ||
               emit_app(session, now, fd, &destination,
                   "c11-after-forward", 0) != 0) {
             failure = 22; break;
@@ -350,6 +352,15 @@ int main(int argc, char **argv) {
           fflush(stdout);
         } else {
           int suppress = 0;
+          /* The abandoned TSN is retired by I-FORWARD. A late retransmit
+           * of the same I-DATA is a protocol regression, even if the peer
+           * could otherwise ignore the already skipped MID. */
+          if (written >= 20u && reply[12u] == 64u &&
+              stage >= 3u && chunk_tsn(reply) == dropped_tsn) {
+            fprintf(stderr,
+                "C11 late abandoned I-DATA after I-FORWARD\n");
+            failure = 31; break;
+          }
           if (written != 0u && reply[12u] == 194u) {
             if (stage == 2u && dropped_tsn_live) {
               dropped_tsn_live = 0;
@@ -411,7 +422,8 @@ int main(int argc, char **argv) {
                 event.stream_id != 0u ||
                 event.generation != original_generation ||
                 event.abandon_reason != CNET_SCTP_SESSION_ABANDON_TIMED ||
-                event.message_size != strlen("c11-drop")) {
+                event.message_size != strlen("c11-drop") ||
+                !event.has_tsn || event.last_tsn != dropped_tsn) {
               fprintf(stderr, "C11 oracle local abandonment wrong: %d/%d\n",
                   (int)status, (int)event.kind);
               failure = 27; break;
