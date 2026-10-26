@@ -33,6 +33,41 @@ jobs:
           -R 'salts_(spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance)'
           --repeat until-fail:5 --output-on-failure
 
+  native-arm64-atomic-conformance:
+    name: Native ARM64 / ${{ matrix.compiler }} / release-acquire and MPMC
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify real ARM64 runner and compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          machine="$(uname -m)"
+          case "$machine" in
+            aarch64|arm64) ;;
+            *) echo "Expected native ARM64, got $machine" >&2; exit 1 ;;
+          esac
+          ${{ matrix.compiler }} --version
+      - name: Configure original Concurrency and atomic source on ARM64
+        run: >-
+          cmake -S tests/compiler -B build/atomic-arm64
+          -G Ninja -DCMAKE_C_COMPILER=${{ matrix.compiler }}
+          -DCMAKE_BUILD_TYPE=Release
+      - name: Compile full native atomic / Disruptor suite
+        run: cmake --build build/atomic-arm64 --parallel 2
+      - name: Require full ARM64 conformance (no TCC override)
+        run: ctest --test-dir build/atomic-arm64 --output-on-failure
+      - name: Stress cross-thread publication, MPMC and retirement 20 times
+        run: >-
+          ctest --test-dir build/atomic-arm64
+          -R 'salts_(atomic_language_conformance|atomic_abi_same_compiler|intrinsic_atomic_conformance|spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance)'
+          --repeat until-fail:20 --output-on-failure
+
   native-interop:
     name: Native GCC/Clang cross-compiler atomic ABI
     runs-on: ubuntu-latest

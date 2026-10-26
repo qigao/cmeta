@@ -457,6 +457,24 @@ and review of race reports. A successful ordinary
 compiler workflow cannot be interpreted as TSan-qualified
 if that diagnostic job fails.
 
+## Native Linux ARM64 atomic and queue execution
+
+The compiler qualification workflow runs **GCC and Clang on native
+`ubuntu-24.04-arm` runners** (not QEMU, cross-compilation, or an x64
+simulator). It verifies `uname -m` is AArch64, compiles the complete
+standalone suite with each native compiler, runs all CTest assertions,
+then repeats seven native scalar/ABI/real-SPSC/Disruptor test targets
+**20 times each**. This specifically exercises release/acquire
+publication, competing CAS, 64-bit cursor retirement, wrap-around
+payload ownership, worker wake/stop and 4-publisher/4-worker MPMC
+under an ARM64 execution model rather than only x86-64.
+
+**Scope remains narrow:** repeated execution is not an exhaustive
+ARMv8 litmus/model check, hardware weak-memory proof, source TSan on
+ARM64, mixed GCC/TCC shared ABI qualification or an installed SDK
+admission. TinyCC remains experimental, separately pinned on Linux
+x64, and the strict `__STDC_NO_ATOMICS__` gate stays unchanged.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:
