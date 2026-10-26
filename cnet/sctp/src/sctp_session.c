@@ -261,15 +261,18 @@ cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
           session->association.peer_abort_info.last_acked_tsn;
       if (session->peer_abort_has_tsn)
         latch_cumulative_progress(session, session->peer_abort_last_ack);
-      /* No post-ABORT SACK can complete an unconfirmed FORWARD result.
-       * Retire only these non-success placeholders; retain all genuinely
-       * confirmed, copied results for Owner retrieval. This also prevents
-       * stale placeholders from permanently saturating the result table. */
-      for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
-        if (session->forward_tracks[i].used &&
-            !session->forward_tracks[i].cumul_confirmed)
-          memset(&session->forward_tracks[i], 0,
-              sizeof(session->forward_tracks[i]));
+      /* A peer ABORT by itself is NEVER a locally exhausted retry budget.
+       * Discard unresolved FORWARD placeholders only if NO prior local
+       * advance() actually exhausted its retries. Once local EXPIRED has
+       * genuinely occurred, those old copied records MUST remain eligible
+       * for a separate local terminal-failure result even if peer ABORT
+       * subsequently destroys DATA. Confirmed success always survives. */
+      if (!session->terminal_retry_exhausted)
+        for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i)
+          if (session->forward_tracks[i].used &&
+              !session->forward_tracks[i].cumul_confirmed)
+            memset(&session->forward_tracks[i], 0,
+                sizeof(session->forward_tracks[i]));
       if (staged_count != 0u) {
         memcpy(session->abort_abandoned, staged,
             staged_count * sizeof(staged[0]));
@@ -480,13 +483,32 @@ cnet_sctp_session_status cnet_sctp_session_take_terminal_failure(
   status = guard(session);
   if (status != CNET_SCTP_SESSION_OK) return status;
   if (!session->terminal_retry_exhausted) return CNET_SCTP_SESSION_EMPTY;
-  /* The DATA engine still owns unread original-generation local PR
-   * abandonment records after local transport failure. Those MUST be
-   * surfaced by poll() and reserved in the forward ledger BEFORE an
-   * apparently empty terminal-receipt result can be reported. */
-  if (session->association.data_ready &&
-      session->association.data.abandon_event_count != 0u)
-    return CNET_SCTP_SESSION_BUSY;
+  /* Original PR abandonments must be published through poll() BEFORE the
+   * Owner concludes that terminal results are drained. They may still live
+   * in the failed DATA TCB, OR in a Session-owned copy after a later peer
+   * ABORT destroyed DATA. This is independent of the peer's ABORT reason. */
+  if ((session->association.data_ready &&
+       session->association.data.abandon_event_count != 0u) ||
+      session->abort_abandoned_count != 0u) {
+    size_t occupied = 0u;
+    int has_confirmed = 0;
+    for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
+      const cnet_sctp_session_forward_track *item =
+          &session->forward_tracks[i];
+      if (item->used) {
+        ++occupied;
+        if (item->cumul_confirmed) has_confirmed = 1;
+      }
+    }
+    /* A saturated, all-UNCONFIRMED prior progress ledger otherwise
+     * deadlocks: poll() needs a free slot to preserve the unread copied
+     * abandonment, but terminal take would refuse until poll(). Permit
+     * an already-published genuine LOCAL failure to free one slot. Never
+     * return EMPTY or skip an unread original abandonment. Any confirmed
+     * peer-progress receipt is Owner-readable via the success take API. */
+    if (occupied != CNET_SCTP_DATA_TX_SLOTS || has_confirmed)
+      return CNET_SCTP_SESSION_BUSY;
+  }
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
     cnet_sctp_session_reliable_track *item = &session->tracked[i];
     if (!item->used || item->cumul_acked) continue;
@@ -942,12 +964,14 @@ cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
       }
     }
     if (next) {
-      /* Post-ABORT no future SACK can confirm the abandoned DATA. Only a
-       * genuine pre-ABORT cumulative SACK admits a peer-progress receipt.
-       * Unconfirmed local abandons still drain without consuming a forward
-       * result slot or being mislabeled LOCAL_RETRY_EXHAUSTED. */
+      /* Peer ABORT alone cannot confirm a FORWARD. If the local Owner
+       * already exhausted its genuine transport retry budget, however,
+       * its pre-existing abandonment MUST retain an unconfirmed terminal
+       * result after the copied event is polled. The only success source
+       * remains a validated pre-ABORT cumulative SACK. */
       record_forward = next->has_tsn &&
-          (!from_abort || (session->peer_abort_has_tsn &&
+          (!from_abort || session->terminal_retry_exhausted ||
+           (session->peer_abort_has_tsn &&
             (uint32_t)(session->peer_abort_last_ack -
                 next->last_tsn) < UINT32_C(0x80000000)));
       if (record_forward) {
