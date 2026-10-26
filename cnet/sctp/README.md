@@ -127,12 +127,27 @@ queued/partially emitted messages never invent one. The two existing
 fixed 16-entry ledgers are reused, with no new heap, callback or worker.
 Abortive stop discards unread terminal and successful results.
 A still-unread local PR abandonment is retained in DATA after local retry
-exhaustion: the terminal take returns BUSY until Session poll first reports
-the original local MESSAGE_ABANDONED event and reserves its fixed forward
-progress record. The Association's FAILED state admits only this read-only
-event retrieval while its DATA state remains intact; no retransmission,
-write or restart is authorized. This prevents a silently lost generation
-or a misleading terminal EMPTY result.
+exhaustion: terminal take ordinarily returns BUSY until Session poll first
+reports the original local MESSAGE_ABANDONED event and reserves its fixed
+forward progress record. **Bounded capacity escape:** when all 16 existing
+forward-ledger slots hold unconfirmed, previously polled local records,
+poll cannot reserve the additional slot. Since local Owner advance() really
+exhausted its retry budget, terminal take may consume ONE of those existing
+local failed records to free capacity; an unread original event still
+prohibits terminal EMPTY. If even one ledger slot is peer-confirmed success,
+the application instead takes its separate forward-success receipt to free
+a slot. No event is overwritten or fabricated from network acceptance.
+The Association's FAILED state admits only read-only Owner retrieval of
+previously buffered DATA abandonment; **even a checksum/tag-valid late peer
+ABORT is rejected with CLOSED and makes no peer-ABORT receipt** after local
+FAILED. Local terminal outcomes cannot be destroyed or reclassified by a
+late peer packet, and no retransmission, write or restart is authorized.
+The strict C11 tests include real local RTX exhaustion/late ABORT with
+a test-only full ledger, plus separate installed public Session consumer
+tests of valid late ABORT refusal for both reliable and PR local failure.
+This prevents a silently lost generation, a misleading terminal EMPTY and
+the previous poll/terminal BUSY deadlock while preserving the two independent
+terminal sources.
 
 A separate `cnet_sctp_session_take_peer_abort()` makes the lower SCTP
 Association's one-shot peer ABORT report available from the opaque installed

@@ -341,13 +341,20 @@ cnet_sctp_session_status cnet_sctp_session_take_forward_progress(
     cnet_sctp_session *session,
     cnet_sctp_session_forward_progress *progress);
 
-/* Owner-only, bounded LOCAL retry-exhaustion results. Returns BUSY
+/* Owner-only, bounded LOCAL retry-exhaustion results. Normally returns BUSY
  * while original local PR abandonment records remain unread in DATA: first
- * consume those records through poll() (preserving SID/generation/TSN) before
- * draining terminal failures. A successful take consumes one result; EMPTY
- * means no remaining eligible result before or after retry exhaustion.
- * Never reclassifies ACKed/peer-forward-confirmed success. Peer ABORT is
- * consumed separately by take_peer_abort(), not through this function. */
+ * consume each through poll() (preserving SID/generation/TSN) before
+ * reporting final terminal EMPTY. Capacity escape: if the 16-slot
+ * FORWARD receipt ledger is FULL of previously polled, UNCONFIRMED local
+ * results, poll itself needs one slot and cannot advance. In that narrow
+ * case take_terminal_failure may consume an EXISTING confirmed-local-failure
+ * eligibility before the next abandonment is polled; it must never return
+ * EMPTY while the original event is unread. If any slot holds confirmed peer
+ * FORWARD progress, use take_forward_progress() to free it instead.
+ * A successful take consumes one result, never reclassifying peer ACK
+ * success. Association FAILED rejects ALL later ingress, including a
+ * well-formed late peer ABORT, so it cannot overwrite local failure or
+ * create take_peer_abort() after genuine retry exhaustion. */
 cnet_sctp_session_status cnet_sctp_session_take_terminal_failure(
     cnet_sctp_session *session,
     cnet_sctp_session_terminal_failure *failure);
