@@ -379,9 +379,10 @@ cnet_sctp_session_status cnet_sctp_session_send_reliable_tracked(
       break;
     }
   if (!slot) return CNET_SCTP_SESSION_CAPACITY;
-  as = cnet_sctp_assoc_send_message_pr(&session->association, now_ms,
-      stream, payload.ppid, unordered, &reliability,
-      payload.wire_bytes, payload.wire_size, packet, capacity, written);
+  as = cnet_sctp_assoc_send_message_pr_bound(&session->association,
+      now_ms, stream, payload.ppid, unordered, &reliability,
+      payload.wire_bytes, payload.wire_size, packet, capacity, written,
+      generation);
   if (as != CNET_SCTP_ASSOC_OK) return map_assoc(as);
   slot->ack.generation = generation;
   slot->ack.ticket = ++session->next_tracked_ticket;
@@ -591,9 +592,9 @@ cnet_sctp_session_status cnet_sctp_session_queue_reliable_tracked(
     }
   }
   if (!slot) return CNET_SCTP_SESSION_CAPACITY;
-  as = cnet_sctp_assoc_queue_message_pr(&session->association, now_ms,
-      stream, payload.ppid, unordered, &policy,
-      payload.wire_bytes, payload.wire_size);
+  as = cnet_sctp_assoc_queue_message_pr_bound(&session->association,
+      now_ms, stream, payload.ppid, unordered, &policy,
+      payload.wire_bytes, payload.wire_size, generation);
   if (as != CNET_SCTP_ASSOC_OK) return map_assoc(as);
   slot->ack.generation = generation;
   slot->ack.ticket = ++session->next_tracked_ticket;
@@ -659,6 +660,13 @@ cnet_sctp_session_status cnet_sctp_session_cancel_unsent_message(
   }
   if (pending->ppid == CNET_SCTP_DCEP_PPID)
     return CNET_SCTP_SESSION_PROTOCOL;
+  /* A copied message owns the generation fixed at admission. A current
+   * DCEP SID may have been illicitly retired/reused in a faulty lifecycle;
+   * neither the old nor the new generation can cancel it as a new message.
+   * This is a read-only STALE refusal; the original pending bytes remain. */
+  if (pending->admission_generation == 0u ||
+      pending->admission_generation != generation)
+    return CNET_SCTP_SESSION_STALE;
   if (pending->has_tsn || pending->offset)
     return CNET_SCTP_SESSION_BUSY;
   for (i = 0u; i < CNET_SCTP_DATA_TX_SLOTS; ++i) {
