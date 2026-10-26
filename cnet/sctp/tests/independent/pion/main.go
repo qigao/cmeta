@@ -112,7 +112,7 @@ func main() {
 	local := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 49572}
 	remote := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 49571}
 	var conn net.Conn
-	var err error
+	// err is already scoped to the earlier StdoutPipe/peer launch.
 	if useDTLS {
 		raw, listenErr := net.ListenUDP("udp", local)
 		require(listenErr == nil, "DTLS socket listen: %v", listenErr)
