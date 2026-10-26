@@ -694,6 +694,42 @@ weak-memory validation or sanitizer-qualified foreign assembly.
 Performance improvements are not grounds for merging #1316 while
 TinyCC still declares `__STDC_NO_ATOMICS__=1`.
 
+## Targeted ASM memory-order litmus (SB and MP)
+
+`asm-atomic/asm_atomic_litmus.c` adds two independent real-pthread
+scenarios without using `<stdatomic.h>`, GNU `__atomic` builtins
+or hidden global mutexes.
+
+1. **Store Buffering (SB), SEQ_CST:** Two workers each perform a
+   `salts_asm_u64_store` to a distinct slot then
+   `salts_asm_u64_load` the other slot; the third party uses a
+   pthread barrier only to synchronize the start/end of each round.
+   Under a single sequentially consistent order, both read results
+   cannot be zero in the same round. The test executes **12,000**
+   attempts, rejects any observed forbidden (0,0) outcome, and
+   reports the count. This tests the actual x86-64
+   `xchg/mfence` and AArch64 `dmb/ldar/stlr` instructions.
+2. **Message Passing (MP), release/acquire:** One worker writes a
+   plain, sequence-derived C payload, then publishes an ASM
+   `store_release` flag; its reader waits using
+   `load_acquire`, checks the non-atomic payload and acknowledges
+   via a release store. The producer waits for acquire-loaded
+   acknowledgement before writing the next payload. **30,000**
+   iterations must complete with no payload mismatch or timeout.
+
+The standalone GCC/Clang native CTest binaries and pinned TinyCC
+x86-64/AArch64 C programs both link the *same* external assembler
+object for these litmus tests. Existing Disruptor native-C11,
+ASM-SEQ_CST and ASM load/store-order-specialized tests remain
+unchanged and run in their respective jobs.
+
+**Interpretation:** Neither repeated SB nor MP experiments constitute
+a complete ARMv8 axiomatic memory-model proof. Failures disqualify the
+prototype; success is evidence of the specified exercised executions
+only. Foreign GAS atomic instructions are still not fully observable
+to source ThreadSanitizer, and a green TCC diagnostic does not make
+`__STDC_NO_ATOMICS__=1` disappear.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:

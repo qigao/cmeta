@@ -62,6 +62,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         asm-atomic/asm_atomic_conformance.c
         "${CMAKE_CURRENT_LIST_DIR}/${_salts_asm_atomic_source}")
       set_tests_properties(salts_asm_atomic_conformance PROPERTIES TIMEOUT 60)
+      salts_add_atomic_conformance(salts_asm_atomic_litmus
+        asm-atomic/asm_atomic_litmus.c
+        "${CMAKE_CURRENT_LIST_DIR}/${_salts_asm_atomic_source}")
+      set_tests_properties(salts_asm_atomic_litmus PROPERTIES TIMEOUT 60)
       # THREE identical source tests also run against the private assembly
       # atomic slots. Original Disruptor algorithms are #included unmodified
       # into ONE private experimental TU; consumers still use public opaque API.
