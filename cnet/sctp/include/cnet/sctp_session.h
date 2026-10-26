@@ -12,6 +12,8 @@
 #define CNET_SCTP_SESSION_MAX_PACKET_BYTES 1280u
 #define CNET_SCTP_SESSION_MAX_MESSAGE_BYTES 24576u
 #define CNET_SCTP_SESSION_MAX_STREAMS 16u
+#define CNET_SCTP_SESSION_MAX_TRACKED_RELIABLE_RECEIPTS 16u
+#define CNET_SCTP_SESSION_MAX_PEER_ABORT_REASON_BYTES 1180u
 #define CNET_SCTP_SESSION_MAC_BYTES 32u
 
 typedef struct cnet_sctp_session cnet_sctp_session;
@@ -102,6 +104,126 @@ typedef struct cnet_sctp_session_event {
   cnet_sctp_session_reset_result reset_result;
 } cnet_sctp_session_event;
 
+/* Owner-only generation-fenced snapshot of SCTP application wire-payload
+ * bytes. queued_bytes are copied but not yet emitted. retained_bytes count
+ * emitted DATA tickets awaiting cumulative ACK/FORWARD progress, including
+ * revocable gap_acked_bytes and abandoned_bytes as subsets, not additional
+ * bytes. An emitted FORWARD-TSN transfers abandoned DATA into a separate
+ * retained association-level control packet (see association_forward_pending);
+ * zero retained_bytes alone is NOT proof that the forward barrier is retired.
+ * DCEP PPID50 is excluded. PPID56/57 wire placeholders count as a
+ * byte here despite their zero logical application length. The original
+ * admission_generation of every matching copied pending message and
+ * retained DATA ticket is checked BEFORE publishing any byte count: a
+ * malformed/stale mixed lifetime returns STALE with zeroed *usage rather
+ * than attributing old SID traffic to a reused DCEP channel. Neither this
+ * snapshot nor its changes imply JavaScript buffered_amount or an exactly-
+ * once per-message completion event. No borrowed output survives the call. */
+typedef struct cnet_sctp_session_tx_usage {
+  uint64_t generation;
+  size_t queued_bytes;
+  size_t retained_bytes;
+  size_t gap_acked_bytes;
+  size_t abandoned_bytes;
+  uint16_t retained_fragments;
+  uint8_t has_pending_message;
+  /* ASSOCIATION-wide, not attributable to this SID alone. After abandoned
+   * DATA tickets transfer into a retained FORWARD-TSN control packet, their
+   * per-SID retained_bytes can be zero while the peer has NOT acknowledged
+   * the forward barrier. This conservative flag prevents false completion. */
+  uint8_t association_forward_pending;
+} cnet_sctp_session_tx_usage;
+
+/* Cumulative-ACK receipt for a tracked reliable message. For a fragmented
+ * message tsn is the LAST fragment TSN, and only that final cumulative ACK
+ * admits the exactly-once receipt. Already-confirmed receipts remain
+ * Owner-readable after a later peer ABORT destroys DATA. A valid cumulative
+ * SACK preceding ABORT in the same packet may also confirm a ticket, whereas
+ * ABORT by itself never does. NOT PR-SCTP, cancel, peer delivery,
+ * JS buffered_amount or complete generic terminal events. */
+typedef struct cnet_sctp_session_reliable_ack {
+  uint64_t generation;
+  uint64_t ticket;
+  uint16_t stream_id;
+  uint32_t tsn;
+  uint32_t ppid;
+  size_t message_size;
+  uint8_t binary;
+} cnet_sctp_session_reliable_ack;
+
+/* Independent, exactly-once peer cumulative-progress receipt for a local
+ * MESSAGE_ABANDONED carrying DATA TSNs. This result does NOT prove remote
+ * application delivery nor whether peer progress came from FORWARD-TSN or
+ * late original DATA. SID, original generation and TSN range are immutable
+ * across RFC6525 reset/reuse. Confirmed results remain Owner-readable
+ * after later peer ABORT, independently of the one-shot ABORT reason.
+ * A full 16-slot result table makes poll()
+ * return CAPACITY BEFORE consuming the next abandonment. */
+typedef struct cnet_sctp_session_forward_progress {
+  uint64_t generation;
+  uint16_t stream_id;
+  uint32_t first_tsn, last_tsn;
+  uint32_t ppid, message_identifier;
+  size_t message_size;
+  cnet_sctp_session_reliability reliability;
+  cnet_sctp_session_abandon_reason abandon_reason;
+  uint8_t binary, unordered, interleaved;
+} cnet_sctp_session_forward_progress;
+
+/* Exactly-once local transport failure after a REAL Owner retry-budget
+ * EXPIRED transition to Association FAILED. V1 covers unresolved explicitly
+ * tracked reliable sends and ALREADY POLLED local PR abandonments whose peer
+ * cumulative progress is unconfirmed. ACKed/confirmed results keep their
+ * separate SUCCESS APIs. Original SID/generation and ticket are immutable.
+ * Not for untracked messages, unpolled abandonment, peer ABORT or arbitrary
+ * post-TSN application cancellation; not remote application delivery. */
+typedef enum cnet_sctp_session_terminal_kind {
+  CNET_SCTP_SESSION_TERMINAL_RELIABLE_UNACKED = 1,
+  CNET_SCTP_SESSION_TERMINAL_FORWARD_UNCONFIRMED = 2
+} cnet_sctp_session_terminal_kind;
+typedef enum cnet_sctp_session_terminal_reason {
+  CNET_SCTP_SESSION_TERMINAL_LOCAL_RETRY_EXHAUSTED = 1
+} cnet_sctp_session_terminal_reason;
+typedef struct cnet_sctp_session_terminal_failure {
+  cnet_sctp_session_terminal_kind kind;
+  cnet_sctp_session_terminal_reason reason;
+  uint64_t generation;
+  uint64_t ticket; /* nonzero for explicitly tracked reliable sends */
+  uint16_t stream_id;
+  uint32_t last_tsn; /* meaningful iff has_final_tsn */
+  uint32_t ppid;
+  size_t message_size;
+  uint8_t binary;
+  uint8_t has_final_tsn;
+} cnet_sctp_session_terminal_failure;
+
+/* Separate, Owner-pulled peer SCTP ABORT. Framing, CRC and SCTP verification
+ * tag must pass ingress preflight; cryptographic peer identity remains the
+ * responsibility of the external DTLS transport. A single bounded Cause 12
+ * user reason is copied (never borrowed/truncated). This association-level
+ * result is NOT LOCAL_RETRY_EXHAUSTED, not a per-message ACK/failure and does
+ * not assign a DCEP SID/generation to arbitrary untracked traffic.
+ * last_acked_tsn/last_sent_tsn are pre-ABORT TCB snapshots if has_tsn=1. */
+typedef struct cnet_sctp_session_peer_abort {
+  uint32_t last_acked_tsn, last_sent_tsn;
+  uint8_t has_tsn, has_user_reason;
+} cnet_sctp_session_peer_abort;
+
+/* Synchronous result of a locally cancelled, wholly copied pending message
+ * BEFORE its first DATA TSN. ticket is the original nonzero tracking token
+ * only for queue_reliable_tracked(); untracked sends return ticket=0.
+ * No asynchronous ACK/PR abandonment is implied by this result. */
+typedef struct cnet_sctp_session_unsent_cancelled {
+  uint64_t generation;
+  uint64_t ticket;
+  uint16_t stream_id;
+  uint32_t ppid;
+  size_t message_size; /* logical size, not PPID56/57 wire placeholder */
+  cnet_sctp_session_reliability reliability;
+  uint8_t binary;
+  uint8_t unordered;
+} cnet_sctp_session_unsent_cancelled;
+
 typedef int (*cnet_sctp_session_owner_fn)(void *context);
 typedef int (*cnet_sctp_session_entropy_fn)(void *context,
     uint8_t *destination, size_t destination_size);
@@ -152,7 +274,15 @@ cnet_sctp_session_status cnet_sctp_session_create(
 
 /* start emits INIT. input consumes one complete SCTP packet and may emit one
  * reply. advance emits the next due retransmission/control packet. Output is
- * copied into caller storage and its size is returned through written. */
+ * copied into caller storage and its size is returned through written.
+ * On OWNER/CLOSED refusal, start() resets *written and next_deadline() resets
+ * available deadline outputs; no packet or timer admission occurs.
+ * Before Owner advance(), all pending/retained APPLICATION DATA generations
+ * are checked against the active DCEP SID lifetimes. If a SID was wrongly
+ * reused before old DATA retired, STALE prevents even a T3 retransmission
+ * or first zero-window probe, returns zero written and leaves DATA unchanged.
+ * Only valid Owner state repair or explicit abortive stop can proceed;
+ * DCEP PPID50 retains its separate control-plane lifecycle. */
 cnet_sctp_session_status cnet_sctp_session_start(cnet_sctp_session *session,
     uint64_t now_ms, void *packet, size_t capacity, size_t *written);
 cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
@@ -163,11 +293,15 @@ cnet_sctp_session_status cnet_sctp_session_advance(cnet_sctp_session *session,
 cnet_sctp_session_status cnet_sctp_session_next_deadline(
     cnet_sctp_session *session, uint64_t *deadline_ms, int *has_deadline);
 
-/* open_channel emits reliable ordered DCEP OPEN. type is one of the channel
+/* open_channel emits reliably ordered DCEP OPEN. type is one of the channel
  * constants above; label/protocol are borrowed and individually bounded to
- * 128 bytes. send copies one text/binary message of at most MAX_MESSAGE_BYTES
- * into bounded transport storage. close_channel emits the bidirectional reset
- * and returns a nonzero generation that identifies this stream lifetime. */
+ * 128 bytes. send emits a SINGLE SCTP DATA/I-DATA packet immediately; it
+ * returns CAPACITY for messages requiring fragmentation without changing
+ * the stream's send state. For a message up to MAX_MESSAGE_BYTES, use the
+ * queue_message/pump_message pair below, which copies the entire input into
+ * one bounded, Owner-owned pending slot and emits one fragment per pump.
+ * close_channel emits a bidirectional reset and returns the generation
+ * that identifies the stream lifetime. */
 cnet_sctp_session_status cnet_sctp_session_open_channel(
     cnet_sctp_session *session, uint64_t now_ms, uint16_t stream,
     uint8_t type, uint16_t priority, uint32_t reliability,
@@ -178,6 +312,131 @@ cnet_sctp_session_status cnet_sctp_session_send(cnet_sctp_session *session,
     uint64_t now_ms, uint16_t stream, int binary,
     const void *message, size_t message_size,
     void *packet, size_t capacity, size_t *written);
+
+/* Opt-in reliable-only SINGLE-DATA send. An available 16-entry receipt slot
+ * and the expected active DCEP generation are validated BEFORE emission.
+ * Successful admission returns a monotonically unique ticket. An actual
+ * cumulative SACK (not revocable Gap ACK or peer echo) makes the receipt
+ * eligible; take_reliable_ack consumes it at most once and retains its
+ * original SID/generation across RFC6525 reset/reuse. CAPACITY/STALE/OWNER
+ * refuse without allocating a ticket or sending DATA. An unread receipt
+ * holds its bounded slot. Abortive stop discards outstanding receipts.
+ * Fragmented reliable messages use the separate opt-in queue_reliable_tracked
+ * admission plus the existing pump_message. LOCAL retry exhaustion is an
+ * independent take_terminal_failure() result, and PR DATA abandonment is
+ * reported by poll(). An unsent copied message may be cancelled explicitly;
+ * post-TSN application cancellation and generic per-message transport/provider
+ * failure notifications remain unimplemented. Peer ABORT is association-level,
+ * never evidence of locally exhausted retransmissions. */
+cnet_sctp_session_status cnet_sctp_session_send_reliable_tracked(
+    cnet_sctp_session *session, uint64_t now_ms,
+    uint16_t stream, uint64_t expected_generation, int binary,
+    const void *message, size_t message_size,
+    void *packet, size_t capacity, size_t *written, uint64_t *ticket);
+cnet_sctp_session_status cnet_sctp_session_take_reliable_ack(
+    cnet_sctp_session *session, cnet_sctp_session_reliable_ack *ack);
+
+/* Owner-only, bounded, separate from the earlier local abandonment event.
+ * EMPTY until validated peer cumulative SACK crosses LAST abandoned TSN.
+ * Does not implement post-TSN explicit cancel or transport-terminal failure. */
+cnet_sctp_session_status cnet_sctp_session_take_forward_progress(
+    cnet_sctp_session *session,
+    cnet_sctp_session_forward_progress *progress);
+
+/* Owner-only, bounded LOCAL retry-exhaustion results. Normally returns BUSY
+ * while original local PR abandonment records remain unread in DATA: first
+ * consume each through poll() (preserving SID/generation/TSN) before
+ * reporting final terminal EMPTY. Capacity escape: if the 16-slot
+ * FORWARD receipt ledger is FULL of previously polled, UNCONFIRMED local
+ * results, poll itself needs one slot and cannot advance. In that narrow
+ * case take_terminal_failure may consume an EXISTING confirmed-local-failure
+ * eligibility before the next abandonment is polled; it must never return
+ * EMPTY while the original event is unread. If any slot holds confirmed peer
+ * FORWARD progress, use take_forward_progress() to free it instead.
+ * A successful take consumes one result, never reclassifying peer ACK
+ * success. Association FAILED rejects ALL later ingress, including a
+ * well-formed late peer ABORT, so it cannot overwrite local failure or
+ * create take_peer_abort() after genuine retry exhaustion. */
+cnet_sctp_session_status cnet_sctp_session_take_terminal_failure(
+    cnet_sctp_session *session,
+    cnet_sctp_session_terminal_failure *failure);
+
+/* Consume a distinct, copied peer ABORT event (if any) exactly once.
+ * On CAPACITY/OWNER/INVALID the event remains available; *info and *written
+ * are cleared, and an undersized reason buffer NEVER truncates the reason.
+ * On success, caller owns the copied reason bytes. A second call is EMPTY.
+ * Unread events are discarded only by explicit abortive stop/destroy. */
+cnet_sctp_session_status cnet_sctp_session_take_peer_abort(
+    cnet_sctp_session *session, cnet_sctp_session_peer_abort *info,
+    void *reason, size_t capacity, size_t *written);
+
+/* Opt-in copied, reliable message admission up to 24 KiB. One fixed receipt
+ * is reserved BEFORE admitting the only pending Association message. Return
+ * a generation-bound ticket while a packet still awaits Owner pump_message().
+ * Earlier fragment ACKs cannot finish the ticket: last DATA/I-DATA fragment
+ * must first be emitted and then cumulatively ACKed. A failure changes no
+ * send or receipt state. WebRTC empty PPID56/57 records are supported.
+ * All non-reliable policies remain on untracked queue_message(). */
+cnet_sctp_session_status cnet_sctp_session_queue_reliable_tracked(
+    cnet_sctp_session *session, uint64_t now_ms,
+    uint16_t stream, uint64_t expected_generation, int binary,
+    const void *message, size_t message_size, uint64_t *ticket);
+
+/* Owner-only atomic cancel of a copied message BEFORE its first fragment.
+ * Returns the original SID/generation, optional tracked ticket, logical
+ * payload size and DCEP policy synchronously and exactly once. The
+ * copied message's admission-time generation MUST still match the active
+ * DCEP SID; otherwise STALE preserves the original queued bytes/ticket.
+ * Repetition yields EMPTY only when no pending or retained DATA/protocol-
+ * forward barrier remains; wrong generation STALE. A sent DATA/probe or any
+ * still-retained SID ticket is BUSY, as is a conservatively association-wide
+ * FORWARD-TSN barrier; an already expired TIMED message remains on its separate
+ * advance()+MESSAGE_ABANDONED path. Cancel emits NO DATA/FORWARD/ACK,
+ * never borrows user data, and releases any reserved reliable tracked slot.
+ * Once a DATA TSN exists, safe protocol-level abandonment is a distinct,
+ * deliberately unsupported operation—not silently done by this API. */
+cnet_sctp_session_status cnet_sctp_session_cancel_unsent_message(
+    cnet_sctp_session *session, uint64_t now_ms,
+    uint16_t stream, uint64_t expected_generation,
+    cnet_sctp_session_unsent_cancelled *cancelled);
+
+/* queue_message owns a full copied user message before any SCTP TSN is
+ * assigned; the caller may free the input immediately. Its original DCEP
+ * SID generation is bound on successful admission and travels with DATA
+ * tickets and any later local PR abandonment; peer ABORT or SID reset must
+ * never substitute the currently active SID lifetime. Existing DATA PR-event
+ * reservation denies capacity exhaustion BEFORE admitting a new message.
+ * The pending queue is bounded to ONE message per Association: a second
+ * queue returns CAPACITY without consuming bytes. DCEP OPEN/ACK and
+ * reliability policy must already admit the SID. No borrowed application
+ * input survives the call.
+ *
+ * pump_message emits AT MOST ONE DATA/I-DATA fragment. EMPTY means no queued
+ * bytes remain, CAPACITY means congestion/receive-window/buffer backpressure
+ * without consuming the pending fragment, and BUSY requires Owner advance()
+ * to service an earlier retransmission/reset. Before pump, advance or a new
+ * send/queue, old or unbound application DATA owned by a different original
+ * generation causes STALE and commits no packet/TSN/queue change. This is
+ * fail-closed on an invalid SID-reuse lifecycle, not a second sender queue
+ * or a way to retire the missing original message. Caller must keep pumping
+ * after subsequent SACKs/Owner deadlines; there is no implicit worker or I/O.
+ * For timed policies the lifetime begins at queue admission, not pump time.
+ * Neither entry point changes production Salts::CNet or its backend. */
+cnet_sctp_session_status cnet_sctp_session_queue_message(
+    cnet_sctp_session *session, uint64_t now_ms, uint16_t stream, int binary,
+    const void *message, size_t message_size);
+cnet_sctp_session_status cnet_sctp_session_pump_message(
+    cnet_sctp_session *session, uint64_t now_ms,
+    void *packet, size_t capacity, size_t *written);
+
+/* Only the exact active DCEP generation may read a SID's TX usage. Stale
+ * expected generations OR old/unbound in-flight message generations return
+ * STALE and clear *usage; free SIDs return PROTOCOL. No ticket is settled
+ * and no new timer/callback is created by this query. */
+cnet_sctp_session_status cnet_sctp_session_get_tx_usage(
+    cnet_sctp_session *session, uint16_t stream,
+    uint64_t expected_generation, cnet_sctp_session_tx_usage *usage);
+
 cnet_sctp_session_status cnet_sctp_session_close_channel(
     cnet_sctp_session *session, uint64_t now_ms, uint16_t stream,
     void *packet, size_t capacity, size_t *written,
@@ -185,7 +444,13 @@ cnet_sctp_session_status cnet_sctp_session_close_channel(
 
 /* Poll copies user DATA into message and never retains that buffer. packet is
  * an independent optional wire reply (for example DCEP ACK). EMPTY means no
- * ULP event is available. CAPACITY retains a pending reply/event for retry. */
+ * ULP event is available. CAPACITY retains a pending reply/event for retry.
+ * After an admitted peer ABORT destroys DATA, the Owner can still retrieve
+ * up to 16 already-queued local MESSAGE_ABANDONED records with original SID
+ * generations, from a fixed Session-owned snapshot. Once exhausted, poll
+ * returns EMPTY even though the underlying SCTP DATA state is CLOSED.
+ * ABORT itself does not imply a confirmed FORWARD or a per-message terminal
+ * failure; all such results remain on their separate take APIs. */
 cnet_sctp_session_status cnet_sctp_session_poll(cnet_sctp_session *session,
     uint64_t now_ms, cnet_sctp_session_event *event,
     void *message, size_t message_capacity,

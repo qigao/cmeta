@@ -61,6 +61,7 @@ typedef struct cnet_sctp_data_abandon_event {
   uint16_t stream_id;
   uint32_t ppid;
   uint32_t message_identifier; /* SSN projection or negotiated MID */
+  uint64_t admission_generation; /* immutable original Owner/ULP SID lifetime */
   size_t message_size;
   uint32_t first_tsn;
   uint32_t last_tsn;
@@ -107,6 +108,7 @@ typedef struct cnet_sctp_data_tx {
   uint16_t stream_id, ssn;
   uint32_t mid, fsn, ppid;
   uint32_t message_first_tsn;
+  uint64_t admission_generation; /* fixed on first successful admission */
   size_t message_size;
   uint8_t unordered;
   uint8_t interleaved;
@@ -137,6 +139,7 @@ typedef struct cnet_sctp_data_pending {
   uint32_t first_tsn;
   cnet_sctp_data_reliability reliability;
   uint64_t expires_at_ms;
+  uint64_t admission_generation; /* copied before any TSN is assigned */
   uint8_t unordered;
   uint8_t interleaved;
   uint8_t has_tsn;
@@ -215,6 +218,14 @@ cnet_sctp_data_status cnet_sctp_data_send_pr(cnet_sctp_data *d,
     const cnet_sctp_data_reliability *reliability,
     const void *bytes, size_t length, void *output, size_t output_capacity,
     size_t *written);
+/* Internal Owner-token binding. The unbound API above remains usable by
+ * standalone DATA conformance tests; only the higher Session layer supplies
+ * a nonzero original SID generation at successful PR admission. */
+cnet_sctp_data_status cnet_sctp_data_send_pr_bound(cnet_sctp_data *d,
+    uint64_t now_ms, uint16_t stream_id, uint32_t ppid, int unordered,
+    const cnet_sctp_data_reliability *reliability, const void *bytes,
+    size_t length, void *output, size_t output_capacity, size_t *written,
+    uint64_t admission_generation);
 
 /* Input: one or more DATA chunks, optionally preceded by one SACK, on
  * a CRC-checked packet bounded to the private 1280-byte peer-ingress limit.
@@ -254,8 +265,18 @@ cnet_sctp_data_status cnet_sctp_data_queue_message_pr(cnet_sctp_data *d,
     uint64_t now_ms, uint16_t stream_id, uint32_t ppid, int unordered,
     const cnet_sctp_data_reliability *reliability,
     const void *bytes, size_t length);
+cnet_sctp_data_status cnet_sctp_data_queue_message_pr_bound(
+    cnet_sctp_data *d, uint64_t now_ms, uint16_t stream_id, uint32_t ppid,
+    int unordered, const cnet_sctp_data_reliability *reliability,
+    const void *bytes, size_t length, uint64_t admission_generation);
 cnet_sctp_data_status cnet_sctp_data_pump(cnet_sctp_data *d, uint64_t now_ms,
     void *packet, size_t packet_capacity, size_t *packet_bytes);
+
+/* Owner-only synchronous pre-TSN cancellation. No fragment/probe may have
+ * left; an already expired TIMED record must be processed by advance().
+ * No new DATA, FORWARD-TSN or callback is created. */
+cnet_sctp_data_status cnet_sctp_data_cancel_unsent(
+    cnet_sctp_data *d, uint64_t now_ms, uint16_t stream_id);
 
 /* Takes one copied message-abandonment record. Insufficient event capacity
  * is prevented at PR-message admission; explicit stop discards unread events. */

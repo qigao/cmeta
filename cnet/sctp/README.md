@@ -2,7 +2,23 @@
 
 Independent RFC-first protocol workstream for [Salts #1181](https://github.com/qigao/salts/issues/1181) and upstream prerequisite for [TurboMedia #227](https://github.com/qigao/turbomedia/issues/227).
 
-**Research only. This is not a complete SCTP engine, not authenticated production transport and not WebRTC-interoperable yet.** No Rust/C++ protocol source, FFI or runtime is involved. No production CNet or TurboMedia target uses these objects.
+**Research only. This is not the production SCTP transport.** There are
+three distinct, bounded interoperability lanes: **Janus** over real ICE/DTLS
+qualifies **legacy RFC 3758 FORWARD-TSN (type 192)**; independent
+**Pion SCTP v1.10.0** qualifies RFC 8260 I-DATA/I-FORWARD-TSN (types
+64/194) with controlled loss and retransmission over both test-only UDP
+and **real Pion DTLS v3.1.15 ↔ OpenSSL DTLS 1.2** (two independent
+SCTP/DTLS processes on localhost); and a separate single-process OpenSSL
+DTLS consumer qualifies the **installed public opaque Session** with
+ASan/UBSan, ciphertext rejection and test Owner-generation refusal.
+The Pion/OpenSSL DTLS path now proves **both SHA-256 certificate pins**,
+identical independent RFC 5705 export-derived non-secret generation
+identities, **creation of the native Session only AFTER DTLS authentication**,
+and refusal of otherwise authenticated late DATA after test Owner revocation.
+None of these paths installs Go/OpenSSL adapters or changes production
+`Salts::CNet`/TurboMedia usrsctp. Browser ICE/DataChannel, production
+DTLS Owner/DSO lifecycle, mobile device execution and full six-RID release
+remain unqualified. No exactly-once/no-loss production claim is made.
 
 ## Isolation and build
 
@@ -18,6 +34,274 @@ cmake -S cnet/sctp/tests/installed -B build-cnet-sctp-consumer \
 cmake --build build-cnet-sctp-consumer --config Release
 ctest --test-dir build-cnet-sctp-consumer -C Release --output-on-failure
 ```
+
+## Independent RFC8260 Pion wire oracle (isolated test only)
+
+The experimental `CNET_SCTP_TEST_PION_ORACLE=ON` target remains available
+for source-tree research, but CI builds a stricter **separate consumer
+at `cnet/sctp/tests/independent/pion_sdk`** that finds and links only
+the *previously installed* `CNetSctpPrototype::Session` public
+package. Its distinct Go peer pins **Pion SCTP v1.10.0** and **Pion DTLS
+v3.1.15**, including direct and transitive checksum entries in
+`go.mod`/`go.sum`. The job fails if Go mutates either lock file.
+The native consumer optionally links OpenSSL **only as a test transport**;
+no Pion, native socket, DTLS object, fallback or test target enters
+the installed library, `SaltsTargets`, or production CNet.
+
+[Exact-head CNet C11 #40275477236](https://github.com/qigao/salts/actions/runs/40275477236)
+passed two independent Pion cases: a dropped application I-DATA TSN
+with valid I-FORWARD-TSN 194 followed by byte-exact successor delivery;
+and an identical application loss followed by a **deliberately dropped
+first I-FORWARD**, an immutable Owner retransmission, real Pion SACK and
+exact successor delivery. Test-only transport filtering rejects accidental
+delivery of the abandoned TSN and false early forward retirement.
+DCEP PPID50, binary PPID53, original abandonment generation/TSN and
+the confirmed FORWARD's original TSN are checked.
+
+**New independently implemented RFC 8260-over-DTLS evidence:** the SAME
+two positive loss/recovery scenarios also pass with real **Pion DTLS 1.2
+on the Go side** and **OpenSSL DTLS 1.2 on the installed C11 Session
+side**, using ephemeral P-256 certificates and explicitly pinned mutual
+SHA-256 leaf fingerprints. OpenSSL's RFC 5705 exporter and Pion's
+independent exporter must agree on the complete **64-bit non-secret
+Owner Generation token** before the native SCTP Session is even created.
+The negative identity cases reject a wrong expected server fingerprint
+at Pion, and a wrong expected client fingerprint at OpenSSL **before
+C11 Session creation**. A third negative runs an actual DTLS-encrypted
+PPID53 message after the isolated Owner generation is revoked: OpenSSL
+authenticates/decrypts, but C11 `session_input()` returns
+`CNET_SCTP_SESSION_OWNER` with zero reply, never publishing that ULP.
+
+[Exact-head CNet SCTP CI #40288797102](https://github.com/qigao/salts/actions/runs/40288797102)
+passes **12/12** jobs: four native C11+installed SDK consumer environments,
+Android/iOS ARM64 cross-linked standalone SDK consumers (NOT device-run),
+the six-case Pion SCTP/DTLS oracle (two UDP, two real DTLS, two bad-pin
+cases, plus a seventh isolated late-Owner-revocation scenario), source
+ASan/UBSan, effective-source Owner/provider DSO TSan, pinned GmSSL
+Cookie MAC and separate real OpenSSL DTLS consumer under ASan/UBSan ×10.
+This is an independent localhost SCTP-over-DTLS proof, **not ICE or
+browser/libwebrtc DataChannel**, not concurrent production DTLS lease
+or DSO unload, and not six-RID production SDK/release qualification.
+
+## Real DTLS 1.2 application records — installed opaque Session (test only)
+
+The independent CMake consumer at `cnet/sctp/tests/independent/dtls`
+finds **only the previously installed `CNetSctpPrototype::Session` public
+CMake package and OpenSSL 3**. No internal Association/DATA header, native
+usrsctp dependency, adapter or OpenSSL type enters the production SDK.
+
+Two ephemeral EC P-256 certificate identities negotiate actual **DTLS 1.2**
+via OpenSSL memory BIOs; after the handshake both peer SHA-256 fingerprints
+must match their expected identities (a forged fingerprint is refused).
+The fixture derives a nonzero opaque SCTP `peer_binding` from the verified
+certificate fingerprints, retains separate random HMAC-SHA256 Cookie
+providers and encrypts/authenticates every SCTP INIT/INIT-ACK/COOKIE-
+ECHO/COOKIE-ACK, DCEP OPEN/ACK and PPID53 I-DATA record with
+`SSL_write()`/`SSL_read()`. A valid decrypted old SCTP datagram is
+rejected when the **test-only external Owner Generation** no longer matches,
+and again after abortive stop; a tampered encrypted record produces **no
+decrypted SCTP plaintext**. All copied resources are destroyed before the
+OpenSSL identity and Cookie providers are released.
+
+[Exact-head CNet SCTP CI #40280847157](https://github.com/qigao/salts/actions/runs/40280847157)
+passes the installed public-only real DTLS consumer and a **second run
+under Clang 18 effective-source ASan+UBSan with ten repetitions**.
+The sanitizer job audits the compile commands of all eight C11 SCTP
+implementation files plus `dtls_records.c`. It does not claim OpenSSL's
+third-party binaries were built with the same instrumentation. This is
+a single-process encrypted-record contract test, **not** an independent
+browser/Pion-over-DTLS peer, real UDP/ICE, production DTLS Provider DSO
+unload or concurrent Owner lease.
+
+Reproduce on a Linux host with OpenSSL 3 development files:
+
+```sh
+cmake -S cnet/sctp -B build-c11 -DBUILD_TESTING=OFF
+cmake --build build-c11
+cmake --install build-c11 --prefix "$PWD/c11-installed"
+cmake -S cnet/sctp/tests/independent/dtls -B build-dtls-consumer \
+  -DCMAKE_PREFIX_PATH="$PWD/c11-installed"
+cmake --build build-dtls-consumer
+ctest --test-dir build-dtls-consumer --output-on-failure
+```
+
+## Installed opaque Session: bounded messages
+
+The standalone, experimental `CNetSctpPrototype::Session` installed target
+exposes an opaque Owner-only handle. Its immediate
+`cnet_sctp_session_send()` emits one SCTP DATA/I-DATA packet and returns
+`CAPACITY` without accepting a multi-fragment message. For payloads up to
+`CNET_SCTP_SESSION_MAX_MESSAGE_BYTES` (24 KiB), use
+`cnet_sctp_session_queue_message()` to copy the whole message and then
+`cnet_sctp_session_pump_message()` on the Owner to emit one fragment per
+call. Only one unsent message is queued; a second returns `CAPACITY` without
+replacing it. Handle SACKs via `input()`, due retransmission/lifetime via
+`advance()`, and explicit congestion/receive-window backpressure before
+pumping again. The DCEP-negotiated ordered/unordered, retransmit/timed policy
+is preserved for every emitted fragment. Timed lifetime starts at queue
+admission. No background worker, I/O or borrowed application input is retained.
+
+The separate installed C11 consumer verifies 2,048-byte and full 24 KiB
+fragmentation, copied input ownership, Owner rejection, unsent TIMED expiry,
+two-sided RFC6525 reset and old-generation DATA replay, using only installed
+headers and exports.
+
+The new `cnet_sctp_session_get_tx_usage()` takes an explicit nonzero DCEP
+generation and snapshots only the active matching SID. It distinguishes
+copied, not-yet-emitted bytes from retained DATA tickets, as well as
+revocable gap-ACKed and abandoned subsets. On RFC3758 abandonment, the
+Owner can transfer retained DATA tickets into an association-level
+FORWARD-TSN packet: `retained_bytes` then drops to zero *before* the
+receiver has acknowledged the forward control. The snapshot exposes
+`association_forward_pending` to prohibit a false completion inference;
+this flag conservatively covers the entire association, not a single SID.
+In addition to checking the expected DCEP generation, the query validates
+the original admission-time generation of each relevant queued message and
+retained DATA ticket. A deliberately reused SID with still-owned old DATA
+returns STALE and zeroed output, never a false zero-byte/current-generation
+completion signal. In addition to the read-only snapshot, **all Owner egress**
+for application DATA is fenced: direct/tracked send, copied queue admission,
+fragment pump, and advance/T3/zero-window probe preflight the retained
+original generation before issuing any new packet or mutating DATA. Stale
+SIDs are fail-closed, without a fallback transport or implicit lifetime
+repair; valid RFC6525 retirement still allows a fresh new-generation send.
+These contracts are covered by real direct, copied queued, partially emitted
+PR, tracked reliable, stale-generation probe/refusal and freshly reopened SID
+installed-ABI consumer fixtures. One Owner-driven zero-window PR probe test
+also verifies that the admission generation survives its first one-byte DATA,
+retransmission-budget abandonment and FORWARD-TSN event.
+Unlike a per-message terminal event, this query performs NO retirement. The installed consumer delays TSN N,
+gap-ACKs N+1, observes both tickets remain retained, and then requires
+cumulative SACK before clearing either. DCEP PPID50 bytes are excluded.
+These counts are not JavaScript buffered_amount and are not exactly-once
+message completion notifications.
+
+A separate Owner-only `cnet_sctp_session_take_forward_progress()` follows
+a prior `MESSAGE_ABANDONED` carrying DATA TSNs. The local event is the
+sending Owner's abandonment decision, NOT peer confirmation. The forward
+progress receipt becomes eligible only when a validated real cumulative SACK
+crosses the LAST abandoned TSN; it carries the ORIGINAL SID, generation,
+PPID, TSN range and PR policy once. The cumulative advance may come from a
+FORWARD-TSN or late original DATA and does NOT prove application delivery.
+Up to 16 records are retained: a saturated table makes poll return CAPACITY
+BEFORE consuming another local abandonment. Pre-TSN TIMED expiry creates no
+forward-progress result. Abortive stop discards unread results. Transport
+failure, post-TSN explicit cancellation and full JS buffered_amount remain
+separate gates.
+
+A separate opt-in, reliable-only **single-packet** API
+`cnet_sctp_session_send_reliable_tracked()` returns a monotonic ticket after
+SCTP DATA admission. `cnet_sctp_session_take_reliable_ack()` reports that
+ticket exactly once only after a real cumulative ACK—not Gap ACK, send
+admission or receiver application delivery. Input latches validated
+cumulative ACKs at commit time, preserving unread results across later
+TSN progression and SID reuse. At most 16 unread/outstanding
+tickets are retained in the opaque Session; a full table fails closed
+BEFORE sending. Receipts capture the original SID and DCEP generation even
+after an RFC6525 reset/reopen. Abortive stop explicitly discards them.
+The separate `cnet_sctp_session_queue_reliable_tracked()` API reserves a
+receipt before copying a reliable message of up to 24 KiB. The Owner emits
+fragments with `pump_message()`, and `advance()` may send a final-byte
+zero-window probe. ACKs of EARLIER fragments cannot retire the full message:
+the last fragment must have a committed TSN and be cumulatively ACKed.
+An additional, synchronous pre-TSN path
+`cnet_sctp_session_cancel_unsent_message()` cancels only a copied message
+that has emitted NO DATA/zero-window probe. It returns the original SID,
+generation, optional reliable tracked ticket, logical size and DCEP policy
+in a single exactly-once result. The copied queue and its reserved tracked
+slot are freed; repeated cancellation returns EMPTY. A partially sent
+message remains BUSY with all tickets intact. A TIMED message past its
+deadline belongs to the existing advance()/MESSAGE_ABANDONED path, not
+to cancellation. No FORWARD-TSN or ACK is fabricated. This synchronous
+result is NOT an asynchronous terminal-event queue. With no pending copied
+record, the query conservatively reports BUSY for any unretired DATA TSN
+on the requested SID, including revocable gap ACK; a retained association
+FORWARD-TSN barrier also reports BUSY even if that SID's DATA tickets were
+already transferred into the control packet. Only after genuine cumulative
+FORWARD retirement can it report EMPTY. This is NOT a new cancellation
+operation for already-sent messages.
+
+The narrowly scoped `cnet_sctp_session_take_terminal_failure()` result
+is enabled ONLY by an actual Owner `advance()` retransmission-budget
+EXPIRED transition to Association FAILED. It consumes unresolved explicitly
+tracked reliable tickets and already-polled PR local abandonment records
+whose peer cumulative progress was not confirmed, preserving their
+original SID, generation and ticket (if any). ACKed/forward-confirmed
+receipts remain SUCCESS through the existing separate take APIs.
+Only fully emitted reliable messages carry a valid final DATA TSN;
+queued/partially emitted messages never invent one. The two existing
+fixed 16-entry ledgers are reused, with no new heap, callback or worker.
+Abortive stop discards unread terminal and successful results.
+A still-unread local PR abandonment is retained in DATA after local retry
+exhaustion: terminal take ordinarily returns BUSY until Session poll first
+reports the original local MESSAGE_ABANDONED event and reserves its fixed
+forward progress record. **Bounded capacity escape:** when all 16 existing
+forward-ledger slots hold unconfirmed, previously polled local records,
+poll cannot reserve the additional slot. Since local Owner advance() really
+exhausted its retry budget, terminal take may consume ONE of those existing
+local failed records to free capacity; an unread original event still
+prohibits terminal EMPTY. If even one ledger slot is peer-confirmed success,
+the application instead takes its separate forward-success receipt to free
+a slot. No event is overwritten or fabricated from network acceptance.
+The Association's FAILED state admits only read-only Owner retrieval of
+previously buffered DATA abandonment; **even a checksum/tag-valid late peer
+ABORT is rejected with CLOSED and makes no peer-ABORT receipt** after local
+FAILED. Local terminal outcomes cannot be destroyed or reclassified by a
+late peer packet, and no retransmission, write or restart is authorized.
+The strict C11 tests include real local RTX exhaustion/late ABORT with
+a test-only full ledger, plus separate installed public Session consumer
+tests of valid late ABORT refusal for both reliable and PR local failure.
+This prevents a silently lost generation, a misleading terminal EMPTY and
+the previous poll/terminal BUSY deadlock while preserving the two independent
+terminal sources.
+
+A separate `cnet_sctp_session_take_peer_abort()` makes the lower SCTP
+Association's one-shot peer ABORT report available from the opaque installed
+Session. Only a checksum/verification-tag/cause-valid ABORT is admitted;
+caller-provided DTLS transport must establish real peer identity. The
+bounded Cause-12 reason is copied without truncation and capacity rejection
+does not consume it. The report contains pre-ABORT last acknowledged/sent
+TSNs when available. It is NOT LOCAL_RETRY_EXHAUSTED and does not fabricate
+per-SID application-ticket termination. Explicit stop discards unread ABORT.
+
+An admitted peer ABORT also transfers any **already existing**, unread
+local PR-SCTP DATA abandonment FIFO into 16 fixed Session-owned copied slots,
+retaining each original SID generation before the private DATA TCB is destroyed.
+The same Owner retrieves those records through the unchanged public
+`cnet_sctp_session_poll()` API, independently of the one-shot peer ABORT
+reason. Wrong-tag/malformed incoming packets transfer no records. A full,
+wrapped 16-entry FIFO preserves order; non-Owner reads are denied and
+consuming the last record makes the subsequent poll return EMPTY, not CLOSED.
+A confirmed forward result additionally requires **real pre-ABORT cumulative
+SACK progress**, not the ABORT packet itself or an inadmissible/reflected-tag
+prefix SACK. If that fixed success ledger is full, CAPACITY retains the next
+event for Owner retry after an existing success receipt is consumed; no ULP
+event/output or generation is silently truncated. No per-message transport
+failure is fabricated for other untracked/in-flight DATA. Original generation
+metadata that is unbound in a lower DATA-only caller remains fail-closed
+(STALE at Session take), never replaced by the currently active DCEP SID.
+In the opaque Session, every successfully admitted direct or copied PR
+message now binds the nonzero original DCEP generation into the DATA
+pending copy, each fragment/retransmission ticket (including zero-window
+probe), and its one bounded local abandonment record. DATA reserves this
+record's capacity BEFORE admission; no second unbounded identity queue
+was added. The copied reliable-tracked queue binds generation too, so
+pre-TSN cancellation refuses an inadvertently reused SID with STALE
+instead of attributing the old message to the new lifetime. Actual
+I-DATA, test-only legacy DATA, fragmented sends, pre-TSN TIMED expiry,
+and failure-atomic Owner/capacity tests cover this private path.
+Independent real reset/reuse against another browser/DTLS implementation
+and six-RID release qualification remain separate gates. No public C ABI,
+heap, socket or background worker was added.
+
+General untracked per-message outcomes, provider errors, post-TSN explicit
+application cancellation and `buffered_amount` remain separate gates.
+
+This remains an experimental reliable ACK / PR local-abandonment subset;
+general message termination semantics are NOT release-qualified.
+
+This does **not** export the prototype through production `Salts::CNet`,
+replace usrsctp in TurboMedia or qualify a six-RID release.
 
 ## Implemented slices
 

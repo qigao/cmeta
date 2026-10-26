@@ -330,8 +330,14 @@ static cnet_sctp_assoc_status data_prepare(const cnet_sctp_assoc *s,
   cfg.t3_max_ms = s->config.t1_max_ms;
   cfg.max_retransmits = s->config.max_retransmits;
   cfg.interleaving_supported = peer_interleaving_supported ? 1u : 0u;
-  cfg.forward_tsn_supported = peer_forward_tsn_supported &&
-      (!peer_interleaving_supported || peer_i_forward_tsn_supported) ? 1u : 0u;
+  /* RFC 8260 section 2.3.1 negotiates partial reliability for I-DATA
+   * through BOTH endpoints' I-FORWARD-TSN Supported Extensions (type 194).
+   * The legacy RFC 3758 Forward-TSN-Supported parameter 0xC000 controls
+   * DATA/FORWARD-TSN only; an independent RFC8260 peer may omit 0xC000.
+   * Do not accidentally require BOTH dialects to be negotiated. */
+  cfg.forward_tsn_supported = peer_interleaving_supported ?
+      (peer_i_forward_tsn_supported ? 1u : 0u) :
+      (peer_forward_tsn_supported ? 1u : 0u);
   cfg.is_owner = s->config.is_owner;
   cfg.owner_context = s->config.provider_context;
   result = cnet_sctp_data_init(candidate, &cfg, now);
@@ -3266,7 +3272,13 @@ cnet_sctp_assoc_status cnet_sctp_assoc_input(cnet_sctp_assoc *s,
      * prefix-SACK progress is projected from an owned candidate, not by
      * mutating the live TCB or sending an ACK to the aborting peer. */
     record_peer_abort(s, &terminal_chunk);
-    if (s->data_ready && terminal_index != 0u)
+    /* RFC 9260 §8.5.1 B permits reflected-tag T=1 ABORT, but its packet
+     * verification tag is the PEER tag, not our ordinary LOCAL tag. Any
+     * preceding SACK in that reflected packet is not admitted as normal
+     * association traffic and MUST NOT credit a real DATA ticket. Still
+     * accept the terminal ABORT without inventing cumulative success. */
+    if (s->data_ready && terminal_index != 0u &&
+        (terminal_chunk.flags & 1u) == 0u)
       s->peer_abort_info.last_acked_tsn =
           preview_abort_prefix_last_ack(s, now, &preflight_decoder,
               terminal_index);
@@ -3979,6 +3991,14 @@ cnet_sctp_assoc_status cnet_sctp_assoc_send_message_pr(cnet_sctp_assoc *s,
     const cnet_sctp_data_reliability *reliability,
     const void *payload, size_t n, void *packet, size_t cap,
     size_t *written) {
+  return cnet_sctp_assoc_send_message_pr_bound(s, now, stream_id, ppid,
+      unordered, reliability, payload, n, packet, cap, written, 0u);
+}
+cnet_sctp_assoc_status cnet_sctp_assoc_send_message_pr_bound(
+    cnet_sctp_assoc *s, uint64_t now, uint16_t stream_id, uint32_t ppid,
+    int unordered, const cnet_sctp_data_reliability *reliability,
+    const void *payload, size_t n, void *packet, size_t cap,
+    size_t *written, uint64_t admission_generation) {
   if (written) *written = 0u;
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
@@ -3990,8 +4010,9 @@ cnet_sctp_assoc_status cnet_sctp_assoc_send_message_pr(cnet_sctp_assoc *s,
       (reset_blocked_streams(s) & reset_stream_bit(stream_id)) != 0u)
     return CNET_SCTP_ASSOC_BUSY;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
-  status = data_result(cnet_sctp_data_send_pr(&s->data, now, stream_id,
-      ppid, unordered, reliability, payload, n, packet, cap, written));
+  status = data_result(cnet_sctp_data_send_pr_bound(&s->data, now,
+      stream_id, ppid, unordered, reliability, payload, n,
+      packet, cap, written, admission_generation));
   if (status == CNET_SCTP_ASSOC_OK) s->last_time_ms = now;
   return status;
 }
@@ -4066,6 +4087,13 @@ cnet_sctp_assoc_status cnet_sctp_assoc_queue_message_pr(cnet_sctp_assoc *s,
     uint64_t now, uint16_t stream, uint32_t ppid, int unordered,
     const cnet_sctp_data_reliability *reliability,
     const void *payload, size_t n) {
+  return cnet_sctp_assoc_queue_message_pr_bound(s, now, stream, ppid,
+      unordered, reliability, payload, n, 0u);
+}
+cnet_sctp_assoc_status cnet_sctp_assoc_queue_message_pr_bound(
+    cnet_sctp_assoc *s, uint64_t now, uint16_t stream, uint32_t ppid,
+    int unordered, const cnet_sctp_data_reliability *reliability,
+    const void *payload, size_t n, uint64_t admission_generation) {
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (!reliability || !payload) return CNET_SCTP_ASSOC_INVALID;
@@ -4075,8 +4103,24 @@ cnet_sctp_assoc_status cnet_sctp_assoc_queue_message_pr(cnet_sctp_assoc *s,
       (reset_blocked_streams(s) & reset_stream_bit(stream)) != 0u)
     return CNET_SCTP_ASSOC_BUSY;
   if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
-  status = data_result(cnet_sctp_data_queue_message_pr(&s->data, now,
-      stream, ppid, unordered, reliability, payload, n));
+  status = data_result(cnet_sctp_data_queue_message_pr_bound(&s->data,
+      now, stream, ppid, unordered, reliability, payload, n,
+      admission_generation));
+  if (status == CNET_SCTP_ASSOC_OK) s->last_time_ms = now;
+  return status;
+}
+
+/* Association Owner validates the clock before the DATA layer atomically
+ * releases a never-sent, fully-copied message. No protocol packet is emitted. */
+cnet_sctp_assoc_status cnet_sctp_assoc_cancel_unsent_message(
+    cnet_sctp_assoc *s, uint64_t now, uint16_t stream_id) {
+  cnet_sctp_assoc_status status = guard(s);
+  if (status != CNET_SCTP_ASSOC_OK) return status;
+  if (s->state != CNET_SCTP_ASSOC_ESTABLISHED || !s->data_ready)
+    return CNET_SCTP_ASSOC_CLOSED_ERROR;
+  if ((status = check_time(s, now)) != CNET_SCTP_ASSOC_OK) return status;
+  status = data_result(cnet_sctp_data_cancel_unsent(&s->data,
+      now, stream_id));
   if (status == CNET_SCTP_ASSOC_OK) s->last_time_ms = now;
   return status;
 }
@@ -4086,10 +4130,16 @@ cnet_sctp_assoc_status cnet_sctp_assoc_take_abandoned(cnet_sctp_assoc *s,
   cnet_sctp_assoc_status status = guard(s);
   if (status != CNET_SCTP_ASSOC_OK) return status;
   if (!event) return CNET_SCTP_ASSOC_INVALID;
+  /* A LOCAL retry-budget EXPIRED state changes the Association to FAILED,
+   * but does NOT clear its existing DATA TCB or buffered abandonment FIFO.
+   * Allow this strictly read-only Owner take after local FAILED, so an
+   * unpolled PR event can still retain its ORIGINAL DCEP generation.
+   * Peer ABORT is different: its DATA state has already been destroyed. */
   if ((s->state != CNET_SCTP_ASSOC_ESTABLISHED &&
        s->state != CNET_SCTP_ASSOC_SHUTDOWN_PENDING &&
        s->state != CNET_SCTP_ASSOC_SHUTDOWN_SENT &&
-       s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED) || !s->data_ready)
+       s->state != CNET_SCTP_ASSOC_SHUTDOWN_RECEIVED &&
+       s->state != CNET_SCTP_ASSOC_FAILED) || !s->data_ready)
     return CNET_SCTP_ASSOC_CLOSED_ERROR;
   return data_result(cnet_sctp_data_take_abandoned(&s->data, event));
 }

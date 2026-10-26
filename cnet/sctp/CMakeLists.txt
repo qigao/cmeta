@@ -386,6 +386,45 @@ if(CNET_SCTP_TEST_OWNER_THREADS)
   add_test(NAME cnet_sctp_provider_dso_test
     COMMAND cnet_sctp_provider_dso_test
       $<TARGET_FILE:cnet_sctp_test_provider_dso>)
+
+  # Test-only public opaque Session + real DSO cancellation/Owner/drain.
+  # The existing private Association DSO gate remains separate.
+  add_executable(cnet_sctp_session_provider_dso_test
+    tests/session_provider_dso_test.c)
+  target_include_directories(cnet_sctp_session_provider_dso_test
+    PRIVATE tests)
+  target_link_libraries(cnet_sctp_session_provider_dso_test PRIVATE
+    CNetSctpPrototype::Session Threads::Threads ${CMAKE_DL_LIBS})
+  set_target_properties(cnet_sctp_session_provider_dso_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_compile_options(cnet_sctp_session_provider_dso_test PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
+  add_dependencies(cnet_sctp_session_provider_dso_test
+    cnet_sctp_test_provider_dso)
+  add_test(NAME cnet_sctp_session_provider_dso_test
+    COMMAND cnet_sctp_session_provider_dso_test
+      $<TARGET_FILE:cnet_sctp_test_provider_dso>)
+endif()
+
+# Test-only independent Pion SCTP oracle. Real UDP datagrams to an external
+# Go implementation of SCTP (RFC8260); no DTLS in this deliberately isolated
+# first oracle slice. NEVER export, install or link this adapter into Salts.
+option(CNET_SCTP_TEST_PION_ORACLE
+  "Build separate Pion SCTP RFC8260 test-only UDP packet peer" OFF)
+if(CNET_SCTP_TEST_PION_ORACLE)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "Independent Pion SCTP oracle is Linux-only")
+  endif()
+  find_package(OpenSSL 3.0 REQUIRED COMPONENTS SSL Crypto)
+  add_executable(cnet_sctp_pion_oracle_peer
+    tests/independent/pion_peer.c
+    tests/independent/pion_dtls_transport.c)
+  target_link_libraries(cnet_sctp_pion_oracle_peer PRIVATE
+    CNetSctpPrototype::Session OpenSSL::SSL OpenSSL::Crypto)
+  set_target_properties(cnet_sctp_pion_oracle_peer PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_compile_options(cnet_sctp_pion_oracle_peer PRIVATE
+    -Wall -Wextra -Wpedantic -Werror)
 endif()
 
 # Optional cryptographic research gate. Its private C11 sources and GmSSL
