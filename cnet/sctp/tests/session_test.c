@@ -1404,6 +1404,53 @@ static void queued_cancel_rejects_reused_dcep_generation(void) {
 }
 
 
+/* Test-only deliberately unbound lower-DATA record. A Session must not
+ * recover a missing original generation by reading the currently open DCEP
+ * SID; the result stays in the copied fixed FIFO and returns STALE until
+ * explicit abortive stop, rather than being consumed or misattributed. */
+static void peer_abort_unbound_generation_fails_closed(void) {
+  cnet_sctp_session a = {0}, b = {0};
+  test_context ca = {0}, cb = {0};
+  cnet_sctp_session_event event = {0};
+  cnet_sctp_data_abandon_event *unbound;
+  uint8_t wire[1200], reply[1200], msg[16];
+  const cnet_sctp_wire_chunk abort_chunk = {6u, 0u, NULL, 0u};
+  size_t wire_n = 0u, reply_n = 0u;
+  uint64_t ga = 0u, gb = 0u;
+
+  ready_pair(&a, &b, &ca, &cb);
+  open_channel_with_policy(&a, &b, 6u, 2u, 0x01u, 0u, &ga, &gb);
+  a.association.data.abandon_event_head = 0u;
+  a.association.data.abandon_event_count = 1u;
+  unbound = &a.association.data.abandon_events[0];
+  memset(unbound, 0, sizeof(*unbound));
+  unbound->stream_id = 2u;
+  unbound->ppid = 53u;
+  unbound->message_size = 4u;
+  unbound->admission_generation = 0u; /* deliberately invalid */
+  unbound->reason = CNET_SCTP_DATA_ABANDON_RETRANSMITS;
+  assert(cnet_sctp_wire_encode(5001u, 5000u, a.association.local_tag,
+      &abort_chunk, 1u, wire, sizeof(wire), &wire_n) ==
+      CNET_SCTP_WIRE_OK);
+  assert(cnet_sctp_session_input(&a, 20u, wire, wire_n,
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_OK &&
+      reply_n == 0u && !a.association.data_ready &&
+      a.abort_abandoned_count == 1u &&
+      a.abort_abandoned[0].generation == 0u);
+  reply_n = 123u;
+  assert(cnet_sctp_session_poll(&a, 20u, &event, msg, sizeof(msg),
+      reply, sizeof(reply), &reply_n) == CNET_SCTP_SESSION_STALE &&
+      reply_n == 0u && event.kind == CNET_SCTP_SESSION_EVENT_NONE &&
+      a.abort_abandoned_count == 1u && a.abort_abandoned_head == 0u);
+  assert(ga != 0u && gb != 0u);
+  assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK &&
+      a.abort_abandoned_count == 0u &&
+      cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK &&
+      cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK &&
+      cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+}
+
+
 int main(void) {
   session_open_message_reset_reuse();
   partial_loss_reports_abandonment_then_reliable_continues();
@@ -1418,6 +1465,7 @@ int main(void) {
   peer_abort_snapshot_progress_capacity_is_atomic();
   pr_admission_generation_is_immutable();
   queued_cancel_rejects_reused_dcep_generation();
+  peer_abort_unbound_generation_fails_closed();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }
