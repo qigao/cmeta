@@ -89,40 +89,61 @@ func main() {
 
 	stream, err := association.OpenStream(0, sctp.PayloadTypeWebRTCDCEP)
 	require(err == nil, "Pion DCEP OpenStream: %v", err)
-	// RFC8832 DCEP OPEN, channel type TIMED+UNORDERED 0x82, lifetime 500ms,
-	// zero priority and empty label/protocol. DCEP PPID50 is always reliable.
-	open := []byte{0x03, 0x82, 0, 0, 0, 0, 1, 0xf4, 0, 0, 0, 0}
+	// RFC8832 DCEP OPEN, TIMED+UNORDERED 0x82, lifetime 1500ms.
+	// DCEP PPID50 remains reliable and is never deliberately dropped.
+	open := []byte{0x03, 0x82, 0, 0, 0, 0, 0x05, 0xdc, 0, 0, 0, 0}
 	n, err := stream.WriteSCTP(open, sctp.PayloadTypeWebRTCDCEP)
 	require(err == nil && n == len(open), "DCEP OPEN send: n=%d err=%v", n, err)
-	_ = stream.SetReadDeadline(time.Now().Add(6 * time.Second))
+	_ = stream.SetReadDeadline(time.Now().Add(10 * time.Second))
 	p := make([]byte, 128)
 	n, ppi, err := stream.ReadSCTP(p)
 	require(err == nil && n == 1 && p[0] == 2 &&
 		ppi == sctp.PayloadTypeWebRTCDCEP,
 		"expected C11 DCEP ACK, got n=%d ppi=%d err=%v", n, ppi, err)
 	fmt.Println("PION_DCEP_ACK_OK")
+	// The first C11 DATA must be decoded by the independent Go peer.
+	n, ppi, err = stream.ReadSCTP(p)
+	require(err == nil && ppi == sctp.PayloadTypeWebRTCBinary &&
+		string(p[:n]) == "c11-nominal",
+		"independent Pion did not receive nominal: n=%d ppi=%d err=%v value=%q",
+		n, ppi, err, p[:n])
+	fmt.Println("PION_RECEIVED_C11_NOMINAL_IDATA")
+	// The C11 sender committed one subsequent DATA TSN but our test-only
+	// datagram transport dropped it. Pion must process the real RFC8260
+	// I-FORWARD-TSN and deliver ONLY the distinct following message.
+	n, ppi, err = stream.ReadSCTP(p)
+	require(err == nil && ppi == sctp.PayloadTypeWebRTCBinary &&
+		string(p[:n]) == "c11-after-forward",
+		"independent Pion failed I-FORWARD recovery: n=%d ppi=%d err=%v value=%q",
+		n, ppi, err, p[:n])
+	fmt.Println("PION_RECEIVED_POST_I_FORWARD_SUCCESSOR")
+	stream.SetReliabilityParams(true, sctp.ReliabilityTypeTimed, 1500)
 	payload := []byte("pion-independent-idata")
 	n, err = stream.WriteSCTP(payload, sctp.PayloadTypeWebRTCBinary)
 	require(err == nil && n == len(payload), "Pion I-DATA send: %v", err)
 	// These two externally generated records are required: I-DATA=64 and
 	// an Owner-delivered exact PPID53 message, NOT a self-loopback fixture.
 	expected := "MESSAGE=0:" + hex.EncodeToString(payload)
-	seenIData, seenMessage := false, false
+	seenIData, seenMessage, seenForward, seenDrop, seenConfirmed := false, false, false, false, false
 	limit := time.After(6 * time.Second)
-	for !seenIData || !seenMessage {
+	for !seenIData || !seenMessage || !seenForward || !seenDrop || !seenConfirmed {
 		select {
 		case line, open := <-lines:
 			require(open, "C11 peer terminated during I-DATA")
 			fmt.Println("C11:", line)
 			if line == "RX_TYPE=64" { seenIData = true }
 			if line == expected { seenMessage = true }
+			if line == "C11_REAL_I_FORWARD_TSN_194" { seenForward = true }
+			if line == "C11_DROPPED_ONE_I_DATA" { seenDrop = true }
+			if line == "C11_PEER_CONFIRMED_I_FORWARD" { seenConfirmed = true }
 		case <-limit:
-			require(false, "I-DATA evidence missing: type64=%t message=%t",
-				seenIData, seenMessage)
+			require(false,
+				"RFC8260 evidence missing: type64=%t message=%t forward=%t drop=%t peerACK=%t",
+				seenIData, seenMessage, seenForward, seenDrop, seenConfirmed)
 		}
 	}
-	// The Pion stream writes a negotiated PPID=53 I-DATA and the independent
-	// native C11 Session validates it. Loss/FORWARD/DTLS are later stages.
-	fmt.Println("PION_INDEPENDENT_RFC8260_IDATA_PASS " +
+	// Real SCTP RFC8260 I-DATA and I-FORWARD peer recovery over *test-only*
+	// UDP datagrams. This is NOT authenticated DTLS/ICE/browser evidence.
+	fmt.Println("PION_INDEPENDENT_RFC8260_IFORWARD_PASS " +
 		strconv.Itoa(int(metadata.PartialReliabilityMode)))
 }

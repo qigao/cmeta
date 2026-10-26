@@ -95,6 +95,29 @@ static void trace_event(const cnet_sctp_session_event *event,
   }
   fflush(stdout);
 }
+/* The one named I-DATA is dropped only AFTER the real C11 sender has
+ * accepted the TSN. No DCEP, SACK, FORWARD or successor is filtered.
+ * This is a test-only UDP adapter, NOT an application cancellation API. */
+static int emit_app(cnet_sctp_session *session, uint64_t now, int fd,
+    const struct sockaddr_in *destination, const char *payload, int drop) {
+  uint8_t output[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  size_t size = 0u;
+  cnet_sctp_session_status status = cnet_sctp_session_send(session,
+      now, 0u, 1, payload, strlen(payload), output, sizeof(output), &size);
+  if (status != CNET_SCTP_SESSION_OK || size <= 12u ||
+      output[12u] != 64u) {
+    fprintf(stderr, "C11 oracle user egress failed %d/%zu\n",
+        (int)status, size);
+    return -1;
+  }
+  if (drop) {
+    puts("C11_DROPPED_ONE_I_DATA");
+    fflush(stdout);
+    return 0;
+  }
+  return publish(fd, destination, output, size);
+}
+
 int main(int argc, char **argv) {
   oracle_context context = {
     UINT32_C(0x11223344), UINT32_C(0x10203040), UINT32_C(0x13579bdf)
@@ -102,6 +125,9 @@ int main(int argc, char **argv) {
   cnet_sctp_session_create_config cfg = {0};
   cnet_sctp_session *session = NULL;
   struct sockaddr_in local = {0}, destination = {0};
+  uint64_t original_generation = 0u;
+  unsigned int stage = 0u;
+  int original_abandoned = 0;
   uint8_t packet[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t reply[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t body[CNET_SCTP_SESSION_MAX_MESSAGE_BYTES];
@@ -207,8 +233,65 @@ int main(int argc, char **argv) {
           if (publish(fd, &destination, reply, written) != 0) {
             failure = 13; break;
           }
+          if (event.kind == CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN) {
+            if (stage != 0u || event.stream_id != 0u ||
+                event.generation == 0u ||
+                emit_app(session, now, fd, &destination,
+                    "c11-nominal", 0) != 0) {
+              failure = 18; break;
+            }
+            original_generation = event.generation;
+            stage = 1u;
+            puts("C11_NOMINAL_SENT");
+            fflush(stdout);
+          }
+          if (event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE_ABANDONED) {
+            if (stage < 2u || event.stream_id != 0u ||
+                event.generation != original_generation ||
+                event.abandon_reason != CNET_SCTP_SESSION_ABANDON_TIMED ||
+                event.message_size != strlen("c11-drop")) {
+              failure = 19; break;
+            }
+            original_abandoned = 1;
+            puts("C11_LOCAL_ABANDONMENT");
+            fflush(stdout);
+          }
         }
         if (failure != 0) break;
+      }
+      if (stage == 1u) {
+        cnet_sctp_session_tx_usage usage = {0};
+        status = cnet_sctp_session_get_tx_usage(session, 0u,
+            original_generation, &usage);
+        if (status != CNET_SCTP_SESSION_OK) {
+          failure = 20; break;
+        }
+        if (usage.retained_bytes == 0u && !usage.has_pending_message) {
+          if (emit_app(session, now, fd, &destination,
+                  "c11-drop", 1) != 0) {
+            failure = 21; break;
+          }
+          stage = 2u;
+        }
+      }
+      if (stage == 3u && original_abandoned) {
+        cnet_sctp_session_forward_progress progress = {0};
+        status = cnet_sctp_session_take_forward_progress(session, &progress);
+        if (status == CNET_SCTP_SESSION_OK) {
+          if (progress.generation != original_generation ||
+              progress.stream_id != 0u ||
+              progress.abandon_reason != CNET_SCTP_SESSION_ABANDON_TIMED ||
+              progress.message_size != strlen("c11-drop") ||
+              emit_app(session, now, fd, &destination,
+                  "c11-after-forward", 0) != 0) {
+            failure = 22; break;
+          }
+          stage = 4u;
+          puts("C11_PEER_CONFIRMED_I_FORWARD");
+          fflush(stdout);
+        } else if (status != CNET_SCTP_SESSION_EMPTY) {
+          failure = 23; break;
+        }
       }
     }
     {
@@ -228,6 +311,16 @@ int main(int argc, char **argv) {
         if (status != CNET_SCTP_SESSION_OK) {
           fprintf(stderr, "C11 oracle advance refused: %d\n", (int)status);
           failure = 15; break;
+        }
+        if (written != 0u && reply[12u] == 194u) {
+          if (stage != 2u) { failure = 24; break; }
+          stage = 3u;
+          puts("C11_REAL_I_FORWARD_TSN_194");
+          fflush(stdout);
+        } else if (written != 0u && reply[12u] == 192u) {
+          fprintf(stderr, "C11 emitted legacy FORWARD instead of I-FORWARD
+");
+          failure = 25; break;
         }
         if (publish(fd, &destination, reply, written) != 0) {
           failure = 16; break;
