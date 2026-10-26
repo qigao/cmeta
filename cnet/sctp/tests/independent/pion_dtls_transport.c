@@ -7,6 +7,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -225,6 +226,11 @@ int pion_test_dtls_input(pion_test_dtls *t, int fd,
     t->accepted = 1u;
     puts("OPENSSL_DTLS_CLIENT_FINGERPRINT_MATCH");
     puts("OPENSSL_DTLS_GENERATION_EXPORTED");
+    /* The exported eight-byte projection is a non-secret test-only
+     * lifetime token. Pion's separately implemented RFC5705 exporter
+     * must compute precisely the same 64-bit value after authentication. */
+    printf("OPENSSL_DTLS_GENERATION_BINDING=%016" PRIx64 "\n",
+        t->generation);
     fflush(stdout);
   }
   result = SSL_read(t->ssl, plaintext, (int)capacity);

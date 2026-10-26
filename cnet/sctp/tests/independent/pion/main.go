@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -132,6 +133,7 @@ func main() {
 	local := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 49572}
 	remote := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 49571}
 	var conn net.Conn
+	var expectedGeneration uint64
 	// err is already scoped to the earlier StdoutPipe/peer launch.
 	if useDTLS {
 		raw, listenErr := net.ListenUDP("udp", local)
@@ -182,6 +184,16 @@ func main() {
 		require(err == nil && pinned,
 			"independent Pion/OpenSSL DTLS 1.2 handshake or pin: %v pinned=%t",
 			err, pinned)
+		state, validState := secure.ConnectionState()
+		require(validState,
+			"Pion DTLS connection state unavailable after fingerprint pin")
+		exported, exportErr := state.ExportKeyingMaterial(
+			"CNetSctpPrototype-test-Owner-Generation", nil, 32)
+		require(exportErr == nil && len(exported) == 32,
+			"independent RFC5705 Pion DTLS exporter: %v", exportErr)
+		expectedGeneration = binary.BigEndian.Uint64(exported[:8])
+		require(expectedGeneration != 0,
+			"independent RFC5705 Pion Owner generation is zero")
 		conn = secure
 		fmt.Println("PION_DTLS_1_2_PINNED_OPENSSL_SERVER_PASS")
 	} else {
@@ -262,11 +274,12 @@ func main() {
 	expected := "MESSAGE=0:" + hex.EncodeToString(payload)
 	seenIData, seenMessage, seenForward, seenDrop, seenConfirmed := false, false, false, false, false
 	seenForwardLoss, seenForwardRetry, seenPinnedClient := false, false, false
-	seenBoundGeneration := false
+	seenBoundGeneration, seenEqualGeneration := false, false
 	limit := time.After(6 * time.Second)
 	for !seenIData || !seenMessage || !seenForward || !seenDrop ||
 		!seenConfirmed || (dropFirstForward && (!seenForwardLoss || !seenForwardRetry)) ||
-		(useDTLS && (!seenPinnedClient || !seenBoundGeneration)) {
+		(useDTLS && (!seenPinnedClient || !seenBoundGeneration ||
+			!seenEqualGeneration)) {
 		select {
 		case line, open := <-lines:
 			require(open, "C11 peer terminated during I-DATA")
@@ -275,9 +288,20 @@ func main() {
 				require(useDTLS, "unexpected DTLS fingerprint event in plaintext mode")
 				seenPinnedClient = true
 			}
-			if line == "C11_DTLS_SESSION_CREATED_AFTER_AUTH" {
+			if strings.HasPrefix(line, "OPENSSL_DTLS_GENERATION_BINDING=") {
 				require(useDTLS && seenPinnedClient,
-					"OpenSSL C11 Session created before DTLS peer identity")
+					"OpenSSL Owner generation exported before fingerprint pin")
+				actual, parseErr := strconv.ParseUint(
+					strings.TrimPrefix(line, "OPENSSL_DTLS_GENERATION_BINDING="),
+					16, 64)
+				require(parseErr == nil && actual == expectedGeneration,
+					"independent Pion/OpenSSL DTLS exporter mismatch: Pion=%016x OpenSSL=%016x err=%v",
+					expectedGeneration, actual, parseErr)
+				seenEqualGeneration = true
+			}
+			if line == "C11_DTLS_SESSION_CREATED_AFTER_AUTH" {
+				require(useDTLS && seenPinnedClient && seenEqualGeneration,
+					"OpenSSL Session created before verified RFC5705 generation")
 				seenBoundGeneration = true
 			}
 			if line == "RX_TYPE=64" { seenIData = true }
