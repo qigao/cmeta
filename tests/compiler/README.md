@@ -584,6 +584,38 @@ accesses. The comparison demonstrates bounded observable
 correctness in the tested executions, **not general C11 atomic
 semantic, TSan, ABI, or cross-DSO equivalence**.
 
+## Paired Disruptor C11 vs external ASM throughput comparison
+
+The benchmark uses the **same** `disruptor_mpmc_real_source.c` source
+and actual unmodified Disruptor implementation, built twice with the
+**same GCC or Clang**, same `-O2` flags, 4 publishers, 4 workers, a
+bounded 64-slot ring and 80,000 records per invocation. Unlike a
+synthetic atomic loop, both versions check payload integrity, duplicate
+claims, missed messages and complete retirement before reporting time.
+
+The sole backend distinction is original C11 internal atomics with
+their existing relaxed/acquire/release/acq_rel orders versus independent
+GAS atomic C ABI calls with conservative `seq_cst` ordering.
+This is **not** a like-for-like ordering-strength microbenchmark; it
+quantifies the cost of the proposed isolated implementation strategy,
+including external function-call overhead and stronger fences.
+
+`asm-atomic/compare_disruptor_benchmark.py` runs two warm-ups and
+seven alternating-order paired samples on the same runner, retains
+each sample's nanosecond wall time and messages/s, reports the median
+throughput and ASM/native ratio, and uploads the raw JSON evidence.
+Two native Linux architectures × GCC/Clang are measured independently.
+There is **no release performance threshold**; host scheduling and
+frequency variation can change ratios, and no cross-runner comparison
+should be treated as a hardware speedup measurement.
+
+The printed `mean_wall_ns_per_msg` is aggregate **wall time divided
+by total delivered records**, **not** an individual enqueue-to-consume
+latency or p99 latency. Such latency measurement requires a separately
+instrumented packet timestamped harness. Do not infer p50/p99 latency
+from throughput alone. Correctness and native C11 source sanitizer
+gates remain separate from the uninstrumented foreign ASM backend.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:

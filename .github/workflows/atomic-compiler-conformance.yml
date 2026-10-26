@@ -68,6 +68,45 @@ jobs:
           -R 'salts_(atomic_language_conformance|atomic_abi_same_compiler|intrinsic_atomic_conformance|asm_atomic_conformance|spsc_real_source_conformance|disruptor_real_source_conformance|disruptor_mpmc_real_source|disruptor_parked_worker_conformance|disruptor_asm_real_source_conformance|disruptor_asm_mpmc_real_source|disruptor_asm_parked_worker_conformance)'
           --repeat until-fail:20 --output-on-failure
 
+  asm-disruptor-benchmark:
+    name: Disruptor C11 vs ASM / ${{ matrix.os }} / ${{ matrix.compiler }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the same real Disruptor 4x4 MPMC harness twice
+        run: >-
+          cmake -S tests/compiler -B build/asm-compare
+          -G Ninja -DCMAKE_C_COMPILER=${{ matrix.compiler }}
+          -DCMAKE_BUILD_TYPE=Release
+      - name: Build C11 and ASM backends with identical native C compiler flags
+        run: >-
+          cmake --build build/asm-compare --parallel 2
+          --target salts_disruptor_native_benchmark salts_disruptor_asm_benchmark
+      - name: Compare paired warm and sampled runs (no performance threshold)
+        env:
+          CC: ${{ matrix.compiler }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/compiler/asm-atomic/compare_disruptor_benchmark.py \
+            --native build/asm-compare/salts_disruptor_native_benchmark \
+            --asm build/asm-compare/salts_disruptor_asm_benchmark \
+            --samples 7 --warmups 2 \
+            --output build/asm-compare/paired-benchmark.json
+      - name: Upload raw measurements, no release performance claims
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asm-disruptor-${{ matrix.os }}-${{ matrix.compiler }}
+          if-no-files-found: ignore
+          path: build/asm-compare/paired-benchmark.json
+
   native-interop:
     name: Native GCC/Clang cross-compiler atomic ABI
     runs-on: ubuntu-latest

@@ -79,6 +79,37 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
           _DEFAULT_SOURCE=1 _POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700)
         set_tests_properties("salts_disruptor_asm_${_variant}" PROPERTIES TIMEOUT 60)
       endforeach()
+      # Fair paired wall-time comparison: compile EXACT same 4x4 MPMC
+      # harness, original Disruptor source and POSIX Platform source with
+      # the same C compiler, C flags, workload and 64-slot capacity.
+      # Only atomic storage + primitive translation unit differ.
+      # Do not make an observational throughput ratio a release gate.
+      add_executable(salts_disruptor_native_benchmark
+        disruptor_mpmc_real_source.c
+        "${CMAKE_CURRENT_LIST_DIR}/../../concurrency/src/disruptor.c"
+        "${CMAKE_CURRENT_LIST_DIR}/../../platform/src/thread_posix.c")
+      add_executable(salts_disruptor_asm_benchmark
+        disruptor_mpmc_real_source.c
+        asm-atomic/disruptor_asm_inclusion.c
+        "${CMAKE_CURRENT_LIST_DIR}/${_salts_asm_atomic_source}"
+        "${CMAKE_CURRENT_LIST_DIR}/../../platform/src/thread_posix.c")
+      foreach(_benchmark_target
+        salts_disruptor_native_benchmark
+        salts_disruptor_asm_benchmark)
+        target_compile_features(${_benchmark_target} PRIVATE c_std_11)
+        set_target_properties(${_benchmark_target} PROPERTIES
+          C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+        target_include_directories(${_benchmark_target} PRIVATE
+          "${CMAKE_CURRENT_LIST_DIR}/../../concurrency/include"
+          "${CMAKE_CURRENT_LIST_DIR}/../../utils/include"
+          "${CMAKE_CURRENT_LIST_DIR}/../../platform/include")
+        target_compile_definitions(${_benchmark_target} PRIVATE
+          _DEFAULT_SOURCE=1 _POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700
+          SALTS_COMPILER_MPMC_BENCHMARK=1 SALTS_COMPILER_MPMC_EACH=20000)
+        target_compile_options(${_benchmark_target} PRIVATE
+          -O2 -Wall -Wextra -Wpedantic -Werror)
+        target_link_libraries(${_benchmark_target} PRIVATE Threads::Threads)
+      endforeach()
       unset(_salts_asm_atomic_source)
     endif()
   endif()

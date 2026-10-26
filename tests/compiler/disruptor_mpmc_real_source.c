@@ -13,8 +13,14 @@
 #include <string.h>
 #include <time.h>
 
+/* Both production-source backends use the EXACT SAME workload and verdict.
+ * Benchmark mode changes only the number of events and result reporting.
+ */
+#ifndef SALTS_COMPILER_MPMC_EACH
+#define SALTS_COMPILER_MPMC_EACH 3000
+#endif
 enum {
-    PRODUCERS = 4, WORKERS = 4, EACH = 3000,
+    PRODUCERS = 4, WORKERS = 4, EACH = SALTS_COMPILER_MPMC_EACH,
     TOTAL = PRODUCERS * EACH, CAPACITY = 64, DEADLINE_SECONDS = 15
 };
 
@@ -139,7 +145,18 @@ static void *worker(void *arg) {
     }
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+#ifdef SALTS_COMPILER_MPMC_BENCHMARK
+    if (argc != 2 || argv == NULL || argv[1] == NULL) {
+        fprintf(stderr, "Benchmark requires one backend name argument\n");
+        return 1;
+    }
+    const uint64_t benchmark_start_ns = now_ns();
+    if (benchmark_start_ns == 0u) return 1;
+#else
+    (void)argc;
+    (void)argv;
+#endif
     const disruptor_config_t config = {
         sizeof(uint64_t), CAPACITY, WORKERS, DISRUPTOR_MODE_WORKER_POOL
     };
@@ -205,6 +222,18 @@ int main(void) {
                 published, consumed_by_lanes, ctx.consumed, missing, creation_ok);
         return 1;
     }
+#ifdef SALTS_COMPILER_MPMC_BENCHMARK
+    const uint64_t benchmark_end_ns = now_ns();
+    if (benchmark_end_ns == 0u || benchmark_end_ns <= benchmark_start_ns)
+        return 1;
+    const uint64_t elapsed_ns = benchmark_end_ns - benchmark_start_ns;
+    const double throughput = ((double)TOTAL * 1000000000.0) / (double)elapsed_ns;
+    /* This is aggregate amortized cost per event, NOT individual latency. */
+    printf("BENCH backend=%s messages=%zu elapsed_ns=%llu throughput_msg_s=%.3f mean_wall_ns_per_msg=%.3f\n",
+           argv[1], (size_t)TOTAL, (unsigned long long)elapsed_ns,
+           throughput, (double)elapsed_ns / (double)TOTAL);
+#else
     puts("Actual Disruptor 4 publishers + 4 workers / 12000 exact-once: PASS (diagnostic)");
+#endif
     return 0;
 }
