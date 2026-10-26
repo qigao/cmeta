@@ -193,10 +193,10 @@ cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
   /* Stage a fixed, copy-owned FIFO BEFORE input: an accepted peer ABORT
    * destroys the DATA TCB, including its unread local abandonment records.
    * A rejected packet may never transfer or consume any staged result. */
-  cnet_sctp_session_abort_abandoned
-      staged[CNET_SCTP_DATA_TX_SLOTS] = {{0}};
+  cnet_sctp_session_abort_abandoned staged[CNET_SCTP_DATA_TX_SLOTS];
   size_t staged_count = 0u, i;
   if (status != CNET_SCTP_SESSION_OK) return status;
+  memset(staged, 0, sizeof(staged));
   if (session->association.data_ready) {
     const cnet_sctp_data *data = &session->association.data;
     staged_count = data->abandon_event_count;
