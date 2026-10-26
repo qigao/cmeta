@@ -213,10 +213,70 @@ static void receiver_zero_window_sacks_dropped_data(void) {
   assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
   assert(cnet_sctp_data_stop(&b) == CNET_SCTP_DATA_OK);
 }
+/* A closed peer receive window forces the first copied PR message fragment
+ * through Owner advance() rather than pump(). The admission-bound generation
+ * must survive that one-byte probe, its retry/abandon transition and the
+ * copied original local abandonment event, even when no more bytes are sent. */
+static void pr_probe_carries_admission_generation(void) {
+  cnet_sctp_data a;
+  cnet_sctp_data_abandon_event abandoned = {0};
+  const cnet_sctp_data_reliability pr = {
+    CNET_SCTP_DATA_RELIABILITY_RETRANSMITS, 0u
+  };
+  const uint8_t message[2] = {'x', 'y'};
+  const uint64_t generation = UINT64_C(0xabcdef0123456789);
+  uint8_t probe[CNET_SCTP_DATA_MTU], forward[CNET_SCTP_DATA_MTU];
+  size_t probe_n = 0u, forward_n = 0u;
+  int owner;
+  uint64_t deadline = 0u;
+  int has_deadline = 0;
+
+  init(&a, &owner, 0);
+  a.config.forward_tsn_supported = 1u; /* private DATA negotiated profile */
+  ack(&a, 10u, 99u, 0u);
+  assert(a.peer_rwnd == 0u);
+  assert(cnet_sctp_data_queue_message_pr_bound(&a, 11u, 0u, 53u, 0,
+      &pr, message, sizeof(message), generation) == CNET_SCTP_DATA_OK &&
+      a.pending.active && a.pending.admission_generation == generation);
+  assert(cnet_sctp_data_deadline(&a, &deadline,
+      &has_deadline) == CNET_SCTP_DATA_OK && has_deadline &&
+      deadline == 111u);
+  assert(cnet_sctp_data_advance(&a, deadline, probe,
+      sizeof(probe), &probe_n) == CNET_SCTP_DATA_OK &&
+      probe_n != 0u && a.probe_active && a.pending.active &&
+      a.pending.offset == 1u && a.pending.admission_generation ==
+          generation && a.next_tsn == 101u && a.tx[0].used &&
+      a.tx[0].admission_generation == generation);
+  /* The peer remains unresponsive. RTX0 cannot create another DATA TSN.
+   * Owner emits negotiated FORWARD and a single original-generation event. */
+  assert(cnet_sctp_data_deadline(&a, &deadline,
+      &has_deadline) == CNET_SCTP_DATA_OK && has_deadline &&
+      deadline == 311u);
+  assert(cnet_sctp_data_advance(&a, deadline, forward,
+      sizeof(forward), &forward_n) == CNET_SCTP_DATA_OK &&
+      forward_n != 0u && forward[12u] == 192u &&
+      !a.pending.active && a.abandon_event_count == 1u);
+  assert(cnet_sctp_data_take_abandoned(&a, &abandoned) ==
+      CNET_SCTP_DATA_OK &&
+      abandoned.admission_generation == generation &&
+      abandoned.stream_id == 0u && abandoned.ppid == 53u &&
+      abandoned.message_size == sizeof(message) &&
+      abandoned.first_tsn == 100u && abandoned.last_tsn == 100u &&
+      abandoned.has_tsn &&
+      abandoned.reason == CNET_SCTP_DATA_ABANDON_RETRANSMITS &&
+      abandoned.reliability.mode == CNET_SCTP_DATA_RELIABILITY_RETRANSMITS &&
+      abandoned.reliability.value == 0u);
+  assert(cnet_sctp_data_take_abandoned(&a, &abandoned) ==
+      CNET_SCTP_DATA_EMPTY);
+  assert(cnet_sctp_data_stop(&a) == CNET_SCTP_DATA_OK);
+}
+
+
 int main(void) {
   zero_probe_backoff_recovery();
   unresponsive_probe_expires();
   receiver_zero_window_sacks_dropped_data();
+  pr_probe_carries_admission_generation();
   puts("SCTP zero-window Owner-driven DATA probe and recovery PASS");
   return 0;
 }
