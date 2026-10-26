@@ -49,6 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           if tcc -std=c11 -DSALTS_DISRUPTOR_BACKEND_ASM=0 \
+            -DSALTS_THREAD_LOCAL=_Thread_local \
             -Iconcurrency/include -Iutils/include -Iplatform/include \
             -D_DEFAULT_SOURCE=1 -D_POSIX_C_SOURCE=200809L \
             -c concurrency/src/disruptor.c -o "$RUNNER_TEMP/invalid-disruptor.o" \
