@@ -98,6 +98,13 @@ static void trace_event(const cnet_sctp_session_event *event,
 /* The one named I-DATA is dropped only AFTER the real C11 sender has
  * accepted the TSN. No DCEP, SACK, FORWARD or successor is filtered.
  * This is a test-only UDP adapter, NOT an application cancellation API. */
+static uint32_t dropped_tsn = 0u;
+static int dropped_tsn_live = 0;
+static uint32_t chunk_tsn(const uint8_t *wire) {
+  return ((uint32_t)wire[16u] << 24u) |
+      ((uint32_t)wire[17u] << 16u) |
+      ((uint32_t)wire[18u] << 8u) | wire[19u];
+}
 static int emit_app(cnet_sctp_session *session, uint64_t now, int fd,
     const struct sockaddr_in *destination, const char *payload, int drop) {
   uint8_t output[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
@@ -111,6 +118,8 @@ static int emit_app(cnet_sctp_session *session, uint64_t now, int fd,
     return -1;
   }
   if (drop) {
+    dropped_tsn = chunk_tsn(output);
+    dropped_tsn_live = 1;
     puts("C11_DROPPED_ONE_I_DATA");
     fflush(stdout);
     return 0;
@@ -312,17 +321,33 @@ int main(int argc, char **argv) {
           fprintf(stderr, "C11 oracle advance refused: %d\n", (int)status);
           failure = 15; break;
         }
-        if (written != 0u && reply[12u] == 194u) {
-          if (stage != 2u) { failure = 24; break; }
-          stage = 3u;
-          puts("C11_REAL_I_FORWARD_TSN_194");
+        if (written != 0u && reply[12u] == 64u &&
+            dropped_tsn_live) {
+          /* T3 retransmissions of the IDENTICAL dropped TSN must not
+           * accidentally deliver its payload before TIMED expiry. Do not
+           * drop an unrelated TSN or a DCEP control packet. */
+          if (stage != 2u || chunk_tsn(reply) != dropped_tsn) {
+            failure = 26; break;
+          }
+          puts("C11_FILTERED_SAME_TSN_RETRANSMISSION");
           fflush(stdout);
-        } else if (written != 0u && reply[12u] == 192u) {
-          fprintf(stderr, "C11 emitted legacy FORWARD instead of I-FORWARD\n");
-          failure = 25; break;
-        }
-        if (publish(fd, &destination, reply, written) != 0) {
-          failure = 16; break;
+        } else {
+          if (written != 0u && reply[12u] == 194u) {
+            if (stage != 2u || !dropped_tsn_live) {
+              failure = 24; break;
+            }
+            dropped_tsn_live = 0;
+            stage = 3u;
+            puts("C11_REAL_I_FORWARD_TSN_194");
+            fflush(stdout);
+          } else if (written != 0u && reply[12u] == 192u) {
+            fprintf(stderr,
+                "C11 emitted legacy FORWARD instead of I-FORWARD\n");
+            failure = 25; break;
+          }
+          if (publish(fd, &destination, reply, written) != 0) {
+            failure = 16; break;
+          }
         }
       }
     }

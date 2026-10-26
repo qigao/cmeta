@@ -330,8 +330,14 @@ static cnet_sctp_assoc_status data_prepare(const cnet_sctp_assoc *s,
   cfg.t3_max_ms = s->config.t1_max_ms;
   cfg.max_retransmits = s->config.max_retransmits;
   cfg.interleaving_supported = peer_interleaving_supported ? 1u : 0u;
-  cfg.forward_tsn_supported = peer_forward_tsn_supported &&
-      (!peer_interleaving_supported || peer_i_forward_tsn_supported) ? 1u : 0u;
+  /* RFC 8260 section 2.3.1 negotiates partial reliability for I-DATA
+   * through BOTH endpoints' I-FORWARD-TSN Supported Extensions (type 194).
+   * The legacy RFC 3758 Forward-TSN-Supported parameter 0xC000 controls
+   * DATA/FORWARD-TSN only; an independent RFC8260 peer may omit 0xC000.
+   * Do not accidentally require BOTH dialects to be negotiated. */
+  cfg.forward_tsn_supported = peer_interleaving_supported ?
+      (peer_i_forward_tsn_supported ? 1u : 0u) :
+      (peer_forward_tsn_supported ? 1u : 0u);
   cfg.is_owner = s->config.is_owner;
   cfg.owner_context = s->config.provider_context;
   result = cnet_sctp_data_init(candidate, &cfg, now);
