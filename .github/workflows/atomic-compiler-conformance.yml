@@ -90,63 +90,34 @@ jobs:
           --target salts_disruptor_native_benchmark salts_disruptor_asm_benchmark
           salts_disruptor_native_latency salts_disruptor_asm_latency
           salts_disruptor_asm_ordered_benchmark salts_disruptor_asm_ordered_latency
-      - name: Compare paired warm and sampled runs (no performance threshold)
+      - name: Verify balanced three-way order and pairwise statistic self-tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/compiler/asm-atomic/compare_disruptor_three_way.py --self-test
+      - name: Benchmark all three original Disruptor implementations in one interleaved run
         env:
           CC: ${{ matrix.compiler }}
         shell: bash
         run: |
           set -euo pipefail
-          python3 tests/compiler/asm-atomic/compare_disruptor_benchmark.py \
-            --native build/asm-compare/salts_disruptor_native_benchmark \
-            --asm build/asm-compare/salts_disruptor_asm_benchmark \
-            --samples 7 --warmups 2 \
-            --output build/asm-compare/paired-benchmark.json
-      - name: Compare real publish-to-claim per-message age quantiles
-        env:
-          CC: ${{ matrix.compiler }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tests/compiler/asm-atomic/compare_disruptor_latency.py \
-            --native build/asm-compare/salts_disruptor_native_latency \
-            --asm build/asm-compare/salts_disruptor_asm_latency \
-            --samples 7 --warmups 2 \
-            --output build/asm-compare/paired-latency.json
-      - name: Compare order-specialized ASM throughput with the same native C11 workload
-        env:
-          CC: ${{ matrix.compiler }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tests/compiler/asm-atomic/compare_disruptor_benchmark.py \
-            --native build/asm-compare/salts_disruptor_native_benchmark \
-            --asm build/asm-compare/salts_disruptor_asm_ordered_benchmark \
-            --asm-policy loadstore_ordered \
-            --samples 7 --warmups 2 \
-            --output build/asm-compare/paired-benchmark-ordered.json
-      - name: Compare order-specialized ASM publish-to-claim latency
-        env:
-          CC: ${{ matrix.compiler }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tests/compiler/asm-atomic/compare_disruptor_latency.py \
-            --native build/asm-compare/salts_disruptor_native_latency \
-            --asm build/asm-compare/salts_disruptor_asm_ordered_latency \
-            --asm-policy loadstore_ordered \
-            --samples 7 --warmups 2 \
-            --output build/asm-compare/paired-latency-ordered.json
-      - name: Upload raw throughput and latency measurements (no performance thresholds)
+          python3 tests/compiler/asm-atomic/compare_disruptor_three_way.py \
+            --throughput-native build/asm-compare/salts_disruptor_native_benchmark \
+            --throughput-seq-cst build/asm-compare/salts_disruptor_asm_benchmark \
+            --throughput-loadstore-ordered build/asm-compare/salts_disruptor_asm_ordered_benchmark \
+            --latency-native build/asm-compare/salts_disruptor_native_latency \
+            --latency-seq-cst build/asm-compare/salts_disruptor_asm_latency \
+            --latency-loadstore-ordered build/asm-compare/salts_disruptor_asm_ordered_latency \
+            --warmups 6 --samples 12 \
+            --expected-throughput 80000 --expected-latency 16000 \
+            --output build/asm-compare/three-way-comparison.json
+      - name: Preserve complete raw three-way data, including failures
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: asm-disruptor-${{ matrix.os }}-${{ matrix.compiler }}
+          name: asm-disruptor-three-way-${{ matrix.os }}-${{ matrix.compiler }}
           if-no-files-found: ignore
-          path: |
-            build/asm-compare/paired-benchmark.json
-            build/asm-compare/paired-latency.json
-            build/asm-compare/paired-benchmark-ordered.json
-            build/asm-compare/paired-latency-ordered.json
+          path: build/asm-compare/three-way-comparison.json
 
   native-interop:
     name: Native GCC/Clang cross-compiler atomic ABI

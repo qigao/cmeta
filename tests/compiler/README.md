@@ -730,6 +730,58 @@ only. Foreign GAS atomic instructions are still not fully observable
 to source ThreadSanitizer, and a green TCC diagnostic does not make
 `__STDC_NO_ATOMICS__=1` disappear.
 
+## Balanced three-way observational performance study
+
+Earlier CI runs compared `native` vs `ASM seq_cst` and
+`native` vs `ASM loadstore_ordered` in **separate batches**.
+Ratios from those different periods are *not* a valid paired estimate
+for ordered ASM versus seq_cst ASM. In particular, an isolated ARM64
+GCC observation of 1.12× does not demonstrate a reproducible speedup.
+
+`asm-atomic/compare_disruptor_three_way.py` replaces those scheduled
+pairwise CI measurements with one **same-runner, round-matched**
+three-backend experiment. Each round executes the **exact same
+original Disruptor 4-publisher / 4-worker implementation** using:
+
+- Original C11 `_Atomic` and its existing memory orders.
+- External GAS 32/64-bit Atomic functions, all `seq_cst`.
+- External GAS Atomic functions, scalar load/store using requested
+  relaxed/acquire/release instructions while RMW/CAS stay `seq_cst`.
+
+Every phase contains **all three backends** with identical compiler
+and `-O2` options, capacity=64, payload integrity verdicts and
+4×4 topology. Throughput processes 80,000 verified messages/round;
+the independent timestamped publish-to-claim-age test processes
+16,000 verified messages/round, including valid per-run p50/p95/p99.
+Every execution that reports missing, duplicated, corrupt or mislabelled
+data aborts the experiment.
+
+Six permutations of the three backend orders are used as a
+**balanced cyclic schedule**: six complete warm-up triplets and
+twelve measured triplets, giving each backend equal first/middle/last
+position counts. Throughput and latency phases alternate precedence
+to mitigate some CPU/thermal drift. A built-in `--self-test` checks
+the order balance and paired ratio computation before CI runs.
+
+For each measured triplet, the driver computes:
+`seq_cst/native`, `ordered/native`, and `ordered/seq_cst`.
+The **median of the contemporaneous per-round ratios** is the primary
+comparison, with descriptive p10/p90 ratio ranges and raw values.
+It separately includes per-backend median, minimum, maximum, and
+median absolute deviation, plus per-run order and full measurements.
+The JSON artifact is named `three-way-comparison.json` and collected
+independently for Linux x86-64 and Linux AArch64, GCC and Clang.
+
+These are **observational, unthresholded CI measurements**. They
+are not confidence intervals, CPU-pinned controlled benchmarks,
+formal memory-order proofs, full foreign-ASM TSan coverage, or
+approval to modify the production Atomic ABI. Throughput and
+timestamped message age are distinct; age includes scheduling and
+timestamp overhead and must not be interpreted as a single Atomic
+instruction latency. Pinned TinyCC x86-64/ARM64 qualification
+continues independently and fails its strict `__STDC_NO_ATOMICS__`
+admission step as intended.
+
 ## Limits
 
 Passing is **necessary but not sufficient** for production qualification:
