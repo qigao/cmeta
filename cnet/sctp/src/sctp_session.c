@@ -226,6 +226,10 @@ cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
    * A rejected packet may never transfer or consume any staged result. */
   cnet_sctp_session_abort_abandoned staged[CNET_SCTP_DATA_TX_SLOTS];
   size_t staged_count = 0u, i;
+  /* A STOPPED/foreign-Owner/invalid input must never leave a stale caller
+   * output byte count suggesting that its packet was accepted. Guard
+   * rejection does not borrow or mutate the output buffer itself. */
+  if (written) *written = 0u;
   if (status != CNET_SCTP_SESSION_OK) return status;
   /* The hot DATA ingress path normally has no unread abandonment. Only
    * initialize the actually copied FIFO entries, not all 16 fixed slots

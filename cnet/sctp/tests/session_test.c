@@ -1965,6 +1965,43 @@ static void late_peer_abort_is_closed_after_local_retry_exhaustion(void) {
 }
 
 
+/* The direct installed public Session API is used by a DTLS ingress Owner:
+ * when a real encrypted packet decrypts after the Session has STOPPED,
+ * input must refuse CLOSED and zero its *written output without publishing
+ * or altering caller-owned packet bytes. A foreign Owner refusal is likewise
+ * failure-atomic. This portable conformance does not need OpenSSL. */
+static void stopped_input_clears_output_size(void) {
+  cnet_sctp_session a = {0}, b = {0};
+  test_context ca = {0}, cb = {0};
+  uint8_t real_data[1200], output[1200];
+  size_t real_n = 0u, reply_n = 123u, i;
+  uint64_t ga = 0u, gb = 0u;
+  ready_pair(&a, &b, &ca, &cb);
+  open_channel_with_policy(&a, &b, 6u, 2u, 0x80u, 0u,
+      &ga, &gb);
+  assert(cnet_sctp_session_send(&a, 20u, 2u, 1,
+      "late", 4u, real_data, sizeof(real_data), &real_n) ==
+      CNET_SCTP_SESSION_OK && real_n > 12u);
+  memset(output, 0xA5, sizeof(output));
+  cb.owner = 0;
+  assert(cnet_sctp_session_input(&b, 21u, real_data, real_n,
+      output, sizeof(output), &reply_n) == CNET_SCTP_SESSION_OWNER &&
+      reply_n == 0u);
+  for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xA5u);
+  cb.owner = 1;
+  assert(cnet_sctp_session_stop(&b) == CNET_SCTP_SESSION_OK);
+  reply_n = 123u;
+  assert(cnet_sctp_session_input(&b, 22u, real_data, real_n,
+      output, sizeof(output), &reply_n) == CNET_SCTP_SESSION_CLOSED &&
+      reply_n == 0u);
+  for (i = 0u; i < sizeof(output); ++i) assert(output[i] == 0xA5u);
+  assert(ga != 0u && gb != 0u);
+  assert(cnet_sctp_session_stop(&a) == CNET_SCTP_SESSION_OK &&
+      cnet_sctp_session_destroy_in_place(&a) == CNET_SCTP_SESSION_OK &&
+      cnet_sctp_session_destroy_in_place(&b) == CNET_SCTP_SESSION_OK);
+}
+
+
 int main(void) {
   session_open_message_reset_reuse();
   partial_loss_reports_abandonment_then_reliable_continues();
@@ -1984,6 +2021,7 @@ int main(void) {
   peer_abort_preempts_reset_without_losing_pr_events();
   stale_generation_denies_old_data_egress();
   late_peer_abort_is_closed_after_local_retry_exhaustion();
+  stopped_input_clears_output_size();
   puts("C11 Owner-scoped SCTP/DCEP session lifecycle PASS");
   return 0;
 }
