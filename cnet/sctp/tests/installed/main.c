@@ -1583,6 +1583,37 @@ static int session_terminal_retry_failure(int forward_case) {
           sizeof(fourth), &nq) != CNET_SCTP_SESSION_TRANSPORT ||
       nq != 0u)
     goto cleanup;
+  /* Fully public, installed opaque SDK contract: local FAILED is already
+   * terminal. Even a valid, peer-tagged/CRC-correct ABORT cannot reenter the
+   * failed Association, discard the unread PR abandonment, substitute a peer
+   * abort reason or turn an unACKed tracked reliable DATA into success. The
+   * subsequent original-generation terminal take must remain unchanged. */
+  {
+    const uint8_t cause[] = {
+        0u, 12u, 0u, 8u, 'l', 'a', 't', 'e'
+    };
+    const cnet_sctp_wire_chunk late_abort = {
+        6u, 0u, cause, sizeof(cause)
+    };
+    cnet_sctp_session_peer_abort ignored_abort = {0};
+    uint8_t late_packet[64], reason[8] = {0};
+    size_t late_packet_n = 0u, reason_n = 123u;
+    if (cnet_sctp_wire_encode(5001u, 5000u, cc.tag, &late_abort,
+            1u, late_packet, sizeof(late_packet),
+            &late_packet_n) != CNET_SCTP_WIRE_OK ||
+        late_packet_n == 0u)
+      goto cleanup;
+    nq = 123u;
+    if (cnet_sctp_session_input(client, due + 1u,
+            late_packet, late_packet_n, fourth,
+            sizeof(fourth), &nq) != CNET_SCTP_SESSION_CLOSED ||
+        nq != 0u ||
+        cnet_sctp_session_take_peer_abort(client, &ignored_abort,
+            reason, sizeof(reason), &reason_n) !=
+                CNET_SCTP_SESSION_EMPTY ||
+        reason_n != 0u || ignored_abort.has_user_reason)
+      goto cleanup;
+  }
   /* Foreign Owner is not allowed to consume a terminal result; restoring
    * original Owner must still return that identical immutable failure. */
   {
