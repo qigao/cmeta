@@ -301,6 +301,109 @@ static void reject_modified_dtls_ciphertext(SSL *sender, SSL *receiver,
   puts("REAL_DTLS_CORRUPTED_CIPHERTEXT_REJECTED");
 }
 
+/* Same pinned certificates can authenticate a NEW DTLS handshake. Only a
+ * NEW SCTP Session carrying that handshake's owner Generation may proceed.
+ * Keep the old Session allocated and Owner-revoked while this one admits real
+ * INIT/COOKIE, DCEP and user PPID53 through the independent OpenSSL records. */
+static void prove_reconnected_generation_has_fresh_session(
+    SSL *client_dtls, SSL *server_dtls, uint64_t generation) {
+  test_owner a = {0}, b = {0};
+  cnet_sctp_session *client = NULL, *server = NULL;
+  cnet_sctp_session_create_config ca, cb;
+  cnet_sctp_session_event event = {0};
+  uint8_t first[DATAGRAM_CAPACITY], second[DATAGRAM_CAPACITY];
+  uint8_t third[DATAGRAM_CAPACITY], fourth[DATAGRAM_CAPACITY];
+  uint8_t message[CNET_SCTP_SESSION_MAX_MESSAGE_BYTES];
+  size_t n1 = 0u, n2 = 0u, n3 = 0u, n4 = 0u;
+  uint64_t stream_generation = 0u;
+  static const char payload[] = "new-dtls-generation";
+
+  assert(generation != 0u);
+  a.generation = a.bound_generation = generation;
+  b.generation = b.bound_generation = generation;
+  assert(RAND_bytes(a.cookie_key, sizeof(a.cookie_key)) == 1);
+  assert(RAND_bytes(b.cookie_key, sizeof(b.cookie_key)) == 1);
+  ca = config(5000u, generation, 1, &a);
+  cb = config(5001u, generation, 0, &b);
+  assert(cnet_sctp_session_create(&ca, 0u, &client) ==
+      CNET_SCTP_SESSION_OK && client);
+  assert(cnet_sctp_session_create(&cb, 0u, &server) ==
+      CNET_SCTP_SESSION_OK && server);
+
+  assert(cnet_sctp_session_start(client, 1u, first,
+      sizeof(first), &n1) == CNET_SCTP_SESSION_OK && n1 > 0u);
+  n2 = input_over_verified_dtls(server, client_dtls, server_dtls,
+      2u, first, n1, second);
+  assert(n2 > 0u);
+  n3 = input_over_verified_dtls(client, server_dtls, client_dtls,
+      3u, second, n2, third);
+  assert(n3 > 0u);
+  n4 = input_over_verified_dtls(server, client_dtls, server_dtls,
+      4u, third, n3, fourth);
+  assert(n4 > 0u);
+  n1 = input_over_verified_dtls(client, server_dtls, client_dtls,
+      5u, fourth, n4, first);
+  assert(n1 == 0u);
+
+  assert(cnet_sctp_session_open_channel(client, 6u, 0u,
+      CNET_SCTP_SESSION_CHANNEL_RELIABLE_UNORDERED, 0u, 0u,
+      "renew", 5u, NULL, 0u,
+      first, sizeof(first), &n1) == CNET_SCTP_SESSION_OK && n1 > 0u);
+  n2 = input_over_verified_dtls(server, client_dtls, server_dtls,
+      7u, first, n1, second);
+  if (n2) {
+    n3 = input_over_verified_dtls(client, server_dtls, client_dtls,
+        8u, second, n2, third);
+    assert(n3 == 0u);
+  }
+  assert(cnet_sctp_session_poll(server, 9u, &event, message,
+      sizeof(message), second, sizeof(second), &n2) ==
+      CNET_SCTP_SESSION_OK && event.kind ==
+      CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN && n2 > 0u &&
+      event.stream_id == 0u && event.generation != 0u);
+  stream_generation = event.generation;
+  n3 = input_over_verified_dtls(client, server_dtls, client_dtls,
+      10u, second, n2, third);
+  if (n3) {
+    n4 = input_over_verified_dtls(server, client_dtls, server_dtls,
+        11u, third, n3, fourth);
+    assert(n4 == 0u);
+  }
+  assert(cnet_sctp_session_poll(client, 12u, &event, message,
+      sizeof(message), first, sizeof(first), &n1) ==
+      CNET_SCTP_SESSION_OK &&
+      event.kind == CNET_SCTP_SESSION_EVENT_CHANNEL_OPEN &&
+      event.stream_id == 0u && event.generation != 0u);
+
+  assert(cnet_sctp_session_send(client, 13u, 0u, 1,
+      payload, sizeof(payload) - 1u,
+      first, sizeof(first), &n1) == CNET_SCTP_SESSION_OK &&
+      n1 > 12u && first[12u] == 64u);
+  n2 = input_over_verified_dtls(server, client_dtls, server_dtls,
+      14u, first, n1, second);
+  assert(n2 > 0u);
+  n3 = input_over_verified_dtls(client, server_dtls, client_dtls,
+      15u, second, n2, third);
+  assert(n3 == 0u);
+  assert(cnet_sctp_session_poll(server, 16u, &event,
+      message, sizeof(message), fourth, sizeof(fourth),
+      &n4) == CNET_SCTP_SESSION_OK &&
+      event.kind == CNET_SCTP_SESSION_EVENT_MESSAGE &&
+      event.stream_id == 0u && event.generation == stream_generation &&
+      event.ppid == 53u && event.message_size == sizeof(payload) - 1u &&
+      memcmp(message, payload, sizeof(payload) - 1u) == 0);
+
+  assert(cnet_sctp_session_stop(client) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_stop(server) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_drained(client) &&
+      cnet_sctp_session_drained(server));
+  assert(cnet_sctp_session_destroy(client) == CNET_SCTP_SESSION_OK);
+  assert(cnet_sctp_session_destroy(server) == CNET_SCTP_SESSION_OK);
+  OPENSSL_cleanse(a.cookie_key, sizeof(a.cookie_key));
+  OPENSSL_cleanse(b.cookie_key, sizeof(b.cookie_key));
+  puts("REAL_DTLS_SAME_CERT_FRESH_SESSION_DATA_PASS");
+}
+
 static void test_actual_dtls_application_records(void) {
   uint8_t client_fp[32], server_fp[32], incorrect[32];
   SSL_CTX *client_context = new_identity(client_fp);
@@ -439,6 +542,10 @@ static void test_actual_dtls_application_records(void) {
         authenticated, bytes, fourth, sizeof(fourth),
         &discarded) == CNET_SCTP_SESSION_OWNER &&
         discarded == 0u);
+    /* Old Session remains live-but-revoked while the second verified DTLS
+     * handshake admits a completely new SCTP/DCEP/PPID53 conversation. */
+    prove_reconnected_generation_has_fresh_session(reconnected_client_dtls,
+        reconnected_server_dtls, reconnected_generation);
     b.generation = b.bound_generation;
   }
   puts("REAL_DTLS_STALE_GENERATION_OWNER_REFUSED");
