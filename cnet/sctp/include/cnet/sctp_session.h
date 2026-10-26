@@ -274,7 +274,13 @@ cnet_sctp_session_status cnet_sctp_session_create(
 
 /* start emits INIT. input consumes one complete SCTP packet and may emit one
  * reply. advance emits the next due retransmission/control packet. Output is
- * copied into caller storage and its size is returned through written. */
+ * copied into caller storage and its size is returned through written.
+ * Before Owner advance(), all pending/retained APPLICATION DATA generations
+ * are checked against the active DCEP SID lifetimes. If a SID was wrongly
+ * reused before old DATA retired, STALE prevents even a T3 retransmission
+ * or first zero-window probe, returns zero written and leaves DATA unchanged.
+ * Only valid Owner state repair or explicit abortive stop can proceed;
+ * DCEP PPID50 retains its separate control-plane lifecycle. */
 cnet_sctp_session_status cnet_sctp_session_start(cnet_sctp_session *session,
     uint64_t now_ms, void *packet, size_t capacity, size_t *written);
 cnet_sctp_session_status cnet_sctp_session_input(cnet_sctp_session *session,
@@ -399,8 +405,12 @@ cnet_sctp_session_status cnet_sctp_session_cancel_unsent_message(
  * pump_message emits AT MOST ONE DATA/I-DATA fragment. EMPTY means no queued
  * bytes remain, CAPACITY means congestion/receive-window/buffer backpressure
  * without consuming the pending fragment, and BUSY requires Owner advance()
- * to service an earlier retransmission/reset. Caller must keep pumping after
- * subsequent SACKs/Owner deadlines; there is no implicit worker or I/O.
+ * to service an earlier retransmission/reset. Before pump, advance or a new
+ * send/queue, old or unbound application DATA owned by a different original
+ * generation causes STALE and commits no packet/TSN/queue change. This is
+ * fail-closed on an invalid SID-reuse lifecycle, not a second sender queue
+ * or a way to retire the missing original message. Caller must keep pumping
+ * after subsequent SACKs/Owner deadlines; there is no implicit worker or I/O.
  * For timed policies the lifetime begins at queue admission, not pump time.
  * Neither entry point changes production Salts::CNet or its backend. */
 cnet_sctp_session_status cnet_sctp_session_queue_message(

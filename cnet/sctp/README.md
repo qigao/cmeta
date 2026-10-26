@@ -53,10 +53,16 @@ In addition to checking the expected DCEP generation, the query validates
 the original admission-time generation of each relevant queued message and
 retained DATA ticket. A deliberately reused SID with still-owned old DATA
 returns STALE and zeroed output, never a false zero-byte/current-generation
-completion signal. This fail-closed case is covered by real direct, copied
-queued, and partly emitted PR message fixtures; it does not silently reassign
-prior message ownership. One Owner-driven zero-window PR probe test also
-verifies that the admission generation survives its first one-byte DATA,
+completion signal. In addition to the read-only snapshot, **all Owner egress**
+for application DATA is fenced: direct/tracked send, copied queue admission,
+fragment pump, and advance/T3/zero-window probe preflight the retained
+original generation before issuing any new packet or mutating DATA. Stale
+SIDs are fail-closed, without a fallback transport or implicit lifetime
+repair; valid RFC6525 retirement still allows a fresh new-generation send.
+These contracts are covered by real direct, copied queued, partially emitted
+PR, tracked reliable, stale-generation probe/refusal and freshly reopened SID
+installed-ABI consumer fixtures. One Owner-driven zero-window PR probe test
+also verifies that the admission generation survives its first one-byte DATA,
 retransmission-budget abandonment and FORWARD-TSN event.
 Unlike a per-message terminal event, this query performs NO retirement. The installed consumer delays TSN N,
 gap-ACKs N+1, observes both tickets remain retained, and then requires
