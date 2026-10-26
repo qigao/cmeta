@@ -188,6 +188,41 @@ jobs:
             drop-first-iforward
           go mod verify
 
+  dtls-opaque-installed-session:
+    name: Real DTLS 1.2 encrypted records through installed C11 Session
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Build standalone public-only Session consumer using real OpenSSL DTLS
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          openssl version
+          prefix="$GITHUB_WORKSPACE/sctp-c11-dtls-isolated-sdk"
+          cmake -S cnet/sctp -B build-sctp-dtls-sdk \
+            -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=OFF \
+            -DCNET_SCTP_TEST_GMSSL=OFF
+          cmake --build build-sctp-dtls-sdk --parallel 2
+          cmake --install build-sctp-dtls-sdk --prefix "$prefix"
+          test -f "$prefix/include/cnet/sctp_session.h"
+          test ! -e "$prefix/include/cnet/sctp_assoc_internal.h"
+          test ! -e "$prefix/include/cnet/sctp_session_internal.h"
+          test -f "$prefix/lib/cmake/CNetSctpPrototype/CNetSctpPrototypeTargets.cmake"
+          cmake -S cnet/sctp/tests/independent/dtls \
+            -B build-sctp-dtls-opaque-consumer \
+            -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build build-sctp-dtls-opaque-consumer --parallel 2
+          timeout 20s ctest --test-dir build-sctp-dtls-opaque-consumer \
+            --output-on-failure --verbose
+          echo "Test-only real DTLS 1.2 and installed opaque C11 Session qualified; NOT independent browser/ICE or production Owner."
+
   sanitizer-source:
     runs-on: ubuntu-latest
     steps:
