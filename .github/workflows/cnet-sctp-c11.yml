@@ -141,9 +141,12 @@ jobs:
             -DCNetSctpPrototype_DIR="$prefix/lib/cmake/CNetSctpPrototype" \
             -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH
           cmake --build build-sctp-consumer-ios-arm64 --parallel 2
-          test -f build-sctp-consumer-ios-arm64/cnet_sctp_installed_consumer
+          # On iOS, CMake places executable targets inside a .app bundle;
+          # checking the Unix flat path incorrectly rejects a valid link.
+          ios_consumer="build-sctp-consumer-ios-arm64/cnet_sctp_installed_consumer.app/cnet_sctp_installed_consumer"
+          test -f "$ios_consumer"
           xcrun lipo -archs "$prefix/lib/libcnet_sctp_session.a" | grep -w arm64
-          xcrun lipo -archs build-sctp-consumer-ios-arm64/cnet_sctp_installed_consumer | grep -w arm64
+          xcrun lipo -archs "$ios_consumer" | grep -w arm64
           echo "iOS arm64 installed opaque C11 Session compiled and linked; NO device execution."
 
   sanitizer-source:
