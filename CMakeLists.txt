@@ -15,7 +15,13 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(CTest)
-include("${CMAKE_CURRENT_SOURCE_DIR}/CMakeOptions.cmake")
+# Only one package graph. Legacy CMake options must never select a second
+# native source owner, even if passed explicitly by a downstream build.
+if(BUILD_TESTS OR BUILD_EXAMPLES OR BUILD_BENCHMARKS OR
+   CFLOW_BUILD_BENCHMARKS OR CMETA_BUILD_NATIVE_THUNKS OR
+   CFLOW_ENABLE_MINICORO OR BUILD_SHARED_LIBS)
+  message(FATAL_ERROR "The Salts 3 package has no legacy native source modes")
+endif()
 include(CmakeUtils)
 find_package(Threads REQUIRED)
 find_package(SaltsCore 0.1 CONFIG REQUIRED)
