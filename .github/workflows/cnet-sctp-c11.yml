@@ -150,7 +150,7 @@ jobs:
           echo "iOS arm64 installed opaque C11 Session compiled and linked; NO device execution."
 
   pion-independent-rfc8260:
-    name: Independent Pion RFC8260 I-DATA/I-FORWARD recovery (test-only UDP)
+    name: Independent Pion RFC8260 recovery over UDP and real DTLS 1.2 (test-only)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -186,6 +186,14 @@ jobs:
           timeout 35s "$RUNNER_TEMP/pion-independent-oracle" \
             "$GITHUB_WORKSPACE/build-sctp-pion-oracle/cnet_sctp_pion_oracle_peer" \
             drop-first-iforward
+          # Real independently implemented DTLS 1.2 between Pion DTLS v3
+          # and OpenSSL; the SAME two RFC8260 packet-loss tests must pass.
+          timeout 35s "$RUNNER_TEMP/pion-independent-oracle" \
+            "$GITHUB_WORKSPACE/build-sctp-pion-oracle/cnet_sctp_pion_oracle_peer" \
+            dtls
+          timeout 35s "$RUNNER_TEMP/pion-independent-oracle" \
+            "$GITHUB_WORKSPACE/build-sctp-pion-oracle/cnet_sctp_pion_oracle_peer" \
+            dtls drop-first-iforward
           go mod verify
 
   dtls-opaque-installed-session:

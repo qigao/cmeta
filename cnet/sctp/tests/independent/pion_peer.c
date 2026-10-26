@@ -5,6 +5,7 @@
  * authentication provider, installed target, or M4 DTLS qualification. */
 #define _POSIX_C_SOURCE 200809L
 #include <cnet/sctp_session.h>
+#include "pion_dtls_transport.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -27,6 +28,8 @@ typedef struct oracle_context {
 } oracle_context;
 
 static volatile sig_atomic_t shutting_down = 0;
+static pion_test_dtls secure_transport = {0};
+static int use_real_dtls = 0;
 static void stop_signal(int signo) { (void)signo; shutting_down = 1; }
 static int owner(void *context) { return context != NULL; }
 static int entropy(void *context, uint8_t *p, size_t n) {
@@ -73,9 +76,15 @@ static int publish(int fd, const struct sockaddr_in *destination,
     const void *bytes, size_t length) {
   if (length == 0u) return 0;
   if (!bytes || length > CNET_SCTP_SESSION_MAX_PACKET_BYTES) return -1;
-  if (sendto(fd, bytes, length, 0, (const struct sockaddr *)destination,
-          sizeof(*destination)) != (ssize_t)length)
+  if (use_real_dtls) {
+    if (pion_test_dtls_send(&secure_transport, fd, destination,
+            (const uint8_t *)bytes, length) != 0)
+      return -1;
+  } else if (sendto(fd, bytes, length, 0,
+          (const struct sockaddr *)destination,
+          sizeof(*destination)) != (ssize_t)length) {
     return -1;
+  }
   printf("TX_TYPE=%u\n", (unsigned)((const uint8_t *)bytes)[12]);
   fflush(stdout);
   return 0;
@@ -146,17 +155,22 @@ int main(int argc, char **argv) {
   unsigned int stage = 0u;
   int original_abandoned = 0;
   uint8_t packet[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
+  uint8_t encrypted[4096];
   uint8_t reply[CNET_SCTP_SESSION_MAX_PACKET_BYTES];
   uint8_t body[CNET_SCTP_SESSION_MAX_MESSAGE_BYTES];
   uint64_t start, now;
   int fd = -1, failure = 0;
   unsigned int local_port, peer_port;
-  if ((argc != 3 && argc != 4) ||
-      (argc == 4 && strcmp(argv[3], "drop-first-iforward") != 0)) {
-    fprintf(stderr, "usage: pion_oracle_peer UDP_LISTEN_PORT UDP_PEER_PORT [drop-first-iforward]\n");
+  if ((argc != 3 &&
+       !(argc == 4 && strcmp(argv[3], "drop-first-iforward") == 0) &&
+       !(argc == 5 && strcmp(argv[3], "dtls") == 0) &&
+       !(argc == 6 && strcmp(argv[3], "dtls") == 0 &&
+           strcmp(argv[5], "drop-first-iforward") == 0))) {
+    fprintf(stderr, "usage: pion_oracle_peer UDP_LISTEN_PORT UDP_PEER_PORT [drop-first-iforward] | [dtls CLIENT_SHA256_HEX [drop-first-iforward]]\n");
     return 2;
   }
-  drop_first_iforward = argc == 4;
+  use_real_dtls = argc >= 5;
+  drop_first_iforward = (argc == 4 || argc == 6);
   local_port = (unsigned int)strtoul(argv[1], NULL, 10);
   peer_port = (unsigned int)strtoul(argv[2], NULL, 10);
   if (local_port == 0u || peer_port == 0u ||
@@ -197,6 +211,11 @@ int main(int argc, char **argv) {
     failure = 4; goto done;
   }
   if (signal(SIGTERM, stop_signal) == SIG_ERR) { failure = 5; goto done; }
+  if (use_real_dtls &&
+      pion_test_dtls_init(&secure_transport, argv[4]) != 0) {
+    fprintf(stderr, "C11 oracle real DTLS initialization failed\n");
+    failure = 32; goto done;
+  }
   start = monotonic_ms();
   if (start == UINT64_MAX) { failure = 6; goto done; }
   puts("READY");
@@ -218,15 +237,31 @@ int main(int argc, char **argv) {
       failure = 8; break;
     }
     if (n > 0 && FD_ISSET(fd, &readfds)) {
-      const ssize_t received = recvfrom(fd, packet, sizeof(packet),
+      const ssize_t raw_size = recvfrom(fd, encrypted, sizeof(encrypted),
           0, NULL, NULL);
-      size_t written = 0u;
+      size_t plaintext_size = 0u, written = 0u;
       cnet_sctp_session_status status;
-      if (received < 16) { failure = 9; break; }
+      if (raw_size <= 0) { failure = 9; break; }
+      if (use_real_dtls) {
+        int unwrapped = pion_test_dtls_input(&secure_transport, fd,
+            &destination, encrypted, (size_t)raw_size,
+            packet, sizeof(packet), &plaintext_size);
+        if (unwrapped < 0) {
+          fprintf(stderr, "C11 oracle DTLS packet authentication/record failure\n");
+          failure = 33; break;
+        }
+        /* SCTP Owner NEVER sees handshake/ciphertext bytes. */
+        if (unwrapped == 0) continue;
+      } else {
+        if ((size_t)raw_size > sizeof(packet)) { failure = 9; break; }
+        memcpy(packet, encrypted, (size_t)raw_size);
+        plaintext_size = (size_t)raw_size;
+      }
+      if (plaintext_size < 16u) { failure = 9; break; }
       printf("RX_TYPE=%u\n", (unsigned)packet[12]);
       fflush(stdout);
       status = cnet_sctp_session_input(session, now, packet,
-          (size_t)received, reply, sizeof(reply), &written);
+          plaintext_size, reply, sizeof(reply), &written);
       if (status != CNET_SCTP_SESSION_OK) {
         fprintf(stderr, "C11 oracle input refused: status=%d chunk=%u\n",
             (int)status, (unsigned)packet[12]);
@@ -447,6 +482,7 @@ done:
         cnet_sctp_session_destroy(session) != CNET_SCTP_SESSION_OK)
       failure = 17;
   }
+  if (use_real_dtls) pion_test_dtls_stop(&secure_transport);
   if (fd >= 0) close(fd);
   if (!failure) { puts("C11_ORACLE_EXIT_OK"); fflush(stdout); }
   return failure;

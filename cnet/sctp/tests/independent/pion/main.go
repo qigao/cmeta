@@ -6,7 +6,12 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -16,6 +21,8 @@ import (
 	"syscall"
 	"time"
 
+	dtls "github.com/pion/dtls/v3"
+	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
 	"github.com/pion/sctp"
 )
 
@@ -43,12 +50,35 @@ func expect(lines <-chan string, prefix string, timeout time.Duration) string {
 }
 
 func main() {
-	require(len(os.Args) == 2 || (len(os.Args) == 3 &&
-		os.Args[2] == "drop-first-iforward"),
-		"expected C11 oracle binary and optional drop-first-iforward")
-	dropFirstForward := len(os.Args) == 3
+	require(len(os.Args) >= 2 && len(os.Args) <= 4,
+		"expected C11 oracle binary [drop-first-iforward] [dtls]")
+	dropFirstForward, useDTLS := false, false
+	for _, option := range os.Args[2:] {
+		switch option {
+		case "drop-first-iforward":
+			require(!dropFirstForward, "duplicate I-FORWARD drop option")
+			dropFirstForward = true
+		case "dtls":
+			require(!useDTLS, "duplicate DTLS option")
+			useDTLS = true
+		default:
+			require(false, "unknown mode %s", option)
+		}
+	}
 	peerArgs := []string{"49571", "49572"}
-	if dropFirstForward {
+	var certificate tls.Certificate
+	if useDTLS {
+		var certErr error
+		certificate, certErr = selfsign.GenerateSelfSigned()
+		require(certErr == nil && len(certificate.Certificate) != 0,
+			"ephemeral Pion DTLS certificate: %v", certErr)
+		clientFingerprint := sha256.Sum256(certificate.Certificate[0])
+		peerArgs = append(peerArgs, "dtls",
+			hex.EncodeToString(clientFingerprint[:]))
+		if dropFirstForward {
+			peerArgs = append(peerArgs, "drop-first-iforward")
+		}
+	} else if dropFirstForward {
 		peerArgs = append(peerArgs, "drop-first-iforward")
 	}
 	peer := exec.Command(os.Args[1], peerArgs...)
@@ -68,14 +98,56 @@ func main() {
 		}
 		close(lines)
 	}()
+	var expectedServerFingerprint [32]byte
+	if useDTLS {
+		line := expect(lines, "DTLS_SERVER_FP=", 5*time.Second)
+		hexString := strings.TrimPrefix(line, "DTLS_SERVER_FP=")
+		der, decodeErr := hex.DecodeString(hexString)
+		require(decodeErr == nil && len(der) == 32,
+			"OpenSSL DTLS server did not publish valid pinned fingerprint")
+		copy(expectedServerFingerprint[:], der)
+	}
 	expect(lines, "READY", 5*time.Second)
 
 	local := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 49572}
 	remote := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 49571}
-	conn, err := net.DialUDP("udp", local, remote)
-	require(err == nil, "UDP dial: %v", err)
+	var conn net.Conn
+	var err error
+	if useDTLS {
+		raw, listenErr := net.ListenUDP("udp", local)
+		require(listenErr == nil, "DTLS socket listen: %v", listenErr)
+		pinned := false
+		secure, dtlsErr := dtls.Client(raw, remote, &dtls.Config{
+			Certificates:       []tls.Certificate{certificate},
+			InsecureSkipVerify: true, // bounded to the SHA256 check BELOW
+			VerifyPeerCertificate: func(rawCerts [][]byte,
+				_ [][]*x509.Certificate) error {
+				if len(rawCerts) == 0 {
+					return errors.New("OpenSSL DTLS certificate absent")
+				}
+				actual := sha256.Sum256(rawCerts[0])
+				if actual != expectedServerFingerprint {
+					return errors.New("OpenSSL DTLS SHA256 fingerprint mismatch")
+				}
+				pinned = true
+				return nil
+			},
+		})
+		require(dtlsErr == nil, "independent Pion DTLS client: %v", dtlsErr)
+		ctx, cancel := context.WithTimeout(context.Background(), 9*time.Second)
+		err = secure.HandshakeContext(ctx)
+		cancel()
+		require(err == nil && pinned,
+			"independent Pion/OpenSSL DTLS 1.2 handshake or pin: %v pinned=%t",
+			err, pinned)
+		conn = secure
+		fmt.Println("PION_DTLS_1_2_PINNED_OPENSSL_SERVER_PASS")
+	} else {
+		conn, err = net.DialUDP("udp", local, remote)
+		require(err == nil, "UDP dial: %v", err)
+	}
 	defer conn.Close()
-	timer := time.AfterFunc(12*time.Second, func() { _ = conn.Close() })
+	timer := time.AfterFunc(13*time.Second, func() { _ = conn.Close() })
 	defer timer.Stop()
 	association, err := sctp.ClientWithOptions(
 		sctp.Config{NetConn: conn},
@@ -147,14 +219,19 @@ func main() {
 	// an Owner-delivered exact PPID53 message, NOT a self-loopback fixture.
 	expected := "MESSAGE=0:" + hex.EncodeToString(payload)
 	seenIData, seenMessage, seenForward, seenDrop, seenConfirmed := false, false, false, false, false
-	seenForwardLoss, seenForwardRetry := false, false
+	seenForwardLoss, seenForwardRetry, seenPinnedClient := false, false, false
 	limit := time.After(6 * time.Second)
 	for !seenIData || !seenMessage || !seenForward || !seenDrop ||
-		!seenConfirmed || (dropFirstForward && (!seenForwardLoss || !seenForwardRetry)) {
+		!seenConfirmed || (dropFirstForward && (!seenForwardLoss || !seenForwardRetry)) ||
+		(useDTLS && !seenPinnedClient) {
 		select {
 		case line, open := <-lines:
 			require(open, "C11 peer terminated during I-DATA")
 			fmt.Println("C11:", line)
+			if line == "OPENSSL_DTLS_CLIENT_FINGERPRINT_MATCH" {
+				require(useDTLS, "unexpected DTLS fingerprint event in plaintext mode")
+				seenPinnedClient = true
+			}
 			if line == "RX_TYPE=64" { seenIData = true }
 			if line == expected { seenMessage = true }
 			if line == "C11_REAL_I_FORWARD_TSN_194" { seenForward = true }
@@ -181,6 +258,10 @@ func main() {
 	if dropFirstForward {
 		mode = "lost-first-iforward"
 	}
-	fmt.Println("PION_INDEPENDENT_RFC8260_IFORWARD_PASS mode=" + mode +
+	transport := "udp-plaintext"
+	if useDTLS {
+		transport = "pion-dtls-v3-to-openssl-dtls12"
+	}
+	fmt.Println("PION_INDEPENDENT_RFC8260_IFORWARD_PASS transport=" + transport + " mode=" + mode +
 		" partialReliability=" + strconv.Itoa(int(metadata.PartialReliabilityMode)))
 }

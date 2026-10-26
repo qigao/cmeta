@@ -397,10 +397,12 @@ if(CNET_SCTP_TEST_PION_ORACLE)
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(FATAL_ERROR "Independent Pion SCTP oracle is Linux-only")
   endif()
+  find_package(OpenSSL 3.0 REQUIRED COMPONENTS SSL Crypto)
   add_executable(cnet_sctp_pion_oracle_peer
-    tests/independent/pion_peer.c)
+    tests/independent/pion_peer.c
+    tests/independent/pion_dtls_transport.c)
   target_link_libraries(cnet_sctp_pion_oracle_peer PRIVATE
-    CNetSctpPrototype::Session)
+    CNetSctpPrototype::Session OpenSSL::SSL OpenSSL::Crypto)
   set_target_properties(cnet_sctp_pion_oracle_peer PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   target_compile_options(cnet_sctp_pion_oracle_peer PRIVATE
