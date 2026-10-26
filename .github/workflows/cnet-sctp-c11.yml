@@ -211,6 +211,9 @@ jobs:
           timeout 15s "$RUNNER_TEMP/pion-independent-oracle" \
             "$GITHUB_WORKSPACE/build-sctp-pion-installed-consumer/cnet_sctp_pion_oracle_peer" \
             dtls-bad-server-fingerprint
+          timeout 15s "$RUNNER_TEMP/pion-independent-oracle" \
+            "$GITHUB_WORKSPACE/build-sctp-pion-installed-consumer/cnet_sctp_pion_oracle_peer" \
+            dtls-bad-client-fingerprint
           go mod verify
           # The model cannot silently upgrade modules or generate untracked
           # security checksum entries in CI. Print the exact proposed patch

@@ -51,8 +51,8 @@ func expect(lines <-chan string, prefix string, timeout time.Duration) string {
 
 func main() {
 	require(len(os.Args) >= 2 && len(os.Args) <= 4,
-		"expected C11 oracle binary [drop-first-iforward] [dtls|dtls-bad-server-fingerprint]")
-	dropFirstForward, useDTLS, badServerFingerprint := false, false, false
+		"expected C11 oracle binary [drop-first-iforward] [dtls|dtls-bad-server-fingerprint|dtls-bad-client-fingerprint]")
+	dropFirstForward, useDTLS, badServerFingerprint, badClientFingerprint := false, false, false, false
 	for _, option := range os.Args[2:] {
 		switch option {
 		case "drop-first-iforward":
@@ -64,11 +64,15 @@ func main() {
 		case "dtls-bad-server-fingerprint":
 			require(!useDTLS, "duplicate DTLS option")
 			useDTLS, badServerFingerprint = true, true
+		case "dtls-bad-client-fingerprint":
+			require(!useDTLS, "duplicate DTLS option")
+			useDTLS, badClientFingerprint = true, true
 		default:
 			require(false, "unknown mode %s", option)
 		}
 	}
-	require(!badServerFingerprint || !dropFirstForward,
+	require((!badServerFingerprint && !badClientFingerprint) ||
+			!dropFirstForward,
 		"wrong-fingerprint test must not run SCTP loss scenarios")
 	peerArgs := []string{"49571", "49572"}
 	var certificate tls.Certificate
@@ -78,6 +82,11 @@ func main() {
 		require(certErr == nil && len(certificate.Certificate) != 0,
 			"ephemeral Pion DTLS certificate: %v", certErr)
 		clientFingerprint := sha256.Sum256(certificate.Certificate[0])
+		if badClientFingerprint {
+			/* Simulate a corrupted trusted remote SDP client fingerprint.
+			 * The actual Pion client certificate remains unchanged. */
+			clientFingerprint[0] ^= 1
+		}
 		peerArgs = append(peerArgs, "dtls",
 			hex.EncodeToString(clientFingerprint[:]))
 		if dropFirstForward {
@@ -156,6 +165,17 @@ func main() {
 			_ = secure.Close()
 			fmt.Println("PION_DTLS_WRONG_SERVER_FINGERPRINT_REJECTED")
 			return // no SCTP association, INIT, DCEP or payload admitted
+		}
+		if badClientFingerprint {
+			/* The remote OpenSSL endpoint checks the genuine Pion leaf
+			 * against a corrupted expected SHA256 pin. Its refusal may
+			 * become visible asynchronously to the DTLS client, so wait
+			 * for the EXACT native certificate-rejection marker. */
+			expect(lines, "OPENSSL_DTLS_BAD_CLIENT_FINGERPRINT_REJECTED",
+				6*time.Second)
+			_ = secure.Close()
+			fmt.Println("PION_DTLS_WRONG_CLIENT_FINGERPRINT_REJECTED")
+			return // never create SCTP on an invalid authenticated peer
 		}
 		require(err == nil && pinned,
 			"independent Pion/OpenSSL DTLS 1.2 handshake or pin: %v pinned=%t",

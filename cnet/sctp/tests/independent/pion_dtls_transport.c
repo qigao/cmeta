@@ -189,9 +189,15 @@ int pion_test_dtls_input(pion_test_dtls *t, int fd,
     }
     if (flush_ciphertext(t, fd, peer) != 0) return -1;
     if (!SSL_is_init_finished(t->ssl)) return 0;
-    if (SSL_version(t->ssl) != DTLS1_2_VERSION ||
-        !peer_fingerprint_matches(t->ssl, t->expected_client_fingerprint))
+    if (SSL_version(t->ssl) != DTLS1_2_VERSION)
       return -1;
+    if (!peer_fingerprint_matches(t->ssl, t->expected_client_fingerprint)) {
+      /* Exact certificate mismatch rather than an unrelated network error.
+       * No SCTP plaintext is admitted on this bad peer-identity path. */
+      puts("OPENSSL_DTLS_BAD_CLIENT_FINGERPRINT_REJECTED");
+      fflush(stdout);
+      return -1;
+    }
     t->accepted = 1u;
     puts("OPENSSL_DTLS_CLIENT_FINGERPRINT_MATCH");
     fflush(stdout);
