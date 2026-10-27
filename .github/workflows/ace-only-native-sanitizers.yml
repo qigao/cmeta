@@ -68,7 +68,7 @@ jobs:
           cmake --build build-instrumented-core-${{ matrix.kind }} --parallel 2
           cmake --install build-instrumented-core-${{ matrix.kind }} \
             --config RelWithDebInfo
-      - name: Install real Salts 3.0 Core-backed CMeta ACE CFlow targets
+      - name: Install sole Salts 3.0 CMeta ACE CFlow package
         shell: bash
         run: |
           set -euo pipefail

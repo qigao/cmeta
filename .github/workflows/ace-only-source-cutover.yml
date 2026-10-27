@@ -15,11 +15,13 @@ on:
       - "tools/check_ace_only_sources.py"
       - "utils/**"
       - ".github/workflows/ace-only-source-cutover.yml"
+      - ".github/workflows/ace-only-native-sanitizers.yml"
   push:
     paths:
       - "CMakeLists.txt"
       - "tools/check_ace_only_sources.py"
       - ".github/workflows/ace-only-source-cutover.yml"
+      - ".github/workflows/ace-only-native-sanitizers.yml"
   workflow_dispatch:
 permissions:
   contents: read
