@@ -39,7 +39,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: b18981b15563e587fdc6cf911eb5738c2a3f6dc5
+          ref: 90cbb9d481e9921ebc860dbb1c7773d33a43ebbb
           path: _core_owner
           persist-credentials: false
       - name: Check no duplicate native source owners
@@ -47,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/check_ace_only_sources.py
-          test "$(git -C _core_owner rev-parse HEAD)" = b18981b15563e587fdc6cf911eb5738c2a3f6dc5
+          test "$(git -C _core_owner rev-parse HEAD)" = 90cbb9d481e9921ebc860dbb1c7773d33a43ebbb
       - name: Install exact qualified native Core and test-only TinyTest
         shell: bash
         run: |
