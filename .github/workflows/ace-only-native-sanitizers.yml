@@ -112,58 +112,17 @@ jobs:
           else
             export TSAN_OPTIONS='halt_on_error=1:exitcode=66'
           fi
-          # Prevent an empty or partial conformance suite from looking green.
+          # Fail closed if a fixture/test disappears during source extraction.
           ctest --test-dir build-instrumented-parity-${{ matrix.kind }} \
-            -C RelWithDebInfo -N -R '^salts3[.]original[.][a-z0-9_]+
-            -C RelWithDebInfo --output-on-failure --no-tests=error \
-            --timeout 120 --repeat until-fail:3 \
-            -R '^salts3[.]original[.][a-z0-9_]+
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: installed-salts3-${{ matrix.kind }}-ctest
-          path: build-instrumented-parity-${{ matrix.kind }}/Testing/Temporary/LastTest.log
-          if-no-files-found: ignore
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: installed-salts3-${{ matrix.kind }}-ctest
-          path: build-instrumented-parity-${{ matrix.kind }}/Testing/Temporary/LastTest.log
-          if-no-files-found: ignore
- |
-            grep -E '^Total Tests: 13
-            -C RelWithDebInfo --output-on-failure --no-tests=error \
-            --timeout 120 --repeat until-fail:3 \
-            -R '^salts3[.]original[.][a-z0-9_]+
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: installed-salts3-${{ matrix.kind }}-ctest
-          path: build-instrumented-parity-${{ matrix.kind }}/Testing/Temporary/LastTest.log
-          if-no-files-found: ignore
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: installed-salts3-${{ matrix.kind }}-ctest
-          path: build-instrumented-parity-${{ matrix.kind }}/Testing/Temporary/LastTest.log
-          if-no-files-found: ignore
-
+            -C RelWithDebInfo -N -R '^salts3[.]original[.][a-z0-9_]+$' |
+            grep -E '^Total Tests: 13$'
           ctest --test-dir build-instrumented-parity-${{ matrix.kind }} \
             -C RelWithDebInfo --output-on-failure --no-tests=error \
             --timeout 120 --repeat until-fail:3 \
-            -R '^salts3[.]original[.][a-z0-9_]+
+            -R '^salts3[.]original[.][a-z0-9_]+$'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: installed-salts3-${{ matrix.kind }}-ctest
           path: build-instrumented-parity-${{ matrix.kind }}/Testing/Temporary/LastTest.log
-          if-no-files-found: ignore
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: installed-salts3-${{ matrix.kind }}-ctest
-          path: build-instrumented-parity-${{ matrix.kind }}/Testing/Temporary/LastTest.log
-          if-no-files-found: ignore
+          if-no-files-found: warn
