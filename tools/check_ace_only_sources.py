@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MIGRATED = (
     "platform", "concurrency", "coroutine", "native-io", "cnet",
     "unicode", "idna", "cserde", "tinytest", "asn1", "uri",
-    "vendor", "presets",
+    "vendor", "presets", "utils",
 )
 for name in MIGRATED:
     if (ROOT / name).exists():
