@@ -18,6 +18,7 @@ on:
       - "component-plugin/**"
       - "cflow/**"
   push:
+    branches: [master]
     paths:
       - ".github/workflows/ace-only-native-sanitizers.yml"
   workflow_dispatch:

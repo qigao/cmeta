@@ -17,6 +17,7 @@ on:
       - ".github/workflows/ace-only-source-cutover.yml"
       - ".github/workflows/ace-only-native-sanitizers.yml"
   push:
+    branches: [master]
     paths:
       - "CMakeLists.txt"
       - "tools/check_ace_only_sources.py"
