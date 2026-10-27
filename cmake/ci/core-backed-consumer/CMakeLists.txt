@@ -15,6 +15,11 @@ foreach(_target IN ITEMS CMeta ComponentABI PluginABI Plugin
     message(FATAL_ERROR "Real Salts 3.0 target missing: ${_target}")
   endif()
 endforeach()
+# ASN.1 belongs exclusively to the one installed static Salts::Crypto,
+# not Salts or SaltsCore. Never reintroduce a split native target.
+if(TARGET Salts::ASN1)
+  message(FATAL_ERROR "Retired Salts::ASN1 exported by Core or Salts")
+endif()
 foreach(_native IN ITEMS Core Platform Concurrency Coroutine NativeIO)
   if(NOT TARGET "Salts::${_native}")
     message(FATAL_ERROR "Missing Core Salts::${_native}")
