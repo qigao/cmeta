@@ -1,4 +1,0 @@
-#ifndef SALTS_CONCURRENCY_DISRUPTOR_SOURCE_COMPAT_H
-#define SALTS_CONCURRENCY_DISRUPTOR_SOURCE_COMPAT_H
-#include <salts/disruptor.h>
-#endif

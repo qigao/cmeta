@@ -3,7 +3,7 @@
 #include "plugin_loader_internal.h"
 
 #include <salts/thread.h>
-#include <vstr.h>
+#include <salts_core/utf8.h>
 
 #include <limits.h>
 #include <stdlib.h>
@@ -55,7 +55,7 @@ static bool bounded_utf8_path_valid(const char *path) {
         if (path[length] == '\0') {
             if (length == 0u)
                 return false;
-            return vstr_utf8_valid(vstr_from_buf(path, length)) != 0;
+            return salts_core_utf8_valid(path, length) != 0;
         }
     }
     return false;

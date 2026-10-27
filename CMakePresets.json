@@ -1,36 +1,35 @@
 {
-    "version": 6,
-    "include": [
-        "presets/BuildPresets.json",
-        "presets/TestPresets.json"
-    ],
-    "configurePresets": [
-        {
-            "name": "base-win-dev-user",
-            "hidden": true,
-            "displayName": "Developer Build (Windows, Base)",
-            "inherits": [
-                "dev-win-msvc-ninja",
-                "pkg-vcpkg"
-            ]
-        },
-        {
-            "name": "base-win-release-user",
-            "hidden": true,
-            "displayName": "Release Build (Windows, Base)",
-            "inherits": [
-                "release-win-msvc-ninja",
-                "pkg-vcpkg"
-            ]
-        },
-        {
-            "name": "base-linux-dev-user",
-            "hidden": true,
-            "displayName": "Developer Build (Linux, Base)",
-            "inherits": [
-                "dev-linux-ninja",
-                "pkg-vcpkg"
-            ]
-        }
-    ]
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "native-release",
+      "displayName": "Salts 3 / installed Core / Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}"
+      }
+    },
+    {
+      "name": "native-debug",
+      "displayName": "Salts 3 / installed Core / Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release",
+      "configurePreset": "native-release"
+    },
+    {
+      "name": "debug",
+      "configurePreset": "native-debug"
+    }
+  ]
 }
