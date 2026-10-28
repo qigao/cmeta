@@ -45,8 +45,12 @@ add_subdirectory(plugin)
 add_subdirectory(component-plugin)
 add_subdirectory(component-runtime)
 add_subdirectory(cflow)
+# CSTL is the existing CMeta-typed container owner, not a Core/native
+# provider. Build and export its one canonical source tree after CFlow so
+# SaltsUtils consumers import the actual container operations and metadata.
+add_subdirectory(cstl)
 foreach(_retained IN ITEMS CMeta ComponentABI PluginABI Plugin
-    ComponentProviderABI Configurator ServiceHost CFlow)
+    ComponentProviderABI Configurator ServiceHost CFlow CSTL CSTLStream)
   if(NOT TARGET "Salts::${_retained}")
     message(FATAL_ERROR "Missing CMeta/ACE target Salts::${_retained}")
   endif()
