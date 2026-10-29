@@ -31,6 +31,32 @@ foreach(_native IN ITEMS Core Platform Concurrency Coroutine NativeIO)
   endif()
 endforeach()
 
+get_target_property(_simd_kind Salts::SIMD TYPE)
+get_target_property(_simd_imported Salts::SIMD IMPORTED)
+if(NOT _simd_imported OR NOT _simd_kind STREQUAL "STATIC_LIBRARY")
+  message(FATAL_ERROR "Reflection consumers require the installed static SIMD module")
+endif()
+foreach(_language IN ITEMS c11 cpp17)
+  if(_language STREQUAL "c11")
+    set(_source simd_reflection.c)
+    set(_standard c_std_11)
+  else()
+    set(_source simd_reflection.cpp)
+    set(_standard cxx_std_17)
+  endif()
+  add_executable(salts3_simd_reflection_${_language} ${_source})
+  target_compile_features(salts3_simd_reflection_${_language} PRIVATE ${_standard})
+  # CMeta must propagate its one native descriptor/execution dependency.
+  target_link_libraries(salts3_simd_reflection_${_language} PRIVATE Salts::CMeta)
+  if(MSVC)
+    target_compile_options(salts3_simd_reflection_${_language} PRIVATE /W4 /WX)
+  else()
+    target_compile_options(salts3_simd_reflection_${_language} PRIVATE -Wall -Wextra -Werror)
+  endif()
+  add_test(NAME sdk.salts3.simd_reflection_${_language}
+    COMMAND salts3_simd_reflection_${_language})
+endforeach()
+
 # Only the original test provider's source is compiled here. No original
 # Salts state-machine/source/object file enters these independent consumers.
 if(NOT DEFINED SALTS_FIXTURE_ROOT OR

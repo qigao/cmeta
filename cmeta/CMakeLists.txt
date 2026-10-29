@@ -28,7 +28,7 @@ cmake_config_target(
   FOLDER "cmeta"
   EXPORT_NAME CMeta)
 
-# A static CMeta archive may be embedded by Core and multiple bridge DSOs.
+# A static CMeta archive may be embedded by upper layers and bridge DSOs.
 # Keep each image's immutable descriptors and helpers local instead of exposing
 # preemptible duplicate globals. Type compatibility is semantic, not address-based.
 # Do not apply hidden visibility to an explicitly requested shared CMeta target.
@@ -46,6 +46,10 @@ target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
+
+# Native SIMD owns the carrier and lane shapes; CMeta adds reflection only.
+# The installed static target propagates its headers and link dependencies.
+target_link_libraries(${TARGET_NAME} PUBLIC Salts::SIMD)
 
 install(
   TARGETS ${TARGET_NAME}

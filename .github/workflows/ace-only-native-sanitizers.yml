@@ -8,6 +8,7 @@ on:
       - ".github/workflows/ace-only-native-sanitizers.yml"
       - "tools/check_ace_only_sources.py"
       - "cmake/SaltsConfig.cmake.in"
+      - "cmake/ci/core-backed-consumer/**"
       - "cmake/ci/core-backed-original-tests/**"
       - "CMakeLists.txt"
       - ".github/workflows/ace-only-source-cutover.yml"
@@ -25,6 +26,11 @@ on:
 
 permissions:
   contents: read
+  packages: read
+
+concurrency:
+  group: salts3-native-sanitizers-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   salts3-native-sanitizers:
@@ -33,6 +39,7 @@ jobs:
     timeout-minutes: 40
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - kind: asan-ubsan
@@ -41,10 +48,13 @@ jobs:
             flags: "-fsanitize=thread -fno-omit-frame-pointer -g -O1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: cfc1ed0d24364689b10ef7a85cff28d8776eb7db
+          ref: 4c678e1fe3d0b9f44ea0dd1fc2d80454e43d8434
           path: _core_owner
           persist-credentials: false
       - name: Validate instrumented CTest selection is well quoted
@@ -53,18 +63,38 @@ jobs:
           set -euo pipefail
           python3 _core_owner/tools/check_ci_ctest_regex.py \
             .github/workflows/ace-only-native-sanitizers.yml
-      - name: Install one exact shared Core native owner with instrumentation
+      - name: Verified compiler output cache
+        uses: qigao/stun/.github/actions/setup-ccache@6498e9710609820da7d99a938627cc44f17f00ed
+        with:
+          profile: salts3-native-sanitizers-${{ matrix.kind }}
+          source_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Canonical vcpkg and curl-only cached Core SIMDe dependency
+        id: cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@7bb5b556a001bc82d2922a04a718e986a7f47f54
+        with:
+          token: ${{ github.token }}
+          triplet: x64-linux
+          host-triplet: x64-linux
+          manifest-root: _core_owner
+          features: simd
+      - name: Install exact shared Core owners and static SIMD with instrumentation
         shell: bash
+        env:
+          CORE_TOOLCHAIN: ${{ steps.cache.outputs.toolchain_file }}
         run: |
           set -euo pipefail
           python3 tools/check_ace_only_sources.py --core-root _core_owner
           test "$(git -C _core_owner rev-parse HEAD)" = \
-            cfc1ed0d24364689b10ef7a85cff28d8776eb7db
+            4c678e1fe3d0b9f44ea0dd1fc2d80454e43d8434
           prefix="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
           cmake -S _core_owner -B build-instrumented-core-${{ matrix.kind }} \
             -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF \
-            -DSALTSCORE_BUILD_TINYTEST=ON \
+            -DSALTSCORE_BUILD_TINYTEST=ON -DSALTSCORE_BUILD_SIMD=ON \
+            "-DCMAKE_TOOLCHAIN_FILE=$CORE_TOOLCHAIN" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux -DVCPKG_HOST_TRIPLET=x64-linux \
+            -DVCPKG_MANIFEST_FEATURES=simd \
             "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}" \
             "-DCMAKE_INSTALL_PREFIX=$prefix"
           cmake --build build-instrumented-core-${{ matrix.kind }} --parallel 2
           cmake --install build-instrumented-core-${{ matrix.kind }} \
@@ -101,6 +131,20 @@ jobs:
             "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
             "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
           cmake --build build-instrumented-parity-${{ matrix.kind }} --parallel 2
+      - name: Build installed C11 and C++17 SIMD reflection consumers
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
+          salts="$RUNNER_TEMP/salts3-asan-${{ matrix.kind }}"
+          cmake -S cmake/ci/core-backed-consumer \
+            -B build-instrumented-consumer-${{ matrix.kind }} -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            "-DSALTS_FIXTURE_ROOT=$GITHUB_WORKSPACE" \
+            "-DCMAKE_PREFIX_PATH=$salts;$core" \
+            "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
+          cmake --build build-instrumented-consumer-${{ matrix.kind }} --parallel 2
       - name: Execute full original source parity under fail-on-report sanitizers
         shell: bash
         run: |
@@ -121,9 +165,21 @@ jobs:
             -C RelWithDebInfo --output-on-failure --no-tests=error \
             --timeout 120 --repeat until-fail:3 \
             -R '^salts3[.]original[.][a-z0-9_]+$'
+          for lang in c11 cpp17; do
+            ctest --test-dir build-instrumented-consumer-${{ matrix.kind }} \
+              -C RelWithDebInfo --output-on-failure --no-tests=error \
+              --timeout 120 --repeat until-fail:3 \
+              -R "^sdk[.]salts3[.]simd_reflection_${lang}$"
+          done
+      - name: Record real compiler cache statistics
+        if: always()
+        shell: bash
+        run: ccache --show-stats
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: installed-salts3-${{ matrix.kind }}-ctest
-          path: build-instrumented-parity-${{ matrix.kind }}/Testing/Temporary/LastTest.log
+          path: |
+            build-instrumented-parity-${{ matrix.kind }}/Testing/Temporary/LastTest.log
+            build-instrumented-consumer-${{ matrix.kind }}/Testing/Temporary/LastTest.log
           if-no-files-found: warn

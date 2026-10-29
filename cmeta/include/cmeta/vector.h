@@ -2,6 +2,7 @@
 #define CMETA_VECTOR_H
 
 #include <cmeta/cmeta.h>
+#include <salts/simd_types.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -11,36 +12,13 @@
 extern "C" {
 #endif
 
-typedef enum cmeta_vector_lane_kind {
-    CMETA_VECTOR_I8 = 0,
-    CMETA_VECTOR_U8,
-    CMETA_VECTOR_I16,
-    CMETA_VECTOR_U16,
-    CMETA_VECTOR_I32,
-    CMETA_VECTOR_U32,
-    CMETA_VECTOR_I64,
-    CMETA_VECTOR_U64,
-    CMETA_VECTOR_F32,
-    CMETA_VECTOR_F64,
-    CMETA_VECTOR_BOOL
-} cmeta_vector_lane_kind;
-
-/* Neutral ABI/storage carrier.  The semantic lane interpretation lives in
- * cmeta_vector_desc; consumers must not infer it from these bytes. */
-typedef struct cmeta_v128_storage {
-#if defined(__cplusplus)
-    alignas(16) unsigned char bytes[16];
-#else
-    _Alignas(16) unsigned char bytes[16];
-#endif
-} cmeta_v128_storage;
-
+/* Reflection belongs to CMeta; the carrier and execution shape belong to
+ * Salts::SIMD. Both pointers borrow immutable metadata and must remain valid
+ * while the descriptor is used. Native shape equality is by fields, never by
+ * descriptor address across static archives or DSOs. */
 typedef struct cmeta_vector_desc {
     const cmeta_type_desc *type;
-    cmeta_vector_lane_kind lane_kind;
-    uint16_t lane_bits;
-    uint16_t lane_count;
-    bool is_mask;
+    const salts_simd_desc *native_shape;
 } cmeta_vector_desc;
 
 extern const cmeta_type_desc cmeta_type_i8x16;
