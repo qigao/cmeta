@@ -74,7 +74,7 @@ int main(void) {
     /* The type, identity, stable ID bytes and native shape have different
      * addresses. Equality and the native mapping must remain semantic. */
     SIMD_CHECK(strlen(row->stable_id) < sizeof(stable_id));
-    strcpy(stable_id, row->stable_id);
+    memcpy(stable_id, row->stable_id, strlen(row->stable_id) + 1u);
     identity = *row->reflected->type->identity;
     identity.stable_atom_id = stable_id;
     type = *row->reflected->type;

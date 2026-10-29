@@ -149,7 +149,7 @@ jobs:
           cmake --build build-original --config Release --parallel 2
           ctest --test-dir build-original \
             -C Release -N -R '^salts3[.]original[.][a-z0-9_]+$' |
-            grep -E '^Total Tests: 13$'
+            tr -d '\r' | grep -E '^Total Tests: 13$'
           ctest --test-dir build-original -C Release --no-tests=error \
             --output-on-failure --timeout 120
           python3 cmake/ci/core-backed-consumer/audit-profile.py \
