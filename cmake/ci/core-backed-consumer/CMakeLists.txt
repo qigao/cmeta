@@ -15,10 +15,15 @@ foreach(_target IN ITEMS CMeta ComponentABI PluginABI Plugin
     message(FATAL_ERROR "Real Salts 3.0 target missing: ${_target}")
   endif()
 endforeach()
-# ASN.1 belongs exclusively to the one installed static Salts::Crypto,
-# not Salts or SaltsCore. Never reintroduce a split native target.
-if(TARGET Salts::ASN1)
-  message(FATAL_ERROR "Retired Salts::ASN1 exported by Core or Salts")
+# The native Core SDK owns its first-party ASN1 codec. SaltsTargets above must
+# still export only CMeta/ACE/CFlow; it may never provide another native owner.
+if(NOT TARGET Salts::ASN1)
+  message(FATAL_ERROR "Core SDK is missing the native Salts::ASN1 owner")
+endif()
+get_target_property(_asn1_kind Salts::ASN1 TYPE)
+get_target_property(_asn1_imported Salts::ASN1 IMPORTED)
+if(NOT _asn1_imported OR NOT _asn1_kind STREQUAL "STATIC_LIBRARY")
+  message(FATAL_ERROR "Salts::ASN1 must be the imported static Core codec")
 endif()
 foreach(_native IN ITEMS Core Platform Concurrency Coroutine NativeIO)
   if(NOT TARGET "Salts::${_native}")

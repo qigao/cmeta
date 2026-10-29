@@ -54,7 +54,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: 4c678e1fe3d0b9f44ea0dd1fc2d80454e43d8434
+          ref: 910b272841d77f1b56ea703116adc1380f481ccc
           path: _core_owner
           persist-credentials: false
       - name: Check no duplicate native source owners
@@ -62,7 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/check_ace_only_sources.py --core-root _core_owner
-          test "$(git -C _core_owner rev-parse HEAD)" = 4c678e1fe3d0b9f44ea0dd1fc2d80454e43d8434
+          test "$(git -C _core_owner rev-parse HEAD)" = 910b272841d77f1b56ea703116adc1380f481ccc
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
         with:
