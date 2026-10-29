@@ -26,6 +26,10 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  packages: read
+concurrency:
+  group: salts3-source-cutover-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   installed-ace:
     name: "CMeta ACE CFlow owner and installed SDK / ${{ matrix.os }}"
@@ -33,16 +37,24 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        include:
+          - os: ubuntu-24.04
+            triplet: x64-linux
+          - os: windows-2025
+            triplet: qigao-x64-windows-v145
+          - os: macos-15
+            triplet: arm64-osx
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: cfc1ed0d24364689b10ef7a85cff28d8776eb7db
+          ref: 8d81ada096790ce3332891584abc654e753d4695
           path: _core_owner
           persist-credentials: false
       - name: Check no duplicate native source owners
@@ -50,19 +62,40 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/check_ace_only_sources.py --core-root _core_owner
-          test "$(git -C _core_owner rev-parse HEAD)" = cfc1ed0d24364689b10ef7a85cff28d8776eb7db
-      - name: Install exact qualified native Core and test-only TinyTest
+          test "$(git -C _core_owner rev-parse HEAD)" = 8d81ada096790ce3332891584abc654e753d4695
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: Verified compiler output cache
+        uses: qigao/stun/.github/actions/setup-ccache@6498e9710609820da7d99a938627cc44f17f00ed
+        with:
+          profile: salts3-source-cutover-${{ matrix.os }}
+          source_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Canonical vcpkg and curl-only cached Core SIMDe dependency
+        id: cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@7bb5b556a001bc82d2922a04a718e986a7f47f54
+        with:
+          token: ${{ github.token }}
+          triplet: ${{ matrix.triplet }}
+          host-triplet: ${{ matrix.triplet }}
+          manifest-root: _core_owner
+          features: simd
+      - name: Install exact qualified native Core, static SIMD and test-only TinyTest
         shell: bash
+        env:
+          CORE_TOOLCHAIN: ${{ steps.cache.outputs.toolchain_file }}
         run: |
           set -euo pipefail
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            generator=(-G 'Visual Studio 18 2026' -A x64)
-          else
-            generator=(-G Ninja)
-          fi
-          cmake -S _core_owner -B build-core "${generator[@]}" \
+          cmake -S _core_owner -B build-core -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
-            -DSALTSCORE_BUILD_TINYTEST=ON \
+            -DSALTSCORE_BUILD_TINYTEST=ON -DSALTSCORE_BUILD_SIMD=ON \
+            "-DCMAKE_TOOLCHAIN_FILE=$CORE_TOOLCHAIN" \
+            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} \
+            -DVCPKG_HOST_TRIPLET=${{ matrix.triplet }} \
+            -DVCPKG_MANIFEST_FEATURES=simd \
+            -DCMAKE_POLICY_DEFAULT_CMP0141=NEW \
+            -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded \
             "-DCMAKE_INSTALL_PREFIX=$RUNNER_TEMP/core-sdk"
           cmake --build build-core --config Release --parallel 2
           cmake --install build-core --config Release
@@ -70,14 +103,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            generator=(-G 'Visual Studio 18 2026' -A x64)
-          else
-            generator=(-G Ninja)
-          fi
-          cmake -S . -B build-salts "${generator[@]}" \
+          cmake -S . -B build-salts -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF \
             -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_POLICY_DEFAULT_CMP0141=NEW \
+            -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded \
             "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/core-sdk" \
             "-DCMAKE_INSTALL_PREFIX=$RUNNER_TEMP/ace-sdk"
           cmake --build build-salts --config Release --parallel 2
@@ -88,35 +118,48 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$RUNNER_OS" == Windows ]]; then
-            generator=(-G 'Visual Studio 18 2026' -A x64)
             export PATH="$(cygpath -u "$RUNNER_TEMP/ace-sdk")/bin:$(cygpath -u "$RUNNER_TEMP/core-sdk")/bin:$PATH"
           elif [[ "$RUNNER_OS" == macOS ]]; then
-            generator=(-G Ninja)
             export DYLD_LIBRARY_PATH="$RUNNER_TEMP/core-sdk/lib:${DYLD_LIBRARY_PATH:-}"
           else
-            generator=(-G Ninja)
             export LD_LIBRARY_PATH="$RUNNER_TEMP/core-sdk/lib:${LD_LIBRARY_PATH:-}"
           fi
-          if cmake -S cmake/ci/core-backed-legacy-rejection -B reject-salts23 "${generator[@]}" \
+          if cmake -S cmake/ci/core-backed-legacy-rejection -B reject-salts23 -G Ninja \
               "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/ace-sdk;$RUNNER_TEMP/core-sdk"; then
             echo "Salts 2.3 falsely admitted against 3.0" >&2; exit 1
           fi
-          cmake -S cmake/ci/core-backed-consumer -B build-installed "${generator[@]}" \
+          cmake -S cmake/ci/core-backed-consumer -B build-installed -G Ninja \
             -DCMAKE_BUILD_TYPE=Release "-DSALTS_FIXTURE_ROOT=$GITHUB_WORKSPACE" \
+            -DCMAKE_POLICY_DEFAULT_CMP0141=NEW \
+            -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded \
             "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/ace-sdk;$RUNNER_TEMP/core-sdk"
           cmake --build build-installed --config Release --parallel 2
+          for lang in c11 cpp17; do
+            ctest --test-dir build-installed -C Release --no-tests=error \
+              --output-on-failure --timeout 120 \
+              -R "^sdk[.]salts3[.]simd_reflection_${lang}$"
+          done
           ctest --test-dir build-installed -C Release --no-tests=error \
             --output-on-failure --timeout 120
-          cmake -S cmake/ci/core-backed-original-tests -B build-original "${generator[@]}" \
+          cmake -S cmake/ci/core-backed-original-tests -B build-original -G Ninja \
             -DCMAKE_BUILD_TYPE=Release "-DSALTS_SOURCE_ROOT=$GITHUB_WORKSPACE" \
+            -DCMAKE_POLICY_DEFAULT_CMP0141=NEW \
+            -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded \
             "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/ace-sdk;$RUNNER_TEMP/core-sdk"
           cmake --build build-original --config Release --parallel 2
+          ctest --test-dir build-original \
+            -C Release -N -R '^salts3[.]original[.][a-z0-9_]+$' |
+            grep -E '^Total Tests: 13$'
           ctest --test-dir build-original -C Release --no-tests=error \
             --output-on-failure --timeout 120
           python3 cmake/ci/core-backed-consumer/audit-profile.py \
             --core-tools _core_owner/tools \
             --core-prefix "$RUNNER_TEMP/core-sdk" --salts-prefix "$RUNNER_TEMP/ace-sdk" \
             --build-dir build-installed --report build-installed/ace-one-owner-audit.json
+      - name: Record real compiler cache statistics
+        if: always()
+        shell: bash
+        run: ccache --show-stats
       - if: always()
         uses: actions/upload-artifact@v4
         with:

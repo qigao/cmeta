@@ -36,6 +36,16 @@ foreach(_owner IN ITEMS Core Platform Concurrency Coroutine NativeIO)
   endif()
 endforeach()
 
+# Numeric execution and lane shapes belong to the installed static Core module.
+if(NOT TARGET Salts::SIMD)
+  message(FATAL_ERROR "Missing installed static Salts::SIMD from SaltsCore")
+endif()
+get_target_property(_simd_kind Salts::SIMD TYPE)
+get_target_property(_simd_imported Salts::SIMD IMPORTED)
+if(NOT _simd_imported OR NOT _simd_kind STREQUAL "STATIC_LIBRARY")
+  message(FATAL_ERROR "Salts::SIMD must be the imported STATIC Core module")
+endif()
+
 # Only reflected CMeta, ACE/Component, Configurator/ServiceHost and CFlow.
 # All native CNet, FS, Process, Unicode, IDNA, CSerde, ASN1 and Crypto
 # implementations must belong to their appropriate Core/Crypto repositories.
