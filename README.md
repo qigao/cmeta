@@ -86,10 +86,10 @@ The matrix executes natively on Linux, macOS and Windows, each on x64 and
 ARM64. ASan/UBSan/LSan and TSan use instrumented Clang builds of both owners.
 A cross-compiled artifact alone does not qualify a native runtime.
 
-Compiler setup currently pins `qigao/vcpkg-cache` Draft #244 at
-`971d5d11325d01edef423e1d039afaec0409b2fe`, because these actions are not on
-its master branch yet. This is a source qualification dependency, not a
-protected release or published SDK. No vcpkg dependency graph is needed here.
+Compiler setup uses `qigao/vcpkg-cache@master` after #244 merged. Both Core
+and CMeta use the same selected compiler. The exact Core source is pinned to
+the native DLL-export and scheduler-TLS fix from Core #135; native runtime
+qualification and SDK publication remain separate.
 MSVC and llvm-mingw artifacts/caches are distinct compiler/CRT ABIs and must
 never be relabeled or reused across toolchains.
 

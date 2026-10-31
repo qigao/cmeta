@@ -56,17 +56,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: cfc1ed0d24364689b10ef7a85cff28d8776eb7db
+          ref: 287c30db125e1ada12d51bd17ba36cddd8302305
           path: _core_owner
           persist-credentials: false
-      # These compiler actions are currently a Draft #244 dependency, not on
-      # vcpkg-cache master. Pin the same action revision for every platform.
+      # Shared compiler setup is available on vcpkg-cache master (#244 merged).
       - name: Select runner-native LLVM
         if: runner.os != 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@971d5d11325d01edef423e1d039afaec0409b2fe
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@master
       - name: Select llvm-mingw UCRT
         if: runner.os == 'Windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@971d5d11325d01edef423e1d039afaec0409b2fe
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@master
         with:
           target: ${{ matrix.arch }}
           version: "20261020"
@@ -83,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/check_ace_only_sources.py --core-root _core_owner
-          test "$(git -C _core_owner rev-parse HEAD)" = cfc1ed0d24364689b10ef7a85cff28d8776eb7db
+          test "$(git -C _core_owner rev-parse HEAD)" = 287c30db125e1ada12d51bd17ba36cddd8302305
       - name: Install exact qualified native Core and test-only TinyTest
         shell: bash
         run: |
