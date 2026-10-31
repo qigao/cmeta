@@ -33,7 +33,8 @@
   default Unix-style `lib` prefix. CMeta applies the same top-level policy to
   its own provider/plugin DLLs. Keep the ABI audit fail-closed rather than
   accepting compiler-dependent filenames.
-- Protected macOS arm64 Release compilation exceeded 150 minutes at Ninja
-  parallelism 2 without a compiler or test failure. The release matrix uses
-  parallelism 3 for that RID and a 240-minute fail-closed timeout; do not
-  disable obfuscation or omit targets to hide the throughput cost.
+- Protected macOS arm64 Release compilation exceeded both 150 and 240 minutes
+  because every test executable inherited the product-wide obfuscator. Keep
+  the installed Release SDK graph fail-closed and protected, but qualify the
+  same source with a separate LLVM Debug test graph (full build, CTest, and ABI
+  owner audit); do not ship or attest the unprotected test graph as the SDK.
