@@ -1,7 +1,9 @@
 # Salts repository instructions
 
-Salts is exclusively the **CMeta / ACE / Component Runtime / CFlow**
-repository. New OS, concurrency, coroutine, transport, Unicode/IDNA, native
+Salts focuses on **CMeta / ACE**. Its component runtime implements
+Configurator/ServiceHost/Plugin composition; CFlow supplies accompanying
+CMeta-based execution integrations. New OS, concurrency, coroutine,
+transport, Unicode/IDNA, native
 FS/Process implementations belong to **qigao/salts-core**;
 cryptographic code and ASN.1 belong to **qigao/crypto**. Source ownership is singular.
 
