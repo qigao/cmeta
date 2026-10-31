@@ -177,13 +177,11 @@ jobs:
           admit_clang "$CMETA_BINARY_DIR"
           if [[ '${{ matrix.family }}' == android ]]; then
             admit_android_abi() {
-              if ! grep -R -Fq \
-                  'set(CMAKE_ANDROID_ARCH_ABI "${{ matrix.android_abi }}")' \
-                  "$1/CMakeFiles"; then
+              if ! grep -Eq \
+                  '^ANDROID_ABI:[^=]+=${{ matrix.android_abi }}$' \
+                  "$1/CMakeCache.txt"; then
                 grep -E '^(ANDROID_ABI|CMAKE_ANDROID_ARCH_ABI):' \
                   "$1/CMakeCache.txt" || true
-                grep -R -n -E 'CMAKE_ANDROID_ARCH_ABI|ANDROID_ABI' \
-                  "$1/CMakeFiles" | head -40 || true
                 return 1
               fi
             }
