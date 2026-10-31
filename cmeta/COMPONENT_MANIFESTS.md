@@ -137,7 +137,7 @@ Provider DSOs, generated bindings and downstream libraries must be rebuilt from
 one matching SDK. There are no compatibility headers, type aliases, old runtime
 symbols or previous Provider contract fallback.
 
-Use `find_package(CMeta 4 CONFIG REQUIRED)` for the installed SDK. The library
+Use `find_package(CMeta CONFIG REQUIRED)` for the installed SDK. The library
 exports ABI version/layout functions and `salts_service_host_abi_v2_0_required()`;
 matching target names alone do not establish header/archive compatibility.
 

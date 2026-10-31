@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 project(cflow_ace_actor_installed_consumer LANGUAGES C CXX)
 
-if(NOT DEFINED SALTS_TEST_PREFIX OR NOT DEFINED SALTS_TEST_VERSION)
-  message(FATAL_ERROR "installed SDK prefix and expected version required")
+if(NOT DEFINED SALTS_TEST_PREFIX)
+  message(FATAL_ERROR "installed CMeta prefix required")
 endif()
 
 # Installed CFlow and transitive CMeta only: no source-tree includes, no
 # implicit Plugin runtime and no alternate stable SDK/fallback.
-find_package(CMeta ${SALTS_TEST_VERSION} EXACT CONFIG REQUIRED
+find_package(CMeta CONFIG REQUIRED
   PATHS "${SALTS_TEST_PREFIX}" NO_DEFAULT_PATH)
 if(NOT TARGET CMeta::CFlow)
   message(FATAL_ERROR "installed package is missing CMeta::CFlow")

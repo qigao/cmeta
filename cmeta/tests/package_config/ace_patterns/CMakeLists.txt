@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(cmeta_ace_patterns_installed LANGUAGES C CXX)
-if(NOT DEFINED SALTS_TEST_PREFIX OR NOT DEFINED SALTS_TEST_VERSION)
-  message(FATAL_ERROR "exact installed Salts prefix/version required")
+if(NOT DEFINED SALTS_TEST_PREFIX)
+  message(FATAL_ERROR "installed CMeta prefix required")
 endif()
-find_package(CMeta ${SALTS_TEST_VERSION} EXACT CONFIG REQUIRED
+find_package(CMeta CONFIG REQUIRED
   PATHS "${SALTS_TEST_PREFIX}" NO_DEFAULT_PATH)
 foreach(target IN ITEMS CMeta::CMeta Salts::NativeIO Salts::Platform)
   if(NOT TARGET "${target}")

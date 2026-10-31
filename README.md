@@ -45,7 +45,7 @@ cmake --build build --parallel
 cmake --install build --prefix /path/to/installed/cmeta
 ```
 
-Consumers use `find_package(CMeta 4 CONFIG REQUIRED)` and link the
+Consumers use `find_package(CMeta CONFIG REQUIRED)` and link the
 canonical `CMeta::CMeta`, `CMeta::CFlow` and other listed targets.
 There is no 2.x build configuration or native implementation bundled here.
 
@@ -93,7 +93,7 @@ qualification and SDK publication remain separate.
 MSVC and llvm-mingw artifacts/caches are distinct compiler/CRT ABIs and must
 never be relabeled or reused across toolchains.
 
-The package entry is `find_package(CMeta 4 CONFIG REQUIRED)` with no `Salts`
+The package entry is `find_package(CMeta CONFIG REQUIRED)` with no `Salts`
 package/target aliases. Its NuGet metadata is `CMeta.Native`; publication is
 not enabled. The GitHub repository rename to `qigao/cmeta` is a separate manual
 operation. Existing `salts_*` C symbols, Provider identifiers and `salts/`

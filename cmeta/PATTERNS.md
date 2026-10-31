@@ -239,7 +239,7 @@ borrowed Strategy/provider storage outlives Actor destruction. No new
 
 An independent installed consumer in
 `cflow/tests/package_config/ace_actor` also builds through
-`find_package(CMeta ... EXACT CONFIG REQUIRED)` and links only
+`find_package(CMeta CONFIG REQUIRED)` and links only
 `CMeta::CFlow`. Its executable creates a real Actor from installed headers,
 invokes reflected CMeta producer/Strategy methods, observes one terminal
 message and safely drains/destroys the Actor. This is run through the shared
@@ -270,7 +270,7 @@ The installed-SDK CMake consumer under
 `cflow/tests/package_config/ace_actor/pipes.c` compiles and executes the
 same public FILTER → MAP, Subscriber, demand/cancel and bounded Channel APIs
 against one exact installed `CMeta::CFlow`. It shares the existing out-of-tree
-`find_package(CMeta ... EXACT)` and SDK install test with the ACE Actor
+`find_package(CMeta CONFIG REQUIRED)` and SDK install test with the ACE Actor
 consumer; no second packaging workflow or fallback SDK is introduced.
 
 ### ACE Half-Sync/Half-Async over CNet and CFlow
@@ -308,7 +308,7 @@ The independent installed SDK consumer
 `cflow/tests/package_config/ace_actor/half_sync.c` additionally exercises
 public CNet TCP receive callbacks feeding the fixed-capacity CFlow Channel,
 then an explicit-demand Subscription using a canonical Subscriber. It links
-only exported `Salts::CFlowCNet` after exact `find_package(CMeta ... EXACT)`
+only exported `Salts::CFlowCNet` after `find_package(CMeta CONFIG REQUIRED)`
 and shares the same out-of-tree install verification harness as the ACE Actor
 and Pipes/Filters consumers; no separate packaging workflow is added.
 

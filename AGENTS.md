@@ -7,7 +7,8 @@ transport, Unicode/IDNA, native
 FS/Process implementations belong to **qigao/salts-core**;
 cryptographic code and ASN.1 belong to **qigao/crypto**. Source ownership is singular.
 
-- This package exports only `CMeta::XXX` through `find_package(CMeta 4 CONFIG REQUIRED)`.
+- This package exports only `CMeta::XXX` through `find_package(CMeta CONFIG REQUIRED)`.
+  Do not add a version or EXACT to CMeta package lookups.
   Core, Crypto and Utils retain their own `Salts::XXX` targets; do not rename
   dependency-owned exports.
 - No legacy interface, compatibility shim, alias, fallback, provider DSO
@@ -28,7 +29,7 @@ do not restore those implementation trees or make CMeta depend on Utils.
 
 This repository owns CMeta, CSTL reflected integrations, CFlow, ACE-style
 Component/Plugin/Configurator, interceptors, scoped resources and
-ServiceHost only. Core's `include/vstr.h` is a pure C11 borrowed view:
+ServiceHost only. Core's `core/include/vstr.h` is a pure C11 borrowed view:
 do not reintroduce `CMETA_STRUCT`, a reflected compatibility type or a
 second `vstr` library here.
 

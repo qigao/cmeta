@@ -10,7 +10,7 @@ or arm64. Each prefix contains headers, libraries and
 `lib/cmake/CMeta/CMetaConfig.cmake`. Consumers use:
 
 ```cmake
-find_package(CMeta 4 CONFIG REQUIRED)
+find_package(CMeta CONFIG REQUIRED)
 target_link_libraries(my_host PRIVATE CMeta::ACE)
 target_link_libraries(my_provider PRIVATE CMeta::Provider)
 ```

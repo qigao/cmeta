@@ -103,7 +103,7 @@ Rebuild the host, every generated binding and all native providers against one
 matching Salts 4.0 SDK:
 
 ```cmake
-find_package(CMeta 4 CONFIG REQUIRED)
+find_package(CMeta CONFIG REQUIRED)
 target_link_libraries(my_host PRIVATE CMeta::ACE)
 ```
 
