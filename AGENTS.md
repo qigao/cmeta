@@ -2,8 +2,8 @@
 
 Salts is exclusively the **CMeta / ACE / Component Runtime / CFlow**
 repository. New OS, concurrency, coroutine, transport, Unicode/IDNA, native
-FS/Process and ASN.1 implementations belong to **qigao/salts-core**;
-cryptographic code belongs to **qigao/crypto**. Source ownership is singular.
+FS/Process implementations belong to **qigao/salts-core**;
+cryptographic code and ASN.1 belong to **qigao/crypto**. Source ownership is singular.
 
 - Every public CMake link target is `Salts::XXX`, irrespective of repository.
 - No legacy interface, compatibility shim, alias, fallback, provider DSO

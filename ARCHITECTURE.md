@@ -2,22 +2,33 @@
 
 The Salts repository implements **only the CMeta/ACE/CFlow layer**.
 
-```text
-Applications / services (Flowie, CHttp, TurboDB, TurboAgent, ...)
-                 |
-Salts 4: CMeta + Plugin + Component/Configurator + ServiceHost + CFlow
-                 |
-SaltsCore: Core + Platform + Concurrency + Coroutine + NativeIO
-           + CNet/SCTP/URI + Unicode/IDNA + ASN1/CSerde/TinyTest
-                 |
-Crypto: one Salts::Crypto STATIC archive containing pinned GmSSL
+```mermaid
+flowchart TD
+    app["Applications and services"]
+    utils["SaltsUtils: utilities, TinyMock, SIMD"]
+    salts["Salts 4: CMeta, Configurator, ServiceHost, CFlow"]
+    core["SaltsCore: native runtime, I/O, TinyTest"]
+    crypto["Crypto: static algorithms, ASN.1, TLS"]
+    app --> utils
+    app --> salts
+    utils --> salts
+    utils --> core
+    utils --> crypto
+    salts --> core
 ```
 
 CMeta/ACE owns type metadata, interfaces, resource scopes, reflection,
 interceptors, service construction, component activation and plugin leases.
 CFlow owns actor, reactive, DAG and state machine semantics. NativeIO owner,
 TCP/UDP/KCP/SCTP transport and system I/O belong to **salts-core**;
-cryptographic algorithms and TLS/X.509 belong only to **crypto**.
+cryptographic algorithms, ASN.1 BER/DER and TLS/X.509 belong only to **crypto**.
+TinyMock behavior state and descriptor-driven SIMD execution belong to
+**salts-utils**; vector/mask reflection metadata remains in CMeta and TinyTest
+remains in Core. Neither foundation depends on Utils.
+
+The diagram describes dependency ownership, not package release admission.
+Salts #1332/#1333 are merged; the Utils destination remains Draft #732 and its
+complete SDK build is blocked. See the [current integration status](README.md#merged-source-and-remaining-sdk-gates--2026-10-31).
 
 ## Invariants
 
