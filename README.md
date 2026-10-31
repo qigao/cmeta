@@ -49,8 +49,9 @@ Consumers use `find_package(Salts 4 CONFIG REQUIRED)` and link the
 canonical `Salts::CMeta`, `Salts::CFlow` and other listed targets.
 There is no 2.x build configuration or native implementation bundled here.
 
-The existing native CI builds the production graph and runs its original
-C11/C++17, real Provider DSO, generation/publication and CFlow tests directly.
+The native CI uses LLVM Clang on Ubuntu to build the production graph and run
+its original C11/C++17, real Provider DSO, generation/publication and CFlow
+tests directly. The sanitizer and Lean jobs use the same LLVM compiler family.
 Use `-DBUILD_TESTING=OFF` for a package-only build. Test builds require the
 installed Core TinyTest target. There are no separate consumer/probe projects.
 
