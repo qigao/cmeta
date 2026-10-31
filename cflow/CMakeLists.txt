@@ -140,7 +140,7 @@ unset(_salts_owner_type)
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS Salts::CFlow
+  ALIAS CMeta::CFlow
   FOLDER "cflow"
   EXPORT_NAME CFlow
   VERSION ${CFLOW_LIBRARY_VERSION}
@@ -171,7 +171,7 @@ target_include_directories(
 # CFlow remains independent of CNet; no CNet-to-Actor integration target.
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC Salts::CMeta Salts::NativeIO Salts::Platform
+  PUBLIC CMeta::CMeta Salts::NativeIO Salts::Platform
   PRIVATE Salts::Concurrency)
 
 install(

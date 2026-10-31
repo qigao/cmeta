@@ -22,7 +22,7 @@ Select the prefix matching the target OS, CPU and ABI, add it to
 
 ```cmake
 find_package(Salts 0.1 CONFIG REQUIRED)
-target_link_libraries(my_host PRIVATE Salts::CMeta Salts::ServiceHost)
+target_link_libraries(my_host PRIVATE CMeta::CMeta CMeta::ServiceHost)
 ```
 
 Windows payloads use llvm-mingw with UCRT and are not ABI-compatible with

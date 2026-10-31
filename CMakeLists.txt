@@ -53,8 +53,8 @@ if(BUILD_TESTING)
 endif()
 foreach(_retained IN ITEMS CMeta ConfiguratorABI PluginABI Plugin
     ServiceHostProviderABI Configurator ServiceHost CFlow)
-  if(NOT TARGET "Salts::${_retained}")
-    message(FATAL_ERROR "Missing CMeta/ACE target Salts::${_retained}")
+  if(NOT TARGET "CMeta::${_retained}")
+    message(FATAL_ERROR "Missing repository target CMeta::${_retained}")
   endif()
 endforeach()
 configure_package_config_file(
@@ -69,7 +69,7 @@ install(FILES
   "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/Salts")
 export(EXPORT SaltsTargets
-  FILE "${CMAKE_BINARY_DIR}/SaltsTargets.cmake" NAMESPACE Salts::)
+  FILE "${CMAKE_BINARY_DIR}/SaltsTargets.cmake" NAMESPACE CMeta::)
 install(EXPORT SaltsTargets
-  FILE SaltsTargets.cmake NAMESPACE Salts::
+  FILE SaltsTargets.cmake NAMESPACE CMeta::
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/Salts")

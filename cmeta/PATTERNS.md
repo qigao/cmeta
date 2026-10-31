@@ -42,11 +42,11 @@ pattern authoring
 Runtime mechanism remains with its existing owner.
 
 The current canonical runtime consumer is the ACE-style Configurator /
-ServiceHost composition: `Salts::Configurator` owns the static graph and
-`Salts::ServiceHost` owns published generations, Scope admission/drain and
-Plugin lease settlement. `Salts::Plugin` remains the sole dynamic loader and
+ServiceHost composition: `CMeta::Configurator` owns the static graph and
+`CMeta::ServiceHost` owns published generations, Scope admission/drain and
+Plugin lease settlement. `CMeta::Plugin` remains the sole dynamic loader and
 unload authority. The installed lifecycle targets are
-`Salts::Configurator` and `Salts::ServiceHost`. CHttp, TurboFlow and
+`CMeta::Configurator` and `CMeta::ServiceHost`. CHttp, TurboFlow and
 TurboSCXML remain downstream conformance profiles, not sources of
 consumer-private component semantics.
 
@@ -181,7 +181,7 @@ stable component/provider identity
 It does not load modules, resolve dependencies, select providers, own leases, or
 advance lifecycle.
 
-This metadata is the canonical component/provider capability declaration. Dynamic module publication and lease ownership remain under `Salts::Plugin`. There is no second static Plugin declaration vocabulary in the 2.3.0 candidate.
+This metadata is the canonical component/provider capability declaration. Dynamic module publication and lease ownership remain under `CMeta::Plugin`. There is no second static Plugin declaration vocabulary in the 2.3.0 candidate.
 
 ## Patterns that do not belong in CMeta runtime
 
@@ -196,8 +196,8 @@ mechanism remains outside CMeta:
 | Message Queue | Concurrency / Actor / CFlow |
 | Half-Sync/Half-Async | domain runtime + bounded handoff |
 | Streams execution | CFlow / domain runtime |
-| Plugin module lifecycle | Salts::Plugin |
-| Component resolution/lifecycle graph | Salts::Configurator |
+| Plugin module lifecycle | CMeta::Plugin |
+| Component resolution/lifecycle graph | CMeta::Configurator |
 
 CMeta may describe typed policies, messages, interfaces, factories and
 lifecycle contracts for these mechanisms.
@@ -305,7 +305,7 @@ queue is introduced.
 feeding the fixed-capacity CFlow Channel, then an explicit-demand Subscription
 using a canonical Subscriber. Standalone installed consumer projects and
 their CI are forbidden; external downstream qualification uses the published
-`Salts::CFlowCNet` SDK outside this repository.
+`CMeta::CFlowCNet` SDK outside this repository.
 
 ## Admission test for a new pattern helper
 
@@ -332,15 +332,15 @@ Interface / Function / Object / Lifecycle / Manifest
              provides / requires
                         |
                         v
-              Salts::Configurator
+              CMeta::Configurator
              resolver / lifecycle graph
                         |
                         v
-            Salts::ServiceHost
+            CMeta::ServiceHost
                 generation scopes
                         |
                         v
-                 Salts::Plugin
+                 CMeta::Plugin
 ```
 
 The Configurator adds only the runtime semantics not already owned by

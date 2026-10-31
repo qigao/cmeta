@@ -7,7 +7,7 @@ mechanism. The immutable `v2.3.0-rc.15` binary is not retroactively repaired.
 
 ## Single execution owner; image-local static metadata
 
-When `Salts::CSTL` and `Salts::CFlow` are static archives, their reflected
+When `CMeta::CSTL` and `CMeta::CFlow` are static archives, their reflected
 CMeta descriptor objects are **private to the image that embeds the archive**.
 The compiler and linker must not export their data symbols from an unrelated
 `libsalts`, `libcnet`, CHttp Client/Server, or Provider DSO. This is the

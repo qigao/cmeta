@@ -10,11 +10,11 @@ ASN.1 belong to the Crypto repository.
 
 The installed package exports:
 
-- `Salts::CMeta`
-- `Salts::ConfiguratorABI` and `Salts::Configurator`
-- `Salts::PluginABI` and `Salts::Plugin`
-- `Salts::ServiceHostProviderABI` and `Salts::ServiceHost`
-- `Salts::CFlow`
+- `CMeta::CMeta`
+- `CMeta::ConfiguratorABI` and `CMeta::Configurator`
+- `CMeta::PluginABI` and `CMeta::Plugin`
+- `CMeta::ServiceHostProviderABI` and `CMeta::ServiceHost`
+- `CMeta::CFlow`
 
 SaltsCore supplies the imported shared owners `Salts::Core`,
 `Salts::Platform`, `Salts::Concurrency`, `Salts::Coroutine` and
@@ -38,7 +38,7 @@ Consumers select the combined installed prefix and link the canonical targets:
 
 ```cmake
 find_package(Salts 0.1 CONFIG REQUIRED)
-target_link_libraries(my_host PRIVATE Salts::CMeta Salts::ServiceHost)
+target_link_libraries(my_host PRIVATE CMeta::CMeta CMeta::ServiceHost)
 ```
 
 Configurator and ServiceHost retain native ABI epoch 2.0, Provider contract v2

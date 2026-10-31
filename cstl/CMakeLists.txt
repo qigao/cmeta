@@ -36,7 +36,7 @@ unset(_salts_owner_type)
 cmake_config_target(
   ${TARGET_NAME}
   VERSION "${PROJECT_VERSION}" SOVERSION "${SALTS_NATIVE_SOVERSION}"
-  ALIAS Salts::CSTL
+  ALIAS CMeta::CSTL
   FOLDER "cstl"
   EXPORT_NAME CSTL)
 
@@ -46,19 +46,19 @@ target_include_directories(
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
-target_link_libraries(${TARGET_NAME} PUBLIC Salts::CMeta)
+target_link_libraries(${TARGET_NAME} PUBLIC CMeta::CMeta)
 
 add_library(cmeta_cstl_stream
   src/cflow_backend.c)
 cmake_config_target(
   cmeta_cstl_stream
   VERSION "${PROJECT_VERSION}" SOVERSION "${SALTS_NATIVE_SOVERSION}"
-  ALIAS Salts::CSTLStream
+  ALIAS CMeta::CSTLStream
   FOLDER "cstl"
   EXPORT_NAME CSTLStream)
 target_link_libraries(
   cmeta_cstl_stream
-  PUBLIC Salts::CSTL Salts::CFlow)
+  PUBLIC CMeta::CSTL CMeta::CFlow)
 target_compile_features(cmeta_cstl_stream PUBLIC c_std_11)
 
 install(

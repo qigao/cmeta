@@ -14,7 +14,7 @@ extern "C" {
 #endif
 
 /*
- * Salts::Plugin supports exactly one current ABI.
+ * CMeta::Plugin supports exactly one current ABI.
  *
  * The version is an exact admission epoch, not a compatibility range. Hosts do
  * not negotiate or retry older layouts. It covers this publication layout and
@@ -151,7 +151,7 @@ typedef struct cmeta_plugin_export {
 /*
  * Immutable plugin manifest returned by CMETA_PLUGIN_QUERY_SYMBOL.
  *
- * Salts::Plugin accepts only the exact current layout and ABI epoch. There is
+ * CMeta::Plugin accepts only the exact current layout and ABI epoch. There is
  * no readable-prefix compatibility, tail compatibility, ABI negotiation or
  * fallback.
  */

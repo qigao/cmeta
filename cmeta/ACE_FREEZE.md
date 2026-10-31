@@ -23,10 +23,10 @@ remains **DO NOT MERGE. DO NOT PUBLISH.** Feature freeze is **not** 2.3.0
 native SDK, downstream or stable release qualification.
 
 **Current ownership mapping:** the graph below uses the current public owner
-names for the corresponding responsibilities. `Salts::Configurator` owns static
-graph resolution and activation; `Salts::ServiceHost` owns generation
+names for the corresponding responsibilities. `CMeta::Configurator` owns static
+graph resolution and activation; `CMeta::ServiceHost` owns generation
 publication, Scope admission and drain, and Plugin lease settlement.
-`Salts::Plugin` remains the sole DSO loader and unload authority. Frozen test
+`CMeta::Plugin` remains the sole DSO loader and unload authority. Frozen test
 names and run links below apply to their historical source only. They do not
 qualify the current Salts 4.0 / ABI 2.0 implementation.
 
@@ -34,11 +34,11 @@ qualify the current Salts 4.0 / ABI 2.0 implementation.
 CMeta: immutable Type / Interface / FunctionAbi / DataDesc / ObjectRef /
        Lifecycle / Manifest / typed macro + inline declarations
     |
-    +--> Salts::Configurator: bounded static selection, graph/lifecycle
+    +--> CMeta::Configurator: bounded static selection, graph/lifecycle
     |        |
-    |        +--> Salts::ServiceHost: generation publication + scope admission
+    |        +--> CMeta::ServiceHost: generation publication + scope admission
     |                    |
-    |                    +--> Salts::Plugin: sole DSO load/unload + module lease
+    |                    +--> CMeta::Plugin: sole DSO load/unload + module lease
     |
     +--> CNet / NativeIO: transport, accept/connect, Reactor/Proactor owner
     |

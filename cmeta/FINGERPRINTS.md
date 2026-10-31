@@ -1,6 +1,6 @@
 # Canonical contract fingerprint（#926）
 
-`<cmeta/fingerprint.h>` 的 `cmeta_contract_fingerprint_*()` 直接消费 canonical type、Struct、enum domain、FunctionAbi、interface 和 Component descriptor，链接 `Salts::CMeta`。每个查询返回 `cmeta_status`，只在成功时写入 `uint64_t *out`。这是控制面投影，没有 runtime registry、动态分配、对象 callback 或模块 retain/release。
+`<cmeta/fingerprint.h>` 的 `cmeta_contract_fingerprint_*()` 直接消费 canonical type、Struct、enum domain、FunctionAbi、interface 和 Component descriptor，链接 `CMeta::CMeta`。每个查询返回 `cmeta_status`，只在成功时写入 `uint64_t *out`。这是控制面投影，没有 runtime registry、动态分配、对象 callback 或模块 retain/release。
 
 原 `CMETA_ABI_FINGERPRINT_VERSION = 1` builder 与 `cmeta_abi_fingerprint_type()` 的输出保留，包括旧 type query 的名字参与方式。新 projection 使用独立 domain 和 `CMETA_CONTRACT_FINGERPRINT_VERSION = 1`，不隐式升级既有 fingerprint。
 

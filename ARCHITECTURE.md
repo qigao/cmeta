@@ -37,7 +37,8 @@ complete SDK build is blocked. See the [current integration status](README.md#me
 
 ## Invariants
 
-1. Each exported target is **`Salts::Name`** regardless of owning package.
+1. This repository exports **`CMeta::Name`** targets. Imported native owners
+   from SaltsCore retain **`Salts::Name`**.
 2. Salts imports a clean, installed **shared SaltsCore** and never links or
    compiles a second copy of native state.
 3. No package aliases, 2.x fallback build, retained native implementation

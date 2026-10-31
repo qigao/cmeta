@@ -7,7 +7,8 @@ transport, Unicode/IDNA, native
 FS/Process implementations belong to **qigao/salts-core**;
 cryptographic code and ASN.1 belong to **qigao/crypto**. Source ownership is singular.
 
-- Every public CMake link target is `Salts::XXX`, irrespective of repository.
+- Repository-owned public CMake targets use `CMeta::XXX`; imported native
+  owners from qigao/salts-core keep their canonical `Salts::XXX` names.
 - No legacy interface, compatibility shim, alias, fallback, provider DSO
   for Crypto, copied native implementation or alternate build profile.
 - No CMeta dependency is permitted inside the Core/Crypto repositories.

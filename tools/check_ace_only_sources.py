@@ -43,6 +43,8 @@ for line in cmake.splitlines():
         raise SystemExit(f"Native implementation compiled by Salts: {line}")
 if "SALTS_CORE_BACKED_PROFILE" in cmake or "GmSSL::" in cmake or "SaltsCore::" in cmake:
     raise SystemExit("Compatibility namespace or second native source owner")
+if "NAMESPACE CMeta::" not in cmake or "NAMESPACE Salts::" in cmake:
+    raise SystemExit("Repository-owned exports must use only the CMeta:: namespace")
 
 # Check active retained targets, not just the root. Forbid restoring former
 # native provider namespaces by hidden CMake source/profile declarations.
@@ -56,6 +58,7 @@ for owner in (
     active_cmake = cmake_path.read_text(encoding="utf-8")
     for old in (
         "SaltsCore::", "SaltsCrypto::", "Crypto::", "GmSSL::",
+        "ALIAS Salts::",
         "SALTS_CORE_BACKED_PROFILE", "SALTS_PLUGIN_USE_SALTSCORE",
         "SALTS_CFLOW_USE_SALTSCORE",
     ):

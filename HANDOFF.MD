@@ -46,8 +46,12 @@
   `--core-tools`, `--core-prefix`, `--salts-prefix`, `--build-dir` and
   `--report`; legacy `--cmeta-prefix`/`--rid` arguments are not accepted.
 - The former `component-runtime/` source path is now `ace/`. Public include
-  paths and `Salts::Configurator` / `Salts::ServiceHost` target names are
-  unchanged; do not restore a second compatibility directory.
+  paths are unchanged; do not restore a second compatibility directory.
+- Repository-owned exported targets use `CMeta::` (including CMeta, Plugin,
+  Configurator/ServiceHost, CFlow and retained CSTL targets). Only imported
+  qigao/salts-core owners such as `Salts::Core`, `Salts::Platform` and
+  `Salts::NativeIO` retain the `Salts::` namespace; do not add compatibility
+  aliases for the old repository-owned names.
 - Keep exactly three non-overlapping workflows: eight-RID LLVM SDK/release,
   LLVM sanitizers, and narrow Lean generated-contract verification. The
   redundant Linux source-cutover workflow was removed. Native workflow path

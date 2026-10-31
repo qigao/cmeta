@@ -286,6 +286,16 @@ jobs:
           set -euo pipefail
           test -f "$CMETA_INSTALL_PREFIX/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$CMETA_INSTALL_PREFIX/lib/cmake/SaltsCore/SaltsCoreConfig.cmake"
+          targets="$CMETA_INSTALL_PREFIX/lib/cmake/Salts/SaltsTargets.cmake"
+          for target in CMeta ConfiguratorABI PluginABI Plugin \
+              ServiceHostProviderABI Configurator ServiceHost CFlow; do
+            grep -Fq "CMeta::$target" "$targets"
+          done
+          if grep -Eq 'Salts::(CMeta|Configurator|Plugin|ServiceHost|CFlow)' \
+              "$targets"; then
+            echo 'repository-owned target leaked into the Salts:: namespace' >&2
+            exit 1
+          fi
           protection=llvm-obfuscator
           if [[ '${{ matrix.family }}' == android ]]; then
             protection=android-ndk-clang
