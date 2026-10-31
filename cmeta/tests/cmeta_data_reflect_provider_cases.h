@@ -6,6 +6,7 @@ enum { REFLECT_TEXT_LIMIT = 16, REFLECT_ARRAY_COUNT = 3 };
 typedef struct ReflectText { unsigned char *bytes; size_t size; } ReflectText;
 static size_t reflect_text_allocations, reflect_text_releases;
 static size_t reflect_text_assignments, reflect_text_fail_assignment;
+static bool reflect_text_refuse_restore; /* violate provider no-fail contract */
 
 static bool reflect_text_is_zero(const void *object) {
     const ReflectText *text = (const ReflectText *)object;
@@ -19,6 +20,10 @@ static cmeta_status reflect_text_init(void *object) {
 }
 static void reflect_text_restore(void *object) {
     ReflectText *text = (ReflectText *)object;
+    /* Only the explicit checked-close negative test enables this: a broken
+     * external no-fail provider leaves the original owning value live.
+     */
+    if (reflect_text_refuse_restore) return;
     if (text->bytes != NULL) {
         free(text->bytes);
         ++reflect_text_releases;
@@ -95,6 +100,7 @@ suite("CMeta reflected provider lifecycle") {
     before_each() {
         reflect_text_allocations = reflect_text_releases = 0u;
         reflect_text_assignments = reflect_text_fail_assignment = 0u;
+        reflect_text_refuse_restore = false;
         check_equal(cmeta_data_value_init_zero(data, &source), CMETA_OK);
         check_equal(cmeta_data_value_init_zero(data, &destination), CMETA_OK);
         check_equal(cmeta_data_value_init_zero(data, &moved), CMETA_OK);
@@ -105,10 +111,50 @@ suite("CMeta reflected provider lifecycle") {
         source.values[0] = REFLECT_ARRAY_COUNT;
     }
     after_each() {
+        reflect_text_refuse_restore = false;
         check_equal(cmeta_data_value_restore_zero(data, &source), CMETA_OK);
         check_equal(cmeta_data_value_restore_zero(data, &destination), CMETA_OK);
         check_equal(cmeta_data_value_restore_zero(data, &moved), CMETA_OK);
         check_equal(reflect_text_allocations, reflect_text_releases);
+    }
+    it("keeps temporary allocation and owner lease live on broken restore") {
+        cmeta_data_temp temp = {0};
+        const unsigned char raw[] = {0u, 0xffu, 0x42u};
+        const unsigned char *borrowed = NULL;
+        size_t borrowed_size = 0u;
+        void *original_storage;
+
+        check_equal(cmeta_data_temp_try_close(NULL), CMETA_OK);
+        check_equal(cmeta_data_temp_try_close(&temp), CMETA_OK);
+        check_equal(cmeta_data_temp_open(
+            &reflect_text_data, sizeof(ReflectText), &temp), CMETA_OK);
+        original_storage = temp.storage;
+        check_not_null(original_storage);
+        check_equal(cmeta_data_buffer_assign(
+            &reflect_text_data, temp.storage, raw, sizeof(raw),
+            REFLECT_TEXT_LIMIT), CMETA_OK);
+        /* No-fail provider violation: the checked facade must NOT free or
+         * silently clear the owner's allocation/borrowed descriptor.
+         */
+        reflect_text_refuse_restore = true;
+        check_equal(cmeta_data_temp_try_close(&temp), CMETA_CALLBACK_ERROR);
+        check_equal(temp.storage, original_storage);
+        check_equal(temp.data, &reflect_text_data);
+        check_equal(reflect_text_releases, (size_t)0);
+        check_equal(cmeta_data_buffer_read(
+            &reflect_text_data, temp.storage, sizeof(raw),
+            &borrowed, &borrowed_size), CMETA_OK);
+        check_equal(borrowed_size, sizeof(raw));
+        check_equal(borrowed, raw, sizeof(raw));
+        /* The test controls this deliberately broken provider and repairs
+         * it explicitly. Production callers MUST NOT automatically retry an
+         * arbitrary failed no-fail cleanup or unload that code module.
+         */
+        reflect_text_refuse_restore = false;
+        check_equal(cmeta_data_temp_try_close(&temp), CMETA_OK);
+        check_true(temp.storage == NULL && temp.data == NULL);
+        check_equal(cmeta_data_temp_try_close(&temp), CMETA_OK);
+        check_equal(reflect_text_releases, (size_t)1);
     }
     it("unwinds both the failed field and accepted prefix exactly once") {
         enum { FAILED_COPY_RELEASES = 2 };
