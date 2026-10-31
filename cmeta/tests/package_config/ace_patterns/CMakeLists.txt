@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(salts_ace_patterns_installed LANGUAGES C CXX)
-if(NOT DEFINED SALTS_TEST_PREFIX OR NOT DEFINED SALTS_TEST_VERSION)
-  message(FATAL_ERROR "exact installed Salts prefix/version required")
+project(cmeta_ace_patterns_installed LANGUAGES C CXX)
+if(NOT DEFINED SALTS_TEST_PREFIX)
+  message(FATAL_ERROR "installed CMeta prefix required")
 endif()
-find_package(Salts ${SALTS_TEST_VERSION} EXACT CONFIG REQUIRED
+find_package(CMeta CONFIG REQUIRED
   PATHS "${SALTS_TEST_PREFIX}" NO_DEFAULT_PATH)
-foreach(target IN ITEMS Salts::CMeta Salts::NativeIO Salts::Platform)
+foreach(target IN ITEMS CMeta::CMeta Salts::NativeIO Salts::Platform)
   if(NOT TARGET "${target}")
     message(FATAL_ERROR "installed SDK missing ${target}")
   endif()
@@ -13,7 +13,7 @@ endforeach()
 
 add_executable(ace_patterns_installed_c consumer.c)
 target_link_libraries(ace_patterns_installed_c PRIVATE
-  Salts::CMeta Salts::NativeIO Salts::Platform)
+  CMeta::CMeta Salts::NativeIO Salts::Platform)
 set_target_properties(ace_patterns_installed_c PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 if(CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
@@ -23,7 +23,7 @@ endif()
 
 add_executable(ace_patterns_installed_cpp consumer.cpp)
 target_link_libraries(ace_patterns_installed_cpp PRIVATE
-  Salts::CMeta Salts::NativeIO Salts::Platform)
+  CMeta::CMeta Salts::NativeIO Salts::Platform)
 set_target_properties(ace_patterns_installed_cpp PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")

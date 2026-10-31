@@ -7,9 +7,9 @@ address-independent fingerprint。机制独占在既有 owner：Concurrency 管�
 Core 管理 bounded pool storage/lease，Platform 管理 thread affinity/TLS 与 C 原子 fast key，Plugin 管理模块与 lease。公开 header 的完整分类只维护在
 [HEADER_LAYERS.md](HEADER_LAYERS.md)。
 
-`Salts::CMeta` 不链接上述 runtime，也不编译 fastpath 汇编；`meta.h` 不包含 optional
+`CMeta::CMeta` 不链接上述 runtime，也不编译 fastpath 汇编；`meta.h` 不包含 optional
 adapter 或 scope。Static-call/trace consumer 显式 include 对应 header 并链接
-`Salts::CMeta` 和 `Salts::Platform`。Pool 链接 Core；Local 链接 Platform。
+`CMeta::CMeta` 和 `Salts::Platform`。Pool 链接 Core；Local 链接 Platform。
 选择既有 owner 加 metadata projection，避免创建第二套 allocator/并发/模块状态。
 
 兼容性（HIGH）：#957 要求删除错误归属的 spelling，不保留 forwarding alias。
@@ -55,7 +55,7 @@ COFF 的共同参考；未实现 optional linker aggregation，无需 backend-sp
 查询，把 owned payload 从 Pool 移至 Local，检查 source release、析构恰好一次、
 fingerprint 前中后不变，以及资源关闭后 static metadata 仍可查询。
 
-`tests/installed` 只通过本次安装的 `SaltsConfig.cmake` 链接 `Salts::CMeta` 与 TinyTest。
+`tests/installed` 只通过本次安装的 `CMetaConfig.cmake` 链接 `CMeta::CMeta` 与 TinyTest。
 C11/C++17 实际查询 descriptor、Function ABI、manifest 与 fingerprint，并以 header
 guard 拒绝 runtime 经 aggregate 引入。Find_package 禁用默认路径，防止消费其他 checkout。
 

@@ -3,7 +3,7 @@
   "configurePresets": [
     {
       "name": "native-release",
-      "displayName": "Salts 3 / installed Core / Release",
+      "displayName": "CMeta 4 / installed Core / Release",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
@@ -13,7 +13,7 @@
     },
     {
       "name": "native-debug",
-      "displayName": "Salts 3 / installed Core / Debug",
+      "displayName": "CMeta 4 / installed Core / Debug",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": {

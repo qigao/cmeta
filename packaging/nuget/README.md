@@ -1,25 +1,24 @@
-# Salts.Native
+# CMeta.Native
 
-Prebuilt Release install trees for qigao/salts, published as a lightweight NuGet package.
+Package metadata for CMeta 4 / ACE / CFlow install trees. No CMeta.Native SDK
+has been published by this change, and no publisher workflow is enabled.
+Repository: [qigao/cmeta](https://github.com/qigao/cmeta).
 
-The package contains native SDK payloads only. Source files, tests, examples, benchmarks,
-and CI caches are intentionally excluded.
+A native payload uses `sdk/<os>-<arch>/` for Linux, macOS or Windows and x64
+or arm64. Each prefix contains headers, libraries and
+`lib/cmake/CMeta/CMetaConfig.cmake`. Consumers use:
 
-## Package layout
+```cmake
+find_package(CMeta CONFIG REQUIRED)
+target_link_libraries(my_host PRIVATE CMeta::ACE)
+target_link_libraries(my_provider PRIVATE CMeta::Provider)
+```
 
-- `sdk/linux-x64/` - Linux x64 install prefix
-- `sdk/linux-arm64/` - Linux arm64 install prefix
-- `sdk/windows-x64/` - Windows x64 install prefix
-- `sdk/macos-x64/` or `sdk/macos-arm64/` - macOS install prefix matching the release runner
-- `sdk/android-arm64-v8a/` - Android arm64-v8a install prefix
-- `sdk/ios-arm64/` - iOS ARM64 device install prefix
+The prefix must match the target OS, CPU, compiler and CRT. In particular,
+llvm-mingw/UCRT SDKs cannot reuse or relabel MSVC SDKs. Host tools are restored
+separately from target libraries. Android/iOS payloads are outside the native
+six-platform CI qualification here.
 
-Each target directory contains the normal Salts CMake install tree, including headers,
-libraries, and `lib/cmake/Salts/SaltsConfig.cmake`.
-
-Point `CMAKE_PREFIX_PATH` at the matching SDK directory and use:
-
-    find_package(Salts CONFIG REQUIRED)
-
-Android and iOS are target SDKs in this package. Host build tools such as re2c are
-distributed separately and run on the build host rather than on the target device.
+`feed_hygiene.py` retains its exact historical Salts.Native 2.3 quarantine
+contract and old archive paths. It does not inspect, publish or qualify a
+CMeta.Native 4 package.

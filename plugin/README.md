@@ -1,6 +1,6 @@
 # Salts Plugin
 
-`Salts::Plugin` is the Salts-owned dynamic-module publication and lifecycle
+`CMeta::Plugin` is the Salts-owned dynamic-module publication and lifecycle
 runtime built directly on canonical CMeta semantics.
 
 Plugin and CFlow are independent capabilities. Plugin owns module publication,
@@ -29,9 +29,9 @@ Plugin/CMeta ABI、registry 状态归属、lease 和停止／卸载顺序保持�
 测试通过 canonical Function ABI 验证后调用依赖函数，并按 lease → stop → quiescent → unload
 清理；注册目录仅在该测试进程存活期间使用，卸载后移除。
 
-**验证状态（2026-10-11）**：[草稿 PR #1119](https://github.com/qigao/salts/pull/1119) 的
+**验证状态（2026-10-11）**：[草稿 PR #1119](https://github.com/qigao/cmeta/pull/1119) 的
 源码提交 `e1a26b89ffaccd4cfad7dd8680020ffc35370f3b` 已通过
-[Salts CI 38131873603](https://github.com/qigao/salts/actions/runs/38131873603)。
+[Salts CI 38131873603](https://github.com/qigao/cmeta/actions/runs/38131873603)。
 Windows 使用 `win-release-ci` 完整构建；本测试 3 个用例、47 条断言全部通过，无跳过或过滤。
 Windows native/plugin CTest 38/38、execution CTest 97/97 通过，包含既有 ServiceHost
 DSO、generation、scope、publication、runtime failure 和 concurrency 回归；这两组有重叠，不相加为独立测试数。
@@ -63,7 +63,7 @@ CMETA_PLUGIN_DECLARE(math_plugin, "example.math", (1u,0u,0u),
     MATH_EXPORTS, CMETA_PLUGIN_PASSIVE());
 ```
 
-以普通 DSO target 编译该源文件并链接 `Salts::PluginABI`。安装 SDK 与 in-tree
+以普通 DSO target 编译该源文件并链接 `CMeta::PluginABI`。安装 SDK 与 in-tree
 使用相同头文件和声明。每个 DSO 在一个 TU 中声明一次 query。
 
 `CMETA_PLUGIN_DECLARE(name,id,version,exports,lifecycle)` 的参数为：本地符号前缀、
@@ -172,7 +172,7 @@ query 的时间/额外空间都是 O(1)，既有 manifest validation 的复杂�
 
 ## Lease 作用域（#977）
 
-宿主包含 `<salts/plugin_scope.h>` 并链接 `Salts::Plugin`。
+宿主包含 `<salts/plugin_scope.h>` 并链接 `CMeta::Plugin`。
 C 使用 `cmeta_plugin_with_lease(registry,ref,body,context)`：
 `registry` 和 `ref` 指定已有 provider，`body` 接收借用的 const manifest 与原样 context。
 空 body 返回 `CMETA_PLUGIN_INVALID_ARGUMENT`；acquire 失败原样返回状态且不调用 body；
@@ -207,18 +207,18 @@ installed SDK 测试图，覆盖分片缺失、错误计数、ABI 拒绝、并�
 ## Targets
 
 ```text
-Salts::PluginABI
+CMeta::PluginABI
     -> <salts/plugin.h>
-    -> Salts::CMeta
+    -> CMeta::CMeta
 
-Salts::Plugin
-    -> Salts::PluginABI
+CMeta::Plugin
+    -> CMeta::PluginABI
     -> Salts::Core
     -> Salts::Platform
     -> platform dynamic loader
 ```
 
-`Salts::PluginABI` is publication-only and carries no loader/registry runtime.
+`CMeta::PluginABI` is publication-only and carries no loader/registry runtime.
 Plugin providers can therefore publish CMeta Function/Interface exports without
 linking the host runtime.
 

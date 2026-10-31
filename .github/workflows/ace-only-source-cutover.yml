@@ -1,10 +1,10 @@
-name: Salts Configurator ServiceHost native SDK
+name: CMeta native LLVM SDK
 on:
   pull_request:
     paths:
       - "CMakeLists.txt"
       - "CMakeOptions.cmake"
-      - "cmake/SaltsConfig.cmake.in"
+      - "cmake/CMetaConfig.cmake.in"
       - "tests/**"
       - "cmeta/**"
       - "cflow/**"
@@ -19,8 +19,13 @@ on:
     branches: [master]
     paths:
       - "CMakeLists.txt"
-      - "tools/check_ace_only_sources.py"
-      - "tools/audit_native_owner.py"
+      - "cmake/**"
+      - "tests/**"
+      - "cmeta/**"
+      - "cflow/**"
+      - "ace/**"
+      - "plugin/**"
+      - "tools/**"
       - ".github/workflows/ace-only-source-cutover.yml"
       - ".github/workflows/ace-only-native-sanitizers.yml"
   workflow_dispatch:
@@ -31,13 +36,19 @@ permissions:
   contents: read
 jobs:
   native-ace:
-    name: "Configurator ServiceHost native tests / ${{ matrix.os }}"
+    name: "CMeta LLVM / ${{ matrix.os }} / ${{ matrix.arch }}"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        include:
+          - {os: ubuntu-24.04, arch: x64}
+          - {os: ubuntu-24.04-arm, arch: arm64}
+          - {os: macos-15-intel, arch: x64}
+          - {os: macos-15, arch: arm64}
+          - {os: windows-2025, arch: x64}
+          - {os: windows-11-arm, arch: arm64}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,71 +56,76 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: cfc1ed0d24364689b10ef7a85cff28d8776eb7db
+          ref: 287c30db125e1ada12d51bd17ba36cddd8302305
           path: _core_owner
           persist-credentials: false
+      # Shared compiler setup is available on vcpkg-cache master (#244 merged).
+      - name: Select runner-native LLVM
+        if: runner.os != 'Windows'
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@master
+      - name: Select llvm-mingw UCRT
+        if: runner.os == 'Windows'
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@master
+        with:
+          target: ${{ matrix.arch }}
+          version: "20261020"
+      - name: Require native target execution
+        shell: python
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          import os
+          arch = {"X64": "x64", "ARM64": "arm64"}[os.environ["RUNNER_ARCH"]]
+          assert arch == os.environ["EXPECTED_ARCH"], (arch, os.environ["EXPECTED_ARCH"])
       - name: Check no duplicate native source owners
         shell: bash
         run: |
           set -euo pipefail
           python3 tools/check_ace_only_sources.py --core-root _core_owner
-          test "$(git -C _core_owner rev-parse HEAD)" = cfc1ed0d24364689b10ef7a85cff28d8776eb7db
+          test "$(git -C _core_owner rev-parse HEAD)" = 287c30db125e1ada12d51bd17ba36cddd8302305
       - name: Install exact qualified native Core and test-only TinyTest
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            generator=(-G 'Visual Studio 18 2026' -A x64)
-          else
-            generator=(-G Ninja)
-          fi
-          cmake -S _core_owner -B build-core "${generator[@]}" \
+          cmake -S _core_owner -B build-core -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE" \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
             -DSALTSCORE_BUILD_TINYTEST=ON \
             "-DCMAKE_INSTALL_PREFIX=$RUNNER_TEMP/core-sdk"
           cmake --build build-core --config Release --parallel 2
           cmake --install build-core --config Release
-      - name: Build and install the sole Salts native graph
+      - name: Build and install the sole CMeta native graph
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            generator=(-G 'Visual Studio 18 2026' -A x64)
-          else
-            generator=(-G Ninja)
-          fi
-          cmake -S . -B build-salts "${generator[@]}" \
+          cmake -S . -B build-cmeta -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE" \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
             -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_SHARED_LIBS=OFF \
             "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/core-sdk" \
             "-DCMAKE_INSTALL_PREFIX=$RUNNER_TEMP/ace-sdk"
-          cmake --build build-salts --config Release --parallel 2
-          cmake --install build-salts --config Release
+          cmake --build build-cmeta --config Release --parallel 2
+          cmake --install build-cmeta --config Release
       - name: Run original native C11 C++17 DSO and CFlow tests
         shell: bash
         run: |
           set -euo pipefail
           if [[ "$RUNNER_OS" == Windows ]]; then
-            generator=(-G 'Visual Studio 18 2026' -A x64)
             export PATH="$(cygpath -u "$RUNNER_TEMP/ace-sdk")/bin:$(cygpath -u "$RUNNER_TEMP/core-sdk")/bin:$PATH"
           elif [[ "$RUNNER_OS" == macOS ]]; then
-            generator=(-G Ninja)
             export DYLD_LIBRARY_PATH="$RUNNER_TEMP/core-sdk/lib:${DYLD_LIBRARY_PATH:-}"
           else
-            generator=(-G Ninja)
             export LD_LIBRARY_PATH="$RUNNER_TEMP/core-sdk/lib:${LD_LIBRARY_PATH:-}"
           fi
-          ctest --test-dir build-salts -C Release --no-tests=error \
+          ctest --test-dir build-cmeta -C Release --no-tests=error \
             --output-on-failure --timeout 120
           python3 tools/audit_native_owner.py \
             --core-tools _core_owner/tools \
-            --core-prefix "$RUNNER_TEMP/core-sdk" --salts-prefix "$RUNNER_TEMP/ace-sdk" \
-            --build-dir build-salts --report build-salts/ace-one-owner-audit.json
+            --core-prefix "$RUNNER_TEMP/core-sdk" --cmeta-prefix "$RUNNER_TEMP/ace-sdk" \
+            --build-dir build-cmeta --report build-cmeta/ace-one-owner-audit.json
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ace-only-source-${{ matrix.os }}
+          name: cmeta-llvm-${{ matrix.os }}-${{ matrix.arch }}
           path: |
-            build-salts/Testing/Temporary/LastTest.log
-            build-salts/ace-one-owner-audit.json
+            build-cmeta/Testing/Temporary/LastTest.log
+            build-cmeta/ace-one-owner-audit.json
           if-no-files-found: warn

@@ -14,7 +14,7 @@ stable component/provider identity
 
 It does **not** load a module, select a provider, create an instance, own a
 lease, or advance lifecycle. Dynamic module authority remains
-`Salts::Plugin`.
+`CMeta::Plugin`.
 
 ## Declaration
 
@@ -87,30 +87,30 @@ Equal hashes do not prove provider identity or authenticity.
 ## Static versus dynamic providers
 
 Static composition passes an explicit CMeta manifest and component descriptor
-to Configurator in `Salts::ACE`.
+to Configurator in `CMeta::ACE`.
 
-Dynamic composition admits the DSO through `Salts::Plugin`, holds a Plugin
+Dynamic composition admits the DSO through `CMeta::Plugin`, holds a Plugin
 lease over the borrowed component descriptor, and uses ServiceHost plus
-Configurator in `Salts::ACE`. Provider declarations come from `Salts::Provider`.
+Configurator in `CMeta::ACE`. Provider declarations come from `CMeta::Provider`.
 
 ## Canonical construction and ownership
 
-`Salts::Provider` provides `<salts/configurator_abi.h>`: Configurator
+`CMeta::Provider` provides `<salts/configurator_abi.h>`: Configurator
 status, dependency views and the version-2 ProviderBinding with exact create,
 activate and deactivate callbacks. These callbacks construct objects; service
 methods use the original typed CMeta Interface projection.
 
-The same `Salts::Provider` target supplies `<salts/service_host_provider_abi.h>`.
+The same `CMeta::Provider` target supplies `<salts/service_host_provider_abi.h>`.
 Its reflected `salts_service_host_provider` Interface returns one borrowed
 `salts_configurator_provider_binding`. Dynamic publication requires contract
 `salts.service_host.provider.v2`, contract version 2 and binding ABI version 2.
 Plugin leases cover descriptor admission, construction, invocation and teardown.
 A mismatched contract is rejected before the construction callbacks run.
 
-Inside `Salts::ACE`, Configurator owns one static dependency graph and
+Inside `CMeta::ACE`, Configurator owns one static dependency graph and
 ServiceHost composes that graph with the existing Plugin Registry, generations
 and Scopes.
-`Salts::Plugin` remains the sole DSO loader and unload authority.
+`CMeta::Plugin` remains the sole DSO loader and unload authority.
 
 ```c
 #include <salts/configurator.h>
@@ -137,7 +137,7 @@ Provider DSOs, generated bindings and downstream libraries must be rebuilt from
 one matching SDK. There are no compatibility headers, type aliases, old runtime
 symbols or previous Provider contract fallback.
 
-Use `find_package(Salts 4 CONFIG REQUIRED)` for the installed SDK. The library
+Use `find_package(CMeta CONFIG REQUIRED)` for the installed SDK. The library
 exports ABI version/layout functions and `salts_service_host_abi_v2_0_required()`;
 matching target names alone do not establish header/archive compatibility.
 

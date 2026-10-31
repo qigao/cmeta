@@ -1208,7 +1208,7 @@ Function、Interface、精确 thunk 与 TinyMock 的参数投影共用五字段�
 `cmeta_component` 接受 1–16 个 provides/requires 行，使用共享逗号 map 保留行顺序与重复项；
 零项使用 `cmeta_component_empty(name)`，生成 `capabilities == NULL, count == 0`，仍通过
 `cmeta_component_meta(name)` 取得描述符。两种空声明都不生成零长数组或占位项。
-空 Component 描述符只有放入显式 manifest 才会被该表发现；它不是运行中的 Salts::Plugin 模块。
+空 Component 描述符只有放入显式 manifest 才会被该表发现；它不是运行中的 CMeta::Plugin 模块。
 这两个声明宏没有运行时返回值；非法标识符或不合约的非空行在编译期报错。
 空表的索引查询仍返回 `CMETA_INVALID_ARGUMENT`，失败时输出参数保持原值。
 

@@ -12,21 +12,21 @@
 
 
 **Status:** **ACE FUNCTIONALLY FROZEN** at source HEAD
-[`02b741a7f2ebceaeed68c681898d09072c5323d1`](https://github.com/qigao/salts/commit/02b741a7f2ebceaeed68c681898d09072c5323d1),
-2026-10-08. The exact-source [full CI #37775060929](https://github.com/qigao/salts/actions/runs/37775060929)
+[`02b741a7f2ebceaeed68c681898d09072c5323d1`](https://github.com/qigao/cmeta/commit/02b741a7f2ebceaeed68c681898d09072c5323d1),
+2026-10-08. The exact-source [full CI #37775060929](https://github.com/qigao/cmeta/actions/runs/37775060929)
 completed **SUCCESS** (Linux GCC/Clang, Windows MSVC, macOS GCC/Clang,
 Linux ARM64, Android/iOS cross-build and Lean). Later documentation-only
 commits do not silently change this frozen code baseline; substantive
 changes must requalify the affected contracts.
-Long-lived `feature/cmeta-ace-patterns` [Draft PR #1013](https://github.com/qigao/salts/pull/1013)
+Long-lived `feature/cmeta-ace-patterns` [Draft PR #1013](https://github.com/qigao/cmeta/pull/1013)
 remains **DO NOT MERGE. DO NOT PUBLISH.** Feature freeze is **not** 2.3.0
 native SDK, downstream or stable release qualification.
 
 **Current ownership mapping:** the graph below uses the current public owner
-names for the corresponding responsibilities. `Salts::ACE` contains
+names for the corresponding responsibilities. `CMeta::ACE` contains
 Configurator static graph resolution/activation and ServiceHost generation
 publication, Scope admission/drain and Plugin lease settlement.
-`Salts::Plugin` remains the sole DSO loader and unload authority. Frozen test
+`CMeta::Plugin` remains the sole DSO loader and unload authority. Frozen test
 names and run links below apply to their historical source only. They do not
 qualify the current Salts 4.0 / ABI 2.0 implementation.
 
@@ -157,11 +157,11 @@ final sanitizer and Windows/macOS downstream conformance, CHttp request
 scope/deferred mount, TurboFlow durable-plan ownership, TurboSCXML
 session/invocation generations, Android/iOS device runtime if required,
 and the explicit release/merge decision in
-[#1018](https://github.com/qigao/salts/issues/1018).
+[#1018](https://github.com/qigao/cmeta/issues/1018).
 
 ## Functional qualification evidence (exact source SHA)
 
-[Full matrix #37775060929](https://github.com/qigao/salts/actions/runs/37775060929)
+[Full matrix #37775060929](https://github.com/qigao/cmeta/actions/runs/37775060929)
 executed the final ACE regression source `02b741a7f2ebceaeed68c681898d09072c5323d1`.
 
 | Execution profile | Result |

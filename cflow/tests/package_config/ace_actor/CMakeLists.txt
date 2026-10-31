@@ -1,23 +1,23 @@
 cmake_minimum_required(VERSION 3.20)
 project(cflow_ace_actor_installed_consumer LANGUAGES C CXX)
 
-if(NOT DEFINED SALTS_TEST_PREFIX OR NOT DEFINED SALTS_TEST_VERSION)
-  message(FATAL_ERROR "installed SDK prefix and expected version required")
+if(NOT DEFINED SALTS_TEST_PREFIX)
+  message(FATAL_ERROR "installed CMeta prefix required")
 endif()
 
 # Installed CFlow and transitive CMeta only: no source-tree includes, no
 # implicit Plugin runtime and no alternate stable SDK/fallback.
-find_package(Salts ${SALTS_TEST_VERSION} EXACT CONFIG REQUIRED
+find_package(CMeta CONFIG REQUIRED
   PATHS "${SALTS_TEST_PREFIX}" NO_DEFAULT_PATH)
-if(NOT TARGET Salts::CFlow)
-  message(FATAL_ERROR "installed package is missing Salts::CFlow")
+if(NOT TARGET CMeta::CFlow)
+  message(FATAL_ERROR "installed package is missing CMeta::CFlow")
 endif()
-if(NOT TARGET Salts::CMeta)
-  message(FATAL_ERROR "installed package is missing Salts::CMeta")
+if(NOT TARGET CMeta::CMeta)
+  message(FATAL_ERROR "installed package is missing CMeta::CMeta")
 endif()
 
 add_executable(cflow_ace_actor_installed_consumer main.c)
-target_link_libraries(cflow_ace_actor_installed_consumer PRIVATE Salts::CFlow)
+target_link_libraries(cflow_ace_actor_installed_consumer PRIVATE CMeta::CFlow)
 target_compile_features(cflow_ace_actor_installed_consumer PRIVATE c_std_11)
 
 enable_testing()
@@ -27,7 +27,7 @@ add_test(NAME cflow_ace_actor_installed_consumer
 # One installed SDK and one out-of-tree CMake run now qualify both ACE
 # Active Object and Pipes/Filters; do not duplicate the install harness.
 add_executable(cflow_ace_pipes_installed_consumer pipes.c)
-target_link_libraries(cflow_ace_pipes_installed_consumer PRIVATE Salts::CFlow)
+target_link_libraries(cflow_ace_pipes_installed_consumer PRIVATE CMeta::CFlow)
 target_compile_features(cflow_ace_pipes_installed_consumer PRIVATE c_std_11)
 add_test(NAME cflow_ace_pipes_installed_consumer
   COMMAND cflow_ace_pipes_installed_consumer)
@@ -42,7 +42,7 @@ if(TARGET Salts::CFlowCNet OR NOT TARGET Salts::CNet)
 endif()
 add_executable(cflow_ace_half_sync_installed_consumer half_sync.c)
 target_link_libraries(cflow_ace_half_sync_installed_consumer
-  PRIVATE Salts::CNet Salts::CFlow)
+  PRIVATE Salts::CNet CMeta::CFlow)
 target_compile_features(cflow_ace_half_sync_installed_consumer PRIVATE c_std_11)
 if(WIN32)
   target_link_libraries(cflow_ace_half_sync_installed_consumer PRIVATE ws2_32)
@@ -59,7 +59,7 @@ foreach(kind IN ITEMS c11 cpp17)
     set(owner_source owner.cpp)
   endif()
   add_executable(cflow_owner_installed_${kind} ${owner_source})
-  target_link_libraries(cflow_owner_installed_${kind} PRIVATE Salts::CFlow)
+  target_link_libraries(cflow_owner_installed_${kind} PRIVATE CMeta::CFlow)
   if(kind STREQUAL "c11")
     target_compile_features(cflow_owner_installed_${kind} PRIVATE c_std_11)
     set_target_properties(cflow_owner_installed_${kind} PROPERTIES

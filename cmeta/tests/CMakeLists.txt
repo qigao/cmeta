@@ -2,7 +2,7 @@
 # AppleClang as well as GNU/Clang; no omitted-variadic C23 extension or
 # warning downgrade is accepted.
 add_executable(cmeta_pp_iso_c11_test cmeta_pp_iso_c11_test.c)
-target_link_libraries(cmeta_pp_iso_c11_test PRIVATE Salts::CMeta)
+target_link_libraries(cmeta_pp_iso_c11_test PRIVATE CMeta::CMeta)
 set_target_properties(cmeta_pp_iso_c11_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -15,31 +15,31 @@ set_target_properties(cmeta_pp_iso_c11_test PROPERTIES
 
 cmake_add_test(cmeta_data_reflect_test
   SOURCES cmeta_data_reflect_test.c cmeta_data_reflect_peer.c
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS CMeta::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_data_reflect_cpp_test
   SOURCES cmeta_data_reflect_cpp_test.cpp cmeta_data_reflect_peer.c
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS CMeta::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_fastpath_pattern_test
   SOURCES cmeta_pattern_test.c
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS CMeta::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_pattern_cpp_test
   SOURCES cmeta_pattern_cpp_test.cpp
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS CMeta::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 # Post-freeze POSA2 CMeta composition: typed locking policy, synchronized
 # public Interface and real Monitor Object with bounded wait/close semantics.
 cmake_add_test(cmeta_ace_sync_test
   SOURCES cmeta_ace_sync_test.c
-  LIBS Salts::CMeta Salts::Platform Salts::TinyTest
+  LIBS CMeta::CMeta Salts::Platform Salts::TinyTest
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_ace_sync_cpp_test
   SOURCES cmeta_ace_sync_cpp_test.cpp
-  LIBS Salts::CMeta Salts::Platform Salts::TinyTest
+  LIBS CMeta::CMeta Salts::Platform Salts::TinyTest
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_ace_sync_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -56,11 +56,11 @@ endif()
 # Platform retains all Leader/Followers mutex, condition and thread authority.
 cmake_add_test(cmeta_ace_leader_followers_contract_test
   SOURCES cmeta_ace_leader_followers_contract_test.c
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS CMeta::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_ace_leader_followers_contract_cpp_test
   SOURCES cmeta_ace_leader_followers_contract_cpp_test.cpp
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS CMeta::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_ace_leader_followers_contract_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -79,7 +79,7 @@ if(NOT WIN32)
   add_test(NAME cmeta_ace_patterns_installed_test
     COMMAND "${CMAKE_COMMAND}"
       "-DSALTS_BINARY_DIR=${CMAKE_BINARY_DIR}"
-      "-DSALTS_TEST_VERSION=${PROJECT_VERSION}"
+
       "-DSALTS_TEST_CONFIG=$<CONFIG>"
       "-DSALTS_GENERATOR=${CMAKE_GENERATOR}"
       "-DSALTS_C_COMPILER=${CMAKE_C_COMPILER}"
@@ -95,11 +95,11 @@ endif()
 
 cmake_add_test(cmeta_fastpath_component_test
   SOURCES cmeta_component_test.c
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS CMeta::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_component_cpp_test
   SOURCES cmeta_component_cpp_test.cpp
-  LIBS Salts::CMeta Salts::TinyTest
+  LIBS CMeta::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_fastpath_pattern_test cmeta_fastpath_component_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -122,8 +122,8 @@ if(NOT CMAKE_CROSSCOMPILING)
   include(CheckCSourceCompiles)
   include(CheckCXXSourceCompiles)
 
-  set(_salts_ace_previous_required_includes "${CMAKE_REQUIRED_INCLUDES}")
-  set(_salts_ace_previous_try_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+  set(_cmeta_ace_previous_required_includes "${CMAKE_REQUIRED_INCLUDES}")
+  set(_cmeta_ace_previous_try_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
   set(CMAKE_REQUIRED_INCLUDES "${PROJECT_SOURCE_DIR}/cmeta/include")
   set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
@@ -132,7 +132,7 @@ if(NOT CMAKE_CROSSCOMPILING)
   # to the exact declared type; the bad case must reject void return. Reflected
   # FunctionAbi result-carrier runtime facts are checked by cmeta_pattern_test.
   # No custom pattern facade or duplicate signature ABI is introduced.
-  set(_salts_ace_good_interface_source [=[
+  set(_cmeta_ace_good_interface_source [=[
 #include <cmeta/function.h>
 #include <cmeta/object.h>
 #include <cmeta/object_interface.h>
@@ -143,7 +143,7 @@ CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(
     int (**)(void *)), "ACE exact CMeta Strategy method");
 int main(void) { return 0; }
 ]=])
-  set(_salts_ace_bad_interface_source [=[
+  set(_cmeta_ace_bad_interface_source [=[
 #include <cmeta/function.h>
 #include <cmeta/object.h>
 #include <cmeta/object_interface.h>
@@ -163,18 +163,18 @@ int main(void) { return 0; }
     unset("${_ace_check}" CACHE)
   endforeach()
 
-  check_c_source_compiles("${_salts_ace_good_interface_source}"
+  check_c_source_compiles("${_cmeta_ace_good_interface_source}"
     SALTS_ACE_GOOD_C11_COMPILES)
-  check_c_source_compiles("${_salts_ace_bad_interface_source}"
+  check_c_source_compiles("${_cmeta_ace_bad_interface_source}"
     SALTS_ACE_BAD_C11_COMPILES)
-  check_cxx_source_compiles("${_salts_ace_good_interface_source}"
+  check_cxx_source_compiles("${_cmeta_ace_good_interface_source}"
     SALTS_ACE_GOOD_CPP17_COMPILES)
-  check_cxx_source_compiles("${_salts_ace_bad_interface_source}"
+  check_cxx_source_compiles("${_cmeta_ace_bad_interface_source}"
     SALTS_ACE_BAD_CPP17_COMPILES)
 
   # No erased call ABI: reject native callback constness mismatches at configure
   # time in both C11 and C++17 before creating any interceptor chain.
-  set(_salts_ace_intercept_good [=[
+  set(_cmeta_ace_intercept_good [=[
 #include <cmeta/ace_interceptor.h>
 CMETA_INTERCEPTOR_TYPE(ace_intercept_probe, int, int);
 cmeta_status exact_target(void *, const int *, int *);
@@ -182,7 +182,7 @@ CMETA_STATIC_ASSERT(CMETA_TYPE_MATCHES(&exact_target, ace_intercept_probe_target
                     "exact Interceptor signature");
 int main(void) { return 0; }
 ]=])
-  set(_salts_ace_intercept_bad [=[
+  set(_cmeta_ace_intercept_bad [=[
 #include <cmeta/ace_interceptor.h>
 CMETA_INTERCEPTOR_TYPE(ace_intercept_probe, int, int);
 cmeta_status mutable_target(void *, int *, int *);
@@ -195,10 +195,10 @@ int main(void) { return 0; }
       SALTS_ACE_INTERCEPT_GOOD_CPP17 SALTS_ACE_INTERCEPT_BAD_CPP17)
     unset("${_check}" CACHE)
   endforeach()
-  check_c_source_compiles("${_salts_ace_intercept_good}" SALTS_ACE_INTERCEPT_GOOD_C11)
-  check_c_source_compiles("${_salts_ace_intercept_bad}" SALTS_ACE_INTERCEPT_BAD_C11)
-  check_cxx_source_compiles("${_salts_ace_intercept_good}" SALTS_ACE_INTERCEPT_GOOD_CPP17)
-  check_cxx_source_compiles("${_salts_ace_intercept_bad}" SALTS_ACE_INTERCEPT_BAD_CPP17)
+  check_c_source_compiles("${_cmeta_ace_intercept_good}" SALTS_ACE_INTERCEPT_GOOD_C11)
+  check_c_source_compiles("${_cmeta_ace_intercept_bad}" SALTS_ACE_INTERCEPT_BAD_C11)
+  check_cxx_source_compiles("${_cmeta_ace_intercept_good}" SALTS_ACE_INTERCEPT_GOOD_CPP17)
+  check_cxx_source_compiles("${_cmeta_ace_intercept_bad}" SALTS_ACE_INTERCEPT_BAD_CPP17)
   if(NOT SALTS_ACE_INTERCEPT_GOOD_C11 OR SALTS_ACE_INTERCEPT_BAD_C11 OR
      NOT SALTS_ACE_INTERCEPT_GOOD_CPP17 OR SALTS_ACE_INTERCEPT_BAD_CPP17)
     message(FATAL_ERROR
@@ -207,11 +207,11 @@ int main(void) { return 0; }
       "good-C++=${SALTS_ACE_INTERCEPT_GOOD_CPP17}, bad-C++=${SALTS_ACE_INTERCEPT_BAD_CPP17}")
   endif()
 
-  set(CMAKE_REQUIRED_INCLUDES "${_salts_ace_previous_required_includes}")
-  if("${_salts_ace_previous_try_type}" STREQUAL "")
+  set(CMAKE_REQUIRED_INCLUDES "${_cmeta_ace_previous_required_includes}")
+  if("${_cmeta_ace_previous_try_type}" STREQUAL "")
     unset(CMAKE_TRY_COMPILE_TARGET_TYPE)
   else()
-    set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_salts_ace_previous_try_type}")
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_cmeta_ace_previous_try_type}")
   endif()
 
   if(NOT SALTS_ACE_GOOD_C11_COMPILES OR SALTS_ACE_BAD_C11_COMPILES OR
@@ -243,11 +243,11 @@ endif()
 
 cmake_add_test(cmeta_trace_test
   SOURCES cmeta_trace_test.c
-  LIBS Salts::CMeta Salts::TinyTest Salts::Platform
+  LIBS CMeta::CMeta Salts::TinyTest Salts::Platform
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_trace_cpp_test
   SOURCES cmeta_trace_cpp_test.cpp cmeta_trace_peer.c
-  LIBS Salts::CMeta Salts::TinyTest Salts::Platform
+  LIBS CMeta::CMeta Salts::TinyTest Salts::Platform
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_trace_test cmeta_trace_cpp_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -261,15 +261,15 @@ endif()
 
 cmake_add_test(cmeta_fastpath_test
   SOURCES cmeta_fastpath_test.c cmeta_fastpath_peer.c
-  LIBS Salts::CMeta Salts::TinyTest Salts::Platform
+  LIBS CMeta::CMeta Salts::TinyTest Salts::Platform
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_cpp_test
   SOURCES cmeta_fastpath_cpp_test.cpp cmeta_fastpath_peer.c
-  LIBS Salts::CMeta Salts::TinyTest Salts::Platform
+  LIBS CMeta::CMeta Salts::TinyTest Salts::Platform
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_coroutine_test
   SOURCES cmeta_fastpath_coroutine_test.c cmeta_fastpath_peer.c
-  LIBS Salts::CMeta Salts::TinyTest Salts::Coroutine Salts::Platform
+  LIBS CMeta::CMeta Salts::TinyTest Salts::Coroutine Salts::Platform
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_fastpath_coroutine_test
   PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -283,7 +283,7 @@ endif()
 # #1244: malformed canonical FunctionDesc / FunctionAbi must fail closed.
 add_executable(cmeta_function_desc_contract_test
   cmeta_function_desc_contract_test.c)
-target_link_libraries(cmeta_function_desc_contract_test PRIVATE Salts::CMeta)
+target_link_libraries(cmeta_function_desc_contract_test PRIVATE CMeta::CMeta)
 set_target_properties(cmeta_function_desc_contract_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
   FOLDER "cmeta/tests")
@@ -298,7 +298,7 @@ add_test(NAME cmeta_function_desc_contract_test
 # C++17 decltype, including qualifiers, array extent, pointers and callbacks.
 add_executable(cmeta_field_type_contract_test
   cmeta_field_type_contract_test.c)
-target_link_libraries(cmeta_field_type_contract_test PRIVATE Salts::CMeta)
+target_link_libraries(cmeta_field_type_contract_test PRIVATE CMeta::CMeta)
 set_target_properties(cmeta_field_type_contract_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
   FOLDER "cmeta/tests")
@@ -311,7 +311,7 @@ add_test(NAME cmeta_field_type_contract_test
 
 add_executable(cmeta_field_type_contract_cpp_test
   cmeta_field_type_contract_cpp_test.cpp)
-target_link_libraries(cmeta_field_type_contract_cpp_test PRIVATE Salts::CMeta)
+target_link_libraries(cmeta_field_type_contract_cpp_test PRIVATE CMeta::CMeta)
 set_target_properties(cmeta_field_type_contract_cpp_test PROPERTIES
   CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF
   FOLDER "cmeta/tests")
@@ -326,7 +326,7 @@ add_test(NAME cmeta_field_type_contract_cpp_test
 add_executable(cmeta_enum_tu_contract_test
   cmeta_enum_tu_contract_test.c
   cmeta_enum_tu_contract_peer.c)
-target_link_libraries(cmeta_enum_tu_contract_test PRIVATE Salts::CMeta)
+target_link_libraries(cmeta_enum_tu_contract_test PRIVATE CMeta::CMeta)
 set_target_properties(cmeta_enum_tu_contract_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
   FOLDER "cmeta/tests")

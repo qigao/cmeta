@@ -1,13 +1,16 @@
-# Salts repository instructions
+# CMeta repository instructions
 
-Salts focuses on **CMeta / ACE**. Its component runtime implements
+CMeta focuses on **CMeta / ACE**. Its component runtime implements
 Configurator/ServiceHost/Plugin composition; CFlow supplies accompanying
 CMeta-based execution integrations. New OS, concurrency, coroutine,
 transport, Unicode/IDNA, native
 FS/Process implementations belong to **qigao/salts-core**;
 cryptographic code and ASN.1 belong to **qigao/crypto**. Source ownership is singular.
 
-- Every public CMake link target is `Salts::XXX`, irrespective of repository.
+- This package exports only `CMeta::XXX` through `find_package(CMeta CONFIG REQUIRED)`.
+  Do not add a version or EXACT to CMeta package lookups.
+  Core, Crypto and Utils retain their own `Salts::XXX` targets; do not rename
+  dependency-owned exports.
 - No legacy interface, compatibility shim, alias, fallback, provider DSO
   for Crypto, copied native implementation or alternate build profile.
 - No CMeta dependency is permitted inside the Core/Crypto repositories.
@@ -18,15 +21,15 @@ cryptographic code and ASN.1 belong to **qigao/crypto**. Source ownership is sin
   package layout. Verify installed C11/C++17 consumers and original typed
   runtime conformance after changes.
 
-`ace/` builds the real static `Salts::ACE` library and the interface-only
-`Salts::Provider` target. Provider declarations must not link the ACE runtime.
+`ace/` builds the real static `CMeta::ACE` library and the interface-only
+`CMeta::Provider` target. Provider declarations must not link the ACE runtime.
 
 TinyMock and descriptor-driven SIMD execution belong to qigao/salts-utils;
-do not restore those implementation trees or make Salts depend on Utils.
+do not restore those implementation trees or make CMeta depend on Utils.
 
 This repository owns CMeta, CSTL reflected integrations, CFlow, ACE-style
 Component/Plugin/Configurator, interceptors, scoped resources and
-ServiceHost only. Core's `include/vstr.h` is a pure C11 borrowed view:
+ServiceHost only. Core's `core/include/vstr.h` is a pure C11 borrowed view:
 do not reintroduce `CMETA_STRUCT`, a reflected compatibility type or a
 second `vstr` library here.
 

@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 project(plugin_abi_installed_consumer LANGUAGES C)
 
-find_package(Salts CONFIG REQUIRED)
+find_package(CMeta CONFIG REQUIRED)
 
-if(NOT TARGET Salts::PluginABI)
-  message(FATAL_ERROR "installed package is missing Salts::PluginABI")
+if(NOT TARGET CMeta::PluginABI)
+  message(FATAL_ERROR "installed package is missing CMeta::PluginABI")
 endif()
-if(NOT TARGET Salts::Plugin)
-  message(FATAL_ERROR "installed package is missing Salts::Plugin")
+if(NOT TARGET CMeta::Plugin)
+  message(FATAL_ERROR "installed package is missing CMeta::Plugin")
 endif()
 
 foreach(retired_target IN ITEMS
@@ -23,12 +23,12 @@ foreach(retired_target IN ITEMS
   endif()
 endforeach()
 
-get_target_property(plugin_abi_type Salts::PluginABI TYPE)
+get_target_property(plugin_abi_type CMeta::PluginABI TYPE)
 if(NOT plugin_abi_type STREQUAL "INTERFACE_LIBRARY")
   message(FATAL_ERROR
-    "Salts::PluginABI must remain header/CMeta-only, got ${plugin_abi_type}")
+    "CMeta::PluginABI must remain header/CMeta-only, got ${plugin_abi_type}")
 endif()
 
 add_executable(plugin_abi_installed_consumer main.c)
-target_link_libraries(plugin_abi_installed_consumer PRIVATE Salts::PluginABI)
+target_link_libraries(plugin_abi_installed_consumer PRIVATE CMeta::PluginABI)
 target_compile_features(plugin_abi_installed_consumer PRIVATE c_std_11)

@@ -156,7 +156,7 @@ int main(void) {
 }
 ```
 
-链接 `Salts::CMeta`。该场景由 `cmeta_manifest_view_test` 和 installed Reflection 测试覆盖。Getter 先验证格式、索引、exact kind 与 metadata，再发布原 descriptor 的 const 借用；失败保留输出。`CMETA_INVALID_ARGUMENT` 表示参数/descriptor 无效，`CMETA_TYPE_MISMATCH` 表示格式版本或 kind 不匹配，`CMETA_CAPACITY_EXCEEDED` 表示显式预算不足。Trace getter 验证 payload schema；capability getter 验证 interface schema，不授予接口 handle 或 Plugin lease。
+链接 `CMeta::CMeta`。该场景由 `cmeta_manifest_view_test` 和 installed Reflection 测试覆盖。Getter 先验证格式、索引、exact kind 与 metadata，再发布原 descriptor 的 const 借用；失败保留输出。`CMETA_INVALID_ARGUMENT` 表示参数/descriptor 无效，`CMETA_TYPE_MISMATCH` 表示格式版本或 kind 不匹配，`CMETA_CAPACITY_EXCEEDED` 表示显式预算不足。Trace getter 验证 payload schema；capability getter 验证 interface schema，不授予接口 handle 或 Plugin lease。
 
 查询限额由调用方显式传入：`max_items` 同时限制 manifest membership、字段/方法/参数/泛型 arity，`max_identity_depth` 与 `max_identity_nodes` 限制递归工作；depth 不能超过可配置的 `CMETA_MANIFEST_DEPTH_LIMIT`。Cycle 在 canonical recursive validator 执行前消耗预算并失败。没有动态分配、对象回调、模块 retain 或缓存。调用方须提供可读且 live 的 ABI-compatible descriptor/数组及 NUL-terminated 字符串；kind 校验不能证明一个任意裸指针的真实存储类型。跨 DSO 消费须先协商 Reflection ABI，并由 Plugin owner 保持 provider lease。这里只验证已知 C metadata，不解析不可信字节流。
 

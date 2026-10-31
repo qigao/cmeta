@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce Salts as the only CMeta/ACE/CFlow source owner.
+"""Enforce CMeta as the only CMeta/ACE/CFlow source owner.
 
 Source trees migrated to qigao/salts-core or qigao/crypto must not be
 retained as unbuilt fallbacks, aliases, manifests or dormant test harnesses.
@@ -17,7 +17,7 @@ MIGRATED = (
 )
 for name in MIGRATED:
     if (ROOT / name).exists():
-        raise SystemExit(f"Duplicate native ownership in Salts: {name}")
+        raise SystemExit(f"Duplicate native ownership in CMeta: {name}")
 for name in ("vcpkg.json", "vcpkg-configuration.json", "CMakeUserPresets.json"):
     if (ROOT / name).exists():
         raise SystemExit(f"Obsolete dependency/compatibility manifest: {name}")
@@ -27,7 +27,7 @@ for name in (".github/actions", "cmake/vcpkg-cache.nuget.config"):
 
 cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 required = (
-    "project(Salts VERSION 4.0.0 LANGUAGES C CXX)",
+    "project(CMeta VERSION 4.0.0 LANGUAGES C CXX)",
     "find_package(SaltsCore 0.1 CONFIG REQUIRED)",
     "add_subdirectory(cmeta)",
     "add_subdirectory(ace)",
@@ -38,9 +38,19 @@ for item in required:
         raise SystemExit(f"Missing sole ACE owner: {item}")
 for line in cmake.splitlines():
     if re.search(r"\badd_subdirectory\((?:platform|concurrency|coroutine|native-io|cnet|utils|uri|unicode|idna|cserde|tinytest|asn1|vendor)\)", line):
-        raise SystemExit(f"Native implementation compiled by Salts: {line}")
+        raise SystemExit(f"Native implementation compiled by CMeta: {line}")
 if "SALTS_CORE_BACKED_PROFILE" in cmake or "GmSSL::" in cmake or "SaltsCore::" in cmake:
     raise SystemExit("Compatibility namespace or second native source owner")
+
+# This package no longer exports a Salts CMake package or aliases for its six
+# targets. Core-owned Salts:: targets remain dependencies.
+for old in ("cmake/SaltsConfig.cmake.in",):
+    if (ROOT / old).exists():
+        raise SystemExit(f"Retired package entry remains: {old}")
+for owner in (ROOT, ROOT / "cmeta", ROOT / "plugin", ROOT / "ace", ROOT / "cflow"):
+    text = (owner / "CMakeLists.txt").read_text(encoding="utf-8")
+    if re.search(r"Salts::(?:CMeta|ACE|Provider|PluginABI|Plugin|CFlow)\b", text):
+        raise SystemExit(f"Retired package target in {owner}")
 
 # Check active retained targets, not just the root. Forbid restoring former
 # native provider namespaces by hidden CMake source/profile declarations.
@@ -63,37 +73,37 @@ for owner in (
 def verify_core_owner(core: Path) -> None:
     """Ensure all removed native files have one source owner, never shims."""
     required = (
-        "src/core/cmeta_buffer.c",
-        "src/platform/c11_threads.c",
-        "src/concurrency/disruptor.c",
-        "src/coroutine/coro.c",
-        "src/native-io/native_io.c",
-        "src/cnet/cnet_owner.c",
-        "src/cnet/cnet_ipc.c",
-        "cnet/sctp/src/sctp_session.c",
-        "src/uri/uri_parser.c",
+        "core/src/cmeta_buffer.c",
+        "platform/src/c11_threads.c",
+        "concurrency/src/disruptor.c",
+        "coroutine/src/coro.c",
+        "native-io/src/native_io.c",
+        "cnet/src/cnet_owner.c",
+        "cnet/src/cnet_ipc.c",
+        "sctp/src/sctp_session.c",
+        "uri/src/uri_parser.c",
         "unicode/src/salts_unicode_case.c",
         "idna/src/salts_idna.c",
         "cserde/src/reader.c",
         "tinytest/src/tinytest.c",
-        "src/fs/fs_root.c",
-        "src/process/process.c",
-        "include/vstr.h",
+        "fs/src/fs_root.c",
+        "process/src/process.c",
+        "core/include/vstr.h",
         "cmake/SaltsCoreConfig.cmake.in",
     )
     for name in required:
         if not (core / name).is_file():
             raise SystemExit(f"Native implementation absent from sole Core owner: {name}")
-    vstr = (core / "include/vstr.h").read_text(encoding="utf-8")
+    vstr = (core / "core/include/vstr.h").read_text(encoding="utf-8")
     if "CMETA_" in vstr or re.search(r"#\s*include\s*[<\"]cmeta[/>\"]", vstr):
         raise SystemExit("Native borrowed vstr must not depend on CMeta reflection")
     c = (core / "CMakeLists.txt").read_text(encoding="utf-8")
     if "NAMESPACE Salts::" not in c or "add_library(Salts::CNet ALIAS" not in (
-        core / "cmake/SaltsCoreCNet.cmake"
+        core / "cnet/CMakeLists.txt"
     ).read_text(encoding="utf-8"):
         raise SystemExit("Canonical Salts:: native target owners missing from Core")
 
-parser = argparse.ArgumentParser(description="Fail-closed Salts ACE/Core source closure")
+parser = argparse.ArgumentParser(description="Fail-closed CMeta ACE/Core source closure")
 parser.add_argument("--core-root", type=Path,
                     help="Checked-out, pinned qigao/salts-core source root")
 arguments = parser.parse_args()

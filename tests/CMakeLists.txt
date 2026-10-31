@@ -7,8 +7,8 @@ function(salts_native_case name source)
     "${PROJECT_SOURCE_DIR}/ace/tests"
     "${PROJECT_SOURCE_DIR}/cflow/src")
   target_link_libraries(salts_native_${name} PRIVATE
-    Salts::TinyTest Salts::CMeta Salts::CFlow Salts::ACE
-    Salts::Plugin Salts::Core Salts::Platform Salts::NativeIO Salts::Concurrency)
+    Salts::TinyTest CMeta::CMeta CMeta::CFlow CMeta::ACE
+    CMeta::Plugin Salts::Core Salts::Platform Salts::NativeIO Salts::Concurrency)
   if(WIN32)
     target_link_libraries(salts_native_${name} PRIVATE ws2_32)
   endif()
@@ -34,7 +34,7 @@ foreach(pair IN ITEMS "owner_c11|runtime_owner_test.c"
   add_executable(salts_${name} "${source}")
   target_compile_features(salts_${name} PRIVATE c_std_11 cxx_std_17)
   target_link_libraries(salts_${name} PRIVATE
-    Salts::ACE Salts::Plugin Salts::CFlow Salts::Core
+    CMeta::ACE CMeta::Plugin CMeta::CFlow Salts::Core
     Salts::NativeIO Salts::Platform)
   add_test(NAME salts.native.${name} COMMAND salts_${name})
 endforeach()

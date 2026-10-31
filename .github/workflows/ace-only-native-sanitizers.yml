@@ -1,13 +1,13 @@
-name: Salts Configurator ServiceHost native sanitizers
+name: CMeta native LLVM sanitizers
 
-# Instrument the sole installed Salts 4.0 CMeta/ACE/CFlow owner with the
+# Instrument the sole installed CMeta 4.0 CMeta/ACE/CFlow owner with the
 # sole pinned native SaltsCore 0.1 owner. No legacy 2.3 or profile switch.
 on:
   pull_request:
     paths:
       - ".github/workflows/ace-only-native-sanitizers.yml"
       - "tools/check_ace_only_sources.py"
-      - "cmake/SaltsConfig.cmake.in"
+      - "cmake/CMetaConfig.cmake.in"
       - "tests/**"
       - "CMakeLists.txt"
       - ".github/workflows/ace-only-source-cutover.yml"
@@ -18,7 +18,16 @@ on:
   push:
     branches: [master]
     paths:
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "tests/**"
+      - "cmeta/**"
+      - "cflow/**"
+      - "ace/**"
+      - "plugin/**"
+      - "tools/**"
       - ".github/workflows/ace-only-native-sanitizers.yml"
+      - ".github/workflows/ace-only-source-cutover.yml"
   workflow_dispatch:
 
 concurrency:
@@ -28,8 +37,8 @@ permissions:
   contents: read
 
 jobs:
-  salts3-native-sanitizers:
-    name: Installed Salts 4.0 ${{ matrix.kind }} sole native owner
+  native-sanitizers:
+    name: Installed CMeta 4.0 ${{ matrix.kind }} sole native owner
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
@@ -45,41 +54,43 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: cfc1ed0d24364689b10ef7a85cff28d8776eb7db
+          ref: 287c30db125e1ada12d51bd17ba36cddd8302305
           path: _core_owner
           persist-credentials: false
+      - name: Select runner-native LLVM
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@master
       - name: Install one exact shared Core native owner with instrumentation
         shell: bash
         run: |
           set -euo pipefail
           python3 tools/check_ace_only_sources.py --core-root _core_owner
           test "$(git -C _core_owner rev-parse HEAD)" = \
-            cfc1ed0d24364689b10ef7a85cff28d8776eb7db
+            287c30db125e1ada12d51bd17ba36cddd8302305
           prefix="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
           cmake -S _core_owner -B build-instrumented-core-${{ matrix.kind }} \
-            -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF \
+            -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF \
             -DSALTSCORE_BUILD_TINYTEST=ON \
             "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
             "-DCMAKE_INSTALL_PREFIX=$prefix"
           cmake --build build-instrumented-core-${{ matrix.kind }} --parallel 2
           cmake --install build-instrumented-core-${{ matrix.kind }} \
             --config RelWithDebInfo
-      - name: Install sole Salts 4.0 CMeta ACE CFlow package
+      - name: Install sole CMeta 4.0 CMeta ACE CFlow package
         shell: bash
         run: |
           set -euo pipefail
           core="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
-          salts="$RUNNER_TEMP/salts3-asan-${{ matrix.kind }}"
-          cmake -S . -B build-instrumented-salts-${{ matrix.kind }} \
-            -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          cmeta="$RUNNER_TEMP/cmeta-asan-${{ matrix.kind }}"
+          cmake -S . -B build-instrumented-cmeta-${{ matrix.kind }} \
+            -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DBUILD_TESTING=ON \
             -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
             -DBUILD_SHARED_LIBS=OFF \
             "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
             "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}" \
-            "-DCMAKE_PREFIX_PATH=$core" "-DCMAKE_INSTALL_PREFIX=$salts"
-          cmake --build build-instrumented-salts-${{ matrix.kind }} --parallel 2
-          cmake --install build-instrumented-salts-${{ matrix.kind }} \
+            "-DCMAKE_PREFIX_PATH=$core" "-DCMAKE_INSTALL_PREFIX=$cmeta"
+          cmake --build build-instrumented-cmeta-${{ matrix.kind }} --parallel 2
+          cmake --install build-instrumented-cmeta-${{ matrix.kind }} \
             --config RelWithDebInfo
       - name: Execute full original source parity under fail-on-report sanitizers
         shell: bash
@@ -93,11 +104,11 @@ jobs:
           else
             export TSAN_OPTIONS='halt_on_error=1:exitcode=66'
           fi
-          ctest --test-dir build-instrumented-salts-${{ matrix.kind }} \
+          ctest --test-dir build-instrumented-cmeta-${{ matrix.kind }} \
             -C RelWithDebInfo --output-on-failure --no-tests=error --timeout 120
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: installed-salts3-${{ matrix.kind }}-ctest
-          path: build-instrumented-salts-${{ matrix.kind }}/Testing/Temporary/LastTest.log
+          name: installed-cmeta-llvm-${{ matrix.kind }}-ctest
+          path: build-instrumented-cmeta-${{ matrix.kind }}/Testing/Temporary/LastTest.log
           if-no-files-found: warn

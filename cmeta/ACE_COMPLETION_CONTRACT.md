@@ -6,11 +6,11 @@
 
 Status: **post-freeze design + isolated test-local prototype** on `feature/cmeta-ace-patterns`. This is not a productized executor, fully qualified conformance, a new Salts 2.3 public ABI, or release approval. See #1058, #1064 and #1018.
 
-**Current ownership:** `Salts::ACE` implements Configurator static graph
+**Current ownership:** `CMeta::ACE` implements Configurator static graph
 selection/activation and ServiceHost generation publication, Scope admission,
-drain and settlement of Plugin leases. `Salts::Plugin` remains the sole loader,
+drain and settlement of Plugin leases. `CMeta::Plugin` remains the sole loader,
 Registry, quiescence and unload authority. The earlier
-[SDK audit #1260](https://github.com/qigao/salts/pull/1260) is historical evidence;
+[SDK audit #1260](https://github.com/qigao/cmeta/pull/1260) is historical evidence;
 current native ABI 2.0 requires independent exact-source acceptance.
 
 ## Non-negotiable architectural split
@@ -91,12 +91,12 @@ For all four: type exactness, owned/borrowed lifetimes, C11/C++17 conformance an
 ## TLS worker-lifetime qualification checkpoint (2026-10-09)
 
 The shared C11/C++17 regression now tests sequential native worker lifetimes
-and strict owner-affinity rejection: [`37fd7e3`](https://github.com/qigao/salts/commit/37fd7e3ca222b108563b64488940f10196c854dd)
+and strict owner-affinity rejection: [`37fd7e3`](https://github.com/qigao/cmeta/commit/37fd7e3ca222b108563b64488940f10196c854dd)
 checks a foreign worker fails admission before mutating borrowed state; 
-[`cd46728`](https://github.com/qigao/salts/commit/cd467281e0378f61c6cf511c6c68eb6bf105631e)
+[`cd46728`](https://github.com/qigao/cmeta/commit/cd467281e0378f61c6cf511c6c68eb6bf105631e)
 checks that a new worker begins with independently zero-initialized TLS after
 a previous worker has exited. The latter passed exact-head ordinary Linux
-[CI #37877642307](https://github.com/qigao/salts/actions/runs/37877642307).
+[CI #37877642307](https://github.com/qigao/cmeta/actions/runs/37877642307).
 
 **Destructor decision:** `SALTS_THREAD_LOCAL` for scalar test state does not
 imply a general-purpose native TLS destructor callback contract. We will not
@@ -113,7 +113,7 @@ production non-SG Leader/Followers execution.
 
 ## #1064 Leader/Followers exact CMeta ABI checkpoint — 2026-10-09
 
-- [`b7c72ca3`](https://github.com/qigao/salts/commit/b7c72ca36574554470f8759aec8cb3dfe4b0f4f4) adds C11/C++17 **canonical CMeta FunctionDesc/FunctionAbi** tests for the actual test-local `enum lf_result (*)(void *, int)` CPU callback, borrowed context, enum terminal, and typed role/stop metadata. This does not create a scheduling or Plugin-lease runtime.
-- [Exact-source ACE-MATRIX #37886770939](https://github.com/qigao/salts/actions/runs/37886770939) passed **257/257 Linux GCC/Clang**, **247/247 Windows MSVC**, **250/250 macOS GCC/Clang**, plus Linux ARM64, Android and iOS cross-build and Lean. All four LF C11/C++17 test targets executed on native hosts.
-- [`0c2551a5`](https://github.com/qigao/salts/commit/0c2551a5ffac45e7f408a541d77ad199cacb85fc) passed [ACE-SAN #37886359217](https://github.com/qigao/salts/actions/runs/37886359217), **24/24 ASan+UBSan and 24/24 TSan**, for the earlier Platform LF executor pair only. The newly introduced CMeta ABI tests require a separate latest-source ACE-SAN qualification.
+- [`b7c72ca3`](https://github.com/qigao/cmeta/commit/b7c72ca36574554470f8759aec8cb3dfe4b0f4f4) adds C11/C++17 **canonical CMeta FunctionDesc/FunctionAbi** tests for the actual test-local `enum lf_result (*)(void *, int)` CPU callback, borrowed context, enum terminal, and typed role/stop metadata. This does not create a scheduling or Plugin-lease runtime.
+- [Exact-source ACE-MATRIX #37886770939](https://github.com/qigao/cmeta/actions/runs/37886770939) passed **257/257 Linux GCC/Clang**, **247/247 Windows MSVC**, **250/250 macOS GCC/Clang**, plus Linux ARM64, Android and iOS cross-build and Lean. All four LF C11/C++17 test targets executed on native hosts.
+- [`0c2551a5`](https://github.com/qigao/cmeta/commit/0c2551a5ffac45e7f408a541d77ad199cacb85fc) passed [ACE-SAN #37886359217](https://github.com/qigao/cmeta/actions/runs/37886359217), **24/24 ASan+UBSan and 24/24 TSan**, for the earlier Platform LF executor pair only. The newly introduced CMeta ABI tests require a separate latest-source ACE-SAN qualification.
 - **Disposition:** test-local **PROTOTYPE**, still **NOT QUALIFIED** as a consumer feature. Non-SG CPU-only workload must be explicitly selected and shown useful; do not relabel CNet SG, add default worker pools, publish an SDK or merge draft #1013.

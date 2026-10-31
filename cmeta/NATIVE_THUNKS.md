@@ -5,7 +5,7 @@
 首个有限形状为 `int(int)`，以及将 `int(void *, int)` 的显式 borrowed
 receiver 绑定为 `int(int)`。FunctionAbi 和 Function-owned receiver projection
 负责 admission；生成器不从任意 Reflection 重建 ABI。不添加 MIR/libffi 依赖。
-普通 C 生成的 callable 仍为默认路径，应用显式链接 `Salts::CMetaNative` 后选择特化。
+普通 C 生成的 callable 仍为默认路径，应用显式链接 `CMeta::CMetaNative` 后选择特化。
 
 现有 `cmeta_mmap` 属于文件映射接口，没有匿名代码页与发布权限转换协议，不能直接
 用来承载本功能。原生模块内部的平台适配器只负责有界代码页与 W^X 状态迁移。
@@ -43,7 +43,7 @@ ObjectRef 特化通过可选 `cmeta_native_object_provider` 关联原 operation 
 输出 token 保持空；没有代码分配、retain/release 或自动回退。生成器/provider 负责确保
 两条执行路径具有相同语义，native 层不从 callable capture 或通用 invoke 指针反推 ABI。
 
-`<cmeta/native/object.h>` 随 `Salts::CMetaNative` 提供；
+`<cmeta/native/object.h>` 随 `CMeta::CMetaNative` 提供；
 `<cmeta/native/static_call.h>` 的 C11 前端还要求链接既有 `Salts::Platform`。
 `cmeta_static_thunk_call(name, default_function)` 声明有限 `int(int)` 槽，
 `cmeta_static_thunk_update(name, &thunk)` 只借用 READY 入口；空/未发布句柄返回
