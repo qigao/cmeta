@@ -36,19 +36,19 @@ jobs:
   sdk:
     name: LLVM SDK / ${{ matrix.rid }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 150
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {rid: linux-x64, os: ubuntu-24.04, family: native, arch: x64, run_tests: true}
-          - {rid: linux-arm64, os: ubuntu-24.04-arm, family: native, arch: arm64, run_tests: true}
-          - {rid: windows-x64, os: windows-2025, family: windows, arch: x64, run_tests: true}
-          - {rid: windows-arm64, os: windows-11-arm, family: windows, arch: arm64, run_tests: true}
-          - {rid: macos-x64, os: macos-15-intel, family: native, arch: x64, run_tests: true}
-          - {rid: macos-arm64, os: macos-15, family: native, arch: arm64, run_tests: true}
-          - {rid: android-x64, os: ubuntu-24.04, family: android, arch: x64, android_abi: x86_64, run_tests: false}
-          - {rid: android-arm64, os: ubuntu-24.04, family: android, arch: arm64, android_abi: arm64-v8a, run_tests: false}
+          - {rid: linux-x64, os: ubuntu-24.04, family: native, arch: x64, parallel: 2, run_tests: true}
+          - {rid: linux-arm64, os: ubuntu-24.04-arm, family: native, arch: arm64, parallel: 2, run_tests: true}
+          - {rid: windows-x64, os: windows-2025, family: windows, arch: x64, parallel: 2, run_tests: true}
+          - {rid: windows-arm64, os: windows-11-arm, family: windows, arch: arm64, parallel: 2, run_tests: true}
+          - {rid: macos-x64, os: macos-15-intel, family: native, arch: x64, parallel: 2, run_tests: true}
+          - {rid: macos-arm64, os: macos-15, family: native, arch: arm64, parallel: 3, run_tests: true}
+          - {rid: android-x64, os: ubuntu-24.04, family: android, arch: x64, android_abi: x86_64, parallel: 2, run_tests: false}
+          - {rid: android-arm64, os: ubuntu-24.04, family: android, arch: arm64, android_abi: arm64-v8a, parallel: 2, run_tests: false}
     env:
       RID: ${{ matrix.rid }}
       SOURCE_SHA: ${{ github.sha }}
@@ -56,6 +56,7 @@ jobs:
       CMETA_INSTALL_PREFIX: ${{ github.workspace }}/package/sdk/${{ matrix.rid }}
       SALTSCORE_PREFIX: ${{ github.workspace }}/package/sdk/${{ matrix.rid }}
       CMETA_ANDROID_ABI: ${{ matrix.android_abi }}
+      BUILD_PARALLEL: ${{ matrix.parallel }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -144,7 +145,7 @@ jobs:
               "-DSALTSCORE_BUILD_TINYTEST=$core_test" \
               "-DCMAKE_INSTALL_PREFIX=$SALTSCORE_PREFIX"
           fi
-          cmake --build build/core --config Release --parallel 2
+          cmake --build build/core --config Release --parallel "$BUILD_PARALLEL"
           cmake --install build/core --config Release
 
       - name: Configure and install Salts with its release preset
@@ -157,7 +158,7 @@ jobs:
             preset=llvm-release-ci
           fi
           cmake --preset "$preset"
-          cmake --build --preset "install-$preset" --parallel 2
+          cmake --build --preset "install-$preset" --parallel "$BUILD_PARALLEL"
 
       - name: Admit the selected release compiler
         shell: bash
