@@ -32,7 +32,7 @@ required = (
     "project(Salts VERSION 0.1.0 LANGUAGES C CXX)",
     "find_package(SaltsCore 0.1 CONFIG REQUIRED)",
     "add_subdirectory(cmeta)",
-    "add_subdirectory(component-runtime)",
+    "add_subdirectory(ace)",
     "add_subdirectory(cflow)",
 )
 for item in required:
@@ -48,7 +48,7 @@ if "SALTS_CORE_BACKED_PROFILE" in cmake or "GmSSL::" in cmake or "SaltsCore::" i
 # native provider namespaces by hidden CMake source/profile declarations.
 for owner in (
     "cmeta", "cflow", "cstl",
-    "component-runtime", "plugin",
+    "ace", "plugin",
 ):
     cmake_path = ROOT / owner / "CMakeLists.txt"
     if not cmake_path.is_file():

@@ -44,7 +44,7 @@ target_link_libraries(my_host PRIVATE Salts::CMeta Salts::ServiceHost)
 Configurator and ServiceHost retain native ABI epoch 2.0, Provider contract v2
 and Configurator binding v2. All hosts, generated bindings and Provider DSOs
 must be rebuilt against one matching SDK. See
-[component-runtime/README.md](component-runtime/README.md) for lifecycle and
+[ace/README.md](ace/README.md) for lifecycle and
 ABI admission rules.
 
 ## Release 0.1.000

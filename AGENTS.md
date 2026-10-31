@@ -1,6 +1,6 @@
 # Salts repository instructions
 
-Salts focuses on **CMeta / ACE**. Its component runtime implements
+Salts focuses on **CMeta / ACE**. The `ace/` module implements
 Configurator/ServiceHost/Plugin composition; CFlow supplies accompanying
 CMeta-based execution integrations. New OS, concurrency, coroutine,
 transport, Unicode/IDNA, native

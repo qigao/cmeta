@@ -4,7 +4,7 @@ function(salts_native_case name source)
   add_executable(salts_native_${name} "${source}")
   target_compile_features(salts_native_${name} PRIVATE c_std_11 cxx_std_17)
   target_include_directories(salts_native_${name} PRIVATE
-    "${PROJECT_SOURCE_DIR}/component-runtime/tests"
+    "${PROJECT_SOURCE_DIR}/ace/tests"
     "${PROJECT_SOURCE_DIR}/cflow/src")
   target_link_libraries(salts_native_${name} PRIVATE
     Salts::TinyTest Salts::CMeta Salts::CFlow Salts::ServiceHost

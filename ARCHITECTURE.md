@@ -50,6 +50,6 @@ complete SDK build is blocked. See the [current integration status](README.md#me
 7. Debug/tracing/metrics/adapters implemented with CMeta belong to Salts;
    underlying native resources and handles are owned by Core.
 
-See public headers in `cmeta/`, `component-runtime/`, `plugin/`, and
+See public headers in `cmeta/`, `ace/`, `plugin/`, and
 `cflow/` for concrete ABI and lifecycle contracts. The canonical installed
 SDK CI exercises genuine owner and Provider DSO unload paths.

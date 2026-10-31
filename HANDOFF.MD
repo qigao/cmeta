@@ -45,3 +45,12 @@
 - Run `tools/audit_native_owner.py` with the current five-path contract:
   `--core-tools`, `--core-prefix`, `--salts-prefix`, `--build-dir` and
   `--report`; legacy `--cmeta-prefix`/`--rid` arguments are not accepted.
+- The former `component-runtime/` source path is now `ace/`. Public include
+  paths and `Salts::Configurator` / `Salts::ServiceHost` target names are
+  unchanged; do not restore a second compatibility directory.
+- Keep exactly three non-overlapping workflows: eight-RID LLVM SDK/release,
+  LLVM sanitizers, and narrow Lean generated-contract verification. The
+  redundant Linux source-cutover workflow was removed. Native workflow path
+  filters must name files that actually enter their configured build graph;
+  documentation, benchmarks, examples and local-only presets must not start
+  the eight-RID matrix.

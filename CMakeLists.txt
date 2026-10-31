@@ -46,7 +46,7 @@ endforeach()
 # implementations must belong to their appropriate Core/Crypto repositories.
 add_subdirectory(cmeta)
 add_subdirectory(plugin)
-add_subdirectory(component-runtime)
+add_subdirectory(ace)
 add_subdirectory(cflow)
 if(BUILD_TESTING)
   add_subdirectory(tests)

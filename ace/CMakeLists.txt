@@ -1,7 +1,7 @@
 # Canonical ABI contracts live beside their only runtime implementations.
 add_library(salts_configurator_abi INTERFACE)
 cmake_config_target(salts_configurator_abi
-  ALIAS Salts::ConfiguratorABI FOLDER "component-runtime"
+  ALIAS Salts::ConfiguratorABI FOLDER "ace"
   EXPORT_NAME ConfiguratorABI)
 target_compile_features(salts_configurator_abi INTERFACE c_std_11)
 target_include_directories(salts_configurator_abi INTERFACE
@@ -11,7 +11,7 @@ target_link_libraries(salts_configurator_abi INTERFACE Salts::CMeta)
 
 add_library(salts_service_host_provider_abi INTERFACE)
 cmake_config_target(salts_service_host_provider_abi
-  ALIAS Salts::ServiceHostProviderABI FOLDER "component-runtime"
+  ALIAS Salts::ServiceHostProviderABI FOLDER "ace"
   EXPORT_NAME ServiceHostProviderABI)
 target_compile_features(salts_service_host_provider_abi INTERFACE c_std_11)
 target_include_directories(salts_service_host_provider_abi INTERFACE
@@ -27,7 +27,7 @@ add_library(salts_configurator STATIC
   src/configurator.c src/configurator_abi.c)
 cmake_config_target(salts_configurator
   ALIAS Salts::Configurator
-  FOLDER "component-runtime"
+  FOLDER "ace"
   EXPORT_NAME Configurator
   OUTPUT_NAME salts_configurator)
 target_compile_features(salts_configurator PUBLIC c_std_11)
@@ -40,7 +40,7 @@ add_library(salts_service_host STATIC
   src/service_host.c src/service_host_runtime.c src/service_host_abi.c)
 cmake_config_target(salts_service_host
   ALIAS Salts::ServiceHost
-  FOLDER "component-runtime"
+  FOLDER "ace"
   EXPORT_NAME ServiceHost
   OUTPUT_NAME salts_service_host)
 target_compile_features(salts_service_host PUBLIC c_std_11)

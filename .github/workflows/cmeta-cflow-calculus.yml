@@ -1,23 +1,38 @@
-name: CMeta-CFlow calculus
-'on':
-  workflow_call:
-    inputs:
-      scope:
-        required: true
-        type: string
+name: CMeta-CFlow Lean contracts
+
+# This workflow owns only Lean proofs and generated-header consistency. Native
+# SDK and sanitizer validation remain in their dedicated LLVM workflows.
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cmeta-cflow-calculus.yml"
+      - "formal/cmeta_cflow_calculus/**"
+      - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
+      - "cflow/include/cflow/generated/builtin_operator_policy.h"
+      - "cflow/include/cflow/generated/machine_schema.h"
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/cmeta-cflow-calculus.yml"
+      - "formal/cmeta_cflow_calculus/**"
+      - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
+      - "cflow/include/cflow/generated/builtin_operator_policy.h"
+      - "cflow/include/cflow/generated/machine_schema.h"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
-  packages: read
 jobs:
   lean:
-    if: fromJSON(inputs.scope).lean == 'true'
     name: Lean LLVM build and test
     runs-on: ubuntu-24.04
     env:
       CC: clang
       CXX: clang++
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: leanprover/lean-action@v1
         with:
           auto-config: false
