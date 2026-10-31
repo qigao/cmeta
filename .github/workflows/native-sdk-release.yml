@@ -168,15 +168,24 @@ jobs:
             local compiler_record
             compiler_record="$(find "$build_dir/CMakeFiles" -name CMakeCCompiler.cmake -print -quit)"
             test -n "$compiler_record"
-            grep -Fq 'set(CMAKE_C_COMPILER_ID "Clang")' "$compiler_record"
+            if ! grep -Fq 'set(CMAKE_C_COMPILER_ID "Clang")' "$compiler_record"; then
+              grep -n 'CMAKE_C_COMPILER' "$compiler_record" || true
+              return 1
+            fi
           }
           admit_clang build/core
           admit_clang "$CMETA_BINARY_DIR"
           if [[ '${{ matrix.family }}' == android ]]; then
             admit_android_abi() {
-              grep -R -Fq \
-                'set(CMAKE_ANDROID_ARCH_ABI "${{ matrix.android_abi }}")' \
-                "$1/CMakeFiles"
+              if ! grep -R -Fq \
+                  'set(CMAKE_ANDROID_ARCH_ABI "${{ matrix.android_abi }}")' \
+                  "$1/CMakeFiles"; then
+                grep -E '^(ANDROID_ABI|CMAKE_ANDROID_ARCH_ABI):' \
+                  "$1/CMakeCache.txt" || true
+                grep -R -n -E 'CMAKE_ANDROID_ARCH_ABI|ANDROID_ABI' \
+                  "$1/CMakeFiles" | head -40 || true
+                return 1
+              fi
             }
             admit_android_abi build/core
             admit_android_abi "$CMETA_BINARY_DIR"
