@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
-project(Salts VERSION 3.0.0 LANGUAGES C CXX)
-# This is the sole CMeta/ACE/CFlow package epoch. No old Salts 2.3,
+project(Salts VERSION 4.0.0 LANGUAGES C CXX)
+# This is the sole CMeta/ACE/CFlow package epoch. No previous package,
 # native-ownership profile or compatibility/fallback switch exists.
-set(SALTS_NATIVE_SOVERSION "3.0")
+set(SALTS_NATIVE_SOVERSION "4.0")
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
@@ -40,13 +40,14 @@ endforeach()
 # All native CNet, FS, Process, Unicode, IDNA, CSerde, ASN1 and Crypto
 # implementations must belong to their appropriate Core/Crypto repositories.
 add_subdirectory(cmeta)
-add_subdirectory(component)
 add_subdirectory(plugin)
-add_subdirectory(component-plugin)
 add_subdirectory(component-runtime)
 add_subdirectory(cflow)
-foreach(_retained IN ITEMS CMeta ComponentABI PluginABI Plugin
-    ComponentProviderABI Configurator ServiceHost CFlow)
+if(BUILD_TESTING)
+  add_subdirectory(tests)
+endif()
+foreach(_retained IN ITEMS CMeta ConfiguratorABI PluginABI Plugin
+    ServiceHostProviderABI Configurator ServiceHost CFlow)
   if(NOT TARGET "Salts::${_retained}")
     message(FATAL_ERROR "Missing CMeta/ACE target Salts::${_retained}")
   endif()

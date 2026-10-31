@@ -1,19 +1,19 @@
-/* Independent installed C11 host: no Salts source in this build. */
+/* Native runtime owner and Provider lease regression. */
 #include <salts/service_host.h>
 #include <salts/plugin.h>
-#include <salts/component_runtime_abi.h>
+#include <salts/service_host_abi.h>
 #include <salts_core/runtime_abi.h>
 #include <salts_core/utf8.h>
 #include <cmeta_buffer.h>
 #include <salts/thread.h>
 #include <stdio.h>
 #include <string.h>
-#ifndef SALTS_M6_INSTALLED_PROVIDER
-#error SALTS_M6_INSTALLED_PROVIDER must reference installed fixture DSO
+#ifndef SALTS_TEST_PROVIDER
+#error SALTS_TEST_PROVIDER must reference native fixture DSO
 #endif
 
 #define CHECK(e) do { if (!(e)) { \
-  fprintf(stderr, "M6 installed consumer %d: %s\n",__LINE__,#e); \
+  fprintf(stderr, "Native runtime owner %d: %s\n",__LINE__,#e); \
   return __LINE__; } } while (0)
 
 int main(void) {
@@ -29,15 +29,15 @@ int main(void) {
   CHECK(salts_core_runtime_mem_pool_size() == sizeof(mem_pool_t));
   CHECK(salts_core_runtime_mem_slice_size() == sizeof(mem_slice_t));
   CHECK(salts_core_utf8_valid("\xe6\x97\xa5",3u));
-  CHECK(salts_configurator_abi_version() == SALTS_COMPONENT_RUNTIME_ABI_VERSION);
-  CHECK(salts_service_host_abi_version() == SALTS_COMPONENT_RUNTIME_ABI_VERSION);
+  CHECK(salts_configurator_abi_version() == SALTS_SERVICE_HOST_ABI_VERSION);
+  CHECK(salts_service_host_abi_version() == SALTS_SERVICE_HOST_ABI_VERSION);
   CHECK(cmeta_plugin_registry_init(&registry,&cfg) == CMETA_PLUGIN_OK);
   CHECK(cmeta_plugin_registry_load(&registry,"\xed\xa0\x80",&ref) ==
         CMETA_PLUGIN_INVALID_ARGUMENT);
-  /* Load the installed DSO from the relocated package prefix and prove
+  /* Load the native Provider DSO and prove
    * that borrowed plugin code cannot unload while a live lease exists. */
   CHECK(cmeta_plugin_registry_load(&registry,
-        SALTS_M6_INSTALLED_PROVIDER, &ref) == CMETA_PLUGIN_OK);
+        SALTS_TEST_PROVIDER, &ref) == CMETA_PLUGIN_OK);
   CHECK(cmeta_plugin_registry_start(&registry, ref) == CMETA_PLUGIN_OK);
   CHECK(cmeta_plugin_registry_acquire(&registry, ref, &lease, &manifest) ==
         CMETA_PLUGIN_OK);

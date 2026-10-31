@@ -36,7 +36,7 @@ static bool secondary_loaded;
 static salts_service_host_generation generation;
 static salts_configurator_deployment deployments[1];
 static salts_configurator_instance instances[2];
-static salts_component_dependency dependencies[1];
+static salts_configurator_dependency dependencies[1];
 static size_t activation_order[1];
 static salts_service_host_module modules[1];
 
@@ -47,7 +47,7 @@ static cmeta_status test_logger_create_noncanonical(
     void *provider_context,
     const cmeta_data_desc *config_data,
     const void *config_value,
-    const salts_component_dependency *dependencies,
+    const salts_configurator_dependency *dependencies,
     size_t dependency_count,
     cmeta_object_ref *out_instance) {
     test_provider_state *state = (test_provider_state *)provider_context;
@@ -165,7 +165,7 @@ suite("ServiceHost generation") {
 
     it("rejects forged INIT recovery while an actual ObjectRef remains live") {
         test_provider_state logger;
-        salts_component_provider_binding provider;
+        salts_configurator_provider_binding provider;
         salts_configurator_deployment deployment;
         salts_configurator_deployment local_deployments[1];
         salts_configurator_instance live_instances[2] = {{0}};
@@ -236,7 +236,7 @@ suite("ServiceHost generation") {
 
     it("retains storage when failed create leaves a noncanonical ObjectRef") {
         test_provider_state logger;
-        salts_component_provider_binding provider;
+        salts_configurator_provider_binding provider;
         salts_configurator_deployment deployment;
         const salts_service_host_generation_storage storage = {
             deployments, 1u,
@@ -254,7 +254,7 @@ suite("ServiceHost generation") {
         check_equal(salts_service_host_generation_build(
             &generation, UINT64_C(7), &registry, &storage,
             &deployment, 1u, NULL, 0u, NULL, 0u),
-            SALTS_SERVICE_HOST_COMPONENT_ERROR);
+            SALTS_SERVICE_HOST_CONFIGURATOR_ERROR);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
         check_equal(generation.components.state,
                     SALTS_CONFIGURATOR_CONTEXT_FAILED);
@@ -278,12 +278,72 @@ suite("ServiceHost generation") {
         check_equal(logger.creates, 1u);
     }
 
+    it("pins a real DSO until failed construction ownership is repaired") {
+        const salts_service_host_generation_storage storage = {
+            deployments, 1u, instances, 1u, dependencies, 1u,
+            activation_order, 1u, modules, 1u
+        };
+        const salts_service_host_source source = {
+            ref, "test.incomplete-create", NULL, NULL
+        };
+        cmeta_plugin_lifecycle_info info;
+
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(7), &registry, &storage,
+            NULL, 0u, &source, 1u, NULL, 0u),
+            SALTS_SERVICE_HOST_CONFIGURATOR_ERROR);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
+        check_equal(generation.module_count, (size_t)1u);
+        check_true(instances[0].object.object != NULL);
+        check_equal(instances[0].object.size, (size_t)0u);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)1u);
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_INVALID_STATE);
+        check_equal(cmeta_plugin_registry_request_stop(&registry, ref),
+                    CMETA_PLUGIN_OK);
+        check_equal(cmeta_plugin_registry_unload(&registry, ref),
+                    CMETA_PLUGIN_BUSY);
+
+        /* This fixture returned only a BORROWED object, with no teardown
+         * callback or external resource. Its owner may clear it explicitly. */
+        instances[0].object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
+        check_equal(salts_service_host_generation_recover(&generation),
+                    SALTS_SERVICE_HOST_OK);
+        check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+    }
+
+    it("rejects the retired Provider contract before construction") {
+        const salts_service_host_generation_storage storage = {
+            deployments, 1u, instances, 1u, dependencies, 1u,
+            activation_order, 1u, modules, 1u
+        };
+        const salts_service_host_source source = {
+            ref, "test.retired-contract", NULL, NULL
+        };
+        cmeta_plugin_lifecycle_info info;
+        check_equal(salts_service_host_generation_build(
+            &generation, UINT64_C(8), &registry, &storage,
+            NULL, 0u, &source, 1u, NULL, 0u),
+            SALTS_SERVICE_HOST_PLUGIN_ERROR);
+        check_equal(generation.failure.plugin_status,
+                    CMETA_PLUGIN_INCOMPATIBLE_CONTRACT);
+        check_equal(generation.module_count, (size_t)0u);
+        check_equal(cmeta_plugin_registry_get_lifecycle(
+            &registry, ref, &info), CMETA_PLUGIN_OK);
+        check_equal(info.active_leases, (size_t)0u);
+    }
+
     it("rejects recovery when truncated deployment_count hides a live tail ObjectRef") {
         test_provider_state logger;
-        salts_component_provider_binding provider;
+        salts_configurator_provider_binding provider;
         salts_configurator_deployment deployment;
         salts_configurator_instance tail_instances[2] = {{0}};
-        salts_component_dependency tail_dependencies[1] = {{0}};
+        salts_configurator_dependency tail_dependencies[1] = {{0}};
         size_t tail_order[1] = {0u};
         salts_service_host_generation_storage storage;
         salts_service_host_generation tail_generation = {0};
@@ -512,7 +572,7 @@ suite("ServiceHost generation") {
         check_equal(salts_service_host_generation_build(
             &generation, UINT64_C(1), &registry, &storage,
             &invalid, 1u, NULL, 0u, NULL, 0u),
-            SALTS_SERVICE_HOST_COMPONENT_ERROR);
+            SALTS_SERVICE_HOST_CONFIGURATOR_ERROR);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
         check_equal(generation.module_count, (size_t)0u);
         check_equal(generation.failure.plugin_status, CMETA_PLUGIN_OK);
@@ -530,7 +590,7 @@ suite("ServiceHost generation") {
     it("rejects a truncated module count while a live lease remains in the tail") {
         salts_configurator_deployment two_deployments[2];
         salts_configurator_instance two_instances[2];
-        salts_component_dependency two_dependencies[2];
+        salts_configurator_dependency two_dependencies[2];
         size_t two_activation_order[2];
         salts_service_host_module two_modules[2];
         const salts_service_host_generation_storage storage = {
@@ -602,7 +662,7 @@ suite("ServiceHost generation") {
     it("preserves partial lease settlement and recovers after repairing the failed token") {
         salts_configurator_deployment two_deployments[2];
         salts_configurator_instance two_instances[2];
-        salts_component_dependency two_dependencies[2];
+        salts_configurator_dependency two_dependencies[2];
         size_t two_activation_order[2];
         salts_service_host_module two_modules[2];
         const salts_service_host_generation_storage storage = {
@@ -922,7 +982,7 @@ suite("ServiceHost generation") {
         salts_service_host_generation multi = {0};
         salts_configurator_deployment multi_deployments[2];
         salts_configurator_instance multi_instances[2];
-        salts_component_dependency multi_dependencies[2];
+        salts_configurator_dependency multi_dependencies[2];
         size_t multi_order[2];
         salts_service_host_module multi_modules[1];
         const salts_service_host_generation_storage storage = {
@@ -963,7 +1023,7 @@ suite("ServiceHost generation") {
         check_equal(salts_configurator_context_find_service(
             &multi.components,
             service_host_provider_value_interface(),
-            &service), SALTS_COMPONENT_OK);
+            &service), SALTS_CONFIGURATOR_OK);
         check_equal(service_host_provider_value_borrow_from_object(
             service.object, service.interfaces, &value), CMETA_OK);
         check_equal(service_host_provider_value_get(&value),
@@ -972,7 +1032,7 @@ suite("ServiceHost generation") {
         check_equal(salts_configurator_context_find_service(
             &multi.components,
             service_host_provider_aux_interface(),
-            &service), SALTS_COMPONENT_OK);
+            &service), SALTS_CONFIGURATOR_OK);
         check_equal(service_host_provider_aux_borrow_from_object(
             service.object, service.interfaces, &aux), CMETA_OK);
         check_equal(service_host_provider_aux_get(&aux),
@@ -1023,7 +1083,7 @@ suite("ServiceHost generation") {
             &generation.components,
             service_host_provider_value_interface(),
             &service),
-            SALTS_COMPONENT_OK);
+            SALTS_CONFIGURATOR_OK);
         check_equal(service_host_provider_value_borrow_from_object(
             service.object, service.interfaces, &value), CMETA_OK);
         check_equal(service_host_provider_value_get(&value),

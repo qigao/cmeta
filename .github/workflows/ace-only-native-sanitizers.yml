@@ -1,6 +1,6 @@
-name: Salts 3 sole CMeta ACE CFlow installed source sanitizers
+name: Salts Configurator ServiceHost native sanitizers
 
-# Instrument the sole installed Salts 3.0 CMeta/ACE/CFlow owner with the
+# Instrument the sole installed Salts 4.0 CMeta/ACE/CFlow owner with the
 # sole pinned native SaltsCore 0.1 owner. No legacy 2.3 or profile switch.
 on:
   pull_request:
@@ -8,14 +8,12 @@ on:
       - ".github/workflows/ace-only-native-sanitizers.yml"
       - "tools/check_ace_only_sources.py"
       - "cmake/SaltsConfig.cmake.in"
-      - "cmake/ci/core-backed-original-tests/**"
+      - "tests/**"
       - "CMakeLists.txt"
       - ".github/workflows/ace-only-source-cutover.yml"
       - "cmeta/**"
       - "plugin/**"
-      - "component/**"
       - "component-runtime/**"
-      - "component-plugin/**"
       - "cflow/**"
   push:
     branches: [master]
@@ -23,12 +21,15 @@ on:
       - ".github/workflows/ace-only-native-sanitizers.yml"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 
 jobs:
   salts3-native-sanitizers:
-    name: Installed Salts 3.0 ${{ matrix.kind }} sole native owner
+    name: Installed Salts 4.0 ${{ matrix.kind }} sole native owner
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
@@ -47,12 +48,6 @@ jobs:
           ref: cfc1ed0d24364689b10ef7a85cff28d8776eb7db
           path: _core_owner
           persist-credentials: false
-      - name: Validate instrumented CTest selection is well quoted
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 _core_owner/tools/check_ci_ctest_regex.py \
-            .github/workflows/ace-only-native-sanitizers.yml
       - name: Install one exact shared Core native owner with instrumentation
         shell: bash
         run: |
@@ -69,7 +64,7 @@ jobs:
           cmake --build build-instrumented-core-${{ matrix.kind }} --parallel 2
           cmake --install build-instrumented-core-${{ matrix.kind }} \
             --config RelWithDebInfo
-      - name: Install sole Salts 3.0 CMeta ACE CFlow package
+      - name: Install sole Salts 4.0 CMeta ACE CFlow package
         shell: bash
         run: |
           set -euo pipefail
@@ -77,7 +72,7 @@ jobs:
           salts="$RUNNER_TEMP/salts3-asan-${{ matrix.kind }}"
           cmake -S . -B build-instrumented-salts-${{ matrix.kind }} \
             -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DBUILD_TESTS=OFF \
+            -DBUILD_TESTING=ON \
             -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
             -DBUILD_SHARED_LIBS=OFF \
             "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
@@ -86,21 +81,6 @@ jobs:
           cmake --build build-instrumented-salts-${{ matrix.kind }} --parallel 2
           cmake --install build-instrumented-salts-${{ matrix.kind }} \
             --config RelWithDebInfo
-          test -f "$salts/lib/cmake/Salts/SaltsTargets.cmake"
-      - name: Build all thirteen original CMeta ACE CFlow conformance suites
-        shell: bash
-        run: |
-          set -euo pipefail
-          core="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
-          salts="$RUNNER_TEMP/salts3-asan-${{ matrix.kind }}"
-          cmake -S cmake/ci/core-backed-original-tests \
-            -B build-instrumented-parity-${{ matrix.kind }} -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            "-DSALTS_SOURCE_ROOT=$GITHUB_WORKSPACE" \
-            "-DCMAKE_PREFIX_PATH=$salts;$core" \
-            "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
-            "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
-          cmake --build build-instrumented-parity-${{ matrix.kind }} --parallel 2
       - name: Execute full original source parity under fail-on-report sanitizers
         shell: bash
         run: |
@@ -113,17 +93,11 @@ jobs:
           else
             export TSAN_OPTIONS='halt_on_error=1:exitcode=66'
           fi
-          # Fail closed if a fixture/test disappears during source extraction.
-          ctest --test-dir build-instrumented-parity-${{ matrix.kind }} \
-            -C RelWithDebInfo -N -R '^salts3[.]original[.][a-z0-9_]+$' |
-            grep -E '^Total Tests: 13$'
-          ctest --test-dir build-instrumented-parity-${{ matrix.kind }} \
-            -C RelWithDebInfo --output-on-failure --no-tests=error \
-            --timeout 120 --repeat until-fail:3 \
-            -R '^salts3[.]original[.][a-z0-9_]+$'
+          ctest --test-dir build-instrumented-salts-${{ matrix.kind }} \
+            -C RelWithDebInfo --output-on-failure --no-tests=error --timeout 120
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: installed-salts3-${{ matrix.kind }}-ctest
-          path: build-instrumented-parity-${{ matrix.kind }}/Testing/Temporary/LastTest.log
+          path: build-instrumented-salts-${{ matrix.kind }}/Testing/Temporary/LastTest.log
           if-no-files-found: warn

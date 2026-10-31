@@ -147,7 +147,7 @@ static cmeta_status test_logger_create(
     void *provider_context,
     const cmeta_data_desc *config_data,
     const void *config_value,
-    const salts_component_dependency *dependencies,
+    const salts_configurator_dependency *dependencies,
     size_t dependency_count,
     cmeta_object_ref *out_instance) {
     test_provider_state *state = (test_provider_state *)provider_context;
@@ -164,7 +164,7 @@ static cmeta_status test_logger_create_then_fail(
     void *provider_context,
     const cmeta_data_desc *config_data,
     const void *config_value,
-    const salts_component_dependency *dependencies,
+    const salts_configurator_dependency *dependencies,
     size_t dependency_count,
     cmeta_object_ref *out_instance) {
     cmeta_status status = test_logger_create(
@@ -177,23 +177,23 @@ static cmeta_status test_app_create(
     void *provider_context,
     const cmeta_data_desc *config_data,
     const void *config_value,
-    const salts_component_dependency *dependencies,
+    const salts_configurator_dependency *dependencies,
     size_t dependency_count,
     cmeta_object_ref *out_instance) {
     test_provider_state *state = (test_provider_state *)provider_context;
-    const salts_component_dependency *dependency = NULL;
+    const salts_configurator_dependency *dependency = NULL;
     test_log logger = test_log_bind(NULL, NULL);
     cmeta_status status;
-    salts_component_status component_status;
+    salts_configurator_status configurator_status;
 
     ++state->creates;
     if (!cmeta_data_desc_equal(config_data, &cmeta_data_int) ||
         config_value == NULL)
         return CMETA_TYPE_MISMATCH;
 
-    component_status = salts_component_dependency_find(
+    configurator_status = salts_configurator_dependency_find(
         dependencies, dependency_count, test_log_interface(), &dependency);
-    if (component_status != SALTS_COMPONENT_OK)
+    if (configurator_status != SALTS_CONFIGURATOR_OK)
         return CMETA_CALLBACK_ERROR;
 
     status = test_log_borrow_from_object(
@@ -233,9 +233,9 @@ static void test_deactivate(
 }
 
 #define TEST_PROVIDER_BINDING(component_, state_, create_) \
-    ((salts_component_provider_binding){ \
-        sizeof(salts_component_provider_binding), \
-        SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION, \
+    ((salts_configurator_provider_binding){ \
+        sizeof(salts_configurator_provider_binding), \
+        SALTS_CONFIGURATOR_PROVIDER_BINDING_ABI_VERSION, \
         cmeta_component_meta(component_), (state_), &test_interfaces, \
         (create_), test_activate, test_deactivate })
 
@@ -247,7 +247,7 @@ static cmeta_status test_cycle_create(
     void *provider_context,
     const cmeta_data_desc *config_data,
     const void *config_value,
-    const salts_component_dependency *dependencies,
+    const salts_configurator_dependency *dependencies,
     size_t dependency_count,
     cmeta_object_ref *out_instance) {
     (void)config_data;

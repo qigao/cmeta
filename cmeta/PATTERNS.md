@@ -45,8 +45,8 @@ The current canonical runtime consumer is the ACE-style Configurator /
 ServiceHost composition: `Salts::Configurator` owns the static graph and
 `Salts::ServiceHost` owns published generations, Scope admission/drain and
 Plugin lease settlement. `Salts::Plugin` remains the sole dynamic loader and
-unload authority. Earlier ACE design records may use `ComponentPlugin` as a
-historical name; it is not an installed lifecycle target. CHttp, TurboFlow and
+unload authority. The installed lifecycle targets are
+`Salts::Configurator` and `Salts::ServiceHost`. CHttp, TurboFlow and
 TurboSCXML remain downstream conformance profiles, not sources of
 consumer-private component semantics.
 
@@ -197,7 +197,7 @@ mechanism remains outside CMeta:
 | Half-Sync/Half-Async | domain runtime + bounded handoff |
 | Streams execution | CFlow / domain runtime |
 | Plugin module lifecycle | Salts::Plugin |
-| Component resolution/lifecycle graph | Salts::Component |
+| Component resolution/lifecycle graph | Salts::Configurator |
 
 CMeta may describe typed policies, messages, interfaces, factories and
 lifecycle contracts for these mechanisms.
@@ -337,11 +337,11 @@ Interface / Function / Object / Lifecycle / Manifest
              provides / requires
                         |
                         v
-              Salts::Component
+              Salts::Configurator
              resolver / lifecycle graph
                         |
                         v
-            Salts::ComponentPlugin
+            Salts::ServiceHost
                 generation scopes
                         |
                         v

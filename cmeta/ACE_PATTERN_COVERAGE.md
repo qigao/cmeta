@@ -1,3 +1,7 @@
+> Historical evidence below applies only to each recorded commit and CI run.
+> Current API names describe the corresponding owner; these results do not
+> qualify Salts 4.0 / native runtime ABI 2.0.
+
 # CMeta x ACE / POSA2 — 17-pattern coverage matrix
 
 > **Post-rc.5 LF implementation (2026-10-10):** the opt-in CPU backend now lives in
@@ -15,7 +19,7 @@
 > **Change policy:** [#1012](https://github.com/qigao/salts/issues/1012), draft [PR #1013](https://github.com/qigao/salts/pull/1013) **DO NOT MERGE / DO NOT PUBLISH**; [#1018](https://github.com/qigao/salts/issues/1018) independently owns 2.3.0 package, ABI and downstream release qualification.
 
 > **Runtime naming note (2026-10-19):** the matrix preserves historical source
-> checkpoints and CTest names, some of which use `ComponentPlugin`. The
+> checkpoints and CTest names, some of which use `ServiceHost`. The
 > currently integrated lifecycle targets are `Salts::Configurator` and
 > `Salts::ServiceHost`; Plugin remains the sole loader/Registry/quiescence/
 > unload authority. Current SDK and installed-consumer qualification is tracked
@@ -85,7 +89,7 @@ Status vocabulary:
 ## Grounded implementation / conformance evidence
 
 - **Canonical pattern primitives:** [PATTERNS.md](PATTERNS.md), [Interface source](include/cmeta/interface.h), [Function metadata](include/cmeta/function.h), [Object Interface](include/cmeta/object_interface.h), [pattern C11/C++17 conformance](tests/cmeta_pattern_cases.h).
-- **Component:** [declaration](include/cmeta/component.h), [runtime](../component/include/salts/component.h), [ComponentPlugin scopes](../component-plugin/include/salts/component_plugin.h); freeze tests and generation/epoch evidence in [ACE_FREEZE.md](ACE_FREEZE.md).
+- **Component:** [declaration](include/cmeta/component.h), [runtime](../component-runtime/include/salts/configurator.h), [ServiceHost scopes](../component-runtime/include/salts/service_host.h); freeze tests and generation/epoch evidence in [ACE_FREEZE.md](ACE_FREEZE.md).
 - **Reactor / Proactor:** [NativeIO public model](../native-io/include/salts/native_io.h) + [backend implementation](../native-io/src/native_io.c) + [native tests](../native-io/tests/native_io_test.c); [CNet](../cnet/README.md). Backend-kind distinction is explicit: epoll/kqueue = readiness; IOCP/io_uring = completion. Do not create another loop.
 - **Acceptor-Connector:** [real TCP ACE conformance](../cnet/tests/cnet_ace_acceptor_connector_test.c).
 - **Active Object / Half-Sync:** [Actor conformance](../cflow/tests/cflow_actor_test.c), [TCP → Channel → Actor fixture](../cflow/cnet-adapter/tests/cflow_ace_half_sync_async_test.c), [ACE_FREEZE.md](ACE_FREEZE.md).
@@ -123,7 +127,7 @@ Leader/Followers remains an optional, non-SG **test-local only** topology under 
 
 ### ACT / Plugin lease test (post-freeze)
 
-[`cmeta_native_component_plugin_publication_test`](../component-plugin/tests/component_plugin_publication_test.c)
+[`cmeta_native_component_plugin_publication_test`](https://github.com/qigao/salts/blob/cc6975c0371293f68012febce9644418a145b950/component-plugin/tests/component_plugin_publication_test.c)
 now combines the existing real Plugin DSO + Component generation with a
 **synthetic** typed ACT terminal identity. It demonstrates that closing a
 generation does not release the DSO while the caller still holds a Scope;
@@ -144,10 +148,10 @@ there is no new synchronization runtime or global Interface registry.
 
 ### Real NativeIO × ACT × Plugin DSO integration (post-freeze)
 
-[Real native terminal conformance](../component-plugin/tests/component_plugin_native_io_act_test.c)
+[Real native terminal conformance](https://github.com/qigao/salts/blob/cc6975c0371293f68012febce9644418a145b950/component-plugin/tests/component_plugin_native_io_act_test.c)
 exercises **Linux epoll** and **Darwin kqueue** over a true nonblocking OS
 pipe with NativeIO request/observed completion. The same fixture loads a
-real Plugin DSO, publishes ComponentPlugin generation N, admits and borrows
+real Plugin DSO, publishes ServiceHost generation N, admits and borrows
 a live Scope, then closes admission before I/O terminal observation.
 It verifies that both successful read and explicit cancellation preserve
 the provider lease through terminal observation and exactly-once ACT
@@ -159,11 +163,11 @@ The current HEAD must pass full native CI before this can be claimed qualified.
 
 ### Windows IOCP × ACT × Plugin DSO integration (post-freeze)
 
-[Windows IOCP conformance](../component-plugin/tests/component_plugin_native_io_iocp_act_test.c)
+[Windows IOCP conformance](https://github.com/qigao/salts/blob/cc6975c0371293f68012febce9644418a145b950/component-plugin/tests/component_plugin_native_io_iocp_act_test.c)
 uses **actual overlapped named pipes** through the existing NativeIO IOCP
 backend. Two explicit cases observe successful PIPE_READ and cancellation,
 match exactly one ACT terminal, reject a stale-generation token, and prove
-that closing ComponentPlugin admission / completing NativeIO does **not**
+that closing ServiceHost admission / completing NativeIO does **not**
 reclaim the borrowed Plugin Scope. Only explicit Scope release permits DSO
 generation drain and Plugin unload. This Windows-only fixture complements
 the existing Linux epoll / macOS kqueue nonblocking-pipe fixture; it does
@@ -172,9 +176,9 @@ Status: newly submitted, **requires native Windows CI evidence**.
 
 ### Real Plugin Scope × typed Interceptor integration (post-freeze)
 
-[ComponentPlugin publication conformance](../component-plugin/tests/component_plugin_publication_test.c)
+[ServiceHost publication conformance](https://github.com/qigao/salts/blob/cc6975c0371293f68012febce9644418a145b950/component-plugin/tests/component_plugin_publication_test.c)
 also runs a **native-typed CMeta Interceptor** whose target calls a real
-ComponentPlugin DSO provider via an explicitly acquired Scope. The generation
+ServiceHost DSO provider via an explicitly acquired Scope. The generation
 has stopped new admission, yet in-flight intercepted work remains authorized
 until the Scope is released. CMeta's existing FunctionAbi admission checks
 the native signature; before/after/error and short-circuit paths verify
@@ -260,7 +264,7 @@ retroactively change frozen commit `02b741a`.
 |---|---|---|
 | Component Configurator, Extension Interface, Acceptor-Connector, Active Object, Half-Sync/Half-Async (5) | Frozen ACE host conformance plus later branch regressions | Final immutable 2.3 SDK, downstream and device release gates #1018 |
 | Reactor, Proactor (2) | Existing NativeIO/CNet readiness/completion runtimes, intentionally REUSE | No second runtime; exact backend evidence at release candidate |
-| Interceptor, ACT (2) | Real loaded ComponentPlugin DSO invocation and real NativeIO request/cancel association; full host [#37869377431](https://github.com/qigao/salts/actions/runs/37869377431) at `6185834`; selected sanitizer suites [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) on later source | No implicit lease; final candidate SDK, full composition and downstream |
+| Interceptor, ACT (2) | Real loaded ServiceHost DSO invocation and real NativeIO request/cancel association; full host [#37869377431](https://github.com/qigao/salts/actions/runs/37869377431) at `6185834`; selected sanitizer suites [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) on later source | No implicit lease; final candidate SDK, full composition and downstream |
 | Strategized Locking, Thread-Safe Interface, Monitor Object (3) | Reflected C11/C++17 lockable/synchronized/condition tests, wrong-owner rejection and selected ASan+UBSan/TSan [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) | Exact final installed SDK and closure of any outstanding specific issue acceptance |
 | Wrapper Facade, Scoped Locking, safe Once/DCL, Thread-Specific Storage (4) | Shared real Platform primitives, negative lifecycle tests and native threads; host [#37875659581](https://github.com/qigao/salts/actions/runs/37875659581), latest TLS worker-lifetime host [#37877642307](https://github.com/qigao/salts/actions/runs/37877642307), and selected sanitizer [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) at `c8c27cc` | Wrapper requires quiescent close, TLS scalar cleanup is explicit (not automatic destructor); cross-platform exact-head/installed SDK release gates remain |
 | Leader/Followers (1) | **TEST-LOCAL PROTOTYPE / NOT QUALIFIED**: explicit pre-handler successor election, real mutex/condition workers, bounded copied FIFO and typed C11/C++17 callback contract in `platform_ace_leader_followers(_cpp)_test`; see [#1064](https://github.com/qigao/salts/issues/1064) and [commit `70c3f24`](https://github.com/qigao/salts/commit/70c3f249d1eff06122f35549a0bf8e27f7d68f72) | Named non-SG consumer, DSO provider scope, production ownership and installed SDK (only if exported), cross-platform/sanitizer qualification, comparison with SG if applicable |

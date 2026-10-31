@@ -1,3 +1,7 @@
+> Historical evidence below applies only to each recorded commit and CI run.
+> Current API names describe the corresponding owner; these results do not
+> qualify Salts 4.0 / native runtime ABI 2.0.
+
 # Salts 2.3 — ACE / CMeta functional freeze contract
 > **Post-freeze development notice (2026-10-09):** the existing long-lived
 > branch now contains **additional unqualified** Interceptor, ACT, locking,
@@ -18,26 +22,21 @@ Long-lived `feature/cmeta-ace-patterns` [Draft PR #1013](https://github.com/qiga
 remains **DO NOT MERGE. DO NOT PUBLISH.** Feature freeze is **not** 2.3.0
 native SDK, downstream or stable release qualification.
 
-**Current-runtime mapping (2026-10-19):** the ownership graph below records the
-historical frozen ACE snapshot, where the generation owner was named
-`Salts::ComponentPlugin`. The canonical runtime now integrated in master
-exports `Salts::Configurator` for static graph resolution/activation and
-`Salts::ServiceHost` for generation publication, Scope admission/drain and
-settlement of Plugin leases. `Salts::Plugin` remains the sole DSO
-loader/Registry/quiescence/unload authority. Historical freeze evidence and
-test names are retained as historical evidence, not current target names;
-the current six-RID and installed-consumer release gates are tracked separately
-in [ServiceHost SDK audit PR #1260](https://github.com/qigao/salts/pull/1260).
-
-## Frozen ownership graph
+**Current ownership mapping:** the graph below uses the current public owner
+names for the corresponding responsibilities. `Salts::Configurator` owns static
+graph resolution and activation; `Salts::ServiceHost` owns generation
+publication, Scope admission and drain, and Plugin lease settlement.
+`Salts::Plugin` remains the sole DSO loader and unload authority. Frozen test
+names and run links below apply to their historical source only. They do not
+qualify the current Salts 4.0 / ABI 2.0 implementation.
 
 ```text
 CMeta: immutable Type / Interface / FunctionAbi / DataDesc / ObjectRef /
        Lifecycle / Manifest / typed macro + inline declarations
     |
-    +--> Salts::Component: bounded static selection, graph/lifecycle
+    +--> Salts::Configurator: bounded static selection, graph/lifecycle
     |        |
-    |        +--> Salts::ComponentPlugin: generation publication + scope admission
+    |        +--> Salts::ServiceHost: generation publication + scope admission
     |                    |
     |                    +--> Salts::Plugin: sole DSO load/unload + module lease
     |
@@ -63,8 +62,8 @@ Context ZERO -> READY -> RESOLVED -> ACTIVE -> STOPPED
                                 \-> FAILED (rollback complete)
 ```
 
-- First use: `salts_component_context context =
-  SALTS_COMPONENT_CONTEXT_INIT;` (C11 and C++17). Reading an indeterminate
+- First use: `salts_configurator_context context =
+  SALTS_CONFIGURATOR_CONTEXT_INIT;` (C11 and C++17). Reading an indeterminate
   uninitialized stack context is outside the API contract; no unsafe
   "automatic initialization" compatibility path.
 - Reinit in READY/RESOLVED/ACTIVE fails **without changing storage or losing
@@ -92,7 +91,7 @@ ZERO -> BUILT -> PUBLISHED -> DRAINING -> STOPPING -> DRAINED
   admission/release, close and drain claims are protected by the existing
   runtime mutex. Generation IDs strictly increase and at most **two**
   generations may remain attached; there is no third-generation fallback.
-- A live `salts_component_plugin_scope` is **noncopyable, address-stable,
+- A live `salts_service_host_scope` is **noncopyable, address-stable,
   thread-exclusive**. A shallow copy cannot release or borrow; stale and
   double release cannot decrement the original generation's scope count.
   Scope release is *fallible* and therefore is not silently cast to a
@@ -120,7 +119,7 @@ not be bound twice simply because a candidate is built before publication.
 2. N+1 builds/activates using borrowed provider storage without acquiring a
    second listener/writer. Candidate failure cannot close the domain resource
    or revoke N.
-3. ComponentPlugin publishes N+1, but the domain still decides when its
+3. ServiceHost publishes N+1, but the domain still decides when its
    resource epoch changes. A new N+1 scope is initially **not admitted for
    exclusive I/O**. After the domain explicitly switches the fencing epoch,
    N is no longer admitted for exclusive I/O although its old scopes still
@@ -192,9 +191,9 @@ socket/writer epoch-switch atomicity remains with CNet/CHttp and must
 be qualified in the relevant downstream execution owner, not introduced
 as a second CMeta runtime.
 
-In-repository `salts_component_context_init` call sites were audited:
+In-repository `salts_configurator_context_init` call sites were audited:
 all direct Component C11/C++17 and independently installed consumers use
-`SALTS_COMPONENT_CONTEXT_INIT` before first use; the ComponentPlugin
+`SALTS_CONFIGURATOR_CONTEXT_INIT` before first use; the ServiceHost
 generation initializes its embedded context before calling init. Domain
 repositories' final exact-2.3 consumer qualification remains in #1018.
 

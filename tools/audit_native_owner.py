@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit the *provisional real SaltsConfig* consumers after both SDKs move.
+"""Audit the canonical native executables against the one installed Core owner.
 
 Only original Salts CMeta/Plugin/ServiceHost/CFlow implementation is allowed
 beside the one installed SaltsCore Foundation DLL/DSO owner. No static Runtime
@@ -33,7 +33,7 @@ def main() -> int:
               "darwin" if sys.platform == "darwin" else "linux")
     errors: list[str] = []
     report = {"schema_version": 1, "platform": system,
-              "package": "Salts 3.0 (Core-backed Draft)", "ok": False}
+              "package": "Salts 4.0 native API", "ok": False}
     try:
         core = args.core_prefix.resolve()
         salts = args.salts_prefix.resolve()
@@ -47,11 +47,11 @@ def main() -> int:
             "platform": find_library(core, "platform", system),
             "native_io": find_library(core, "native_io", system),
             "concurrency": find_library(core, "concurrency", system),
-            "provider": find_build_image(build, "salts3_test_provider", system, False),
-            "ace_c": find_build_image(build, "salts3_consumer_c11", system, True),
-            "ace_cpp": find_build_image(build, "salts3_consumer_cpp17", system, True),
-            "cflow_c": find_build_image(build, "salts3_cflow_c11", system, True),
-            "cflow_cpp": find_build_image(build, "salts3_cflow_cpp17", system, True),
+            "provider": find_build_image(build, "salts_service_host_provider_fixture", system, False),
+            "ace_c": find_build_image(build, "salts_owner_c11", system, True),
+            "ace_cpp": find_build_image(build, "salts_owner_cpp17", system, True),
+            "cflow_c": find_build_image(build, "salts_cflow_owner_c11", system, True),
+            "cflow_cpp": find_build_image(build, "salts_cflow_owner_cpp17", system, True),
         }
         for name, image in images.items():
             if not image.is_file():
@@ -104,8 +104,8 @@ def main() -> int:
     args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n",
                            encoding="utf-8")
     for issue in report.get("errors", []):
-        print("Salts3 native ABI: " + issue, file=sys.stderr)
-    print("Salts3 native ABI: " + ("PASS" if report["ok"] else "FAIL"))
+        print("Salts native ABI: " + issue, file=sys.stderr)
+    print("Salts native ABI: " + ("PASS" if report["ok"] else "FAIL"))
     return 0 if report["ok"] else 1
 
 

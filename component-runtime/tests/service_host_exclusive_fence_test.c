@@ -34,7 +34,7 @@ typedef struct exclusive_generation_fixture {
     salts_configurator_deployment deployment;
     salts_configurator_instance instance;
     size_t activation_order;
-    salts_component_provider_binding binding;
+    salts_configurator_provider_binding binding;
     exclusive_provider provider;
 } exclusive_generation_fixture;
 
@@ -84,11 +84,11 @@ static const cmeta_object_interface_provider exclusive_interfaces = {
     exclusive_project
 };
 
-static cmeta_status SALTS_COMPONENT_CALL exclusive_create(
+static cmeta_status SALTS_CONFIGURATOR_CALL exclusive_create(
     void *provider_context,
     const cmeta_data_desc *config_data,
     const void *config_value,
-    const salts_component_dependency *dependencies,
+    const salts_configurator_dependency *dependencies,
     size_t dependency_count,
     cmeta_object_ref *out_instance) {
     exclusive_provider *provider = (exclusive_provider *)provider_context;
@@ -102,7 +102,7 @@ static cmeta_status SALTS_COMPONENT_CALL exclusive_create(
         out_instance, &provider->value, &cmeta_data_int, NULL);
 }
 
-static cmeta_status SALTS_COMPONENT_CALL exclusive_activate(
+static cmeta_status SALTS_CONFIGURATOR_CALL exclusive_activate(
     void *provider_context,
     const cmeta_object_ref *instance) {
     exclusive_provider *provider = (exclusive_provider *)provider_context;
@@ -115,7 +115,7 @@ static cmeta_status SALTS_COMPONENT_CALL exclusive_activate(
     return CMETA_OK;
 }
 
-static void SALTS_COMPONENT_CALL exclusive_deactivate(
+static void SALTS_CONFIGURATOR_CALL exclusive_deactivate(
     void *provider_context,
     const cmeta_object_ref *instance) {
     exclusive_provider *provider = (exclusive_provider *)provider_context;
@@ -161,10 +161,10 @@ static salts_service_host_status domain_bind_service(
             scope, "ExclusiveDomainWriter",
             service_host_provider_value_interface(),
             &service) != SALTS_SERVICE_HOST_OK)
-        return SALTS_SERVICE_HOST_COMPONENT_ERROR;
+        return SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
     if (service_host_provider_value_borrow_from_object(
             service.object, service.interfaces, &value) != CMETA_OK)
-        return SALTS_SERVICE_HOST_COMPONENT_ERROR;
+        return SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
     bound->value = value;
     bound->generation_id = salts_service_host_scope_generation_id(scope);
     bound->live = true;
@@ -206,9 +206,9 @@ static salts_service_host_status build_exclusive_generation(
 
     fixture->provider.value = value;
     fixture->provider.domain = domain;
-    fixture->binding = (salts_component_provider_binding){
-        sizeof(salts_component_provider_binding),
-        SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION,
+    fixture->binding = (salts_configurator_provider_binding){
+        sizeof(salts_configurator_provider_binding),
+        SALTS_CONFIGURATOR_PROVIDER_BINDING_ABI_VERSION,
         cmeta_component_meta(ExclusiveDomainWriter),
         &fixture->provider,
         &exclusive_interfaces,
