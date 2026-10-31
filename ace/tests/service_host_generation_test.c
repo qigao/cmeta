@@ -4,6 +4,7 @@
 
 #include <salts/service_host.h>
 #include <cmeta/object_scope.h>
+#include <stdlib.h>
 
 #ifndef COMPONENT_PROVIDER_SECONDARY_PLUGIN_PATH
 #error COMPONENT_PROVIDER_SECONDARY_PLUGIN_PATH must name the secondary Provider DSO
@@ -115,6 +116,62 @@ suite("ServiceHost generation") {
         check_equal(cmeta_plugin_registry_unload(
             &registry, ref), CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_destroy(&registry), CMETA_PLUGIN_OK);
+    }
+
+    it("publishes and drains after construction configuration has expired") {
+        test_provider_state logger, app;
+        salts_configurator_provider_binding providers[2];
+        salts_configurator_deployment source[2], admitted[2];
+        salts_configurator_instance owned_instances[2];
+        salts_configurator_dependency owned_dependencies[2];
+        size_t order[2];
+        const salts_service_host_generation_storage storage = {
+            admitted, 2u, owned_instances, 2u, owned_dependencies, 2u,
+            order, 2u, NULL, 0u
+        };
+        salts_service_host_generation candidate = SALTS_SERVICE_HOST_GENERATION_INIT;
+        salts_service_host_generation *previous = NULL;
+        salts_service_host_runtime runtime = SALTS_SERVICE_HOST_RUNTIME_INIT;
+        salts_service_host_scope scope = SALTS_SERVICE_HOST_SCOPE_INIT;
+        salts_configurator_service service;
+        test_app value = test_app_bind(NULL, NULL);
+        cmeta_data_desc *config_data = (cmeta_data_desc *)malloc(sizeof(*config_data));
+        int *config = (int *)malloc(sizeof(*config));
+        check_true(config_data != NULL && config != NULL);
+        if (config_data == NULL || config == NULL) {
+            free(config_data);
+            free(config);
+            return;
+        }
+        *config_data = cmeta_data_int;
+        *config = 5;
+        test_provider_state_init(&logger, 7, NULL);
+        test_provider_state_init(&app, 0, NULL);
+        providers[0] = TEST_PROVIDER_BINDING(TestLogger, &logger, test_logger_create);
+        providers[1] = TEST_PROVIDER_BINDING(TestApp, &app, test_app_create);
+        source[0] = TEST_DEPLOYMENT(&providers[0], NULL, NULL);
+        source[1] = TEST_DEPLOYMENT(&providers[1], config_data, config);
+        check_equal(salts_service_host_generation_build(&candidate, 1u, NULL,
+            &storage, source, 2u, NULL, 0u, NULL, 0u), SALTS_SERVICE_HOST_OK);
+        free(config_data);
+        free(config);
+        check_equal(salts_service_host_runtime_init(&runtime), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_runtime_publish(&runtime, &candidate, &previous),
+            SALTS_SERVICE_HOST_OK);
+        check_null(previous);
+        check_equal(salts_service_host_scope_acquire(&runtime, &scope), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_scope_find_service(&scope, test_app_interface(),
+            &service), SALTS_SERVICE_HOST_OK);
+        check_equal(test_app_borrow_from_object(service.object, service.interfaces,
+            &value), CMETA_OK);
+        check_equal(test_app_value(&value), 12);
+        check_equal(salts_service_host_scope_release(&scope), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_runtime_close(&runtime, &previous), SALTS_SERVICE_HOST_OK);
+        check_true(previous == &candidate);
+        check_equal(salts_service_host_generation_drain(&runtime, &candidate), SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_runtime_destroy(&runtime), SALTS_SERVICE_HOST_OK);
+        check_equal(logger.destroys, 1u);
+        check_equal(app.destroys, 1u);
     }
 
     it("rejects noncanonical invalid ObjectRefs during recovery") {

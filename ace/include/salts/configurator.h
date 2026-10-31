@@ -25,7 +25,9 @@ typedef enum salts_configurator_context_state {
     SALTS_CONFIGURATOR_CONTEXT_RESOLVED,
     SALTS_CONFIGURATOR_CONTEXT_ACTIVE,
     SALTS_CONFIGURATOR_CONTEXT_FAILED,
-    SALTS_CONFIGURATOR_CONTEXT_STOPPED
+    SALTS_CONFIGURATOR_CONTEXT_STOPPED,
+    SALTS_CONFIGURATOR_CONTEXT_STARTING,
+    SALTS_CONFIGURATOR_CONTEXT_STOPPING
 } salts_configurator_context_state;
 
 typedef struct salts_configurator_selection {
@@ -37,7 +39,10 @@ typedef struct salts_configurator_selection {
 /*
  * Host/deployment-owned configuration. Configuration is borrowed until
  * create() returns; providers that need it afterwards must copy/retain it
- * under their own semantics.
+ * under their own semantics. This applies to both config_data and config_value;
+ * the runtime does not read either construction input after create() returns.
+ * Provider/component metadata is a separate borrow and remains alive until the
+ * context is stopped (or failed construction/rollback is fully settled).
  */
 typedef struct salts_configurator_deployment {
     const salts_configurator_provider_binding *provider;
@@ -89,7 +94,11 @@ typedef struct salts_configurator_context {
 
 /* Required on first use, in both C11 and C++17:
  * salts_configurator_context context = SALTS_CONFIGURATOR_CONTEXT_INIT;
- * Do not copy a context with live instances, or initialize it concurrently. */
+ * Do not copy a context with live instances. Calls on one context require
+ * external serialization; callback reentry is not concurrent-call support.
+ * During create/activate/rollback callbacks the state is STARTING; during
+ * normal deactivate/destroy it is STOPPING. Reentrant init/resolve/start/stop
+ * and service lookup return INVALID_STATE without changing ownership. */
 #define SALTS_CONFIGURATOR_CONTEXT_INIT {0}
 
 const char *salts_configurator_status_string(salts_configurator_status status);

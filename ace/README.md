@@ -36,6 +36,14 @@ providers and dependency cycles fail closed; there is no implicit ranking or
 fallback. The graph is activated in dependency order and rolled back in reverse
 order if creation, activation or Interface projection fails.
 
+Configurator enters STARTING before create/activate and rollback callbacks,
+and STOPPING before normal deactivate/destroy. Valid reentrant lifecycle or
+lookup calls fail with INVALID_STATE; one context still requires external
+serialization across threads. Construction config_data and config_value are
+borrowed only through create(). ACTIVE graph validation, publication and drain
+use Provider metadata and owned instance records, not expired configuration
+inputs. Provider/component metadata remains borrowed until teardown settles.
+
 ServiceHost builds a complete candidate before publication. A failed N+1 build
 does not withdraw the current N. Publication atomically changes admission for
 new Scopes; existing Scopes keep the old generation alive. Drain returns
@@ -59,6 +67,14 @@ single-owner and non-copyable/non-movable by contract; the owner-address check
 is defensive misuse detection, not a memory-safety boundary. Each Scope is used
 by one thread at a time, while the provider defines its own method-level
 concurrency semantics.
+
+A caller exclusively owns a detached BUILT candidate throughout publish().
+Configurator supplies the sole internal graph/ObjectRef validation; ServiceHost
+checks its storage and Plugin ownership boundary. Full candidate validation runs
+outside the runtime mutex, followed by a synchronized state/epoch recheck and
+publication. Drain reserves STOPPING with zero Scopes under that mutex, then
+validates/stops outside it. Rejected plans retain DRAINING/FAILED, storage and
+leases for an explicit repair/retry; Provider callbacks are not invoked twice.
 
 ## ABI admission
 

@@ -2,8 +2,127 @@
 #define SALTS_CONFIGURATOR_TEST_CASES_H
 
 #include "configurator_test_fixture.h"
+#include <stdlib.h>
 
 suite("Salts static Component Configurator") {
+    it("does not revisit expired construction configuration during lookup or stop") {
+        test_provider_state logger, app;
+        salts_configurator_provider_binding providers[2];
+        salts_configurator_deployment deployments[2];
+        salts_configurator_instance instances[2];
+        salts_configurator_dependency dependencies[2];
+        size_t order[2];
+        salts_configurator_context context = SALTS_CONFIGURATOR_CONTEXT_INIT;
+        salts_configurator_service service;
+        test_app app_interface = test_app_bind(NULL, NULL);
+        cmeta_data_desc *config_data = (cmeta_data_desc *)malloc(sizeof(*config_data));
+        int *config = (int *)malloc(sizeof(*config));
+        check_true(config_data != NULL && config != NULL);
+        if (config_data == NULL || config == NULL) {
+            free(config_data);
+            free(config);
+            return;
+        }
+        *config_data = cmeta_data_int;
+        *config = 5;
+        test_provider_state_init(&logger, 7, NULL);
+        test_provider_state_init(&app, 0, NULL);
+        providers[0] = TEST_PROVIDER_BINDING(TestLogger, &logger, test_logger_create);
+        providers[1] = TEST_PROVIDER_BINDING(TestApp, &app, test_app_create);
+        deployments[0] = TEST_DEPLOYMENT(&providers[0], NULL, NULL);
+        deployments[1] = TEST_DEPLOYMENT(&providers[1], config_data, config);
+        check_equal(salts_configurator_context_init(&context, deployments, 2u,
+            NULL, 0u, instances, 2u, dependencies, 2u, order, 2u), SALTS_CONFIGURATOR_OK);
+        check_equal(salts_configurator_context_resolve(&context), SALTS_CONFIGURATOR_OK);
+        check_equal(salts_configurator_context_start(&context), SALTS_CONFIGURATOR_OK);
+        free(config_data);
+        free(config);
+        check_equal(salts_configurator_context_find_service(
+            &context, test_app_interface(), &service), SALTS_CONFIGURATOR_OK);
+        check_equal(test_app_borrow_from_object(service.object, service.interfaces,
+            &app_interface), CMETA_OK);
+        check_equal(test_app_value(&app_interface), 12);
+        check_equal(salts_configurator_context_stop(&context), SALTS_CONFIGURATOR_OK);
+        check_equal(logger.destroys, 1u);
+        check_equal(app.destroys, 1u);
+    }
+
+    it("rejects callback reentry throughout construction and normal teardown") {
+        salts_configurator_context context = SALTS_CONFIGURATOR_CONTEXT_INIT;
+        test_reentry_provider provider_state = {0};
+        salts_configurator_provider_binding provider;
+        salts_configurator_deployment deployment;
+        salts_configurator_instance instance;
+        size_t order;
+        unsigned i, j;
+        test_provider_state_init(&provider_state.provider, 7, NULL);
+        provider_state.context = &context;
+        provider_state.provider.lifecycle.context = &provider_state;
+        provider_state.provider.lifecycle.destroy = test_reentry_destroy;
+        provider = TEST_PROVIDER_BINDING(TestLogger, &provider_state, test_reentry_create);
+        provider.activate = test_reentry_activate;
+        provider.deactivate = test_reentry_deactivate;
+        deployment = TEST_DEPLOYMENT(&provider, NULL, NULL);
+        check_equal(salts_configurator_context_init(&context, &deployment, 1u,
+            NULL, 0u, &instance, 1u, NULL, 0u, &order, 1u), SALTS_CONFIGURATOR_OK);
+        check_equal(salts_configurator_context_resolve(&context), SALTS_CONFIGURATOR_OK);
+        check_equal(salts_configurator_context_start(&context), SALTS_CONFIGURATOR_OK);
+        check_equal(salts_configurator_context_stop(&context), SALTS_CONFIGURATOR_OK);
+        check_equal(provider_state.calls, 4u);
+        for (i = 0u; i < provider_state.calls; ++i) {
+            check_equal(provider_state.states[i], i < 2u
+                ? SALTS_CONFIGURATOR_CONTEXT_STARTING : SALTS_CONFIGURATOR_CONTEXT_STOPPING);
+            for (j = 0u; j < 4u; ++j)
+                check_equal(provider_state.results[i][j], SALTS_CONFIGURATOR_INVALID_STATE);
+        }
+        check_equal(provider_state.provider.creates, 1u);
+        check_equal(provider_state.provider.activates, 1u);
+        check_equal(provider_state.provider.deactivates, 1u);
+        check_equal(provider_state.provider.destroys, 1u);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_STOPPED);
+    }
+
+    it("keeps callback admission closed while failed construction rolls back") {
+        int config = 5;
+        test_provider_state app;
+        test_reentry_provider logger = {0};
+        salts_configurator_context context = SALTS_CONFIGURATOR_CONTEXT_INIT;
+        salts_configurator_provider_binding providers[2];
+        salts_configurator_deployment deployments[2];
+        salts_configurator_instance instances[2];
+        salts_configurator_dependency dependencies[2];
+        size_t order[2];
+        unsigned i, j;
+        test_provider_state_init(&logger.provider, 7, NULL);
+        logger.context = &context;
+        logger.provider.lifecycle.context = &logger;
+        logger.provider.lifecycle.destroy = test_reentry_destroy;
+        test_provider_state_init(&app, 0, NULL);
+        app.fail_activate = true;
+        providers[0] = TEST_PROVIDER_BINDING(TestLogger, &logger, test_reentry_create);
+        providers[0].activate = test_reentry_activate;
+        providers[0].deactivate = test_reentry_deactivate;
+        providers[1] = TEST_PROVIDER_BINDING(TestApp, &app, test_app_create);
+        deployments[0] = TEST_DEPLOYMENT(&providers[0], NULL, NULL);
+        deployments[1] = TEST_DEPLOYMENT(&providers[1], &cmeta_data_int, &config);
+        check_equal(salts_configurator_context_init(&context, deployments, 2u,
+            NULL, 0u, instances, 2u, dependencies, 2u, order, 2u), SALTS_CONFIGURATOR_OK);
+        check_equal(salts_configurator_context_resolve(&context), SALTS_CONFIGURATOR_OK);
+        check_equal(salts_configurator_context_start(&context), SALTS_CONFIGURATOR_ACTIVATE_FAILED);
+        check_equal(logger.calls, 4u);
+        for (i = 0u; i < logger.calls; ++i) {
+            check_equal(logger.states[i], SALTS_CONFIGURATOR_CONTEXT_STARTING);
+            for (j = 0u; j < 4u; ++j)
+                check_equal(logger.results[i][j], SALTS_CONFIGURATOR_INVALID_STATE);
+        }
+        check_equal(logger.provider.deactivates, 1u);
+        check_equal(logger.provider.destroys, 1u);
+        check_equal(app.deactivates, 0u);
+        check_equal(app.destroys, 1u);
+        check_equal(context.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
+        check_null(context.instances);
+    }
+
     it("rejects a preceding binding epoch before creating any instance") {
         test_provider_state logger;
         salts_configurator_provider_binding provider;
