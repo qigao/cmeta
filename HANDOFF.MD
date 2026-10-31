@@ -28,3 +28,7 @@
   UCRT `_aligned_malloc`/`_aligned_free` pair. llvm-mingw does not define
   `_MSC_VER`; sending it through `posix_memalign` both fails compilation and
   would break the required allocator/deallocator pairing.
+- The exact Core release pin includes the cross-compiler Windows DLL identity
+  fix: CMake must publish `saltscore_<module>-0.1.dll` without llvm-mingw's
+  default Unix-style `lib` prefix. Keep the ABI audit fail-closed rather than
+  accepting compiler-dependent filenames.
