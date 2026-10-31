@@ -55,8 +55,8 @@ cmake_add_test(cmeta_native_service_host_scope_cpp_test
   LIBS CMeta::ACE
   FOLDER "ace/tests")
 cmake_add_test(cmeta_native_service_host_runtime_failure_test
-  SOURCES service_host_runtime_failure_test.c ../src/service_host_runtime.c
-  LIBS CMeta::ACE Salts::Platform Salts::TinyTest
+  SOURCES service_host_runtime_failure_test.c
+  LIBS CMeta::Provider Salts::Platform Salts::TinyTest
   FOLDER "ace/tests")
 
 foreach(host_test IN ITEMS
