@@ -19,9 +19,10 @@ runtime fallback or duplicated GmSSL builds are provided. Link only
 
 The unbuilt `utils/` monolith and old native entry points have been physically retired; FS/Process belong to Core and ASN.1 to Crypto. No old APIs or compatibility targets are retained.
 
-The retained `cstl/`, `simd/` and `tinymock/` trees are CMeta-specific.
-They are not part of the installed production targets until explicitly
-qualified against the single Core SDK.
+The retained `cstl/` tree is CMeta-specific and remains outside the installed
+production graph until explicitly qualified. TinyMock and descriptor-driven
+SIMD execution belong only to `qigao/salts-utils`; their source trees are no
+longer retained here. CMeta continues to own vector/mask reflection metadata.
 
 ## Build
 

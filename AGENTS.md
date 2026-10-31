@@ -16,6 +16,9 @@ cryptographic code belongs to **qigao/crypto**. Source ownership is singular.
   package layout. Verify installed C11/C++17 consumers and original typed
   runtime conformance after changes.
 
+TinyMock and descriptor-driven SIMD execution belong to qigao/salts-utils;
+do not restore those implementation trees or make Salts depend on Utils.
+
 This repository owns CMeta, CSTL reflected integrations, CFlow, ACE-style
 Component/Plugin/Configurator, interceptors, scoped resources and
 ServiceHost only. Core's `include/vstr.h` is a pure C11 borrowed view:
