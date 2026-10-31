@@ -37,6 +37,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
+        "SaltsCore_DIR": "$penv{SALTSCORE_PREFIX}/lib/cmake/SaltsCore",
         "CMAKE_INSTALL_PREFIX": "$penv{CMETA_INSTALL_PREFIX}",
         "CMAKE_TOOLCHAIN_FILE": "$penv{CMETA_TARGET_TOOLCHAIN_FILE}",
         "BUILD_TESTING": "ON",
@@ -53,6 +54,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
+        "SaltsCore_DIR": "$penv{SALTSCORE_PREFIX}/lib/cmake/SaltsCore",
         "CMAKE_INSTALL_PREFIX": "$penv{CMETA_INSTALL_PREFIX}",
         "CMAKE_TOOLCHAIN_FILE": "$penv{CMETA_TARGET_TOOLCHAIN_FILE}",
         "ANDROID_ABI": "$penv{CMETA_ANDROID_ABI}",

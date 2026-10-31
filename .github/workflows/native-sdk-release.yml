@@ -128,17 +128,22 @@ jobs:
         run: |
           set -euo pipefail
           core_test=ON
-          android_args=()
           if [[ '${{ matrix.family }}' == android ]]; then
             core_test=OFF
-            android_args+=("-DANDROID_ABI=$CMETA_ANDROID_ABI" "-DANDROID_PLATFORM=24" "-DANDROID_STL=c++_shared")
+            cmake -S _core_owner -B build/core -G Ninja \
+              "-DCMAKE_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
+              -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+              "-DSALTSCORE_BUILD_TINYTEST=$core_test" \
+              "-DCMAKE_INSTALL_PREFIX=$SALTSCORE_PREFIX" \
+              "-DANDROID_ABI=$CMETA_ANDROID_ABI" -DANDROID_PLATFORM=24 \
+              -DANDROID_STL=c++_shared
+          else
+            cmake -S _core_owner -B build/core -G Ninja \
+              "-DCMAKE_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
+              -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+              "-DSALTSCORE_BUILD_TINYTEST=$core_test" \
+              "-DCMAKE_INSTALL_PREFIX=$SALTSCORE_PREFIX"
           fi
-          cmake -S _core_owner -B build/core -G Ninja \
-            "-DCMAKE_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
-            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
-            "-DSALTSCORE_BUILD_TINYTEST=$core_test" \
-            "-DCMAKE_INSTALL_PREFIX=$SALTSCORE_PREFIX" \
-            "${android_args[@]}"
           cmake --build build/core --config Release --parallel 2
           cmake --install build/core --config Release
 
