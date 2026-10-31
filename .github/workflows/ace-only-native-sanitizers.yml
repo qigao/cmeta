@@ -1,4 +1,4 @@
-name: Salts Configurator ServiceHost native sanitizers
+name: Salts Configurator ServiceHost LLVM sanitizers
 
 # Instrument the sole installed Salts 4.0 CMeta/ACE/CFlow owner with the
 # sole pinned native SaltsCore 0.1 owner. No legacy 2.3 or profile switch.
@@ -29,9 +29,12 @@ permissions:
 
 jobs:
   salts3-native-sanitizers:
-    name: Installed Salts 4.0 ${{ matrix.kind }} sole native owner
+    name: Installed Salts 4.0 Clang ${{ matrix.kind }} sole native owner
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    env:
+      CC: clang
+      CXX: clang++
     strategy:
       fail-fast: false
       matrix:

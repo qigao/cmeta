@@ -11,8 +11,11 @@ permissions:
 jobs:
   lean:
     if: fromJSON(inputs.scope).lean == 'true'
-    name: Lean build and test
+    name: Lean LLVM build and test
     runs-on: ubuntu-24.04
+    env:
+      CC: clang
+      CXX: clang++
     steps:
       - uses: actions/checkout@v7
       - uses: leanprover/lean-action@v1

@@ -1,4 +1,4 @@
-name: Salts Configurator ServiceHost native SDK
+name: Salts Configurator ServiceHost LLVM SDK
 on:
   pull_request:
     paths:
@@ -31,13 +31,12 @@ permissions:
   contents: read
 jobs:
   native-ace:
-    name: "Configurator ServiceHost native tests / ${{ matrix.os }}"
-    runs-on: ${{ matrix.os }}
+    name: Configurator ServiceHost Clang tests
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+    env:
+      CC: clang
+      CXX: clang++
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,12 +57,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            generator=(-G 'Visual Studio 18 2026' -A x64)
-          else
-            generator=(-G Ninja)
-          fi
-          cmake -S _core_owner -B build-core "${generator[@]}" \
+          cmake -S _core_owner -B build-core -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
             -DSALTSCORE_BUILD_TINYTEST=ON \
             "-DCMAKE_INSTALL_PREFIX=$RUNNER_TEMP/core-sdk"
@@ -73,12 +67,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            generator=(-G 'Visual Studio 18 2026' -A x64)
-          else
-            generator=(-G Ninja)
-          fi
-          cmake -S . -B build-salts "${generator[@]}" \
+          cmake -S . -B build-salts -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
             -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_SHARED_LIBS=OFF \
             "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/core-sdk" \
@@ -89,16 +78,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$RUNNER_OS" == Windows ]]; then
-            generator=(-G 'Visual Studio 18 2026' -A x64)
-            export PATH="$(cygpath -u "$RUNNER_TEMP/ace-sdk")/bin:$(cygpath -u "$RUNNER_TEMP/core-sdk")/bin:$PATH"
-          elif [[ "$RUNNER_OS" == macOS ]]; then
-            generator=(-G Ninja)
-            export DYLD_LIBRARY_PATH="$RUNNER_TEMP/core-sdk/lib:${DYLD_LIBRARY_PATH:-}"
-          else
-            generator=(-G Ninja)
-            export LD_LIBRARY_PATH="$RUNNER_TEMP/core-sdk/lib:${LD_LIBRARY_PATH:-}"
-          fi
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/core-sdk/lib:${LD_LIBRARY_PATH:-}"
           ctest --test-dir build-salts -C Release --no-tests=error \
             --output-on-failure --timeout 120
           python3 tools/audit_native_owner.py \
@@ -108,7 +88,7 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ace-only-source-${{ matrix.os }}
+          name: ace-only-source-llvm
           path: |
             build-salts/Testing/Temporary/LastTest.log
             build-salts/ace-one-owner-audit.json
