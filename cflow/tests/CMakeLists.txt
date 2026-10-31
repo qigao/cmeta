@@ -6,12 +6,12 @@ cmake_add_test(cflow_graph_test
   SOURCES
     cflow_graph_test.c
     ${CFLOW_TEST_SUPPORT}
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_dense_successor_index_test
   SOURCES cflow_dense_successor_index_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
@@ -19,7 +19,7 @@ cmake_add_test(cflow_branching_views_test
   SOURCES
     cflow_branching_views_test.c
     ../benchmarks/cflow_branching_views.c
-  LIBS Salts::CFlow Salts::CSTL Salts::TinyTest
+  LIBS CMeta::CFlow Salts::CSTL Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../benchmarks
   FOLDER "cflow/tests")
 
@@ -27,87 +27,87 @@ cmake_add_test(cflow_pipeline_test
   SOURCES
     cflow_pipeline_test.c
     ${CFLOW_TEST_SUPPORT}
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 # ACE Pipes/Filters: canonical reflected publisher/subscriber + CMeta filter/map
 # over the real demand-driven CFlow Graph and bounded Channel implementation.
 cmake_add_test(cflow_ace_pipes_filters_test
   SOURCES cflow_ace_pipes_filters_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 set_target_properties(cflow_ace_pipes_filters_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 
 cmake_add_test(cflow_plan_managed_test
   SOURCES cflow_plan_managed_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_stream_slice_test
   SOURCES cflow_stream_slice_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_stream_count_test
   SOURCES cflow_stream_count_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_stream_execution_test
   SOURCES cflow_stream_execution_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_adapter_lifecycle_test
   SOURCES cflow_adapter_lifecycle_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_stream_terminal_test
   SOURCES cflow_stream_terminal_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_status_test
   SOURCES cflow_status_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_backend_test
   SOURCES cflow_backend_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_reactive_test
   SOURCES
     cflow_reactive_test.c
     ${CFLOW_TEST_SUPPORT}
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_interface_reflection_test
   SOURCES cflow_interface_reflection_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_function_projection_test
   SOURCES cflow_function_projection_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_tinymock_interface_test
   SOURCES cflow_tinymock_interface_test.c
-  LIBS Salts::CFlow Salts::TinyMock
+  LIBS CMeta::CFlow Salts::TinyMock
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_readiness_test
   SOURCES
     cflow_readiness_test.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../platform/tests/readiness_fake_backend.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../../platform/tests
   FOLDER "cflow/tests")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
@@ -118,49 +118,49 @@ endif()
 
 cmake_add_test(cflow_event_mailbox_test
   SOURCES cflow_event_mailbox_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_machine_test
   SOURCES cflow_machine_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_machine_hierarchy_test
   SOURCES cflow_machine_hierarchy_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_statechart_test
   SOURCES cflow_statechart_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_statechart_instance_test
   SOURCES cflow_statechart_instance_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_statechart_instance_adapter_test
   SOURCES cflow_statechart_instance_adapter_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_statechart_hierarchy_adapter_test
   SOURCES cflow_statechart_hierarchy_adapter_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_machine_instance_test
   SOURCES cflow_machine_instance_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_actor_test
   SOURCES cflow_actor_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 # ACE #1025 real TCP -> bounded CFlow Channel -> Subscription -> Actor.
@@ -168,7 +168,7 @@ cmake_add_test(cflow_actor_test
 # CFlowCNet adapter target. Both libraries have separate authoritative owners.
 cmake_add_test(cflow_ace_half_sync_async_test
   SOURCES cflow_ace_half_sync_async_test.c
-  LIBS Salts::CNet Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS Salts::CNet CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 set_target_properties(cflow_ace_half_sync_async_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -196,22 +196,22 @@ set_tests_properties(cflow_ace_active_object_installed_test PROPERTIES
 
 cmake_add_test(cflow_statechart_actor_test
   SOURCES cflow_statechart_actor_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_io_actor_test
   SOURCES cflow_io_actor_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_io_publisher_test
   SOURCES cflow_io_publisher_test.c cflow_io_publisher_init_failure_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_io_native_test
   SOURCES cflow_io_native_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 if(WIN32)
@@ -224,14 +224,14 @@ endif()
 
 cmake_add_test(cflow_io_native_adapter_test
   SOURCES cflow_io_native_adapter_test.c
-  LIBS Salts::CFlow Salts::NativeIO Salts::Concurrency Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::NativeIO Salts::Concurrency Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 
 
 cmake_add_test(cflow_io_native_sharded_adapter_test
   SOURCES cflow_io_native_sharded_adapter_test.c
-  LIBS Salts::CFlow Salts::NativeIO Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::NativeIO Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 if(WIN32)
   target_link_libraries(cflow_io_native_sharded_adapter_test PRIVATE ws2_32)
@@ -239,66 +239,66 @@ endif()
 
 cmake_add_test(cflow_io_file_test
   SOURCES cflow_io_file_test.c cflow_io_file_init_failure_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_io_pipe_test
   SOURCES cflow_io_pipe_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_timer_event_test
   SOURCES cflow_timer_event_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_temporal_test
   SOURCES cflow_temporal_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_calculus_conformance_test
   SOURCES
     cflow_calculus_conformance_test.c
     ${CFLOW_TEST_SUPPORT}
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_direct_test
   SOURCES cflow_direct_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_parallel_reduce_test
   SOURCES cflow_parallel_reduce_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_seeded_reduce_test
   SOURCES cflow_seeded_reduce_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_certificate_test
   SOURCES cflow_certificate_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_execution_test
   SOURCES cflow_execution_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_owner_executor_test
   SOURCES cflow_owner_executor_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_owner_scheduler_test
   SOURCES cflow_owner_scheduler_test.c
-  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
@@ -307,7 +307,7 @@ if(WIN32 AND NOT BUILD_SHARED_LIBS)
     cflow_executor_dso_fixture.c
     cflow_executor_dso_fixture.h)
   target_link_libraries(cflow_executor_dso_fixture
-    PRIVATE Salts::CFlow)
+    PRIVATE CMeta::CFlow)
   target_compile_definitions(cflow_executor_dso_fixture
     PRIVATE CFLOW_EXECUTOR_DSO_FIXTURE_BUILD=1)
   cmake_config_target(cflow_executor_dso_fixture FOLDER "cflow/tests"
@@ -315,23 +315,23 @@ if(WIN32 AND NOT BUILD_SHARED_LIBS)
 
   cmake_add_test(cflow_executor_dso_test
     SOURCES cflow_executor_dso_test.c
-    LIBS cflow_executor_dso_fixture Salts::CFlow Salts::TinyTest
+    LIBS cflow_executor_dso_fixture CMeta::CFlow Salts::TinyTest
     FOLDER "cflow/tests")
 endif()
 
 cmake_add_test(cflow_scheduler_compat_test
   SOURCES cflow_scheduler_compat_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_header_cpp_test
   SOURCES cflow_header_cpp_test.cpp
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_operator_policy_test
   SOURCES cflow_operator_policy_test.c
-  LIBS Salts::CFlow Salts::TinyTest
+  LIBS CMeta::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
 set_target_properties(

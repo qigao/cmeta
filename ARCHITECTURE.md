@@ -1,13 +1,13 @@
 # Canonical source and runtime architecture
 
-Salts centers on **CMeta and ACE-style component/service composition**.
+CMeta centers on **CMeta and ACE-style component/service composition**.
 CFlow provides accompanying execution integrations built on CMeta.
 
 ```mermaid
 flowchart TD
     app["Applications and services"]
     utils["SaltsUtils: utilities, TinyMock, SIMD"]
-    salts["Salts 4: CMeta and ACE"]
+    salts["CMeta 4: reflection and ACE"]
     core["SaltsCore: native runtime, I/O, TinyTest"]
     crypto["Crypto: static algorithms, ASN.1, TLS"]
     app --> utils
@@ -37,17 +37,18 @@ complete SDK build is blocked. See the [current integration status](README.md#me
 
 ## Invariants
 
-1. Each exported target is **`Salts::Name`** regardless of owning package.
-2. Salts imports a clean, installed **shared SaltsCore** and never links or
+1. CMeta exports **`CMeta::Name`**. Core, Crypto and Utils keep their
+   dependency-owned **`Salts::Name`** targets.
+2. CMeta imports a clean, installed **shared SaltsCore** and never links or
    compiles a second copy of native state.
 3. No package aliases, 2.x fallback build, retained native implementation
    headers or compatibility shims.
 4. No raw network TLS parser, platform thread implementation, FS/Process
-   syscall owner, native SCTP or GmSSL sources in Salts.
+   syscall owner, native SCTP or GmSSL sources in CMeta.
 5. No CMeta/Reflection dependency in SaltsCore or Crypto.
 6. Core and Crypto feature/ABI additions require their own cross-platform
    source and installed SDK conformance before dependent production cutover.
-7. Debug/tracing/metrics/adapters implemented with CMeta belong to Salts;
+7. Debug/tracing/metrics/adapters implemented with CMeta belong to CMeta;
    underlying native resources and handles are owned by Core.
 
 See public headers in `cmeta/`, `ace/`, `plugin/`, and

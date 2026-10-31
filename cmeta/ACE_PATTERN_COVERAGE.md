@@ -20,7 +20,7 @@
 
 > **Runtime naming note (2026-10-19):** the matrix preserves historical source
 > checkpoints and CTest names, some of which use `ServiceHost`. The
-> integrated lifecycle library is `Salts::ACE`, with `Salts::Provider`
+> integrated lifecycle library is `CMeta::ACE`, with `CMeta::Provider`
 > supplying Provider declarations; Plugin remains the sole loader/Registry/quiescence/
 > unload authority. Current SDK and installed-consumer qualification is tracked
 > in [PR #1260](https://github.com/qigao/salts/pull/1260).
@@ -51,7 +51,7 @@ Status vocabulary:
 | # | POSA2 family / pattern | Existing authoritative mechanism | Canonical CMeta representation | Status | Exact remaining work (no duplicated runtime) |
 |---:|---|---|---|---|---|
 | 1 | Service — **Wrapper Facade** | Platform / NativeIO / CNet | typed inline façade, Interface, FunctionAbi, explicit status/borrow | **COMPOSED / PARTIAL CONFORMANCE** | Qualify a complete narrow native-resource façade: types, errors, close/borrow, C11/C++17 and out-of-tree consumer. No generic wrapper runtime. |
-| 2 | Service — **Component Configurator** | Salts::ACE + Salts::Plugin | immutable `cmeta_component_desc`, manifests, typed provider, ObjectRef, leased Interface projections | **QUALIFIED** | Preserve [frozen Component/Plugin contracts](ACE_FREEZE.md); downstream/ABI remains [#1018](https://github.com/qigao/salts/issues/1018), not a new pattern engine. |
+| 2 | Service — **Component Configurator** | CMeta::ACE + CMeta::Plugin | immutable `cmeta_component_desc`, manifests, typed provider, ObjectRef, leased Interface projections | **QUALIFIED** | Preserve [frozen Component/Plugin contracts](ACE_FREEZE.md); downstream/ABI remains [#1018](https://github.com/qigao/salts/issues/1018), not a new pattern engine. |
 | 3 | Service — **Interceptor** | domain callback/dispatch owners | exact FunctionDesc/FunctionAbi + typed Interface roles + borrowed context | **IMPLEMENTED / POST-FREEZE TESTED** | Typed before/after/error/short-circuit chain; result/error ownership, effect/ordering, reentrancy and ServiceHost Scope admission. No generic dynamic ABI reconstruction or hidden invocation registry. |
 | 4 | Service — **Extension Interface** | existing provider/ObjectRef/Plugin lifetime | `cmeta_object_ref`, `cmeta_object_interface_provider`, `cmeta_interface_projection` | **QUALIFIED** | Preserve non-owning projections and explicit owning-self rejection; no second provider identity. |
 | 5 | Event — **Reactor** | NativeIO epoll/kqueue readiness; CNet event callbacks | typed callback / Interface over existing owner-bound dispatch | **REUSE** | Existing NativeIO/CNet model, ownership and callback tests are evidence; **no second Reactor or CMeta scheduler**. |

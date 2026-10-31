@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Public, separately built Salts::CFlow only: no source-tree test fixtures. */
+/* Public, separately built CMeta::CFlow only: no source-tree test fixtures. */
 cmeta_function(filter, value, bool, ace_installed_even, (int v)) {
     return v % 2 == 0;
 }

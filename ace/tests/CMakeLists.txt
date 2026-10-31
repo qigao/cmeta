@@ -2,11 +2,11 @@
 # ABI v2 and the sole Configurator/ServiceHost owner.
 cmake_add_test(cmeta_native_configurator_test
   SOURCES configurator_test.c
-  LIBS Salts::ACE Salts::TinyTest
+  LIBS CMeta::ACE Salts::TinyTest
   FOLDER "ace/tests")
 cmake_add_test(cmeta_native_configurator_cpp_test
   SOURCES configurator_cpp_test.cpp
-  LIBS Salts::ACE Salts::TinyTest
+  LIBS CMeta::ACE Salts::TinyTest
   FOLDER "ace/tests")
 set_target_properties(cmeta_native_configurator_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -17,7 +17,7 @@ set_target_properties(cmeta_native_configurator_cpp_test PROPERTIES
 add_library(salts_service_host_provider_fixture SHARED
   fixture_component_provider.c)
 target_link_libraries(salts_service_host_provider_fixture
-  PRIVATE Salts::Provider)
+  PRIVATE CMeta::Provider)
 set_target_properties(salts_service_host_provider_fixture PROPERTIES
   FOLDER "ace/tests/fixtures"
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -25,38 +25,38 @@ set_target_properties(salts_service_host_provider_fixture PROPERTIES
 add_library(salts_service_host_provider_secondary_fixture SHARED
   fixture_component_provider_secondary.c)
 target_link_libraries(salts_service_host_provider_secondary_fixture
-  PRIVATE Salts::Provider)
+  PRIVATE CMeta::Provider)
 set_target_properties(salts_service_host_provider_secondary_fixture PROPERTIES
   FOLDER "ace/tests/fixtures"
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 
 cmake_add_test(cmeta_native_service_host_generation_test
   SOURCES service_host_generation_test.c
-  LIBS Salts::ACE Salts::TinyTest
+  LIBS CMeta::ACE Salts::TinyTest
   DEFS "COMPONENT_PROVIDER_PLUGIN_PATH=\"$<TARGET_FILE:salts_service_host_provider_fixture>\""
        "COMPONENT_PROVIDER_SECONDARY_PLUGIN_PATH=\"$<TARGET_FILE:salts_service_host_provider_secondary_fixture>\""
   FOLDER "ace/tests")
 cmake_add_test(cmeta_native_service_host_publication_test
   SOURCES service_host_publication_test.c
-  LIBS Salts::ACE Salts::NativeIO Salts::TinyTest
+  LIBS CMeta::ACE Salts::NativeIO Salts::TinyTest
   DEFS "COMPONENT_PROVIDER_PLUGIN_PATH=\"$<TARGET_FILE:salts_service_host_provider_fixture>\""
   FOLDER "ace/tests")
 cmake_add_test(cmeta_native_service_host_concurrency_test
   SOURCES service_host_concurrency_test.c
-  LIBS Salts::ACE Salts::Platform Salts::TinyTest
+  LIBS CMeta::ACE Salts::Platform Salts::TinyTest
   DEFS "COMPONENT_PROVIDER_PLUGIN_PATH=\"$<TARGET_FILE:salts_service_host_provider_fixture>\""
   FOLDER "ace/tests")
 cmake_add_test(cmeta_native_service_host_exclusive_fence_test
   SOURCES service_host_exclusive_fence_test.c
-  LIBS Salts::ACE Salts::TinyTest
+  LIBS CMeta::ACE Salts::TinyTest
   FOLDER "ace/tests")
 cmake_add_test(cmeta_native_service_host_scope_cpp_test
   SOURCES service_host_scope_cpp_test.cpp
-  LIBS Salts::ACE
+  LIBS CMeta::ACE
   FOLDER "ace/tests")
 cmake_add_test(cmeta_native_service_host_runtime_failure_test
   SOURCES service_host_runtime_failure_test.c ../src/service_host_runtime.c
-  LIBS Salts::ACE Salts::Platform Salts::TinyTest
+  LIBS CMeta::ACE Salts::Platform Salts::TinyTest
   FOLDER "ace/tests")
 
 foreach(host_test IN ITEMS
@@ -88,7 +88,7 @@ foreach(case IN ITEMS runtime_abi runtime_abi_cpp configurator_abi)
   endif()
   cmake_add_test(cmeta_native_${case}_test
     SOURCES ${source}
-    LIBS Salts::ACE
+    LIBS CMeta::ACE
     FOLDER "ace/tests")
 endforeach()
 
@@ -98,7 +98,7 @@ foreach(index IN ITEMS 1 2)
   target_compile_definitions(salts_service_host_abi_provider_${index}
     PRIVATE ABI_TEST_PROVIDER_INDEX=${index})
   target_link_libraries(salts_service_host_abi_provider_${index}
-    PRIVATE Salts::Provider)
+    PRIVATE CMeta::Provider)
 endforeach()
 foreach(language IN ITEMS c cpp)
   if(language STREQUAL "c")
@@ -108,7 +108,7 @@ foreach(language IN ITEMS c cpp)
   endif()
   cmake_add_executable(cmeta_native_service_host_abi_dso_${language}_test
     SOURCES ${source}
-    LIBS Salts::ACE
+    LIBS CMeta::ACE
     FOLDER "ace/tests")
   add_test(NAME cmeta_native_service_host_abi_dso_${language}_test
     COMMAND cmeta_native_service_host_abi_dso_${language}_test
