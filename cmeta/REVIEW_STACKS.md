@@ -15,7 +15,7 @@
 | D：#977 Plugin | `plugin/include/salts/plugin*.h`、`plugin/src/`；精确 adapter、manifest/query、跨 TU 聚合与 lease | A、C；scope 适配使用 B | `cmeta_plugin_*`、ELF/Mach-O/COFF linker tests、installed SDK |
 | E：#981 可选 native | `cmeta/native/`、`include/cmeta/native*.h`、相关 Platform executable-memory backend | A–D admission 已完成后才可执行 specialization | `cmeta_native_*`、W^X/ABI/失败回滚、独立 benchmark；不作为 B 的前提 |
 | F：独立修复 | CNet、NativeIO、runner、benchmark workflow | 各模块自身契约 | 各模块 CTest 与独立 benchmark jobs |
-| G：#985 TinyMock 消费者 | `tinymock/`；history/action/return 只拥有行为状态，复用 CMeta 类型和 ownership | A–D；不依赖 E | `cmeta_tinymock_*`、TinyTest 独立链接、C/C++ installed SDK |
+| G：#985 TinyMock 消费者 | [`qigao/salts-utils/tinymock`](https://github.com/qigao/salts-utils/tree/move/tinymock-simd-from-salts/tinymock)（当前唯一源码归属）；history/action/return 只拥有行为状态，复用 CMeta 类型和 ownership | A–D；不依赖 E | `cmeta_tinymock_*`、TinyTest 独立链接、C/C++ installed SDK |
 
 表中 `include/` 和 `src/` 默认相对 `cmeta/`。B/C 共享 ObjectRef 和 Reflection epoch，
 必须一起满足公开契约，不能为了机械拆分恢复 `receiver_method`、旧布局或兼容 alias。

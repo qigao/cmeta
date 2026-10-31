@@ -13,6 +13,7 @@ MIGRATED = (
     "platform", "concurrency", "coroutine", "native-io", "cnet",
     "unicode", "idna", "cserde", "tinytest", "asn1", "uri",
     "vendor", "presets", "utils", "component", "component-plugin",
+    "tinymock", "simd",
 )
 for name in MIGRATED:
     if (ROOT / name).exists():
@@ -44,7 +45,7 @@ if "SALTS_CORE_BACKED_PROFILE" in cmake or "GmSSL::" in cmake or "SaltsCore::" i
 # Check active retained targets, not just the root. Forbid restoring former
 # native provider namespaces by hidden CMake source/profile declarations.
 for owner in (
-    "cmeta", "cflow", "cstl", "simd", "tinymock",
+    "cmeta", "cflow", "cstl",
     "component-runtime", "plugin",
 ):
     cmake_path = ROOT / owner / "CMakeLists.txt"
