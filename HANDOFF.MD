@@ -30,5 +30,6 @@
   would break the required allocator/deallocator pairing.
 - The exact Core release pin includes the cross-compiler Windows DLL identity
   fix: CMake must publish `saltscore_<module>-0.1.dll` without llvm-mingw's
-  default Unix-style `lib` prefix. Keep the ABI audit fail-closed rather than
+  default Unix-style `lib` prefix. CMeta applies the same top-level policy to
+  its own provider/plugin DLLs. Keep the ABI audit fail-closed rather than
   accepting compiler-dependent filenames.
