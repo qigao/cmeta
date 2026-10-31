@@ -86,41 +86,30 @@ Equal hashes do not prove provider identity or authenticity.
 
 ## Static versus dynamic providers
 
-Static:
+Static composition passes an explicit CMeta manifest and component descriptor
+to Configurator in `Salts::ACE`.
 
-```text
-cmeta_component_desc
-    -> explicit CMeta manifest
-    -> Salts::Configurator
-```
-
-Dynamic:
-
-```text
-DSO
-    -> Salts::Plugin manifest/export
-    -> live Plugin lease
-    -> borrowed cmeta_component_desc
-    -> Salts::ServiceHost
-    -> Salts::Configurator
-```
+Dynamic composition admits the DSO through `Salts::Plugin`, holds a Plugin
+lease over the borrowed component descriptor, and uses ServiceHost plus
+Configurator in `Salts::ACE`. Provider declarations come from `Salts::Provider`.
 
 ## Canonical construction and ownership
 
-`Salts::ConfiguratorABI` provides `<salts/configurator_abi.h>`: Configurator
+`Salts::Provider` provides `<salts/configurator_abi.h>`: Configurator
 status, dependency views and the version-2 ProviderBinding with exact create,
 activate and deactivate callbacks. These callbacks construct objects; service
 methods use the original typed CMeta Interface projection.
 
-`Salts::ServiceHostProviderABI` provides `<salts/service_host_provider_abi.h>`.
+The same `Salts::Provider` target supplies `<salts/service_host_provider_abi.h>`.
 Its reflected `salts_service_host_provider` Interface returns one borrowed
 `salts_configurator_provider_binding`. Dynamic publication requires contract
 `salts.service_host.provider.v2`, contract version 2 and binding ABI version 2.
 Plugin leases cover descriptor admission, construction, invocation and teardown.
 A mismatched contract is rejected before the construction callbacks run.
 
-`Salts::Configurator` owns one static dependency graph. `Salts::ServiceHost`
-composes that graph with the existing Plugin Registry, generations and Scopes.
+Inside `Salts::ACE`, Configurator owns one static dependency graph and
+ServiceHost composes that graph with the existing Plugin Registry, generations
+and Scopes.
 `Salts::Plugin` remains the sole DSO loader and unload authority.
 
 ```c

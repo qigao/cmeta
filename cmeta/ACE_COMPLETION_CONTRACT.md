@@ -6,8 +6,8 @@
 
 Status: **post-freeze design + isolated test-local prototype** on `feature/cmeta-ace-patterns`. This is not a productized executor, fully qualified conformance, a new Salts 2.3 public ABI, or release approval. See #1058, #1064 and #1018.
 
-**Current ownership:** `Salts::Configurator` owns static graph selection and
-activation; `Salts::ServiceHost` owns generation publication, Scope admission,
+**Current ownership:** `Salts::ACE` implements Configurator static graph
+selection/activation and ServiceHost generation publication, Scope admission,
 drain and settlement of Plugin leases. `Salts::Plugin` remains the sole loader,
 Registry, quiescence and unload authority. The earlier
 [SDK audit #1260](https://github.com/qigao/salts/pull/1260) is historical evidence;

@@ -13,7 +13,7 @@ on:
       - ".github/workflows/ace-only-source-cutover.yml"
       - "cmeta/**"
       - "plugin/**"
-      - "component-runtime/**"
+      - "ace/**"
       - "cflow/**"
   push:
     branches: [master]

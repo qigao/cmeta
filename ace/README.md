@@ -1,19 +1,20 @@
-# Configurator / ServiceHost — canonical native runtime
+# ACE — Configurator / ServiceHost runtime and Provider contracts
 
-This directory contains the single canonical native component lifecycle runtime.
-The public runtime names are **Salts::Configurator** and **Salts::ServiceHost**.
-Salts 4.0 installs only these runtime owners and their version-2 native
-contracts. No previous API compatibility targets or headers are provided.
+This directory builds **Salts::ACE**, the single static library containing
+Configurator construction and ServiceHost generation management, and
+**Salts::Provider**, the interface target for their Provider declarations.
+Provider consumers link CMeta/Plugin contracts without the ACE runtime.
+The version-2 native contracts and their role-specific C API names are retained.
 
 ## Ownership
 
 - **CMeta** owns immutable type, Interface, FunctionDesc/FunctionAbi, DataDesc
   and Component capability metadata. Descriptors do not load modules or own
   runtime instances.
-- **Salts::Configurator** owns bounded provider selection, dependency
+- **Configurator**, implemented by Salts::ACE, owns bounded provider selection, dependency
   resolution, activation order, instance creation, rollback and reverse stop
   for one static graph. It does not load DSOs or own generation publication.
-- **Salts::ServiceHost** composes Configurator with the existing Plugin
+- **ServiceHost**, implemented by Salts::ACE, composes Configurator with the existing Plugin
   Registry. It owns generation construction, publication, Scope admission,
   in-flight generation protection, draining and settlement of the Plugin
   leases held for each generation.
@@ -80,11 +81,12 @@ matching Salts 4.0 SDK:
 
 ```cmake
 find_package(Salts 4 CONFIG REQUIRED)
-target_link_libraries(my_host PRIVATE Salts::ServiceHost)
-# A static-only composition client can link Salts::Configurator instead.
+target_link_libraries(my_host PRIVATE Salts::ACE)
 ```
 
-Provider DSOs use `Salts::ServiceHostProviderABI` and `Salts::PluginABI`.
+Static composition and generation-hosting clients both link `Salts::ACE`.
+Provider DSOs link `Salts::Provider`, which carries CMeta and Plugin ABI contracts
+without linking the ACE construction/publication runtime.
 The public headers are `salts/configurator.h`, `salts/configurator_abi.h`, `salts/service_host.h`,
 `salts/service_host_provider_abi.h` and `salts/service_host_abi.h`.
 
@@ -100,8 +102,8 @@ release-tag and package-provenance acceptance.
 Do not pin implementation sources to a review SHA/branch, restore the retired
 runtime names, or add fallback loaders/ABI invocation paths.
 
-The factory ABI target is `Salts::ConfiguratorABI`, and the dynamic Provider ABI
-is `Salts::ServiceHostProviderABI`. Provider bindings require ABI version 2;
+`Salts::Provider` supplies both the factory binding declarations and the dynamic
+Provider Interface. Provider bindings require ABI version 2;
 the dynamic contract is `salts.service_host.provider.v2` at version 2. The
 native runtime marker is `salts_service_host_abi_v2_0_required()`. No prior
 factory, Provider Interface or runtime link marker is installed.

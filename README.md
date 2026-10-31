@@ -16,7 +16,7 @@ belong to SaltsCore; cryptography and ASN.1 belong to Crypto.
 
 | Repository | Modules and canonical link targets |
 | --- | --- |
-| [salts](https://github.com/qigao/salts) | `Salts::CMeta`, `Salts::ConfiguratorABI`, `Salts::PluginABI`, `Salts::Plugin`, `Salts::ServiceHostProviderABI`, `Salts::Configurator`, `Salts::ServiceHost`, `Salts::CFlow` |
+| [salts](https://github.com/qigao/salts) | `Salts::CMeta`, `Salts::Provider`, `Salts::ACE`, `Salts::PluginABI`, `Salts::Plugin`, `Salts::CFlow` |
 | [salts-core](https://github.com/qigao/salts-core) | `Salts::Core`, `Salts::Platform`, `Salts::Concurrency`, `Salts::Coroutine`, `Salts::NativeIO`, and optional CNet, SCTP, URI, Unicode, IDNA, CSerde, TinyTest, FS, Process |
 | [salts-utils](https://github.com/qigao/salts-utils) | Higher-level utilities, including `Salts::TinyMock` and static `Salts::SIMD`; destination [Draft #732](https://github.com/qigao/salts-utils/pull/732) still needs complete SDK qualification |
 | [crypto](https://github.com/qigao/crypto) | Exactly one **static** `Salts::Crypto` archive; GmSSL, hash/signature algorithms, ASN.1 BER/DER, TLS/X.509 and CipherBIO |
@@ -57,8 +57,25 @@ installed Core TinyTest target. There are no separate consumer/probe projects.
 Configurator and ServiceHost now use native ABI **2.0**, Provider contract v2
 and Configurator binding v2. Rebuild every host, generated binding and Provider
 against this SDK; no previous API aliases or contract fallback are supplied.
-See [the runtime contract](component-runtime/README.md) and
+See [the runtime contract](ace/README.md) and
 [component declarations](cmeta/COMPONENT_MANIFESTS.md).
+
+## ACE and Provider targets
+
+`ace/` builds the real static `Salts::ACE` library (`libsalts_ace.a`) containing
+Configurator and ServiceHost. `Salts::Provider` is the interface target for both
+factory bindings and dynamic Provider declarations; it links CMeta/Plugin
+contracts without linking the ACE runtime. Plugin remains an independent
+loader/Registry library. The six installed targets are listed above.
+
+```cmake
+target_link_libraries(my_host PRIVATE Salts::ACE)
+target_link_libraries(my_provider PRIVATE Salts::Provider)
+```
+
+The former separate lifecycle and ABI targets are removed. C API functions and
+headers retain their Configurator/ServiceHost responsibility names; native ABI
+2.0 and the version-2 Provider/binding contracts continue to apply.
 
 ## Merged source and remaining SDK gates — 2026-10-31
 
