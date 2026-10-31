@@ -2366,9 +2366,17 @@ cmeta_status cmeta_data_temp_open(const cmeta_data_desc *desc, size_t max_bytes,
   return CMETA_OK;
 }
 
-void cmeta_data_temp_close(cmeta_data_temp *temp) {
-  if (temp == NULL || temp->storage == NULL) return;
-  if (temp->data != NULL) (void)cmeta_data_value_restore_zero(temp->data, temp->storage);
+cmeta_status cmeta_data_temp_try_close(cmeta_data_temp *temp) {
+  cmeta_status status = CMETA_OK;
+  if (temp == NULL || temp->storage == NULL) return CMETA_OK;
+  /* The borrowed provider and its original code module MUST stay live
+   * if a no-fail restore callback violates the semantic-zero contract.
+   * Never release even the raw allocation after a failed restore.
+   */
+  if (temp->data != NULL) {
+    status = cmeta_data_value_restore_zero(temp->data, temp->storage);
+    if (status != CMETA_OK) return status;
+  }
 #if defined(_WIN32)
   if (temp->alignment > CMETA_ALIGNOF(cmeta_capture_storage)) _aligned_free(temp->storage);
   else free(temp->storage);
@@ -2376,6 +2384,15 @@ void cmeta_data_temp_close(cmeta_data_temp *temp) {
   free(temp->storage);
 #endif
   *temp = (cmeta_data_temp){0};
+  return CMETA_OK;
+}
+
+void cmeta_data_temp_close(cmeta_data_temp *temp) {
+  /* Keep the old void API's no-fail contract. A broken provider cannot be
+   * safely recovered here, so fail-stop rather than free an owning value
+   * with an incompletely restored native representation.
+   */
+  if (cmeta_data_temp_try_close(temp) != CMETA_OK) abort();
 }
 
 cmeta_status cmeta_data_map_accept(const cmeta_data_desc *desc, cmeta_collector *collector,
