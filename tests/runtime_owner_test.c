@@ -6,6 +6,7 @@
 #include <salts_core/utf8.h>
 #include <cmeta_buffer.h>
 #include <salts/thread.h>
+#include <cmeta/data_reflect.h>
 #include <stdio.h>
 #include <string.h>
 #ifndef SALTS_TEST_PROVIDER
@@ -16,6 +17,35 @@
   fprintf(stderr, "Native runtime owner %d: %s\n",__LINE__,#e); \
   return __LINE__; } } while (0)
 
+typedef struct native_aligned_value {
+  _Alignas(64) int value;
+} native_aligned_value;
+cmeta_reflect_value(native_aligned_value, "test.native.aligned-value",
+  cmeta_data_field(int, value, &cmeta_data_int, &cmeta_type_int)
+);
+
+static int aligned_temp_lifetime(void) {
+  const cmeta_data_desc *desc = cmeta_reflected_data(native_aligned_value);
+  cmeta_data_temp temp = {0};
+  CHECK(cmeta_data_desc_valid(desc));
+  CHECK(CMETA_ALIGNOF(native_aligned_value) > CMETA_ALIGNOF(cmeta_capture_storage));
+  CHECK(cmeta_data_temp_open(desc, sizeof(native_aligned_value) - 1u, &temp) ==
+        CMETA_CAPACITY_EXCEEDED);
+  CHECK(temp.storage == NULL);
+  CHECK(cmeta_data_temp_open(desc, sizeof(native_aligned_value), &temp) == CMETA_OK);
+  CHECK((uintptr_t)temp.storage % CMETA_ALIGNOF(native_aligned_value) == 0u);
+  CHECK(((native_aligned_value *)temp.storage)->value == 0);
+  ((native_aligned_value *)temp.storage)->value = 42;
+  cmeta_data_temp_close(&temp);
+  CHECK(temp.storage == NULL && temp.data == NULL && temp.extent == 0u);
+  cmeta_data_temp_close(&temp);
+  CHECK(cmeta_data_temp_open(&cmeta_data_int, sizeof(int), &temp) == CMETA_OK);
+  CHECK(*(int *)temp.storage == 0);
+  cmeta_data_temp_close(&temp);
+  CHECK(temp.storage == NULL);
+  return 0;
+}
+
 int main(void) {
   salts_service_host_runtime runtime = SALTS_SERVICE_HOST_RUNTIME_INIT;
   cmeta_plugin_registry registry = {0};
@@ -24,6 +54,7 @@ int main(void) {
   cmeta_plugin_lease lease = {0};
   const cmeta_plugin_manifest *manifest = NULL;
   bool quiet = false;
+  CHECK(aligned_temp_lifetime() == 0);
   salts_core_runtime_abi_0_1_required();
   CHECK(salts_core_runtime_abi_version() == SALTS_CORE_RUNTIME_ABI_VERSION);
   CHECK(salts_core_runtime_mem_pool_size() == sizeof(mem_pool_t));
