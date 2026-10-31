@@ -24,3 +24,7 @@
   `platform/src`, `cnet/src`, and peers). Source-ownership gates must follow
   that public layout and must also prove the standalone `asn1/src/reader.c`
   owner; the pre-migration `src/<module>` paths are stale.
+- Windows platform checks must use `_WIN32`, not `_MSC_VER`, when selecting the
+  UCRT `_aligned_malloc`/`_aligned_free` pair. llvm-mingw does not define
+  `_MSC_VER`; sending it through `posix_memalign` both fails compilation and
+  would break the required allocator/deallocator pairing.

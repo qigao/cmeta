@@ -17,6 +17,8 @@ function(salts_native_case name source)
 endfunction()
 
 salts_native_case(plugin_utf8_path utf8_plugin_path_test.c)
+salts_native_case(cmeta_data_temp
+  "${PROJECT_SOURCE_DIR}/cmeta/tests/cmeta_data_temp_test.c")
 foreach(flow IN ITEMS status stream_slice ace_pipes_filters event_mailbox
     io_native_adapter io_native_sharded_adapter machine_instance)
   salts_native_case(cflow_${flow}
