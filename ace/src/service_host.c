@@ -308,18 +308,24 @@ static salts_service_host_status admit_dynamic_source(
 
 static void generation_clear(
     salts_service_host_generation *generation) {
+    salts_configurator_failure configurator_failure;
     if (generation == NULL)
         return;
+    configurator_failure = generation->components.failure;
     generation->registry = NULL;
     generation->deployment_count = 0u;
     generation->module_count = 0u;
-    /* A DRAINED generation no longer owns or borrows any graph/Provider
+    /* A settled generation no longer owns or borrows any graph/Provider
      * storage. Drop its stale addresses so callers may reclaim their bundles
      * as soon as cleanup returns successfully. */
     generation->storage =
         (salts_service_host_generation_storage){0};
     generation->components =
         (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
+    /* This record contains only phase/indices/status values, not borrowed
+     * Provider pointers. Keep the construction root cause after dropping its
+     * storage and leases; the next build initializes a fresh diagnostic. */
+    generation->components.failure = configurator_failure;
 }
 
 /* ZERO and DRAINED are reusable only if every owner/borrrow field has reached
@@ -626,8 +632,6 @@ salts_service_host_status salts_service_host_generation_recover(
     }
 
     generation_clear(generation);
-    generation->components =
-        (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
     generation->runtime_owner = NULL;
     generation->active_scopes = 0u;
     generation->state = SALTS_SERVICE_HOST_GENERATION_DRAINED;

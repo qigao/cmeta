@@ -78,6 +78,14 @@ typedef struct salts_service_host_failure {
     salts_configurator_status configurator_status;
 } salts_service_host_failure;
 
+/* A Configurator construction failure also retains its scalar phase,
+ * component/dependency indices and Provider status in generation.components.
+ * Query them through salts_configurator_context_failure(). They survive full
+ * storage/lease cleanup and recovery until a new generation build is admitted. The
+ * retained diagnostic does not keep Provider metadata or backing arrays alive.
+ * As with other mutable generation fields, inspect it only with exclusive
+ * access or after the operation that produced it has completed. */
+
 typedef struct salts_service_host_runtime salts_service_host_runtime;
 
 typedef struct salts_service_host_generation {

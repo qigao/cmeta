@@ -76,6 +76,13 @@ publication. Drain reserves STOPPING with zero Scopes under that mutex, then
 validates/stops outside it. Rejected plans retain DRAINING/FAILED, storage and
 leases for an explicit repair/retry; Provider callbacks are not invoked twice.
 
+Configurator construction diagnostics survive successful cleanup: after a
+build error, `salts_configurator_context_failure(&generation.components)` still
+reports the phase, component/dependency indices and Provider status even when
+all storage pointers and Plugin leases have been detached. These scalar values
+remain available through explicit recovery and reset when a new build is admitted; they
+do not extend any Provider or configuration borrow.
+
 ## ABI admission
 
 Dynamic Provider admission validates the borrowed provider contract and its

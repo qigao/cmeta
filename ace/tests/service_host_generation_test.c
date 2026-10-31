@@ -118,6 +118,91 @@ suite("ServiceHost generation") {
         check_equal(cmeta_plugin_registry_destroy(&registry), CMETA_PLUGIN_OK);
     }
 
+    it("keeps resolve diagnostics after detaching failed generation storage") {
+        int config = 5;
+        test_provider_state app;
+        salts_configurator_provider_binding provider;
+        salts_configurator_deployment source, admitted;
+        salts_configurator_instance instance;
+        salts_configurator_dependency dependency;
+        size_t order;
+        const salts_service_host_generation_storage storage = {
+            &admitted, 1u, &instance, 1u, &dependency, 1u, &order, 1u, NULL, 0u
+        };
+        salts_service_host_generation candidate = SALTS_SERVICE_HOST_GENERATION_INIT;
+        const salts_configurator_failure *failure;
+        test_provider_state_init(&app, 0, NULL);
+        provider = TEST_PROVIDER_BINDING(TestApp, &app, test_app_create);
+        source = TEST_DEPLOYMENT(&provider, &cmeta_data_int, &config);
+        check_equal(salts_service_host_generation_build(&candidate, 1u, NULL,
+            &storage, &source, 1u, NULL, 0u, NULL, 0u), SALTS_SERVICE_HOST_CONFIGURATOR_ERROR);
+        check_equal(candidate.failure.configurator_status, SALTS_CONFIGURATOR_MISSING_PROVIDER);
+        check_equal(candidate.components.state, SALTS_CONFIGURATOR_CONTEXT_ZERO);
+        check_null(candidate.storage.deployments);
+        check_null(candidate.components.deployments);
+        failure = salts_configurator_context_failure(&candidate.components);
+        check_equal(failure->phase, SALTS_CONFIGURATOR_PHASE_RESOLVE);
+        check_equal(failure->component_index, 0u);
+        check_equal(failure->dependency_index, 0u);
+        check_equal(failure->provider_status, CMETA_OK);
+        check_equal(app.creates, 0u);
+        check_equal(salts_service_host_generation_recover(&candidate), SALTS_SERVICE_HOST_OK);
+        check_equal(failure->phase, SALTS_CONFIGURATOR_PHASE_RESOLVE);
+        check_null(candidate.storage.instances);
+    }
+
+    it("retains rollback diagnostics through recovery and resets them on rebuild") {
+        int config = 5;
+        test_provider_state logger, app;
+        salts_configurator_provider_binding providers[2];
+        salts_configurator_deployment source[2], admitted[2];
+        salts_configurator_instance owned_instances[2];
+        salts_configurator_dependency owned_dependencies[2];
+        size_t order[2];
+        const salts_service_host_generation_storage storage = {
+            admitted, 2u, owned_instances, 2u, owned_dependencies, 2u,
+            order, 2u, NULL, 0u
+        };
+        salts_service_host_generation candidate = SALTS_SERVICE_HOST_GENERATION_INIT;
+        const salts_configurator_failure *failure;
+        test_provider_state_init(&logger, 7, NULL);
+        test_provider_state_init(&app, 0, NULL);
+        app.fail_activate = true;
+        providers[0] = TEST_PROVIDER_BINDING(TestLogger, &logger, test_logger_create);
+        providers[1] = TEST_PROVIDER_BINDING(TestApp, &app, test_app_create);
+        source[0] = TEST_DEPLOYMENT(&providers[0], NULL, NULL);
+        source[1] = TEST_DEPLOYMENT(&providers[1], &cmeta_data_int, &config);
+        check_equal(salts_service_host_generation_build(&candidate, 1u, NULL,
+            &storage, source, 2u, NULL, 0u, NULL, 0u), SALTS_SERVICE_HOST_CONFIGURATOR_ERROR);
+        check_equal(candidate.failure.configurator_status, SALTS_CONFIGURATOR_ACTIVATE_FAILED);
+        check_equal(candidate.components.state, SALTS_CONFIGURATOR_CONTEXT_ZERO);
+        check_null(candidate.components.instances);
+        check_null(candidate.storage.instances);
+        check_equal(logger.destroys, 1u);
+        check_equal(app.destroys, 1u);
+        failure = salts_configurator_context_failure(&candidate.components);
+        check_equal(failure->phase, SALTS_CONFIGURATOR_PHASE_ACTIVATE);
+        check_equal(failure->component_index, 1u);
+        check_equal(failure->dependency_index, SALTS_CONFIGURATOR_INDEX_NONE);
+        check_equal(failure->provider_status, CMETA_CALLBACK_ERROR);
+        check_equal(salts_service_host_generation_recover(&candidate), SALTS_SERVICE_HOST_OK);
+        check_equal(failure->phase, SALTS_CONFIGURATOR_PHASE_ACTIVATE);
+        check_equal(failure->provider_status, CMETA_CALLBACK_ERROR);
+        check_null(candidate.storage.modules);
+        check_equal(salts_service_host_generation_build(&candidate, 0u, NULL,
+            &storage, source, 2u, NULL, 0u, NULL, 0u), SALTS_SERVICE_HOST_INVALID_ARGUMENT);
+        check_equal(failure->phase, SALTS_CONFIGURATOR_PHASE_ACTIVATE);
+        app.fail_activate = false;
+        check_equal(salts_service_host_generation_build(&candidate, 2u, NULL,
+            &storage, source, 2u, NULL, 0u, NULL, 0u), SALTS_SERVICE_HOST_OK);
+        check_equal(failure->phase, SALTS_CONFIGURATOR_PHASE_NONE);
+        check_equal(failure->component_index, SALTS_CONFIGURATOR_INDEX_NONE);
+        check_equal(failure->provider_status, CMETA_OK);
+        check_equal(salts_service_host_generation_discard(&candidate), SALTS_SERVICE_HOST_OK);
+        check_equal(logger.destroys, 2u);
+        check_equal(app.destroys, 2u);
+    }
+
     it("publishes and drains after construction configuration has expired") {
         test_provider_state logger, app;
         salts_configurator_provider_binding providers[2];
