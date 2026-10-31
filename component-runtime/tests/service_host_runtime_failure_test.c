@@ -1,10 +1,10 @@
 #include "tinytest.h"
 #include <salts/service_host.h>
-#include <salts/thread.h>
+#include "service_host_runtime_failure_adapter.h"
 
-/* This executable links the production lifecycle TU with this single-thread
- * platform adapter, without the graph runtime or a real platform mutex object.
- * No production test hooks or symbol replacement flags are required. */
+/* The test-only adapter compiles the production lifecycle TU against these
+ * uniquely named single-thread functions. It never overrides or duplicates
+ * the installed Platform DLL's exported cmeta_mutex_* ABI. */
 static bool fail_mutex;
 static int mutex_token;
 static size_t init_calls;
@@ -12,23 +12,23 @@ static size_t destroy_calls;
 static int lock_depth;
 static bool adapter_error;
 
-void cmeta_mutex_init(cmeta_mutex_t *mutex) {
+void salts_service_host_test_mutex_init(cmeta_mutex_t *mutex) {
     ++init_calls;
     *mutex = fail_mutex ? NULL : &mutex_token;
 }
 
-void cmeta_mutex_destroy(cmeta_mutex_t *mutex) {
+void salts_service_host_test_mutex_destroy(cmeta_mutex_t *mutex) {
     if (*mutex != &mutex_token || lock_depth != 0) adapter_error = true;
     ++destroy_calls;
     *mutex = NULL;
 }
 
-void cmeta_mutex_lock(cmeta_mutex_t *mutex) {
+void salts_service_host_test_mutex_lock(cmeta_mutex_t *mutex) {
     if (*mutex != &mutex_token || lock_depth != 0) adapter_error = true;
     ++lock_depth;
 }
 
-void cmeta_mutex_unlock(cmeta_mutex_t *mutex) {
+void salts_service_host_test_mutex_unlock(cmeta_mutex_t *mutex) {
     if (*mutex != &mutex_token || lock_depth != 1) adapter_error = true;
     --lock_depth;
 }

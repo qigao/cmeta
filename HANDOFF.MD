@@ -20,3 +20,7 @@
   and admission through `QIGAO_COMPILER_OBFUSCATION_ENABLED` in the actual
   CMake cache. Android remains target-owned by NDK Clang and a host cross-build
   must not be reported as device execution.
+- The pinned salts-core checkout uses the module-owned layout (`core/src`,
+  `platform/src`, `cnet/src`, and peers). Source-ownership gates must follow
+  that public layout and must also prove the standalone `asn1/src/reader.c`
+  owner; the pre-migration `src/<module>` paths are stale.

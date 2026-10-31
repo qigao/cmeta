@@ -55,7 +55,8 @@ cmake_add_test(cmeta_native_service_host_scope_cpp_test
   LIBS Salts::ServiceHost
   FOLDER "component-runtime/tests")
 cmake_add_test(cmeta_native_service_host_runtime_failure_test
-  SOURCES service_host_runtime_failure_test.c ../src/service_host_runtime.c
+  SOURCES service_host_runtime_failure_test.c
+          service_host_runtime_failure_adapter.c
   LIBS Salts::Configurator Salts::ServiceHostProviderABI Salts::Platform Salts::TinyTest
   FOLDER "component-runtime/tests")
 
