@@ -41,6 +41,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Select protected runner-native LLVM
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@22ab039b6505c06e7a2f03f723305050d775ecf3
+        with:
+          build-type: Release
+          obfuscator: "true"
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
@@ -58,6 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S _core_owner -B build-core -G Ninja \
+            "-DCMAKE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE" \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
             -DSALTSCORE_BUILD_TINYTEST=ON \
             "-DCMAKE_INSTALL_PREFIX=$RUNNER_TEMP/core-sdk"
@@ -68,6 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S . -B build-salts -G Ninja \
+            "-DCMAKE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE" \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
             -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_SHARED_LIBS=OFF \
             "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/core-sdk" \

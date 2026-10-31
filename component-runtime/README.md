@@ -2,7 +2,7 @@
 
 This directory contains the single canonical native component lifecycle runtime.
 The public runtime names are **Salts::Configurator** and **Salts::ServiceHost**.
-Salts 4.0 installs only these runtime owners and their version-2 native
+Salts 0.1 installs only these runtime owners and their version-2 native
 contracts. No previous API compatibility targets or headers are provided.
 
 ## Ownership
@@ -76,10 +76,10 @@ CMake target name alone is not proof that the linked binary has the same ABI.
 ## SDK and release acceptance
 
 Rebuild the host, every generated binding and all native providers against one
-matching Salts 4.0 SDK:
+matching Salts 0.1 SDK:
 
 ```cmake
-find_package(Salts 4 CONFIG REQUIRED)
+find_package(Salts 0.1 CONFIG REQUIRED)
 target_link_libraries(my_host PRIVATE Salts::ServiceHost)
 # A static-only composition client can link Salts::Configurator instead.
 ```
@@ -88,11 +88,12 @@ Provider DSOs use `Salts::ServiceHostProviderABI` and `Salts::PluginABI`.
 The public headers are `salts/configurator.h`, `salts/configurator_abi.h`, `salts/service_host.h`,
 `salts/service_host_provider_abi.h` and `salts/service_host_abi.h`.
 
-Release qualification must verify the installed exports and ABI header for all six
-RIDs: Linux x64/arm64, Windows x64, macOS arm64, Android arm64 and iOS arm64.
+Release qualification verifies the installed exports and ABI header for eight
+RIDs: Linux, Windows, macOS and Android, each on x64 and arm64.
 The canonical native C11/C++17 Provider DSO lifecycle tests execute on Linux,
-Windows and macOS; real downstream applications qualify installed SDK use. Android/iOS checks are compile/link checks, not claims of
-device execution. The final immutable package must independently contain the
+Windows and macOS; real downstream applications qualify installed SDK use.
+Android checks are compile/link checks, not claims of device execution. The
+final immutable package must independently contain the
 canonical headers, imported CMake targets and corresponding libraries. A green
 ordinary master build or a staged source-tree archive is not a substitute for
 release-tag and package-provenance acceptance.

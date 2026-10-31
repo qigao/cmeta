@@ -1,0 +1,334 @@
+name: Salts 0.1 LLVM SDK
+
+on:
+  pull_request:
+    paths:
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - "cmake/**"
+      - "cmeta/**"
+      - "cflow/**"
+      - "component-runtime/**"
+      - "plugin/**"
+      - "tests/**"
+      - "tools/**"
+      - "packaging/**"
+      - ".github/workflows/native-sdk-release.yml"
+  push:
+    branches: [master]
+    tags: ["v0.1.000"]
+  workflow_dispatch:
+
+concurrency:
+  group: salts-native-sdk-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_VERSION: 0.1.000
+  PACKAGE_VERSION: 0.1.0
+  CORE_SHA: cfc1ed0d24364689b10ef7a85cff28d8776eb7db
+
+jobs:
+  sdk:
+    name: LLVM SDK / ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {rid: linux-x64, os: ubuntu-24.04, family: native, arch: x64, run_tests: true}
+          - {rid: linux-arm64, os: ubuntu-24.04-arm, family: native, arch: arm64, run_tests: true}
+          - {rid: windows-x64, os: windows-2025, family: windows, arch: x64, run_tests: true}
+          - {rid: windows-arm64, os: windows-11-arm, family: windows, arch: arm64, run_tests: true}
+          - {rid: macos-x64, os: macos-15-intel, family: native, arch: x64, run_tests: true}
+          - {rid: macos-arm64, os: macos-15, family: native, arch: arm64, run_tests: true}
+          - {rid: android-x64, os: ubuntu-24.04, family: android, arch: x64, android_abi: x86_64, run_tests: false}
+          - {rid: android-arm64, os: ubuntu-24.04, family: android, arch: arm64, android_abi: arm64-v8a, run_tests: false}
+    env:
+      RID: ${{ matrix.rid }}
+      SOURCE_SHA: ${{ github.sha }}
+      CMETA_BINARY_DIR: ${{ github.workspace }}/build/cmeta
+      CMETA_INSTALL_PREFIX: ${{ github.workspace }}/package/sdk/${{ matrix.rid }}
+      SALTSCORE_PREFIX: ${{ github.workspace }}/package/sdk/${{ matrix.rid }}
+      CMETA_ANDROID_ABI: ${{ matrix.android_abi }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/salts-core
+          ref: ${{ env.CORE_SHA }}
+          path: _core_owner
+          persist-credentials: false
+
+      - name: Validate immutable source and release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git -C _core_owner rev-parse HEAD)" = "$CORE_SHA"
+          grep -Fq 'project(Salts VERSION 0.1.0 LANGUAGES C CXX)' CMakeLists.txt
+          grep -Fq '<PackageId>Salts.Native</PackageId>' packaging/nuget/Salts.Native.csproj
+          python3 tools/check_ace_only_sources.py --core-root _core_owner
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            test "$GITHUB_REF_NAME" = "v$RELEASE_VERSION"
+            test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$SOURCE_SHA"
+          fi
+
+      - name: Set up protected runner-native LLVM
+        id: llvm_native
+        if: matrix.family == 'native'
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@22ab039b6505c06e7a2f03f723305050d775ecf3
+        with:
+          build-type: Release
+          obfuscator: "true"
+
+      - name: Set up protected Windows llvm-mingw UCRT
+        id: llvm_mingw
+        if: matrix.family == 'windows'
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@22ab039b6505c06e7a2f03f723305050d775ecf3
+        with:
+          target: ${{ matrix.arch }}
+          version: "20261020"
+          build-type: Release
+          obfuscator: "true"
+
+      - name: Set up Android LLVM host
+        id: llvm_android_host
+        if: matrix.family == 'android'
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@22ab039b6505c06e7a2f03f723305050d775ecf3
+        with:
+          build-type: toolchain-only
+
+      - name: Select target LLVM toolchain
+        shell: bash
+        env:
+          NATIVE_TOOLCHAIN: ${{ steps.llvm_native.outputs.toolchain-file }}
+          WINDOWS_TOOLCHAIN: ${{ steps.llvm_mingw.outputs.toolchain-file }}
+        run: |
+          set -euo pipefail
+          case '${{ matrix.family }}' in
+            native) toolchain="$NATIVE_TOOLCHAIN" ;;
+            windows) toolchain="$WINDOWS_TOOLCHAIN" ;;
+            android) toolchain="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" ;;
+            *) echo 'unknown compiler family' >&2; exit 2 ;;
+          esac
+          test -f "$toolchain"
+          echo "CMETA_TARGET_TOOLCHAIN_FILE=$toolchain" >> "$GITHUB_ENV"
+
+      - name: Build and install exact SaltsCore owner
+        shell: bash
+        run: |
+          set -euo pipefail
+          core_test=ON
+          android_args=()
+          if [[ '${{ matrix.family }}' == android ]]; then
+            core_test=OFF
+            android_args+=("-DANDROID_ABI=$CMETA_ANDROID_ABI" "-DANDROID_PLATFORM=24" "-DANDROID_STL=c++_shared")
+          fi
+          cmake -S _core_owner -B build/core -G Ninja \
+            "-DCMAKE_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+            "-DSALTSCORE_BUILD_TINYTEST=$core_test" \
+            "-DCMAKE_INSTALL_PREFIX=$SALTSCORE_PREFIX" \
+            "${android_args[@]}"
+          cmake --build build/core --config Release --parallel 2
+          cmake --install build/core --config Release
+
+      - name: Configure and install Salts with its release preset
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ '${{ matrix.family }}' == android ]]; then
+            preset=android-release-ci
+          else
+            preset=llvm-release-ci
+          fi
+          cmake --preset "$preset"
+          cmake --build --preset "install-$preset" --parallel 2
+
+      - name: Admit the selected release compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Eq '^CMAKE_C_COMPILER:FILEPATH=.*clang' build/core/CMakeCache.txt
+          grep -Eq '^CMAKE_C_COMPILER:FILEPATH=.*clang' "$CMETA_BINARY_DIR/CMakeCache.txt"
+          if [[ '${{ matrix.family }}' == android ]]; then
+            grep -Eq '^ANDROID_ABI:UNINITIALIZED=${{ matrix.android_abi }}$|^CMAKE_ANDROID_ARCH_ABI:STRING=${{ matrix.android_abi }}$' \
+              "$CMETA_BINARY_DIR/CMakeCache.txt"
+          else
+            grep -Fq 'QIGAO_COMPILER_OBFUSCATION_ENABLED:BOOL=ON' build/core/CMakeCache.txt
+            grep -Fq 'QIGAO_COMPILER_OBFUSCATION_ENABLED:BOOL=ON' "$CMETA_BINARY_DIR/CMakeCache.txt"
+          fi
+
+      - name: Execute native C11 C++17 DSO and CFlow tests
+        if: matrix.run_tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            export PATH="$CMETA_INSTALL_PREFIX/bin:$PATH"
+          elif [[ "$RUNNER_OS" == macOS ]]; then
+            export DYLD_LIBRARY_PATH="$CMETA_INSTALL_PREFIX/lib:${DYLD_LIBRARY_PATH:-}"
+          else
+            export LD_LIBRARY_PATH="$CMETA_INSTALL_PREFIX/lib:${LD_LIBRARY_PATH:-}"
+          fi
+          ctest --preset llvm-release-ci
+          python3 tools/audit_native_owner.py \
+            --core-tools _core_owner/tools \
+            --core-prefix "$CMETA_INSTALL_PREFIX" \
+            --salts-prefix "$CMETA_INSTALL_PREFIX" \
+            --build-dir "$CMETA_BINARY_DIR" \
+            --report "$CMETA_BINARY_DIR/one-owner-audit.json"
+
+      - name: Attest installed SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$CMETA_INSTALL_PREFIX/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$CMETA_INSTALL_PREFIX/lib/cmake/SaltsCore/SaltsCoreConfig.cmake"
+          protection=llvm-obfuscator
+          if [[ '${{ matrix.family }}' == android ]]; then
+            protection=android-ndk-clang
+          fi
+          printf '%s\n' \
+            "release=$RELEASE_VERSION" \
+            "package=$PACKAGE_VERSION" \
+            "commit=$SOURCE_SHA" \
+            "core_commit=$CORE_SHA" \
+            "rid=$RID" \
+            'profile=release' \
+            'compiler=llvm' \
+            "protection=$protection" \
+            > "$CMETA_INSTALL_PREFIX/salts-sdk-manifest.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-sdk-${{ matrix.rid }}
+          path: package
+          if-no-files-found: error
+          retention-days: 14
+
+      - if: always() && matrix.run_tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: salts-native-${{ matrix.rid }}-evidence
+          path: |
+            build/cmeta/Testing/Temporary/LastTest.log
+            build/cmeta/one-owner-audit.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  package:
+    name: Assemble immutable eight-RID SDK
+    needs: sdk
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: salts-sdk-*
+          path: package
+          merge-multiple: true
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Pack and verify the exact SDK artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet pack packaging/nuget/Salts.Native.csproj \
+            --configuration Release --output dist \
+            -p:PackageVersion="$PACKAGE_VERSION" \
+            -p:PackageRoot="$GITHUB_WORKSPACE/package" \
+            -p:RepositoryCommit="$SOURCE_SHA"
+          package="dist/Salts.Native.$PACKAGE_VERSION.nupkg"
+          python3 packaging/nuget/feed_hygiene.py verify \
+            "$package" "$RELEASE_VERSION" "$PACKAGE_VERSION" \
+            "$SOURCE_SHA" "$CORE_SHA"
+          sha256sum "$package" > dist/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-native-nuget
+          path: |
+            dist/Salts.Native.*.nupkg
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish v0.1.000
+    if: github.event_name == 'push' && github.ref == 'refs/tags/v0.1.000'
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: salts-native-nuget
+          path: dist
+      - name: Refuse mutable or duplicate release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = "v$RELEASE_VERSION"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$SOURCE_SHA"
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub Release already exists: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          inventory="$RUNNER_TEMP/published-versions.json"
+          error="$RUNNER_TEMP/package-inventory.err"
+          if gh api --paginate '/users/qigao/packages/nuget/Salts.Native/versions?per_page=100' > "$inventory" 2> "$error"; then
+            :
+          elif grep -Fq 'HTTP 404' "$error"; then
+            printf '[]\n' > "$inventory"
+          else
+            cat "$error" >&2
+            exit 1
+          fi
+          python3 packaging/nuget/feed_hygiene.py published-absent \
+            "$PACKAGE_VERSION" "$inventory"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Publish immutable NuGet and GitHub Release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          config="$RUNNER_TEMP/cmeta-release-nuget.config"
+          printf '<configuration><packageSources><clear /></packageSources></configuration>\n' > "$config"
+          dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
+            --name github --username qigao --password "$GITHUB_TOKEN" \
+            --store-password-in-clear-text --configfile "$config"
+          dotnet nuget push "dist/Salts.Native.$PACKAGE_VERSION.nupkg" \
+            --api-key "$GITHUB_TOKEN" --source github --configfile "$config"
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/Salts.Native.$PACKAGE_VERSION.nupkg" dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --target "$SOURCE_SHA" \
+            --title "Salts $RELEASE_VERSION" --generate-notes --latest

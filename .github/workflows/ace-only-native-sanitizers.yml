@@ -1,6 +1,6 @@
 name: Salts Configurator ServiceHost LLVM sanitizers
 
-# Instrument the sole installed Salts 4.0 CMeta/ACE/CFlow owner with the
+# Instrument the sole installed Salts 0.1 CMeta/ACE/CFlow owner with the
 # sole pinned native SaltsCore 0.1 owner. No legacy 2.3 or profile switch.
 on:
   pull_request:
@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   salts3-native-sanitizers:
-    name: Installed Salts 4.0 Clang ${{ matrix.kind }} sole native owner
+    name: Installed Salts 0.1 Clang ${{ matrix.kind }} sole native owner
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -45,6 +45,10 @@ jobs:
             flags: "-fsanitize=thread -fno-omit-frame-pointer -g -O1"
     steps:
       - uses: actions/checkout@v4
+      - name: Select runner-native LLVM for non-published sanitizer builds
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@22ab039b6505c06e7a2f03f723305050d775ecf3
+        with:
+          build-type: toolchain-only
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
@@ -60,6 +64,7 @@ jobs:
             cfc1ed0d24364689b10ef7a85cff28d8776eb7db
           prefix="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
           cmake -S _core_owner -B build-instrumented-core-${{ matrix.kind }} \
+            "-DCMAKE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE" \
             -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF \
             -DSALTSCORE_BUILD_TINYTEST=ON \
             "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
@@ -67,13 +72,14 @@ jobs:
           cmake --build build-instrumented-core-${{ matrix.kind }} --parallel 2
           cmake --install build-instrumented-core-${{ matrix.kind }} \
             --config RelWithDebInfo
-      - name: Install sole Salts 4.0 CMeta ACE CFlow package
+      - name: Install sole Salts 0.1 CMeta ACE CFlow package
         shell: bash
         run: |
           set -euo pipefail
           core="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
           salts="$RUNNER_TEMP/salts3-asan-${{ matrix.kind }}"
           cmake -S . -B build-instrumented-salts-${{ matrix.kind }} \
+            "-DCMAKE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE" \
             -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DBUILD_TESTING=ON \
             -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \

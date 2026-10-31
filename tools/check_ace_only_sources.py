@@ -18,16 +18,18 @@ MIGRATED = (
 for name in MIGRATED:
     if (ROOT / name).exists():
         raise SystemExit(f"Duplicate native ownership in Salts: {name}")
-for name in ("vcpkg.json", "vcpkg-configuration.json", "CMakeUserPresets.json"):
+for name in ("vcpkg.json", "vcpkg-configuration.json"):
     if (ROOT / name).exists():
         raise SystemExit(f"Obsolete dependency/compatibility manifest: {name}")
 for name in (".github/actions", "cmake/vcpkg-cache.nuget.config"):
     if (ROOT / name).exists():
         raise SystemExit(f"Obsolete native build dependency: {name}")
+if not (ROOT / "CMakeUserPresets.json").is_file():
+    raise SystemExit("Missing version-controlled first-party user presets")
 
 cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 required = (
-    "project(Salts VERSION 4.0.0 LANGUAGES C CXX)",
+    "project(Salts VERSION 0.1.0 LANGUAGES C CXX)",
     "find_package(SaltsCore 0.1 CONFIG REQUIRED)",
     "add_subdirectory(cmeta)",
     "add_subdirectory(component-runtime)",
