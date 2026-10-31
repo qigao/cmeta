@@ -1,5 +1,5 @@
 /* Canonical Salts Configurator: single bounded static graph/lifecycle owner. */
-#include <salts/configurator.h>
+#include "configurator_internal.h"
 
 #include <string.h>
 
@@ -87,13 +87,19 @@ static size_t salts_configurator_requirement_count(
 }
 
 static salts_configurator_status salts_configurator_deployment_status(
-    const salts_configurator_deployment *deployment) {
+    const salts_configurator_deployment *deployment,
+    bool validate_construction_input) {
     const cmeta_component_desc *component;
     if (deployment == NULL || deployment->provider == NULL)
         return SALTS_CONFIGURATOR_INVALID_COMPONENT;
 
     if (!salts_configurator_provider_binding_valid(deployment->provider))
         return SALTS_CONFIGURATOR_INVALID_COMPONENT;
+
+    /* The descriptor and value supplied to create() are construction-only
+     * borrows. ACTIVE graph validation must not inspect either expired input. */
+    if (!validate_construction_input)
+        return SALTS_CONFIGURATOR_OK;
 
     component = deployment->provider->component;
     if (component->config == NULL) {
@@ -364,7 +370,8 @@ static bool salts_configurator_activation_plan_valid(
      * are caller-owned, so a mutable count/offset cannot be trusted alone. */
     for (i = 0u; i < context->deployment_count; ++i) {
         const salts_configurator_instance *instance = &context->instances[i];
-        if (salts_configurator_deployment_status(&context->deployments[i]) !=
+        if (salts_configurator_deployment_status(
+                &context->deployments[i], !expect_active) !=
                 SALTS_CONFIGURATOR_OK ||
             instance->dependency_offset != expected_dependency_offset ||
             instance->dependency_offset > context->dependency_count ||
@@ -442,6 +449,24 @@ static bool salts_configurator_activation_plan_valid(
             return false;
 
     return true;
+}
+
+bool salts_configurator_context_active_valid_internal(
+    const salts_configurator_context *context) {
+    return context != NULL &&
+           context->state == SALTS_CONFIGURATOR_CONTEXT_ACTIVE &&
+           salts_configurator_activation_plan_valid(context, true);
+}
+
+bool salts_configurator_context_settled_internal(
+    const salts_configurator_context *context) {
+    if (context == NULL || context->activation_count != 0u)
+        return false;
+    if (context->state == SALTS_CONFIGURATOR_CONTEXT_ZERO)
+        return salts_configurator_context_zero_is_clear(context);
+    return (context->state == SALTS_CONFIGURATOR_CONTEXT_FAILED ||
+            context->state == SALTS_CONFIGURATOR_CONTEXT_STOPPED) &&
+           salts_configurator_instances_settled(context);
 }
 
 static void salts_configurator_rollback(
@@ -564,7 +589,7 @@ salts_configurator_status salts_configurator_context_init(
 
     for (i = 0u; i < deployment_count; ++i) {
         salts_configurator_status status =
-            salts_configurator_deployment_status(&deployments[i]);
+            salts_configurator_deployment_status(&deployments[i], true);
         if (status != SALTS_CONFIGURATOR_OK)
             return salts_configurator_fail(
                 context, status, SALTS_CONFIGURATOR_PHASE_INIT, i,
@@ -662,7 +687,7 @@ static bool salts_configurator_ready_context_valid(
         const salts_configurator_instance *instance = &context->instances[i];
         const salts_configurator_deployment *deployment = &context->deployments[i];
 
-        if (salts_configurator_deployment_status(deployment) != SALTS_CONFIGURATOR_OK ||
+        if (salts_configurator_deployment_status(deployment, true) != SALTS_CONFIGURATOR_OK ||
             instance->active ||
             !salts_configurator_object_ref_empty(&instance->object) ||
             instance->dependency_offset != 0u ||
@@ -842,6 +867,7 @@ salts_configurator_status salts_configurator_context_start(
         return SALTS_CONFIGURATOR_INVALID_STATE;
 
     context->failure = salts_configurator_failure_none();
+    context->state = SALTS_CONFIGURATOR_CONTEXT_STARTING;
 
     for (order_index = 0u;
          order_index < context->activation_count;
@@ -952,6 +978,9 @@ salts_configurator_status salts_configurator_context_stop(
         !salts_configurator_activation_plan_valid(context, true))
         return SALTS_CONFIGURATOR_INVALID_STATE;
 
+    /* Close lifecycle admission before invoking Provider code. A callback may
+     * call into the host again, but cannot consume this teardown twice. */
+    context->state = SALTS_CONFIGURATOR_CONTEXT_STOPPING;
     order_index = context->activation_count;
     while (order_index != 0u) {
         size_t component_index;

@@ -18,6 +18,9 @@ cryptographic code and ASN.1 belong to **qigao/crypto**. Source ownership is sin
   package layout. Verify installed C11/C++17 consumers and original typed
   runtime conformance after changes.
 
+`ace/` builds the real static `Salts::ACE` library and the interface-only
+`Salts::Provider` target. Provider declarations must not link the ACE runtime.
+
 TinyMock and descriptor-driven SIMD execution belong to qigao/salts-utils;
 do not restore those implementation trees or make Salts depend on Utils.
 

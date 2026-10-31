@@ -42,11 +42,11 @@ pattern authoring
 Runtime mechanism remains with its existing owner.
 
 The current canonical runtime consumer is the ACE-style Configurator /
-ServiceHost composition: `Salts::Configurator` owns the static graph and
-`Salts::ServiceHost` owns published generations, Scope admission/drain and
-Plugin lease settlement. `Salts::Plugin` remains the sole dynamic loader and
-unload authority. The installed lifecycle targets are
-`Salts::Configurator` and `Salts::ServiceHost`. CHttp, TurboFlow and
+ServiceHost composition in `Salts::ACE`: Configurator owns the static graph;
+ServiceHost owns published generations, Scope admission/drain and Plugin lease
+settlement. `Salts::Plugin` remains the sole dynamic loader and
+unload authority. The installed runtime target is `Salts::ACE`; Provider
+declarations use `Salts::Provider`. CHttp, TurboFlow and
 TurboSCXML remain downstream conformance profiles, not sources of
 consumer-private component semantics.
 
@@ -197,7 +197,7 @@ mechanism remains outside CMeta:
 | Half-Sync/Half-Async | domain runtime + bounded handoff |
 | Streams execution | CFlow / domain runtime |
 | Plugin module lifecycle | Salts::Plugin |
-| Component resolution/lifecycle graph | Salts::Configurator |
+| Component resolution/lifecycle graph | Salts::ACE |
 
 CMeta may describe typed policies, messages, interfaces, factories and
 lifecycle contracts for these mechanisms.
@@ -327,26 +327,11 @@ Do not add a helper solely to introduce a pattern name.
 
 ## Component Configurator integration
 
-The candidate composition is:
-
-```text
-Interface / Function / Object / Lifecycle / Manifest
-                        |
-                        v
-              Component descriptor
-             provides / requires
-                        |
-                        v
-              Salts::Configurator
-             resolver / lifecycle graph
-                        |
-                        v
-            Salts::ServiceHost
-                generation scopes
-                        |
-                        v
-                 Salts::Plugin
-```
+The composition follows CMeta Interface/Function/Object/Lifecycle declarations
+into a Component descriptor with explicit provides/requires. `Salts::Provider`
+exposes the bindings. Configurator resolves the lifecycle graph and ServiceHost
+owns generation Scopes within `Salts::ACE`; `Salts::Plugin` owns module leases
+and unloading.
 
 The Configurator adds only the runtime semantics not already owned by
 CMeta:

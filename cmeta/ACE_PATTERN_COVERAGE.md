@@ -20,8 +20,8 @@
 
 > **Runtime naming note (2026-10-19):** the matrix preserves historical source
 > checkpoints and CTest names, some of which use `ServiceHost`. The
-> currently integrated lifecycle targets are `Salts::Configurator` and
-> `Salts::ServiceHost`; Plugin remains the sole loader/Registry/quiescence/
+> integrated lifecycle library is `Salts::ACE`, with `Salts::Provider`
+> supplying Provider declarations; Plugin remains the sole loader/Registry/quiescence/
 > unload authority. Current SDK and installed-consumer qualification is tracked
 > in [PR #1260](https://github.com/qigao/salts/pull/1260).
 
@@ -51,7 +51,7 @@ Status vocabulary:
 | # | POSA2 family / pattern | Existing authoritative mechanism | Canonical CMeta representation | Status | Exact remaining work (no duplicated runtime) |
 |---:|---|---|---|---|---|
 | 1 | Service — **Wrapper Facade** | Platform / NativeIO / CNet | typed inline façade, Interface, FunctionAbi, explicit status/borrow | **COMPOSED / PARTIAL CONFORMANCE** | Qualify a complete narrow native-resource façade: types, errors, close/borrow, C11/C++17 and out-of-tree consumer. No generic wrapper runtime. |
-| 2 | Service — **Component Configurator** | Salts::Configurator + Salts::ServiceHost + Salts::Plugin | immutable `cmeta_component_desc`, manifests, typed provider, ObjectRef, leased Interface projections | **QUALIFIED** | Preserve [frozen Component/Plugin contracts](ACE_FREEZE.md); downstream/ABI remains [#1018](https://github.com/qigao/salts/issues/1018), not a new pattern engine. |
+| 2 | Service — **Component Configurator** | Salts::ACE + Salts::Plugin | immutable `cmeta_component_desc`, manifests, typed provider, ObjectRef, leased Interface projections | **QUALIFIED** | Preserve [frozen Component/Plugin contracts](ACE_FREEZE.md); downstream/ABI remains [#1018](https://github.com/qigao/salts/issues/1018), not a new pattern engine. |
 | 3 | Service — **Interceptor** | domain callback/dispatch owners | exact FunctionDesc/FunctionAbi + typed Interface roles + borrowed context | **IMPLEMENTED / POST-FREEZE TESTED** | Typed before/after/error/short-circuit chain; result/error ownership, effect/ordering, reentrancy and ServiceHost Scope admission. No generic dynamic ABI reconstruction or hidden invocation registry. |
 | 4 | Service — **Extension Interface** | existing provider/ObjectRef/Plugin lifetime | `cmeta_object_ref`, `cmeta_object_interface_provider`, `cmeta_interface_projection` | **QUALIFIED** | Preserve non-owning projections and explicit owning-self rejection; no second provider identity. |
 | 5 | Event — **Reactor** | NativeIO epoll/kqueue readiness; CNet event callbacks | typed callback / Interface over existing owner-bound dispatch | **REUSE** | Existing NativeIO/CNet model, ownership and callback tests are evidence; **no second Reactor or CMeta scheduler**. |
@@ -89,7 +89,7 @@ Status vocabulary:
 ## Grounded implementation / conformance evidence
 
 - **Canonical pattern primitives:** [PATTERNS.md](PATTERNS.md), [Interface source](include/cmeta/interface.h), [Function metadata](include/cmeta/function.h), [Object Interface](include/cmeta/object_interface.h), [pattern C11/C++17 conformance](tests/cmeta_pattern_cases.h).
-- **Component:** [declaration](include/cmeta/component.h), [runtime](../component-runtime/include/salts/configurator.h), [ServiceHost scopes](../component-runtime/include/salts/service_host.h); freeze tests and generation/epoch evidence in [ACE_FREEZE.md](ACE_FREEZE.md).
+- **Component:** [declaration](include/cmeta/component.h), [runtime](../ace/include/salts/configurator.h), [ServiceHost scopes](../ace/include/salts/service_host.h); freeze tests and generation/epoch evidence in [ACE_FREEZE.md](ACE_FREEZE.md).
 - **Reactor / Proactor:** [NativeIO public model](../native-io/include/salts/native_io.h) + [backend implementation](../native-io/src/native_io.c) + [native tests](../native-io/tests/native_io_test.c); [CNet](../cnet/README.md). Backend-kind distinction is explicit: epoll/kqueue = readiness; IOCP/io_uring = completion. Do not create another loop.
 - **Acceptor-Connector:** [real TCP ACE conformance](../cnet/tests/cnet_ace_acceptor_connector_test.c).
 - **Active Object / Half-Sync:** [Actor conformance](../cflow/tests/cflow_actor_test.c), [TCP → Channel → Actor fixture](../cflow/cnet-adapter/tests/cflow_ace_half_sync_async_test.c), [ACE_FREEZE.md](ACE_FREEZE.md).

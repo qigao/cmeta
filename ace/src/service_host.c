@@ -1,5 +1,6 @@
 /* Canonical Salts ServiceHost: single Plugin generation/Scope owner. */
 #include <salts/service_host.h>
+#include "configurator_internal.h"
 #include <salts/thread.h>
 
 #include <string.h>
@@ -307,18 +308,24 @@ static salts_service_host_status admit_dynamic_source(
 
 static void generation_clear(
     salts_service_host_generation *generation) {
+    salts_configurator_failure configurator_failure;
     if (generation == NULL)
         return;
+    configurator_failure = generation->components.failure;
     generation->registry = NULL;
     generation->deployment_count = 0u;
     generation->module_count = 0u;
-    /* A DRAINED generation no longer owns or borrows any graph/Provider
+    /* A settled generation no longer owns or borrows any graph/Provider
      * storage. Drop its stale addresses so callers may reclaim their bundles
      * as soon as cleanup returns successfully. */
     generation->storage =
         (salts_service_host_generation_storage){0};
     generation->components =
         (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
+    /* This record contains only phase/indices/status values, not borrowed
+     * Provider pointers. Keep the construction root cause after dropping its
+     * storage and leases; the next build initializes a fresh diagnostic. */
+    generation->components.failure = configurator_failure;
 }
 
 /* ZERO and DRAINED are reusable only if every owner/borrrow field has reached
@@ -344,147 +351,23 @@ static bool generation_is_clear(
 
     components = &generation->components;
     return components->state == SALTS_CONFIGURATOR_CONTEXT_ZERO &&
-           components->deployment_count == 0u &&
-           components->selection_count == 0u &&
-           components->instance_capacity == 0u &&
-           components->dependency_capacity == 0u &&
-           components->activation_capacity == 0u &&
-           components->dependency_count == 0u &&
-           components->activation_count == 0u &&
-           components->deployments == NULL &&
-           components->selections == NULL &&
-           components->instances == NULL &&
-           components->dependencies == NULL &&
-           components->activation_order == NULL;
+           salts_configurator_context_settled_internal(components);
 }
 
-/* The Configurator plan count is not the only evidence of teardown. A failed
- * or stopped context that is being reused must also have no active instance
- * flags or live ObjectRefs. A genuine INIT-phase failure has detached borrowed
- * arrays already; never trust the mutable failure.phase field as a bypass. */
-static bool service_host_object_ref_is_empty(
-    const cmeta_object_ref *object) {
-    return object != NULL &&
-           object->size == sizeof(*object) &&
-           object->object == NULL &&
-           object->data == NULL &&
-           object->field_provider == NULL &&
-           object->operations == NULL &&
-           object->operation_provider == NULL &&
-           object->lifetime == CMETA_OBJECT_LIFETIME_NONE &&
-           object->lifecycle == NULL;
-}
-
-static bool service_host_configurator_storage_detached(
-    const salts_configurator_context *components) {
-    return components != NULL &&
-           components->deployments == NULL &&
-           components->deployment_count == 0u &&
-           components->selections == NULL &&
-           components->selection_count == 0u &&
-           components->instances == NULL &&
-           components->instance_capacity == 0u &&
-           components->dependencies == NULL &&
-           components->dependency_capacity == 0u &&
-           components->dependency_count == 0u &&
-           components->activation_order == NULL &&
-           components->activation_capacity == 0u &&
-           components->activation_count == 0u;
-}
-
-static bool service_host_components_settled(
-    const salts_configurator_context *components) {
-    size_t i;
-
-    if (components == NULL || components->activation_count != 0u)
-        return false;
-    /* ZERO is reusable only as the canonical empty representation. FAILED
-     * and STOPPED with deployment_count==0 must likewise be detached: zeroing
-     * the public owner count must not hide retained instance storage. An
-     * unsettled activation plan also blocks a repaired FAILED drain retry. */
-    if ((components->state == SALTS_CONFIGURATOR_CONTEXT_ZERO ||
-         ((components->state == SALTS_CONFIGURATOR_CONTEXT_FAILED ||
-           components->state == SALTS_CONFIGURATOR_CONTEXT_STOPPED) &&
-          components->deployment_count == 0u)) &&
-        !service_host_configurator_storage_detached(components))
-        return false;
-    if (components->deployment_count > components->instance_capacity ||
-        (components->instance_capacity != 0u && components->instances == NULL))
-        return false;
-
-    /* Match Configurator's canonical-empty invariant across the entire backing
-     * capacity. A truncated deployment_count must not hide a live ObjectRef
-     * later in caller-owned scratch storage. */
-    for (i = 0u; i < components->instance_capacity; ++i) {
-        const salts_configurator_instance *instance = &components->instances[i];
-        if (instance->active ||
-            !service_host_object_ref_is_empty(&instance->object))
-            return false;
-    }
-    return true;
-}
-
-static bool service_host_deployment_valid(
-    const salts_configurator_deployment *deployment) {
-    const cmeta_component_desc *component;
-
-    if (deployment == NULL || deployment->provider == NULL ||
-        !salts_configurator_provider_binding_valid(deployment->provider))
-        return false;
-
-    component = deployment->provider->component;
-    if (component->config == NULL)
-        return deployment->config_data == NULL &&
-               deployment->config_value == NULL;
-
-    return deployment->config_data != NULL &&
-           deployment->config_value != NULL &&
-           cmeta_data_desc_valid(deployment->config_data) &&
-           cmeta_data_desc_equal(component->config, deployment->config_data);
-}
-
-static bool service_host_component_has_role(
-    const cmeta_component_desc *component,
-    const cmeta_interface_desc *interface_desc,
-    bool requires_role) {
-    size_t i;
-
-    if (!cmeta_component_desc_valid(component) ||
-        !cmeta_interface_desc_valid(interface_desc))
-        return false;
-    for (i = 0u; i < component->capability_count; ++i) {
-        const cmeta_component_capability *capability = &component->capabilities[i];
-        const bool role_matches = requires_role
-            ? capability->role == CMETA_COMPONENT_REQUIRES
-            : capability->role == CMETA_COMPONENT_PROVIDES;
-        if (role_matches &&
-            cmeta_interface_desc_equal(capability->interface_desc, interface_desc))
-            return true;
-    }
-    return false;
-}
-
-static bool service_host_generation_publishable(
+/* ServiceHost validates only its storage/Plugin ownership boundary. The
+ * Configurator graph and ObjectRef invariants have one private implementation. */
+static bool service_host_generation_storage_valid(
     const salts_service_host_generation *generation) {
     const salts_configurator_context *components;
     const salts_service_host_generation_storage *storage;
     size_t i;
-    size_t j;
-    size_t k;
-    size_t expected_dependency_offset = 0u;
 
     if (generation == NULL ||
         (generation->module_count != 0u && generation->registry == NULL))
         return false;
     components = &generation->components;
     storage = &generation->storage;
-
-    /* BUILT is a public enum, not proof that the graph has reached ACTIVE.
-     * Revalidate graph/storage identity, active ObjectRefs and lease records
-     * before attaching a generation to a runtime. */
-    if (components->state != SALTS_CONFIGURATOR_CONTEXT_ACTIVE ||
-        components->deployment_count != generation->deployment_count ||
-        components->activation_count != components->deployment_count ||
+    if (components->deployment_count != generation->deployment_count ||
         components->deployment_count > storage->deployment_capacity ||
         components->deployment_count > storage->instance_capacity ||
         components->deployment_count > storage->activation_capacity ||
@@ -495,19 +378,8 @@ static bool service_host_generation_publishable(
         components->dependency_capacity != storage->dependency_capacity ||
         components->activation_order != storage->activation_order ||
         components->activation_capacity != storage->activation_capacity ||
-        components->dependency_count > components->dependency_capacity ||
         !module_tail_is_clear(generation))
         return false;
-
-    if ((components->instance_capacity != 0u && components->instances == NULL) ||
-        (components->activation_capacity != 0u && components->activation_order == NULL) ||
-        (components->deployment_count != 0u &&
-         (components->deployments == NULL || components->instances == NULL ||
-          components->activation_order == NULL)) ||
-        (components->dependency_capacity != 0u &&
-         components->dependencies == NULL))
-        return false;
-
     for (i = 0u; i < generation->module_count; ++i) {
         const salts_service_host_module *module = &storage->modules[i];
         if (plugin_lease_is_zero(module->lease) ||
@@ -516,98 +388,14 @@ static bool service_host_generation_publishable(
             module->manifest == NULL)
             return false;
     }
-
-    /* Activation order is used later during stop/rollback. Reject any
-     * out-of-range or duplicate index before this generation gains runtime
-     * authority, rather than risking an out-of-bounds teardown. */
-    for (i = 0u; i < components->activation_count; ++i) {
-        const size_t component_index = components->activation_order[i];
-        if (component_index >= components->deployment_count)
-            return false;
-        for (j = 0u; j < i; ++j)
-            if (components->activation_order[j] == component_index)
-                return false;
-    }
-
-    for (i = 0u; i < components->deployment_count; ++i) {
-        const salts_configurator_instance *instance = &components->instances[i];
-        if (instance->dependency_offset != expected_dependency_offset ||
-            expected_dependency_offset > components->dependency_count ||
-            instance->dependency_count >
-                components->dependency_count - expected_dependency_offset ||
-            !service_host_deployment_valid(&components->deployments[i]) ||
-            !instance->active ||
-            !cmeta_object_ref_valid(&instance->object))
-            return false;
-        expected_dependency_offset += instance->dependency_count;
-    }
-    if (expected_dependency_offset != components->dependency_count)
-        return false;
-
-    /* A count-bounded slice is not enough: require each dependency to point
-     * at its declared ProviderBinding and require the Interface role on both
-     * ends. This prevents a corrupted-but-in-range ref from leaving the host
-     * unable to stop a generation after it transitions to STOPPING. */
-    for (i = 0u; i < components->deployment_count; ++i) {
-        const salts_configurator_instance *instance = &components->instances[i];
-        const salts_configurator_provider_binding *consumer =
-            components->deployments[i].provider;
-        for (j = 0u; j < instance->dependency_count; ++j) {
-            const salts_configurator_dependency *dependency =
-                &components->dependencies[instance->dependency_offset + j];
-            const salts_configurator_provider_binding *provider;
-
-            if (dependency->consumer_index != i ||
-                dependency->provider_index >= components->deployment_count ||
-                !cmeta_interface_desc_valid(dependency->interface_desc))
-                return false;
-            provider =
-                components->deployments[dependency->provider_index].provider;
-            if (dependency->provider_component != provider->component ||
-                dependency->provider_instance !=
-                    &components->instances[dependency->provider_index].object ||
-                dependency->provider_interfaces != provider->interfaces ||
-                !service_host_component_has_role(
-                    consumer->component, dependency->interface_desc,
-                    true) ||
-                !service_host_component_has_role(
-                    provider->component, dependency->interface_desc,
-                    false))
-                return false;
-        }
-    }
-
-    /* Prove the activation permutation is also topological: every dependency's
-     * provider appears before its consumer, as Configurator stop/rollback
-     * assumes when consuming this caller-owned plan. */
-    for (i = 0u; i < components->activation_count; ++i) {
-        const size_t component_index = components->activation_order[i];
-        const salts_configurator_instance *instance =
-            &components->instances[component_index];
-        for (j = 0u; j < instance->dependency_count; ++j) {
-            const salts_configurator_dependency *dependency =
-                &components->dependencies[instance->dependency_offset + j];
-            bool provider_precedes_consumer = false;
-            for (k = 0u; k < i; ++k)
-                if (components->activation_order[k] == dependency->provider_index) {
-                    provider_precedes_consumer = true;
-                    break;
-                }
-            if (!provider_precedes_consumer)
-                return false;
-        }
-    }
-
-    for (i = components->deployment_count;
-         i < components->instance_capacity; ++i) {
-        const salts_configurator_instance *instance = &components->instances[i];
-        if (instance->active ||
-            !service_host_object_ref_is_empty(&instance->object) ||
-            instance->dependency_offset != 0u ||
-            instance->dependency_count != 0u)
-            return false;
-    }
     return true;
+}
+
+static bool service_host_generation_publishable(
+    const salts_service_host_generation *generation) {
+    return service_host_generation_storage_valid(generation) &&
+           salts_configurator_context_active_valid_internal(
+               &generation->components);
 }
 
 const char *salts_service_host_status_string(
@@ -665,7 +453,7 @@ salts_service_host_status salts_service_host_generation_build(
             (generation->components.state != SALTS_CONFIGURATOR_CONTEXT_ZERO &&
              generation->components.state != SALTS_CONFIGURATOR_CONTEXT_FAILED &&
              generation->components.state != SALTS_CONFIGURATOR_CONTEXT_STOPPED) ||
-            !service_host_components_settled(&generation->components))
+            !salts_configurator_context_settled_internal(&generation->components))
             return SALTS_SERVICE_HOST_INVALID_STATE;
     } else {
         return SALTS_SERVICE_HOST_INVALID_STATE;
@@ -764,13 +552,13 @@ salts_service_host_status salts_service_host_generation_build(
         /* Retained ObjectRefs can still point into a Provider image. Keep
          * every lease until rollback is proven settled, just as drain and
          * recover do. Preserving only storage would permit premature unload. */
-        if (!service_host_components_settled(&generation->components))
+        if (!salts_configurator_context_settled_internal(&generation->components))
             return SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
         release_status = release_modules(generation);
         if (release_status != CMETA_PLUGIN_OK) {
             generation->failure.source_index = SALTS_SERVICE_HOST_INDEX_NONE;
             generation->failure.plugin_status = release_status;
-        } else if (service_host_components_settled(&generation->components)) {
+        } else if (salts_configurator_context_settled_internal(&generation->components)) {
             /* Clear borrowed graph/storage addresses only after Configurator
              * teardown is independently proven settled. Plugin lease cleanup
              * does not prove that a failing Provider returned a canonical
@@ -829,7 +617,7 @@ salts_service_host_status salts_service_host_generation_recover(
          component_state != SALTS_CONFIGURATOR_CONTEXT_FAILED &&
          component_state != SALTS_CONFIGURATOR_CONTEXT_STOPPED) ||
         generation->components.activation_count != 0u ||
-        !service_host_components_settled(&generation->components))
+        !salts_configurator_context_settled_internal(&generation->components))
         return SALTS_SERVICE_HOST_INVALID_STATE;
 
     /* A failure must not discard an unresolved token. Plugin release consumes
@@ -844,8 +632,6 @@ salts_service_host_status salts_service_host_generation_recover(
     }
 
     generation_clear(generation);
-    generation->components =
-        (salts_configurator_context)SALTS_CONFIGURATOR_CONTEXT_INIT;
     generation->runtime_owner = NULL;
     generation->active_scopes = 0u;
     generation->state = SALTS_SERVICE_HOST_GENERATION_DRAINED;
@@ -862,23 +648,37 @@ salts_service_host_status salts_service_host_runtime_publish(
         !runtime->initialized)
         return SALTS_SERVICE_HOST_INVALID_ARGUMENT;
 
+    /* Cheap admission is synchronized even for a rejected already-attached
+     * bundle. A detached BUILT candidate is exclusively owned by this caller
+     * until publish returns, so full graph validation can run outside the
+     * runtime mutex without blocking Scope acquisition on the current graph. */
     cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
-
     if (generation->state != SALTS_SERVICE_HOST_GENERATION_BUILT ||
-        !service_host_generation_publishable(generation) ||
-        generation->runtime_owner != NULL ||
-        generation->active_scopes != 0u ||
+        generation->runtime_owner != NULL || generation->active_scopes != 0u ||
         generation->id <= runtime->last_generation_id) {
         cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_INVALID_STATE;
     }
+    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
 
+    if (!service_host_generation_publishable(generation))
+        return SALTS_SERVICE_HOST_INVALID_STATE;
+
+    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    /* Another candidate may have published while validation ran. Recheck only
+     * ownership/state/epoch admission here; no Provider callback or graph scan
+     * belongs in this critical section. */
+    if (generation->state != SALTS_SERVICE_HOST_GENERATION_BUILT ||
+        generation->runtime_owner != NULL || generation->active_scopes != 0u ||
+        generation->id <= runtime->last_generation_id) {
+        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        return SALTS_SERVICE_HOST_INVALID_STATE;
+    }
     if (runtime->attached_generations >=
         SALTS_SERVICE_HOST_MAX_ATTACHED_GENERATIONS) {
         cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_BUSY;
     }
-
     previous = runtime->current;
     if (previous != NULL &&
         previous->state != SALTS_SERVICE_HOST_GENERATION_PUBLISHED) {
@@ -889,13 +689,10 @@ salts_service_host_status salts_service_host_runtime_publish(
     generation->runtime_owner = runtime;
     generation->state = SALTS_SERVICE_HOST_GENERATION_PUBLISHED;
     ++runtime->attached_generations;
-
     runtime->current = generation;
     runtime->last_generation_id = generation->id;
-
     if (previous != NULL)
         previous->state = SALTS_SERVICE_HOST_GENERATION_DRAINING;
-
     *out_previous = previous;
     cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
     return SALTS_SERVICE_HOST_OK;
@@ -1053,13 +850,13 @@ salts_service_host_status salts_service_host_generation_drain(
     salts_service_host_runtime *runtime,
     salts_service_host_generation *generation) {
     salts_configurator_status configurator_status = SALTS_CONFIGURATOR_OK;
+    salts_service_host_generation_state original_state;
     cmeta_plugin_status plugin_status;
 
     if (runtime == NULL || generation == NULL || !runtime->initialized)
         return SALTS_SERVICE_HOST_INVALID_ARGUMENT;
 
     cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
-
     if (generation->runtime_owner != runtime ||
         runtime->attached_generations == 0u ||
         (generation->state != SALTS_SERVICE_HOST_GENERATION_DRAINING &&
@@ -1069,41 +866,38 @@ salts_service_host_status salts_service_host_generation_drain(
         cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_INVALID_STATE;
     }
-
     if (generation->active_scopes != 0u) {
         cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_BUSY;
     }
 
-    /* Validate the full active teardown plan while still under the runtime
-     * lock. A corrupted activation index or dependency slice must be rejected
-     * before context_stop() can index caller-owned storage. A FAILED generation
-     * may retry only after its FAILED/STOPPED Configurator records prove every
-     * instance-capacity slot settled; this is the explicit repair path when a
-     * Provider deactivation corrupted an ObjectRef during an earlier drain. */
-    if ((generation->state == SALTS_SERVICE_HOST_GENERATION_DRAINING &&
-         !service_host_generation_publishable(generation)) ||
-        (generation->state == SALTS_SERVICE_HOST_GENERATION_FAILED &&
-         !service_host_components_settled(&generation->components))) {
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
-        return SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
-    }
-
+    /* STOPPING reserves the bundle for exactly one drainer. With admission
+     * withdrawn and no Scopes, it can validate/stop outside the runtime mutex;
+     * readers of another published generation keep making progress. */
+    original_state = generation->state;
     generation->state = SALTS_SERVICE_HOST_GENERATION_STOPPING;
     cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
 
-    if (generation->components.state == SALTS_CONFIGURATOR_CONTEXT_ACTIVE)
+    if (original_state == SALTS_SERVICE_HOST_GENERATION_DRAINING) {
+        salts_configurator_context_state context_state;
+        if (!service_host_generation_storage_valid(generation))
+            goto rejected_plan;
+        context_state = generation->components.state;
+        /* Configurator validates its own complete graph before any callback.
+         * Rejection leaves that state unchanged and retains retry authority. */
         configurator_status =
             salts_configurator_context_stop(&generation->components);
+        if (configurator_status != SALTS_CONFIGURATOR_OK &&
+            generation->components.state == context_state)
+            goto rejected_plan;
+    } else if (!salts_configurator_context_settled_internal(
+                   &generation->components)) {
+        goto rejected_plan;
+    }
 
-    /* A FAILED graph can be retried only after the caller repairs its
-     * ObjectRef records and the full instance-capacity scan proves the graph
-     * is settled. Do not rerun lifecycle callbacks from FAILED; release Plugin
-     * leases and clear storage only after ownership is independently settled. */
     if (configurator_status == SALTS_CONFIGURATOR_OK &&
-        !service_host_components_settled(&generation->components))
+        !salts_configurator_context_settled_internal(&generation->components))
         configurator_status = SALTS_CONFIGURATOR_INVALID_STATE;
-
     if (configurator_status != SALTS_CONFIGURATOR_OK) {
         generation->failure.configurator_status = configurator_status;
         cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
@@ -1127,8 +921,15 @@ salts_service_host_status salts_service_host_generation_drain(
     generation->runtime_owner = NULL;
     --runtime->attached_generations;
     cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
-
     return SALTS_SERVICE_HOST_OK;
+
+rejected_plan:
+    /* No lifecycle callback ran. Preserve the original DRAINING/FAILED state,
+     * all storage and leases, so the owner can repair and explicitly retry. */
+    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    generation->state = original_state;
+    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+    return SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
 }
 
 const salts_service_host_failure *salts_service_host_generation_failure(

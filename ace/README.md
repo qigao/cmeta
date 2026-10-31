@@ -1,19 +1,20 @@
-# Configurator / ServiceHost — canonical native runtime
+# ACE — Configurator / ServiceHost runtime and Provider contracts
 
-This directory contains the single canonical native component lifecycle runtime.
-The public runtime names are **Salts::Configurator** and **Salts::ServiceHost**.
-Salts 4.0 installs only these runtime owners and their version-2 native
-contracts. No previous API compatibility targets or headers are provided.
+This directory builds **Salts::ACE**, the single static library containing
+Configurator construction and ServiceHost generation management, and
+**Salts::Provider**, the interface target for their Provider declarations.
+Provider consumers link CMeta/Plugin contracts without the ACE runtime.
+The version-2 native contracts and their role-specific C API names are retained.
 
 ## Ownership
 
 - **CMeta** owns immutable type, Interface, FunctionDesc/FunctionAbi, DataDesc
   and Component capability metadata. Descriptors do not load modules or own
   runtime instances.
-- **Salts::Configurator** owns bounded provider selection, dependency
+- **Configurator**, implemented by Salts::ACE, owns bounded provider selection, dependency
   resolution, activation order, instance creation, rollback and reverse stop
   for one static graph. It does not load DSOs or own generation publication.
-- **Salts::ServiceHost** composes Configurator with the existing Plugin
+- **ServiceHost**, implemented by Salts::ACE, composes Configurator with the existing Plugin
   Registry. It owns generation construction, publication, Scope admission,
   in-flight generation protection, draining and settlement of the Plugin
   leases held for each generation.
@@ -34,6 +35,14 @@ Configurator resolves an explicit provider selection. Missing or ambiguous
 providers and dependency cycles fail closed; there is no implicit ranking or
 fallback. The graph is activated in dependency order and rolled back in reverse
 order if creation, activation or Interface projection fails.
+
+Configurator enters STARTING before create/activate and rollback callbacks,
+and STOPPING before normal deactivate/destroy. Valid reentrant lifecycle or
+lookup calls fail with INVALID_STATE; one context still requires external
+serialization across threads. Construction config_data and config_value are
+borrowed only through create(). ACTIVE graph validation, publication and drain
+use Provider metadata and owned instance records, not expired configuration
+inputs. Provider/component metadata remains borrowed until teardown settles.
 
 ServiceHost builds a complete candidate before publication. A failed N+1 build
 does not withdraw the current N. Publication atomically changes admission for
@@ -59,6 +68,21 @@ is defensive misuse detection, not a memory-safety boundary. Each Scope is used
 by one thread at a time, while the provider defines its own method-level
 concurrency semantics.
 
+A caller exclusively owns a detached BUILT candidate throughout publish().
+Configurator supplies the sole internal graph/ObjectRef validation; ServiceHost
+checks its storage and Plugin ownership boundary. Full candidate validation runs
+outside the runtime mutex, followed by a synchronized state/epoch recheck and
+publication. Drain reserves STOPPING with zero Scopes under that mutex, then
+validates/stops outside it. Rejected plans retain DRAINING/FAILED, storage and
+leases for an explicit repair/retry; Provider callbacks are not invoked twice.
+
+Configurator construction diagnostics survive successful cleanup: after a
+build error, `salts_configurator_context_failure(&generation.components)` still
+reports the phase, component/dependency indices and Provider status even when
+all storage pointers and Plugin leases have been detached. These scalar values
+remain available through explicit recovery and reset when a new build is admitted; they
+do not extend any Provider or configuration borrow.
+
 ## ABI admission
 
 Dynamic Provider admission validates the borrowed provider contract and its
@@ -80,11 +104,12 @@ matching Salts 4.0 SDK:
 
 ```cmake
 find_package(Salts 4 CONFIG REQUIRED)
-target_link_libraries(my_host PRIVATE Salts::ServiceHost)
-# A static-only composition client can link Salts::Configurator instead.
+target_link_libraries(my_host PRIVATE Salts::ACE)
 ```
 
-Provider DSOs use `Salts::ServiceHostProviderABI` and `Salts::PluginABI`.
+Static composition and generation-hosting clients both link `Salts::ACE`.
+Provider DSOs link `Salts::Provider`, which carries CMeta and Plugin ABI contracts
+without linking the ACE construction/publication runtime.
 The public headers are `salts/configurator.h`, `salts/configurator_abi.h`, `salts/service_host.h`,
 `salts/service_host_provider_abi.h` and `salts/service_host_abi.h`.
 
@@ -100,8 +125,8 @@ release-tag and package-provenance acceptance.
 Do not pin implementation sources to a review SHA/branch, restore the retired
 runtime names, or add fallback loaders/ABI invocation paths.
 
-The factory ABI target is `Salts::ConfiguratorABI`, and the dynamic Provider ABI
-is `Salts::ServiceHostProviderABI`. Provider bindings require ABI version 2;
+`Salts::Provider` supplies both the factory binding declarations and the dynamic
+Provider Interface. Provider bindings require ABI version 2;
 the dynamic contract is `salts.service_host.provider.v2` at version 2. The
 native runtime marker is `salts_service_host_abi_v2_0_required()`. No prior
 factory, Provider Interface or runtime link marker is installed.

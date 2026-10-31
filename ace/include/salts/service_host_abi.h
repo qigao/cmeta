@@ -1,6 +1,6 @@
 /* Native ABI gate for the canonical Configurator/ServiceHost runtime.
  * Epoch 2.0 removes the former Component Provider/Binding API. Every host
- * and provider must be rebuilt from this SDK; epoch-2 modules are rejected. */
+ * and provider must be rebuilt from this SDK; earlier-epoch modules are rejected. */
 #ifndef SALTS_SERVICE_HOST_ABI_H
 #define SALTS_SERVICE_HOST_ABI_H
 #include <stdint.h>

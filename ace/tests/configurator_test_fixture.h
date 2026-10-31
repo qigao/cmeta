@@ -232,6 +232,62 @@ static void test_deactivate(
     ++state->deactivates;
 }
 
+/* Real lifecycle callbacks attempt host reentry; no second runtime or mock
+ * Configurator implementation is used. */
+typedef struct test_reentry_provider {
+    test_provider_state provider;
+    salts_configurator_context *context;
+    salts_configurator_context_state states[8];
+    salts_configurator_status results[8][4];
+    unsigned calls;
+    bool probing;
+} test_reentry_provider;
+
+static void test_probe_lifecycle_reentry(test_reentry_provider *state) {
+    unsigned i;
+    if (state->probing || state->calls >= 8u)
+        return;
+    state->probing = true;
+    i = state->calls++;
+    state->states[i] = state->context->state;
+    state->results[i][0] = salts_configurator_context_start(state->context);
+    state->results[i][1] = salts_configurator_context_stop(state->context);
+    state->results[i][2] = salts_configurator_context_resolve(state->context);
+    state->results[i][3] = salts_configurator_context_init(
+        state->context, NULL, 0u, NULL, 0u, NULL, 0u, NULL, 0u, NULL, 0u);
+    state->probing = false;
+}
+
+static cmeta_status test_reentry_create(
+    void *provider_context, const cmeta_data_desc *config_data,
+    const void *config_value, const salts_configurator_dependency *dependencies,
+    size_t dependency_count, cmeta_object_ref *out_instance) {
+    test_reentry_provider *state = (test_reentry_provider *)provider_context;
+    test_probe_lifecycle_reentry(state);
+    return test_logger_create(&state->provider, config_data, config_value,
+        dependencies, dependency_count, out_instance);
+}
+
+static cmeta_status test_reentry_activate(
+    void *provider_context, const cmeta_object_ref *instance) {
+    test_reentry_provider *state = (test_reentry_provider *)provider_context;
+    test_probe_lifecycle_reentry(state);
+    return test_activate(&state->provider, instance);
+}
+
+static void test_reentry_deactivate(
+    void *provider_context, const cmeta_object_ref *instance) {
+    test_reentry_provider *state = (test_reentry_provider *)provider_context;
+    test_probe_lifecycle_reentry(state);
+    test_deactivate(&state->provider, instance);
+}
+
+static void test_reentry_destroy(void *provider_context, void *object) {
+    test_reentry_provider *state = (test_reentry_provider *)provider_context;
+    test_probe_lifecycle_reentry(state);
+    test_destroy(&state->provider, object);
+}
+
 #define TEST_PROVIDER_BINDING(component_, state_, create_) \
     ((salts_configurator_provider_binding){ \
         sizeof(salts_configurator_provider_binding), \

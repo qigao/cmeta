@@ -23,26 +23,20 @@ remains **DO NOT MERGE. DO NOT PUBLISH.** Feature freeze is **not** 2.3.0
 native SDK, downstream or stable release qualification.
 
 **Current ownership mapping:** the graph below uses the current public owner
-names for the corresponding responsibilities. `Salts::Configurator` owns static
-graph resolution and activation; `Salts::ServiceHost` owns generation
-publication, Scope admission and drain, and Plugin lease settlement.
+names for the corresponding responsibilities. `Salts::ACE` contains
+Configurator static graph resolution/activation and ServiceHost generation
+publication, Scope admission/drain and Plugin lease settlement.
 `Salts::Plugin` remains the sole DSO loader and unload authority. Frozen test
 names and run links below apply to their historical source only. They do not
 qualify the current Salts 4.0 / ABI 2.0 implementation.
 
-```text
-CMeta: immutable Type / Interface / FunctionAbi / DataDesc / ObjectRef /
-       Lifecycle / Manifest / typed macro + inline declarations
-    |
-    +--> Salts::Configurator: bounded static selection, graph/lifecycle
-    |        |
-    |        +--> Salts::ServiceHost: generation publication + scope admission
-    |                    |
-    |                    +--> Salts::Plugin: sole DSO load/unload + module lease
-    |
-    +--> CNet / NativeIO: transport, accept/connect, Reactor/Proactor owner
-    |
-    +--> CFlow / Actor: bounded mailbox, scheduler, Graph, Channel, Stream
+```mermaid
+flowchart TD
+    meta["CMeta declarations"] --> config["ACE Configurator: selection and lifecycle"]
+    config --> host["ACE ServiceHost: generations and Scopes"]
+    host --> plugin["Plugin: loader, unload and leases"]
+    meta --> native["Core CNet and NativeIO"]
+    meta --> flow["CFlow and Actor execution"]
 ```
 
 **No new public ACE pattern DSL, runtime scheduler, dynamic service locator,
