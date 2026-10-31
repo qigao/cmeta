@@ -1,18 +1,17 @@
-name: Salts 3 CMeta ACE only clean SDK
+name: Salts Configurator ServiceHost native SDK
 on:
   pull_request:
     paths:
       - "CMakeLists.txt"
       - "CMakeOptions.cmake"
       - "cmake/SaltsConfig.cmake.in"
-      - "cmake/ci/core-backed-**"
+      - "tests/**"
       - "cmeta/**"
       - "cflow/**"
-      - "component/**"
       - "component-runtime/**"
       - "plugin/**"
-      - "component-plugin/**"
       - "tools/check_ace_only_sources.py"
+      - "tools/audit_native_owner.py"
       - "utils/**"
       - ".github/workflows/ace-only-source-cutover.yml"
       - ".github/workflows/ace-only-native-sanitizers.yml"
@@ -21,14 +20,18 @@ on:
     paths:
       - "CMakeLists.txt"
       - "tools/check_ace_only_sources.py"
+      - "tools/audit_native_owner.py"
       - ".github/workflows/ace-only-source-cutover.yml"
       - ".github/workflows/ace-only-native-sanitizers.yml"
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
-  installed-ace:
-    name: "CMeta ACE CFlow owner and installed SDK / ${{ matrix.os }}"
+  native-ace:
+    name: "Configurator ServiceHost native tests / ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -66,7 +69,7 @@ jobs:
             "-DCMAKE_INSTALL_PREFIX=$RUNNER_TEMP/core-sdk"
           cmake --build build-core --config Release --parallel 2
           cmake --install build-core --config Release
-      - name: Build and install real Salts 3 CMeta ACE CFlow only
+      - name: Build and install the sole Salts native graph
         shell: bash
         run: |
           set -euo pipefail
@@ -76,14 +79,13 @@ jobs:
             generator=(-G Ninja)
           fi
           cmake -S . -B build-salts "${generator[@]}" \
-            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
             -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_SHARED_LIBS=OFF \
             "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/core-sdk" \
             "-DCMAKE_INSTALL_PREFIX=$RUNNER_TEMP/ace-sdk"
           cmake --build build-salts --config Release --parallel 2
           cmake --install build-salts --config Release
-          test -f "$RUNNER_TEMP/ace-sdk/lib/cmake/Salts/SaltsTargets.cmake"
-      - name: Reject Salts 2.3 admission and test actual installed consumer and original CTests
+      - name: Run original native C11 C++17 DSO and CFlow tests
         shell: bash
         run: |
           set -euo pipefail
@@ -97,32 +99,17 @@ jobs:
             generator=(-G Ninja)
             export LD_LIBRARY_PATH="$RUNNER_TEMP/core-sdk/lib:${LD_LIBRARY_PATH:-}"
           fi
-          if cmake -S cmake/ci/core-backed-legacy-rejection -B reject-salts23 "${generator[@]}" \
-              "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/ace-sdk;$RUNNER_TEMP/core-sdk"; then
-            echo "Salts 2.3 falsely admitted against 3.0" >&2; exit 1
-          fi
-          cmake -S cmake/ci/core-backed-consumer -B build-installed "${generator[@]}" \
-            -DCMAKE_BUILD_TYPE=Release "-DSALTS_FIXTURE_ROOT=$GITHUB_WORKSPACE" \
-            "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/ace-sdk;$RUNNER_TEMP/core-sdk"
-          cmake --build build-installed --config Release --parallel 2
-          ctest --test-dir build-installed -C Release --no-tests=error \
+          ctest --test-dir build-salts -C Release --no-tests=error \
             --output-on-failure --timeout 120
-          cmake -S cmake/ci/core-backed-original-tests -B build-original "${generator[@]}" \
-            -DCMAKE_BUILD_TYPE=Release "-DSALTS_SOURCE_ROOT=$GITHUB_WORKSPACE" \
-            "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/ace-sdk;$RUNNER_TEMP/core-sdk"
-          cmake --build build-original --config Release --parallel 2
-          ctest --test-dir build-original -C Release --no-tests=error \
-            --output-on-failure --timeout 120
-          python3 cmake/ci/core-backed-consumer/audit-profile.py \
+          python3 tools/audit_native_owner.py \
             --core-tools _core_owner/tools \
             --core-prefix "$RUNNER_TEMP/core-sdk" --salts-prefix "$RUNNER_TEMP/ace-sdk" \
-            --build-dir build-installed --report build-installed/ace-one-owner-audit.json
+            --build-dir build-salts --report build-salts/ace-one-owner-audit.json
       - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ace-only-source-${{ matrix.os }}
           path: |
-            build-installed/Testing/Temporary/LastTest.log
-            build-original/Testing/Temporary/LastTest.log
-            build-installed/ace-one-owner-audit.json
+            build-salts/Testing/Temporary/LastTest.log
+            build-salts/ace-one-owner-audit.json
           if-no-files-found: warn

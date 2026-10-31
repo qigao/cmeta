@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce Salts 3 as the only CMeta/ACE/CFlow source owner.
+"""Enforce Salts as the only CMeta/ACE/CFlow source owner.
 
 Source trees migrated to qigao/salts-core or qigao/crypto must not be
 retained as unbuilt fallbacks, aliases, manifests or dormant test harnesses.
@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MIGRATED = (
     "platform", "concurrency", "coroutine", "native-io", "cnet",
     "unicode", "idna", "cserde", "tinytest", "asn1", "uri",
-    "vendor", "presets", "utils",
+    "vendor", "presets", "utils", "component", "component-plugin",
 )
 for name in MIGRATED:
     if (ROOT / name).exists():
@@ -26,7 +26,7 @@ for name in (".github/actions", "cmake/vcpkg-cache.nuget.config"):
 
 cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 required = (
-    "project(Salts VERSION 3.0.0 LANGUAGES C CXX)",
+    "project(Salts VERSION 4.0.0 LANGUAGES C CXX)",
     "find_package(SaltsCore 0.1 CONFIG REQUIRED)",
     "add_subdirectory(cmeta)",
     "add_subdirectory(component-runtime)",
@@ -44,8 +44,8 @@ if "SALTS_CORE_BACKED_PROFILE" in cmake or "GmSSL::" in cmake or "SaltsCore::" i
 # Check active retained targets, not just the root. Forbid restoring former
 # native provider namespaces by hidden CMake source/profile declarations.
 for owner in (
-    "cmeta", "cflow", "cstl", "simd", "tinymock", "component",
-    "component-plugin", "component-runtime", "plugin",
+    "cmeta", "cflow", "cstl", "simd", "tinymock",
+    "component-runtime", "plugin",
 ):
     cmake_path = ROOT / owner / "CMakeLists.txt"
     if not cmake_path.is_file():

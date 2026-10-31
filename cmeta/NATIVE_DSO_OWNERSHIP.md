@@ -48,7 +48,7 @@ implementation or a way to transfer a raw handle to a different allocator.
 For CFlow, Graph/Plan/Actor and generated RPC callables may copy admitted
 *value records*, but descriptor pointers, callable function bodies,
 `self` context, executable callbacks and outer Plugin image remain
-borrowed. A ComponentPlugin Generation/Supplied Provider lease must prevent
+borrowed. A ServiceHost Generation/Supplied Provider lease must prevent
 `dlclose`/`FreeLibrary` until the final admitted execution, cancellation,
 terminal callback and reverse cleanup settles. A CMeta semantic type match
 does not extend that lease or authorize invoking foreign unloaded code.

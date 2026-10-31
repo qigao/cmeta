@@ -810,11 +810,11 @@ suite("ServiceHost generation publication") {
         cmeta_plugin_ref ref;
         cmeta_plugin_lifecycle_info info;
         service_host_destroy_corrupt_probe probe = {0};
-        salts_component_provider_binding provider;
+        salts_configurator_provider_binding provider;
         salts_configurator_deployment deployment;
         salts_configurator_deployment deployments[2] = {{0}};
         salts_configurator_instance instances[2] = {{0}};
-        salts_component_dependency dependencies[2] = {{0}};
+        salts_configurator_dependency dependencies[2] = {{0}};
         size_t activation_order[2] = {0u, 0u};
         salts_service_host_module modules[1] = {{0}};
         const salts_service_host_generation_storage storage = {
@@ -852,7 +852,7 @@ suite("ServiceHost generation publication") {
         check_equal(salts_service_host_runtime_close(&runtime, &previous), SALTS_SERVICE_HOST_OK);
         check_true(previous == &generation);
         check_equal(salts_service_host_generation_drain(&runtime, &generation),
-                    SALTS_SERVICE_HOST_COMPONENT_ERROR);
+                    SALTS_SERVICE_HOST_CONFIGURATOR_ERROR);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
         check_equal(generation.components.state, SALTS_CONFIGURATOR_CONTEXT_FAILED);
         check_equal(generation.components.activation_count, (size_t)0u);
@@ -875,7 +875,7 @@ suite("ServiceHost generation publication") {
          * plan; failed drain must preserve the attached generation and lease. */
         generation.components.activation_count = 1u;
         check_equal(salts_service_host_generation_drain(&runtime, &generation),
-                    SALTS_SERVICE_HOST_COMPONENT_ERROR);
+                    SALTS_SERVICE_HOST_CONFIGURATOR_ERROR);
         check_equal(generation.state, SALTS_SERVICE_HOST_GENERATION_FAILED);
         check_true(generation.storage.instances == instances);
         check_equal(runtime.attached_generations, (size_t)1u);
@@ -938,7 +938,7 @@ suite("ServiceHost generation publication") {
         generation.activation_order[0] = SIZE_MAX;
         check_equal(salts_service_host_generation_drain(
             &runtime, &generation.generation),
-            SALTS_SERVICE_HOST_COMPONENT_ERROR);
+            SALTS_SERVICE_HOST_CONFIGURATOR_ERROR);
         check_equal(generation.generation.state,
                     SALTS_SERVICE_HOST_GENERATION_DRAINING);
         check_true(generation.generation.runtime_owner == &runtime);
@@ -957,7 +957,7 @@ suite("ServiceHost generation publication") {
         generation.generation.components.state = SALTS_CONFIGURATOR_CONTEXT_STOPPED;
         check_equal(salts_service_host_generation_drain(
             &runtime, &generation.generation),
-            SALTS_SERVICE_HOST_COMPONENT_ERROR);
+            SALTS_SERVICE_HOST_CONFIGURATOR_ERROR);
         check_equal(generation.generation.state,
                     SALTS_SERVICE_HOST_GENERATION_FAILED);
         check_true(generation.instances[0].active);

@@ -33,7 +33,7 @@ Plugin/CMeta ABI、registry 状态归属、lease 和停止／卸载顺序保持�
 源码提交 `e1a26b89ffaccd4cfad7dd8680020ffc35370f3b` 已通过
 [Salts CI 38131873603](https://github.com/qigao/salts/actions/runs/38131873603)。
 Windows 使用 `win-release-ci` 完整构建；本测试 3 个用例、47 条断言全部通过，无跳过或过滤。
-Windows native/plugin CTest 38/38、execution CTest 97/97 通过，包含既有 ComponentPlugin
+Windows native/plugin CTest 38/38、execution CTest 97/97 通过，包含既有 ServiceHost
 DSO、generation、scope、publication、runtime failure 和 concurrency 回归；这两组有重叠，不相加为独立测试数。
 其余七个平台构建任务也通过；Android/iOS 结果仅代表交叉构建。
 未本地构建 SDK、未合并或发布。这三项正向用例不构成完整搜索边界验收；

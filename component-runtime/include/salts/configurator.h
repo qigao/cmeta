@@ -3,7 +3,7 @@
 #ifndef SALTS_CONFIGURATOR_H
 #define SALTS_CONFIGURATOR_H
 
-#include <salts/component_abi.h>
+#include <salts/configurator_abi.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,7 +40,7 @@ typedef struct salts_configurator_selection {
  * under their own semantics.
  */
 typedef struct salts_configurator_deployment {
-    const salts_component_provider_binding *provider;
+    const salts_configurator_provider_binding *provider;
     const cmeta_data_desc *config_data;
     const void *config_value;
 } salts_configurator_deployment;
@@ -75,7 +75,7 @@ typedef struct salts_configurator_context {
     salts_configurator_instance *instances;
     size_t instance_capacity;
 
-    salts_component_dependency *dependencies;
+    salts_configurator_dependency *dependencies;
     size_t dependency_capacity;
     size_t dependency_count;
 
@@ -92,7 +92,7 @@ typedef struct salts_configurator_context {
  * Do not copy a context with live instances, or initialize it concurrently. */
 #define SALTS_CONFIGURATOR_CONTEXT_INIT {0}
 
-const char *salts_configurator_status_string(salts_component_status status);
+const char *salts_configurator_status_string(salts_configurator_status status);
 
 /* First admission requires an explicitly zero-initialized context.
  * Reinitialization from READY, RESOLVED or ACTIVE is rejected without
@@ -113,7 +113,7 @@ const char *salts_configurator_status_string(salts_component_status status);
  * This contract applies to the canonical Configurator API: explicitly
  * initialize contexts before first use; never pass indeterminate automatic
  * storage or reset a context while it retains ObjectRefs. */
-salts_component_status salts_configurator_context_init(
+salts_configurator_status salts_configurator_context_init(
     salts_configurator_context *context,
     const salts_configurator_deployment *deployments,
     size_t deployment_count,
@@ -121,18 +121,18 @@ salts_component_status salts_configurator_context_init(
     size_t selection_count,
     salts_configurator_instance *instances,
     size_t instance_capacity,
-    salts_component_dependency *dependencies,
+    salts_configurator_dependency *dependencies,
     size_t dependency_capacity,
     size_t *activation_order,
     size_t activation_capacity);
 
-salts_component_status salts_configurator_context_resolve(
+salts_configurator_status salts_configurator_context_resolve(
     salts_configurator_context *context);
 
-salts_component_status salts_configurator_context_start(
+salts_configurator_status salts_configurator_context_start(
     salts_configurator_context *context);
 
-salts_component_status salts_configurator_context_stop(
+salts_configurator_status salts_configurator_context_stop(
     salts_configurator_context *context);
 
 /*
@@ -140,7 +140,7 @@ salts_component_status salts_configurator_context_stop(
  * Bind the exact typed Interface once and retain the appropriate outer scope;
  * do not route hot calls through repeated lookup.
  */
-salts_component_status salts_configurator_context_find_service(
+salts_configurator_status salts_configurator_context_find_service(
     const salts_configurator_context *context,
     const cmeta_interface_desc *interface_desc,
     salts_configurator_service *out_service);
@@ -149,7 +149,7 @@ salts_component_status salts_configurator_context_find_service(
  * Explicit root/service selection for contexts that intentionally contain
  * multiple providers of the same Interface. No ranking or fallback occurs.
  */
-salts_component_status salts_configurator_context_find_service_from(
+salts_configurator_status salts_configurator_context_find_service_from(
     const salts_configurator_context *context,
     const char *provider_component_id,
     const cmeta_interface_desc *interface_desc,

@@ -1,16 +1,17 @@
+> Historical evidence below applies only to each recorded commit and CI run.
+> Current API names describe the corresponding owner; these results do not
+> qualify Salts 4.0 / native runtime ABI 2.0.
+
 # ACE/POSA2 completion contract — opt-in Leader/Followers and primitive conformance
 
 Status: **post-freeze design + isolated test-local prototype** on `feature/cmeta-ace-patterns`. This is not a productized executor, fully qualified conformance, a new Salts 2.3 public ABI, or release approval. See #1058, #1064 and #1018.
 
-**Current ServiceHost mapping (2026-10-19):** this audit document preserves the
-historical ACE branch and its original `ComponentPlugin` labels. In the
-currently integrated native runtime, `Salts::Configurator` owns static graph
-selection/activation; `Salts::ServiceHost` owns generation publication,
-Scope admission/drain and settlement of generation-held Plugin leases; and
-`Salts::Plugin` remains the sole loader/Registry/quiescence/unload authority.
-Historical pattern results in this document are not a statement that the old
-`Salts::ComponentPlugin` target remains exported. Current SDK evidence is
-tracked by [PR #1260](https://github.com/qigao/salts/pull/1260).
+**Current ownership:** `Salts::Configurator` owns static graph selection and
+activation; `Salts::ServiceHost` owns generation publication, Scope admission,
+drain and settlement of Plugin leases. `Salts::Plugin` remains the sole loader,
+Registry, quiescence and unload authority. The earlier
+[SDK audit #1260](https://github.com/qigao/salts/pull/1260) is historical evidence;
+current native ABI 2.0 requires independent exact-source acceptance.
 
 ## Non-negotiable architectural split
 
@@ -20,7 +21,7 @@ tracked by [PR #1260](https://github.com/qigao/salts/pull/1260).
 | Connection owner, shard execution and handoff | CNet Sharded Graph | borrowed handler and immutable policy metadata |
 | Worker creation, mutex, condition variable, TLS, once | Platform/Concurrency | strongly typed role/strategy declarations |
 | Actor scheduling and bounded mailbox | CFlow | typed producer/action/receiver contracts |
-| DSO load/unload, generation scope and leases | ComponentPlugin | typed borrowed invocation, never implicit retention |
+| DSO load/unload, generation scope and leases | ServiceHost | typed borrowed invocation, never implicit retention |
 
 An owner-affine CNet SG lane **cannot** become a Leader/Followers pool by changing a pattern label. Existing Reactor/Proactor already implement their ACE semantics; no duplicate I/O loop is permitted.
 
@@ -48,7 +49,7 @@ exactly-one settlement + owned payload release
 - Synchronization authority is one existing Platform mutex and condition variable. Under that lock keep `leader_id`, `closing`, `queued`, `active` and one bounded FIFO. Only a designated leader removes an event. The leader elects a waiting follower (or preserves its role if no follower is available) **before** processing that event outside the lock. A successor cannot take the same event.
 - Stop under the mutex sets `closing`, rejects subsequent submission, broadcasts all waiters, and drains accepted work by a documented policy (either finish or explicit cancelled settlement). Destruction is forbidden while `queued + active > 0` or workers remain live.
 - Worker cancellation/error cannot abandon leadership: release or elect a successor while holding the mutex and wake a follower. Never invoke application handlers, Plugin callbacks or CMeta reflection while holding the election mutex.
-- CMeta encodes a canonical, compile-time typed `Event -> Result/Status` Callable or Interface. Provider and borrowed callback lifetimes must cover *all* admitted events, and ComponentPlugin generation scope must be held externally until pool shutdown. This declaration does not create scheduler or ownership semantics.
+- CMeta encodes a canonical, compile-time typed `Event -> Result/Status` Callable or Interface. Provider and borrowed callback lifetimes must cover *all* admitted events, and ServiceHost generation scope must be held externally until pool shutdown. This declaration does not create scheduler or ownership semantics.
 - No fairness claim stronger than eventual handoff with runnable followers and an unblocked event source. No migration of CNet endpoint owner, duplicate backend polling or replacement for SG.
 
 ### Executable admission before marking qualified
@@ -74,7 +75,7 @@ For all four: type exactness, owned/borrowed lifetimes, C11/C++17 conformance an
 
 ## Phase A gap acceptance and actual CI authority
 
-- Interceptor (#1059): actual loaded DSO and borrowed ComponentPlugin Scope at `6185834`, full CI run 37869377431 passed; pending new fixture sanitizer and final candidate.
+- Interceptor (#1059): actual loaded DSO and borrowed ServiceHost Scope at `6185834`, full CI run 37869377431 passed; pending new fixture sanitizer and final candidate.
 - ACT (#1060): genuine epoll/kqueue NativeIO plus Plugin Scope and Windows IOCP evidence exist on the branch; exact-head and targeted sanitizer acceptance remain distinct.
 - Strategized Locking (#1061), Thread-Safe Interface (#1062), Monitor (#1063): tested reflected ports, actual mutex/RW/condition and concurrent fixtures exist; exact HEAD, negative cases and sanitizer completion must be independently verified.
 - Leader/Followers (#1064): **test-local prototype, not qualified or exported**; commit `70c3f24` adds 1/2/4-worker FIFO/baton/concurrent-producer/close/worker-failure tests with C11/C++17 strict signatures. A named non-SG production consumer and DSO/SDK qualification remain open.

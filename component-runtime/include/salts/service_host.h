@@ -1,9 +1,9 @@
 /* Canonical Salts ServiceHost: the sole Plugin generation and Scope owner.
- * Public installed ABI epoch is selected through component_runtime_abi.h. */
+ * Public installed ABI epoch is selected through service_host_abi.h. */
 #ifndef SALTS_SERVICE_HOST_H
 #define SALTS_SERVICE_HOST_H
 
-#include <salts/component_provider_abi.h>
+#include <salts/service_host_provider_abi.h>
 #include <salts/configurator.h>
 #include <salts/plugin.h>
 
@@ -26,7 +26,7 @@ typedef enum salts_service_host_status {
     SALTS_SERVICE_HOST_CAPACITY_EXCEEDED,
     SALTS_SERVICE_HOST_PLUGIN_ERROR,
     SALTS_SERVICE_HOST_PROVIDER_ERROR,
-    SALTS_SERVICE_HOST_COMPONENT_ERROR,
+    SALTS_SERVICE_HOST_CONFIGURATOR_ERROR,
     SALTS_SERVICE_HOST_BUSY,
     SALTS_SERVICE_HOST_INVALID_STATE,
     SALTS_SERVICE_HOST_RESOURCE_ERROR
@@ -62,7 +62,7 @@ typedef struct salts_service_host_generation_storage {
     salts_configurator_instance *instances;
     size_t instance_capacity;
 
-    salts_component_dependency *dependencies;
+    salts_configurator_dependency *dependencies;
     size_t dependency_capacity;
 
     size_t *activation_order;
@@ -75,7 +75,7 @@ typedef struct salts_service_host_generation_storage {
 typedef struct salts_service_host_failure {
     size_t source_index;
     cmeta_plugin_status plugin_status;
-    salts_component_status component_status;
+    salts_configurator_status configurator_status;
 } salts_service_host_failure;
 
 typedef struct salts_service_host_runtime salts_service_host_runtime;
@@ -116,7 +116,7 @@ typedef struct salts_service_host_scope {
  * generations are drained. Do not copy/move a live scope; a copied scope is
  * rejected without changing its generation's admission count. One original
  * owner releases it exactly once. Services borrowed from it expire at release.
- * The owner-address field is part of the canonical ServiceHost epoch-1
+ * The owner-address field is part of the canonical ServiceHost epoch-2
  * layout. It is not compatible with any earlier unpublished prototype layout;
  * consumers must use the headers and library from one immutable SDK.
  *

@@ -5,7 +5,7 @@ The Salts repository implements **only the CMeta/ACE/CFlow layer**.
 ```text
 Applications / services (Flowie, CHttp, TurboDB, TurboAgent, ...)
                  |
-Salts 3: CMeta + Plugin + Component/Configurator + ServiceHost + CFlow
+Salts 4: CMeta + Plugin + Component/Configurator + ServiceHost + CFlow
                  |
 SaltsCore: Core + Platform + Concurrency + Coroutine + NativeIO
            + CNet/SCTP/URI + Unicode/IDNA + ASN1/CSerde/TinyTest

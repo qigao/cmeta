@@ -8,7 +8,7 @@ static salts_service_host_failure service_host_failure_none(void) {
     salts_service_host_failure failure;
     failure.source_index = SALTS_SERVICE_HOST_INDEX_NONE;
     failure.plugin_status = CMETA_PLUGIN_OK;
-    failure.component_status = SALTS_COMPONENT_OK;
+    failure.configurator_status = SALTS_CONFIGURATOR_OK;
     return failure;
 }
 
@@ -26,12 +26,12 @@ static salts_service_host_status generation_fail_plugin(
     return SALTS_SERVICE_HOST_PLUGIN_ERROR;
 }
 
-static salts_service_host_status generation_fail_component(
+static salts_service_host_status generation_fail_configurator(
     salts_service_host_generation *generation,
-    salts_component_status status) {
-    generation->failure.component_status = status;
+    salts_configurator_status status) {
+    generation->failure.configurator_status = status;
     generation->state = SALTS_SERVICE_HOST_GENERATION_FAILED;
-    return SALTS_SERVICE_HOST_COMPONENT_ERROR;
+    return SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
 }
 
 static salts_service_host_status generation_fail_provider(
@@ -258,8 +258,8 @@ static salts_service_host_status admit_dynamic_source(
     salts_configurator_deployment *out_deployment) {
     salts_service_host_module *module = NULL;
     const cmeta_plugin_export *entry = NULL;
-    salts_component_provider *provider;
-    const salts_component_provider_binding *binding;
+    salts_service_host_provider *provider;
+    const salts_configurator_provider_binding *binding;
     cmeta_plugin_status plugin_status;
     salts_service_host_status status;
 
@@ -280,21 +280,21 @@ static salts_service_host_status admit_dynamic_source(
 
     plugin_status = cmeta_plugin_export_require_interface(
         entry,
-        SALTS_COMPONENT_PROVIDER_CONTRACT_ID,
-        SALTS_COMPONENT_PROVIDER_CONTRACT_VERSION,
+        SALTS_SERVICE_HOST_PROVIDER_CONTRACT_ID,
+        SALTS_SERVICE_HOST_PROVIDER_CONTRACT_VERSION,
         0u,
-        salts_component_provider_interface());
+        salts_service_host_provider_interface());
     if (plugin_status != CMETA_PLUGIN_OK)
         return generation_fail_plugin(
             generation, source_index, plugin_status);
 
     provider =
-        (salts_component_provider *)entry->value.interface.value;
-    if (!salts_component_provider_valid(provider))
+        (salts_service_host_provider *)entry->value.interface.value;
+    if (!salts_service_host_provider_valid(provider))
         return generation_fail_provider(generation, source_index);
 
-    binding = salts_component_provider_get_binding(provider);
-    if (!salts_component_provider_binding_valid(binding))
+    binding = salts_service_host_provider_get_binding(provider);
+    if (!salts_configurator_provider_binding_valid(binding))
         return generation_fail_provider(generation, source_index);
     if (!service_host_dynamic_component_abi_valid(binding->component))
         return generation_fail_provider(generation, source_index);
@@ -429,7 +429,7 @@ static bool service_host_deployment_valid(
     const cmeta_component_desc *component;
 
     if (deployment == NULL || deployment->provider == NULL ||
-        !salts_component_provider_binding_valid(deployment->provider))
+        !salts_configurator_provider_binding_valid(deployment->provider))
         return false;
 
     component = deployment->provider->component;
@@ -550,12 +550,12 @@ static bool service_host_generation_publishable(
      * unable to stop a generation after it transitions to STOPPING. */
     for (i = 0u; i < components->deployment_count; ++i) {
         const salts_configurator_instance *instance = &components->instances[i];
-        const salts_component_provider_binding *consumer =
+        const salts_configurator_provider_binding *consumer =
             components->deployments[i].provider;
         for (j = 0u; j < instance->dependency_count; ++j) {
-            const salts_component_dependency *dependency =
+            const salts_configurator_dependency *dependency =
                 &components->dependencies[instance->dependency_offset + j];
-            const salts_component_provider_binding *provider;
+            const salts_configurator_provider_binding *provider;
 
             if (dependency->consumer_index != i ||
                 dependency->provider_index >= components->deployment_count ||
@@ -585,7 +585,7 @@ static bool service_host_generation_publishable(
         const salts_configurator_instance *instance =
             &components->instances[component_index];
         for (j = 0u; j < instance->dependency_count; ++j) {
-            const salts_component_dependency *dependency =
+            const salts_configurator_dependency *dependency =
                 &components->dependencies[instance->dependency_offset + j];
             bool provider_precedes_consumer = false;
             for (k = 0u; k < i; ++k)
@@ -618,7 +618,7 @@ const char *salts_service_host_status_string(
     case SALTS_SERVICE_HOST_CAPACITY_EXCEEDED: return "capacity exceeded";
     case SALTS_SERVICE_HOST_PLUGIN_ERROR: return "plugin error";
     case SALTS_SERVICE_HOST_PROVIDER_ERROR: return "provider error";
-    case SALTS_SERVICE_HOST_COMPONENT_ERROR: return "component error";
+    case SALTS_SERVICE_HOST_CONFIGURATOR_ERROR: return "component error";
     case SALTS_SERVICE_HOST_BUSY: return "busy";
     case SALTS_SERVICE_HOST_INVALID_STATE: return "invalid state";
     case SALTS_SERVICE_HOST_RESOURCE_ERROR: return "resource error";
@@ -641,7 +641,7 @@ salts_service_host_status salts_service_host_generation_build(
     size_t distinct_modules = 0u;
     size_t invalid_source = SALTS_SERVICE_HOST_INDEX_NONE;
     size_t i;
-    salts_component_status component_status;
+    salts_configurator_status configurator_status;
     salts_service_host_status preflight_status;
 
     if (generation == NULL || generation_id == 0u ||
@@ -744,23 +744,28 @@ salts_service_host_status salts_service_host_generation_build(
         }
     }
 
-    component_status = salts_configurator_context_init(
+    configurator_status = salts_configurator_context_init(
         &generation->components,
         storage->deployments, total,
         selections, selection_count,
         storage->instances, storage->instance_capacity,
         storage->dependencies, storage->dependency_capacity,
         storage->activation_order, storage->activation_capacity);
-    if (component_status == SALTS_COMPONENT_OK)
-        component_status =
+    if (configurator_status == SALTS_CONFIGURATOR_OK)
+        configurator_status =
             salts_configurator_context_resolve(&generation->components);
-    if (component_status == SALTS_COMPONENT_OK)
-        component_status =
+    if (configurator_status == SALTS_CONFIGURATOR_OK)
+        configurator_status =
             salts_configurator_context_start(&generation->components);
 
-    if (component_status != SALTS_COMPONENT_OK) {
+    if (configurator_status != SALTS_CONFIGURATOR_OK) {
         cmeta_plugin_status release_status;
-        generation_fail_component(generation, component_status);
+        generation_fail_configurator(generation, configurator_status);
+        /* Retained ObjectRefs can still point into a Provider image. Keep
+         * every lease until rollback is proven settled, just as drain and
+         * recover do. Preserving only storage would permit premature unload. */
+        if (!service_host_components_settled(&generation->components))
+            return SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
         release_status = release_modules(generation);
         if (release_status != CMETA_PLUGIN_OK) {
             generation->failure.source_index = SALTS_SERVICE_HOST_INDEX_NONE;
@@ -773,7 +778,7 @@ salts_service_host_status salts_service_host_generation_build(
              * reject reuse until the caller repairs that ownership record. */
             generation_clear(generation);
         }
-        return SALTS_SERVICE_HOST_COMPONENT_ERROR;
+        return SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
     }
 
     generation->state = SALTS_SERVICE_HOST_GENERATION_BUILT;
@@ -790,9 +795,9 @@ salts_service_host_status salts_service_host_generation_discard(
         return SALTS_SERVICE_HOST_INVALID_STATE;
 
     if (salts_configurator_context_stop(&generation->components) !=
-        SALTS_COMPONENT_OK)
-        return generation_fail_component(
-            generation, SALTS_COMPONENT_INVALID_STATE);
+        SALTS_CONFIGURATOR_OK)
+        return generation_fail_configurator(
+            generation, SALTS_CONFIGURATOR_INVALID_STATE);
 
     plugin_status = release_modules(generation);
     if (plugin_status != CMETA_PLUGIN_OK)
@@ -1004,7 +1009,7 @@ salts_service_host_status salts_service_host_scope_find_service(
     const salts_service_host_scope *scope,
     const cmeta_interface_desc *interface_desc,
     salts_configurator_service *out_service) {
-    salts_component_status status;
+    salts_configurator_status status;
 
     if (scope == NULL || !scope->live)
         return SALTS_SERVICE_HOST_INVALID_ARGUMENT;
@@ -1015,9 +1020,9 @@ salts_service_host_status salts_service_host_scope_find_service(
 
     status = salts_configurator_context_find_service(
         &scope->generation->components, interface_desc, out_service);
-    return status == SALTS_COMPONENT_OK
+    return status == SALTS_CONFIGURATOR_OK
         ? SALTS_SERVICE_HOST_OK
-        : SALTS_SERVICE_HOST_COMPONENT_ERROR;
+        : SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
 }
 
 salts_service_host_status salts_service_host_scope_find_service_from(
@@ -1025,7 +1030,7 @@ salts_service_host_status salts_service_host_scope_find_service_from(
     const char *provider_component_id,
     const cmeta_interface_desc *interface_desc,
     salts_configurator_service *out_service) {
-    salts_component_status status;
+    salts_configurator_status status;
 
     if (scope == NULL || !scope->live)
         return SALTS_SERVICE_HOST_INVALID_ARGUMENT;
@@ -1039,15 +1044,15 @@ salts_service_host_status salts_service_host_scope_find_service_from(
         provider_component_id,
         interface_desc,
         out_service);
-    return status == SALTS_COMPONENT_OK
+    return status == SALTS_CONFIGURATOR_OK
         ? SALTS_SERVICE_HOST_OK
-        : SALTS_SERVICE_HOST_COMPONENT_ERROR;
+        : SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
 }
 
 salts_service_host_status salts_service_host_generation_drain(
     salts_service_host_runtime *runtime,
     salts_service_host_generation *generation) {
-    salts_component_status component_status = SALTS_COMPONENT_OK;
+    salts_configurator_status configurator_status = SALTS_CONFIGURATOR_OK;
     cmeta_plugin_status plugin_status;
 
     if (runtime == NULL || generation == NULL || !runtime->initialized)
@@ -1081,30 +1086,30 @@ salts_service_host_status salts_service_host_generation_drain(
         (generation->state == SALTS_SERVICE_HOST_GENERATION_FAILED &&
          !service_host_components_settled(&generation->components))) {
         cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
-        return SALTS_SERVICE_HOST_COMPONENT_ERROR;
+        return SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
     }
 
     generation->state = SALTS_SERVICE_HOST_GENERATION_STOPPING;
     cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
 
     if (generation->components.state == SALTS_CONFIGURATOR_CONTEXT_ACTIVE)
-        component_status =
+        configurator_status =
             salts_configurator_context_stop(&generation->components);
 
     /* A FAILED graph can be retried only after the caller repairs its
      * ObjectRef records and the full instance-capacity scan proves the graph
      * is settled. Do not rerun lifecycle callbacks from FAILED; release Plugin
      * leases and clear storage only after ownership is independently settled. */
-    if (component_status == SALTS_COMPONENT_OK &&
+    if (configurator_status == SALTS_CONFIGURATOR_OK &&
         !service_host_components_settled(&generation->components))
-        component_status = SALTS_COMPONENT_INVALID_STATE;
+        configurator_status = SALTS_CONFIGURATOR_INVALID_STATE;
 
-    if (component_status != SALTS_COMPONENT_OK) {
-        generation->failure.component_status = component_status;
+    if (configurator_status != SALTS_CONFIGURATOR_OK) {
+        generation->failure.configurator_status = configurator_status;
         cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
         generation->state = SALTS_SERVICE_HOST_GENERATION_FAILED;
         cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
-        return SALTS_SERVICE_HOST_COMPONENT_ERROR;
+        return SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
     }
 
     plugin_status = release_modules(generation);

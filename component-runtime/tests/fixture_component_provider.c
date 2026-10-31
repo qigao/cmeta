@@ -63,11 +63,11 @@ static const cmeta_object_interface_provider fixture_interfaces = {
     fixture_project
 };
 
-static cmeta_status SALTS_COMPONENT_CALL fixture_create(
+static cmeta_status SALTS_CONFIGURATOR_CALL fixture_create(
     void *provider_context,
     const cmeta_data_desc *config_data,
     const void *config_value,
-    const salts_component_dependency *dependencies,
+    const salts_configurator_dependency *dependencies,
     size_t dependency_count,
     cmeta_object_ref *out_instance) {
     (void)config_data;
@@ -83,9 +83,9 @@ static cmeta_status SALTS_COMPONENT_CALL fixture_create(
         out_instance, provider_context, &cmeta_data_int, NULL);
 }
 
-static const salts_component_provider_binding fixture_binding = {
-    sizeof(salts_component_provider_binding),
-    SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION,
+static const salts_configurator_provider_binding fixture_binding = {
+    sizeof(salts_configurator_provider_binding),
+    SALTS_CONFIGURATOR_PROVIDER_BINDING_ABI_VERSION,
     cmeta_component_meta(ServiceHostProviderFixture),
     &fixture_value,
     &fixture_interfaces,
@@ -94,9 +94,9 @@ static const salts_component_provider_binding fixture_binding = {
     NULL
 };
 
-static const salts_component_provider_binding fixture_aux_binding = {
-    sizeof(salts_component_provider_binding),
-    SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION,
+static const salts_configurator_provider_binding fixture_aux_binding = {
+    sizeof(salts_configurator_provider_binding),
+    SALTS_CONFIGURATOR_PROVIDER_BINDING_ABI_VERSION,
     cmeta_component_meta(ServiceHostProviderAuxFixture),
     &fixture_aux_value,
     &fixture_interfaces,
@@ -105,11 +105,32 @@ static const salts_component_provider_binding fixture_aux_binding = {
     NULL
 };
 
+/* Failed Provider construction can leave borrowed DSO metadata in an invalid
+ * ObjectRef. The host must quarantine that record under its module lease. */
+static cmeta_status SALTS_CONFIGURATOR_CALL fixture_incomplete_create(
+    void *context, const cmeta_data_desc *config, const void *value,
+    const salts_configurator_dependency *dependencies, size_t count,
+    cmeta_object_ref *out) {
+    cmeta_status status = fixture_create(
+        context, config, value, dependencies, count, out);
+    if (status != CMETA_OK)
+        return status;
+    out->size = 0u;
+    return CMETA_CALLBACK_ERROR;
+}
+
+static const salts_configurator_provider_binding fixture_incomplete_binding = {
+    sizeof(salts_configurator_provider_binding),
+    SALTS_CONFIGURATOR_PROVIDER_BINDING_ABI_VERSION,
+    cmeta_component_meta(ServiceHostProviderFixture),
+    &fixture_value, &fixture_interfaces, fixture_incomplete_create, NULL, NULL
+};
+
 /* ProviderBinding is structurally valid; its borrowed service method is not
  * fully reflected. Dynamic admission must reject without calling create(). */
-static const salts_component_provider_binding fixture_legacy_binding = {
-    sizeof(salts_component_provider_binding),
-    SALTS_COMPONENT_PROVIDER_BINDING_ABI_VERSION,
+static const salts_configurator_provider_binding fixture_legacy_binding = {
+    sizeof(salts_configurator_provider_binding),
+    SALTS_CONFIGURATOR_PROVIDER_BINDING_ABI_VERSION,
     cmeta_component_meta(ServiceHostProviderLegacyFixture),
     &fixture_value,
     &fixture_interfaces,
@@ -118,41 +139,51 @@ static const salts_component_provider_binding fixture_legacy_binding = {
     NULL
 };
 
-static const salts_component_provider_binding *fixture_get_binding(void *self) {
-    return (const salts_component_provider_binding *)self;
+static const salts_configurator_provider_binding *fixture_get_binding(void *self) {
+    return (const salts_configurator_provider_binding *)self;
 }
 
 CMETA_IMPLEMENTS(
-    salts_component_provider,
+    salts_service_host_provider,
     fixture_component_provider_impl,
     0u,
     .get_binding = fixture_get_binding);
 
-static salts_component_provider fixture_component_provider = {
+static salts_service_host_provider fixture_component_provider = {
     (void *)&fixture_binding,
     &fixture_component_provider_impl_vtable
 };
 
-static salts_component_provider fixture_aux_component_provider = {
+static salts_service_host_provider fixture_aux_component_provider = {
     (void *)&fixture_aux_binding,
     &fixture_component_provider_impl_vtable
 };
 
-static salts_component_provider fixture_legacy_component_provider = {
+static salts_service_host_provider fixture_incomplete_provider = {
+    (void *)&fixture_incomplete_binding,
+    &fixture_component_provider_impl_vtable
+};
+
+static salts_service_host_provider fixture_legacy_component_provider = {
     (void *)&fixture_legacy_binding,
     &fixture_component_provider_impl_vtable
 };
 
 #define COMPONENT_PROVIDER_EXPORTS(X) \
-    X(interface, (salts_component_provider, &fixture_component_provider), \
-      COMPONENT_PROVIDER_EXPORT_ID, SALTS_COMPONENT_PROVIDER_CONTRACT_ID, \
-      SALTS_COMPONENT_PROVIDER_CONTRACT_VERSION, 0) \
-    X(interface, (salts_component_provider, &fixture_aux_component_provider), \
-      COMPONENT_PROVIDER_AUX_EXPORT_ID, SALTS_COMPONENT_PROVIDER_CONTRACT_ID, \
-      SALTS_COMPONENT_PROVIDER_CONTRACT_VERSION, 0) \
-    X(interface, (salts_component_provider, &fixture_legacy_component_provider), \
-      COMPONENT_PROVIDER_LEGACY_EXPORT_ID, SALTS_COMPONENT_PROVIDER_CONTRACT_ID, \
-      SALTS_COMPONENT_PROVIDER_CONTRACT_VERSION, 0)
+    X(interface, (salts_service_host_provider, &fixture_incomplete_provider), \
+      "test.incomplete-create", SALTS_SERVICE_HOST_PROVIDER_CONTRACT_ID, \
+      SALTS_SERVICE_HOST_PROVIDER_CONTRACT_VERSION, 0) \
+    X(interface, (salts_service_host_provider, &fixture_component_provider), \
+      "test.retired-contract", "salts.component.provider.v1", 1, 0) \
+    X(interface, (salts_service_host_provider, &fixture_component_provider), \
+      COMPONENT_PROVIDER_EXPORT_ID, SALTS_SERVICE_HOST_PROVIDER_CONTRACT_ID, \
+      SALTS_SERVICE_HOST_PROVIDER_CONTRACT_VERSION, 0) \
+    X(interface, (salts_service_host_provider, &fixture_aux_component_provider), \
+      COMPONENT_PROVIDER_AUX_EXPORT_ID, SALTS_SERVICE_HOST_PROVIDER_CONTRACT_ID, \
+      SALTS_SERVICE_HOST_PROVIDER_CONTRACT_VERSION, 0) \
+    X(interface, (salts_service_host_provider, &fixture_legacy_component_provider), \
+      COMPONENT_PROVIDER_LEGACY_EXPORT_ID, SALTS_SERVICE_HOST_PROVIDER_CONTRACT_ID, \
+      SALTS_SERVICE_HOST_PROVIDER_CONTRACT_VERSION, 0)
 
 CMETA_PLUGIN_DECLARE(
     component_provider_fixture,

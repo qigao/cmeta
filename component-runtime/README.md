@@ -2,8 +2,8 @@
 
 This directory contains the single canonical native component lifecycle runtime.
 The public runtime names are **Salts::Configurator** and **Salts::ServiceHost**.
-There is no second Component/ComponentPlugin lifecycle implementation or
-compatibility target.
+Salts 4.0 installs only these runtime owners and their version-2 native
+contracts. No previous API compatibility targets or headers are provided.
 
 ## Ownership
 
@@ -69,28 +69,29 @@ they do not cross the dynamic DSO trust boundary. Dynamic legacy/undefined
 carriers, directions, ownership and owning-self Interface shapes fail closed.
 There is no arbitrary runtime native-call reconstruction or legacy ABI fallback.
 
-The runtime uses native ABI epoch 1.0. Check the version functions and the
+The runtime uses native ABI epoch 2.0. Check the version functions and the
 link-time epoch marker against the installed library; a matching header or
 CMake target name alone is not proof that the linked binary has the same ABI.
 
-## Installed consumers and release acceptance
+## SDK and release acceptance
 
-Use one immutable published Salts SDK for the host and all native providers:
+Rebuild the host, every generated binding and all native providers against one
+matching Salts 4.0 SDK:
 
 ```cmake
-find_package(Salts CONFIG REQUIRED)
+find_package(Salts 4 CONFIG REQUIRED)
 target_link_libraries(my_host PRIVATE Salts::ServiceHost)
 # A static-only composition client can link Salts::Configurator instead.
 ```
 
-Provider DSOs use `Salts::ComponentProviderABI` and `Salts::PluginABI`.
-The public headers are `salts/configurator.h`, `salts/service_host.h`,
-`salts/component_provider_abi.h` and `salts/component_runtime_abi.h`.
+Provider DSOs use `Salts::ServiceHostProviderABI` and `Salts::PluginABI`.
+The public headers are `salts/configurator.h`, `salts/configurator_abi.h`, `salts/service_host.h`,
+`salts/service_host_provider_abi.h` and `salts/service_host_abi.h`.
 
-The SDK workflow must verify the installed exports and ABI header for all six
+Release qualification must verify the installed exports and ABI header for all six
 RIDs: Linux x64/arm64, Windows x64, macOS arm64, Android arm64 and iOS arm64.
-Native installed C11/C++17 Provider DSO lifecycle tests execute on Linux,
-Windows and macOS. Android/iOS checks are compile/link checks, not claims of
+The canonical native C11/C++17 Provider DSO lifecycle tests execute on Linux,
+Windows and macOS; real downstream applications qualify installed SDK use. Android/iOS checks are compile/link checks, not claims of
 device execution. The final immutable package must independently contain the
 canonical headers, imported CMake targets and corresponding libraries. A green
 ordinary master build or a staged source-tree archive is not a substitute for
@@ -98,3 +99,13 @@ release-tag and package-provenance acceptance.
 
 Do not pin implementation sources to a review SHA/branch, restore the retired
 runtime names, or add fallback loaders/ABI invocation paths.
+
+The factory ABI target is `Salts::ConfiguratorABI`, and the dynamic Provider ABI
+is `Salts::ServiceHostProviderABI`. Provider bindings require ABI version 2;
+the dynamic contract is `salts.service_host.provider.v2` at version 2. The
+native runtime marker is `salts_service_host_abi_v2_0_required()`. No prior
+factory, Provider Interface or runtime link marker is installed.
+
+The existing native build uses `BUILD_TESTING` to compile original tests beside
+the production targets. Standalone SDK-probe and consumer CMake projects have
+been removed; their valid ABI and DSO assertions remain ordinary native tests.

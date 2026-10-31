@@ -1,4 +1,4 @@
-/* Independent installed M6 CFlow consumer on the single NativeIO owner. */
+/* Native CFlow regression on the single NativeIO owner. */
 #include <cflow/cflow.h>
 #include <cflow/status.h>
 #include <cmeta/cmeta.h>
