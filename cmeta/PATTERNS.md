@@ -18,8 +18,8 @@ CMeta composition evidence, already-reused runtimes and post-freeze gaps.
 > The next public Salts release is **2.3.0** (latest published: 2.2.0).
 > The planned 3.0.0 Release was withdrawn; the temporary 4.0.0 proposal was
 > superseded. Component/Configurator and ACE patterns remain under
-> [#1012](https://github.com/qigao/salts/issues/1012) on long-lived Draft
-> [PR #1013](https://github.com/qigao/salts/pull/1013): **DO NOT MERGE**.
+> [#1012](https://github.com/qigao/cmeta/issues/1012) on long-lived Draft
+> [PR #1013](https://github.com/qigao/cmeta/pull/1013): **DO NOT MERGE**.
 
 ## Purpose
 

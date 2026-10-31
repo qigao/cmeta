@@ -2,8 +2,7 @@
 
 Package metadata for CMeta 4 / ACE / CFlow install trees. No CMeta.Native SDK
 has been published by this change, and no publisher workflow is enabled.
-The repository is currently qigao/salts; the manual rename to qigao/cmeta is
-pending.
+Repository: [qigao/cmeta](https://github.com/qigao/cmeta).
 
 A native payload uses `sdk/<os>-<arch>/` for Linux, macOS or Windows and x64
 or arm64. Each prefix contains headers, libraries and

@@ -15,15 +15,15 @@
 > FlowMQ integration, DSO provider qualification or 17/17 final release acceptance.
 
 > **Status:** design/coverage inventory, **not** 17/17 implementation or release qualification.
-> **Baseline:** `feature/cmeta-ace-patterns`; ACE functional-freeze code SHA [`02b741a`](https://github.com/qigao/salts/commit/02b741a7f2ebceaeed68c681898d09072c5323d1), qualified by [CI #37775060929](https://github.com/qigao/salts/actions/runs/37775060929). This document is documentation-only: it does not reopen or supersede the frozen source contract in [ACE_FREEZE.md](ACE_FREEZE.md).
-> **Change policy:** [#1012](https://github.com/qigao/salts/issues/1012), draft [PR #1013](https://github.com/qigao/salts/pull/1013) **DO NOT MERGE / DO NOT PUBLISH**; [#1018](https://github.com/qigao/salts/issues/1018) independently owns 2.3.0 package, ABI and downstream release qualification.
+> **Baseline:** `feature/cmeta-ace-patterns`; ACE functional-freeze code SHA [`02b741a`](https://github.com/qigao/cmeta/commit/02b741a7f2ebceaeed68c681898d09072c5323d1), qualified by [CI #37775060929](https://github.com/qigao/cmeta/actions/runs/37775060929). This document is documentation-only: it does not reopen or supersede the frozen source contract in [ACE_FREEZE.md](ACE_FREEZE.md).
+> **Change policy:** [#1012](https://github.com/qigao/cmeta/issues/1012), draft [PR #1013](https://github.com/qigao/cmeta/pull/1013) **DO NOT MERGE / DO NOT PUBLISH**; [#1018](https://github.com/qigao/cmeta/issues/1018) independently owns 2.3.0 package, ABI and downstream release qualification.
 
 > **Runtime naming note (2026-10-19):** the matrix preserves historical source
 > checkpoints and CTest names, some of which use `ServiceHost`. The
 > integrated lifecycle library is `CMeta::ACE`, with `CMeta::Provider`
 > supplying Provider declarations; Plugin remains the sole loader/Registry/quiescence/
 > unload authority. Current SDK and installed-consumer qualification is tracked
-> in [PR #1260](https://github.com/qigao/salts/pull/1260).
+> in [PR #1260](https://github.com/qigao/cmeta/pull/1260).
 
 ## Goal and counting rule
 
@@ -51,7 +51,7 @@ Status vocabulary:
 | # | POSA2 family / pattern | Existing authoritative mechanism | Canonical CMeta representation | Status | Exact remaining work (no duplicated runtime) |
 |---:|---|---|---|---|---|
 | 1 | Service — **Wrapper Facade** | Platform / NativeIO / CNet | typed inline façade, Interface, FunctionAbi, explicit status/borrow | **COMPOSED / PARTIAL CONFORMANCE** | Qualify a complete narrow native-resource façade: types, errors, close/borrow, C11/C++17 and out-of-tree consumer. No generic wrapper runtime. |
-| 2 | Service — **Component Configurator** | CMeta::ACE + CMeta::Plugin | immutable `cmeta_component_desc`, manifests, typed provider, ObjectRef, leased Interface projections | **QUALIFIED** | Preserve [frozen Component/Plugin contracts](ACE_FREEZE.md); downstream/ABI remains [#1018](https://github.com/qigao/salts/issues/1018), not a new pattern engine. |
+| 2 | Service — **Component Configurator** | CMeta::ACE + CMeta::Plugin | immutable `cmeta_component_desc`, manifests, typed provider, ObjectRef, leased Interface projections | **QUALIFIED** | Preserve [frozen Component/Plugin contracts](ACE_FREEZE.md); downstream/ABI remains [#1018](https://github.com/qigao/cmeta/issues/1018), not a new pattern engine. |
 | 3 | Service — **Interceptor** | domain callback/dispatch owners | exact FunctionDesc/FunctionAbi + typed Interface roles + borrowed context | **IMPLEMENTED / POST-FREEZE TESTED** | Typed before/after/error/short-circuit chain; result/error ownership, effect/ordering, reentrancy and ServiceHost Scope admission. No generic dynamic ABI reconstruction or hidden invocation registry. |
 | 4 | Service — **Extension Interface** | existing provider/ObjectRef/Plugin lifetime | `cmeta_object_ref`, `cmeta_object_interface_provider`, `cmeta_interface_projection` | **QUALIFIED** | Preserve non-owning projections and explicit owning-self rejection; no second provider identity. |
 | 5 | Event — **Reactor** | NativeIO epoll/kqueue readiness; CNet event callbacks | typed callback / Interface over existing owner-bound dispatch | **REUSE** | Existing NativeIO/CNet model, ownership and callback tests are evidence; **no second Reactor or CMeta scheduler**. |
@@ -78,7 +78,7 @@ Status vocabulary:
 |---|---|---|
 | Implementation | Native typed contract and authoritative runtime source/commit | 16 have implementation/reuse/composition; #1064 has a test-local prototype, not a consumer executor |
 | Behavioral conformance | Positive, invalid-admission, lifecycle/terminal and negative tests with CTest name | See pattern fixtures and exact-source ledger below; gaps must stay explicit |
-| Sanitizers | Selected ASan+UBSan / TSan results tied to exact commit and selected tests | [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) at `c8c27cc`; not final HEAD/release |
+| Sanitizers | Selected ASan+UBSan / TSan results tied to exact commit and selected tests | [#37877974693](https://github.com/qigao/cmeta/actions/runs/37877974693) at `c8c27cc`; not final HEAD/release |
 | Installed SDK | Out-of-tree C11/C++17 compile+run, ABI/SONAME and wrong-minor rejection | Some installed ACE consumers exist; immutable candidate verification remains #1018 |
 | Release/downstream | Same immutable 2.3 candidate: host/device, CHttp/TurboFlow/TurboSCXML, explicit go/no-go | **OPEN**, owned by #1018 |
 
@@ -127,7 +127,7 @@ Leader/Followers remains an optional, non-SG **test-local only** topology under 
 
 ### ACT / Plugin lease test (post-freeze)
 
-[`cmeta_native_component_plugin_publication_test`](https://github.com/qigao/salts/blob/cc6975c0371293f68012febce9644418a145b950/component-plugin/tests/component_plugin_publication_test.c)
+[`cmeta_native_component_plugin_publication_test`](https://github.com/qigao/cmeta/blob/cc6975c0371293f68012febce9644418a145b950/component-plugin/tests/component_plugin_publication_test.c)
 now combines the existing real Plugin DSO + Component generation with a
 **synthetic** typed ACT terminal identity. It demonstrates that closing a
 generation does not release the DSO while the caller still holds a Scope;
@@ -148,7 +148,7 @@ there is no new synchronization runtime or global Interface registry.
 
 ### Real NativeIO × ACT × Plugin DSO integration (post-freeze)
 
-[Real native terminal conformance](https://github.com/qigao/salts/blob/cc6975c0371293f68012febce9644418a145b950/component-plugin/tests/component_plugin_native_io_act_test.c)
+[Real native terminal conformance](https://github.com/qigao/cmeta/blob/cc6975c0371293f68012febce9644418a145b950/component-plugin/tests/component_plugin_native_io_act_test.c)
 exercises **Linux epoll** and **Darwin kqueue** over a true nonblocking OS
 pipe with NativeIO request/observed completion. The same fixture loads a
 real Plugin DSO, publishes ServiceHost generation N, admits and borrows
@@ -163,7 +163,7 @@ The current HEAD must pass full native CI before this can be claimed qualified.
 
 ### Windows IOCP × ACT × Plugin DSO integration (post-freeze)
 
-[Windows IOCP conformance](https://github.com/qigao/salts/blob/cc6975c0371293f68012febce9644418a145b950/component-plugin/tests/component_plugin_native_io_iocp_act_test.c)
+[Windows IOCP conformance](https://github.com/qigao/cmeta/blob/cc6975c0371293f68012febce9644418a145b950/component-plugin/tests/component_plugin_native_io_iocp_act_test.c)
 uses **actual overlapped named pipes** through the existing NativeIO IOCP
 backend. Two explicit cases observe successful PIPE_READ and cancellation,
 match exactly one ACT terminal, reject a stale-generation token, and prove
@@ -176,7 +176,7 @@ Status: newly submitted, **requires native Windows CI evidence**.
 
 ### Real Plugin Scope × typed Interceptor integration (post-freeze)
 
-[ServiceHost publication conformance](https://github.com/qigao/salts/blob/cc6975c0371293f68012febce9644418a145b950/component-plugin/tests/component_plugin_publication_test.c)
+[ServiceHost publication conformance](https://github.com/qigao/cmeta/blob/cc6975c0371293f68012febce9644418a145b950/component-plugin/tests/component_plugin_publication_test.c)
 also runs a **native-typed CMeta Interceptor** whose target calls a real
 ServiceHost DSO provider via an explicitly acquired Scope. The generation
 has stopped new admission, yet in-flight intercepted work remains authorized
@@ -202,16 +202,16 @@ or implicit cross-owner dispatch is introduced. Requires latest-head CI.
 
 ## Active pattern-gap tracking
 
-Umbrella: [#1058 — POSA2 17-pattern coverage and conformance](https://github.com/qigao/salts/issues/1058). Missing semantic/composition slices:
+Umbrella: [#1058 — POSA2 17-pattern coverage and conformance](https://github.com/qigao/cmeta/issues/1058). Missing semantic/composition slices:
 
 | Pattern | Issue | Scope |
 |---|---|---|
-| Interceptor | [#1059](https://github.com/qigao/salts/issues/1059) | Exact FunctionAbi, before/after/error and borrowed callback lifetime |
-| Asynchronous Completion Token | [#1060](https://github.com/qigao/salts/issues/1060) | Typed terminal association and once-only context settlement |
-| Strategized Locking | [#1061](https://github.com/qigao/salts/issues/1061) | Typed lock policy plus scoped guard |
-| Thread-Safe Interface | [#1062](https://github.com/qigao/salts/issues/1062) | Synchronized entry/private operations and self-deadlock prevention |
-| Monitor Object | [#1063](https://github.com/qigao/salts/issues/1063) | Predicate/condition waiting, synchronized access and teardown |
-| Leader/Followers | [#1064](https://github.com/qigao/salts/issues/1064) | Genuine leader handoff on an optional non-SG execution topology |
+| Interceptor | [#1059](https://github.com/qigao/cmeta/issues/1059) | Exact FunctionAbi, before/after/error and borrowed callback lifetime |
+| Asynchronous Completion Token | [#1060](https://github.com/qigao/cmeta/issues/1060) | Typed terminal association and once-only context settlement |
+| Strategized Locking | [#1061](https://github.com/qigao/cmeta/issues/1061) | Typed lock policy plus scoped guard |
+| Thread-Safe Interface | [#1062](https://github.com/qigao/cmeta/issues/1062) | Synchronized entry/private operations and self-deadlock prevention |
+| Monitor Object | [#1063](https://github.com/qigao/cmeta/issues/1063) | Predicate/condition waiting, synchronized access and teardown |
+| Leader/Followers | [#1064](https://github.com/qigao/cmeta/issues/1064) | Genuine leader handoff on an optional non-SG execution topology |
 
 Primitive-only conformance (Wrapper Facade / Scoped Locking / safe Once-DCL / Thread-Specific Storage) is separately tracked in #1058. **Neither this issue list nor documentation changes the frozen CMeta source ABI.**
 
@@ -230,8 +230,8 @@ Strategy = canonical Interface; Factory = FunctionDesc/FunctionAbi + ownership; 
 
 ## Phase B exact-source checkpoint — 2026-10-09
 
-Latest completed ordinary [Salts CI #37875659581](https://github.com/qigao/salts/actions/runs/37875659581)
-**SUCCESS** at commit [`0524e216`](https://github.com/qigao/salts/commit/0524e2169c096d18d674278e91f3e29626d4f99c).
+Latest completed ordinary [Salts CI #37875659581](https://github.com/qigao/cmeta/actions/runs/37875659581)
+**SUCCESS** at commit [`0524e216`](https://github.com/qigao/cmeta/commit/0524e2169c096d18d674278e91f3e29626d4f99c).
 The shared C11/C++17 ACE sync fixture now executes:
 
 - **Thread-Specific Storage:** real `SALTS_THREAD_LOCAL` per-worker isolation, nested access and explicit thread-exit cleanup (initial regression `cdb0a50`).
@@ -264,10 +264,10 @@ retroactively change frozen commit `02b741a`.
 |---|---|---|
 | Component Configurator, Extension Interface, Acceptor-Connector, Active Object, Half-Sync/Half-Async (5) | Frozen ACE host conformance plus later branch regressions | Final immutable 2.3 SDK, downstream and device release gates #1018 |
 | Reactor, Proactor (2) | Existing NativeIO/CNet readiness/completion runtimes, intentionally REUSE | No second runtime; exact backend evidence at release candidate |
-| Interceptor, ACT (2) | Real loaded ServiceHost DSO invocation and real NativeIO request/cancel association; full host [#37869377431](https://github.com/qigao/salts/actions/runs/37869377431) at `6185834`; selected sanitizer suites [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) on later source | No implicit lease; final candidate SDK, full composition and downstream |
-| Strategized Locking, Thread-Safe Interface, Monitor Object (3) | Reflected C11/C++17 lockable/synchronized/condition tests, wrong-owner rejection and selected ASan+UBSan/TSan [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) | Exact final installed SDK and closure of any outstanding specific issue acceptance |
-| Wrapper Facade, Scoped Locking, safe Once/DCL, Thread-Specific Storage (4) | Shared real Platform primitives, negative lifecycle tests and native threads; host [#37875659581](https://github.com/qigao/salts/actions/runs/37875659581), latest TLS worker-lifetime host [#37877642307](https://github.com/qigao/salts/actions/runs/37877642307), and selected sanitizer [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) at `c8c27cc` | Wrapper requires quiescent close, TLS scalar cleanup is explicit (not automatic destructor); cross-platform exact-head/installed SDK release gates remain |
-| Leader/Followers (1) | **TEST-LOCAL PROTOTYPE / NOT QUALIFIED**: explicit pre-handler successor election, real mutex/condition workers, bounded copied FIFO and typed C11/C++17 callback contract in `platform_ace_leader_followers(_cpp)_test`; see [#1064](https://github.com/qigao/salts/issues/1064) and [commit `70c3f24`](https://github.com/qigao/salts/commit/70c3f249d1eff06122f35549a0bf8e27f7d68f72) | Named non-SG consumer, DSO provider scope, production ownership and installed SDK (only if exported), cross-platform/sanitizer qualification, comparison with SG if applicable |
+| Interceptor, ACT (2) | Real loaded ServiceHost DSO invocation and real NativeIO request/cancel association; full host [#37869377431](https://github.com/qigao/cmeta/actions/runs/37869377431) at `6185834`; selected sanitizer suites [#37877974693](https://github.com/qigao/cmeta/actions/runs/37877974693) on later source | No implicit lease; final candidate SDK, full composition and downstream |
+| Strategized Locking, Thread-Safe Interface, Monitor Object (3) | Reflected C11/C++17 lockable/synchronized/condition tests, wrong-owner rejection and selected ASan+UBSan/TSan [#37877974693](https://github.com/qigao/cmeta/actions/runs/37877974693) | Exact final installed SDK and closure of any outstanding specific issue acceptance |
+| Wrapper Facade, Scoped Locking, safe Once/DCL, Thread-Specific Storage (4) | Shared real Platform primitives, negative lifecycle tests and native threads; host [#37875659581](https://github.com/qigao/cmeta/actions/runs/37875659581), latest TLS worker-lifetime host [#37877642307](https://github.com/qigao/cmeta/actions/runs/37877642307), and selected sanitizer [#37877974693](https://github.com/qigao/cmeta/actions/runs/37877974693) at `c8c27cc` | Wrapper requires quiescent close, TLS scalar cleanup is explicit (not automatic destructor); cross-platform exact-head/installed SDK release gates remain |
+| Leader/Followers (1) | **TEST-LOCAL PROTOTYPE / NOT QUALIFIED**: explicit pre-handler successor election, real mutex/condition workers, bounded copied FIFO and typed C11/C++17 callback contract in `platform_ace_leader_followers(_cpp)_test`; see [#1064](https://github.com/qigao/cmeta/issues/1064) and [commit `70c3f24`](https://github.com/qigao/cmeta/commit/70c3f249d1eff06122f35549a0bf8e27f7d68f72) | Named non-SG consumer, DSO provider scope, production ownership and installed SDK (only if exported), cross-platform/sanitizer qualification, comparison with SG if applicable |
 
 **Count:** 16 patterns have an implemented mechanism or executable composition
 at different qualification levels (including Reactor/Proactor REUSE);
@@ -290,7 +290,7 @@ tests.
 
 ## #1064 Leader/Followers exact CMeta ABI checkpoint — 2026-10-09
 
-- [`b7c72ca3`](https://github.com/qigao/salts/commit/b7c72ca36574554470f8759aec8cb3dfe4b0f4f4) adds C11/C++17 **canonical CMeta FunctionDesc/FunctionAbi** tests for the actual test-local `enum lf_result (*)(void *, int)` CPU callback, borrowed context, enum terminal, and typed role/stop metadata. This does not create a scheduling or Plugin-lease runtime.
-- [Exact-source ACE-MATRIX #37886770939](https://github.com/qigao/salts/actions/runs/37886770939) passed **257/257 Linux GCC/Clang**, **247/247 Windows MSVC**, **250/250 macOS GCC/Clang**, plus Linux ARM64, Android and iOS cross-build and Lean. All four LF C11/C++17 test targets executed on native hosts.
-- [`0c2551a5`](https://github.com/qigao/salts/commit/0c2551a5ffac45e7f408a541d77ad199cacb85fc) passed [ACE-SAN #37886359217](https://github.com/qigao/salts/actions/runs/37886359217), **24/24 ASan+UBSan and 24/24 TSan**, for the earlier Platform LF executor pair only. The newly introduced CMeta ABI tests require a separate latest-source ACE-SAN qualification.
+- [`b7c72ca3`](https://github.com/qigao/cmeta/commit/b7c72ca36574554470f8759aec8cb3dfe4b0f4f4) adds C11/C++17 **canonical CMeta FunctionDesc/FunctionAbi** tests for the actual test-local `enum lf_result (*)(void *, int)` CPU callback, borrowed context, enum terminal, and typed role/stop metadata. This does not create a scheduling or Plugin-lease runtime.
+- [Exact-source ACE-MATRIX #37886770939](https://github.com/qigao/cmeta/actions/runs/37886770939) passed **257/257 Linux GCC/Clang**, **247/247 Windows MSVC**, **250/250 macOS GCC/Clang**, plus Linux ARM64, Android and iOS cross-build and Lean. All four LF C11/C++17 test targets executed on native hosts.
+- [`0c2551a5`](https://github.com/qigao/cmeta/commit/0c2551a5ffac45e7f408a541d77ad199cacb85fc) passed [ACE-SAN #37886359217](https://github.com/qigao/cmeta/actions/runs/37886359217), **24/24 ASan+UBSan and 24/24 TSan**, for the earlier Platform LF executor pair only. The newly introduced CMeta ABI tests require a separate latest-source ACE-SAN qualification.
 - **Disposition:** test-local **PROTOTYPE**, still **NOT QUALIFIED** as a consumer feature. Non-SG CPU-only workload must be explicitly selected and shown useful; do not relabel CNet SG, add default worker pools, publish an SDK or merge draft #1013.

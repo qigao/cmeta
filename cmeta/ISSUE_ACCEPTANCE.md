@@ -3,12 +3,12 @@
 > 历史验收记录：下述 semantic 分组测试现已删除；相关运行结果仅描述当时提交，不代表当前测试覆盖。
 
 核对日期：2026-10-07。代码基线：`8d19c98e1d0d208ae148bd1404fe59eca875f9ce`，
-分支 `feat/cmeta-plugin-declarations-976-977`，[PR #979](https://github.com/qigao/salts/pull/979)。
+分支 `feat/cmeta-plugin-declarations-976-977`，[PR #979](https://github.com/qigao/cmeta/pull/979)。
 
-需求来源为核对时的 [#976](https://github.com/qigao/salts/issues/976)、
-[#977](https://github.com/qigao/salts/issues/977)、
-[#980](https://github.com/qigao/salts/issues/980)、
-[#981](https://github.com/qigao/salts/issues/981) 正文。四份正文最后更新时间均为 2026-10-06；
+需求来源为核对时的 [#976](https://github.com/qigao/cmeta/issues/976)、
+[#977](https://github.com/qigao/cmeta/issues/977)、
+[#980](https://github.com/qigao/cmeta/issues/980)、
+[#981](https://github.com/qigao/cmeta/issues/981) 正文。四份正文最后更新时间均为 2026-10-06；
 本次覆盖 #976 的全部 36 项能力及四个 issue 正文中的全部 191 个 checkbox，
 包括阶段、迁移、平台与最终 Acceptance，保留原顺序和原文，便于逐项回查。
 
@@ -63,7 +63,7 @@
 `正式测试`（已删除） 已设置各平台 dead-strip / section-GC。
 Linux 和 Windows 的 Plugin suite 实际运行 `cmeta_plugin_linker_test` 和
 `cmeta_plugin_scope_cpp_test`。本次 macOS 仅选择 execution / native suites，
-[当时的筛选规则](https://github.com/qigao/salts/blob/8d19c98e1d0d208ae148bd1404fe59eca875f9ce/.github/workflows/native-tests.yml) 的 native 分支不包含这两项。
+[当时的筛选规则](https://github.com/qigao/cmeta/blob/8d19c98e1d0d208ae148bd1404fe59eca875f9ce/.github/workflows/native-tests.yml) 的 native 分支不包含这两项。
 macOS build 成功不能证明加载 DSO 后的跨 TU 聚合、片段保留、计数错误拒绝和隔离行为。
 
 **影响：**#977 P4 “qualified ELF/Mach-O/COFF” 只能确认 ELF/COFF 的运行结果。
@@ -105,7 +105,7 @@ Linux installed suite 复用 ObjectRef RAII、operation、invokable 源码，提
 
 ### G5 — LOW：Plugin 文档混用旧 ABI 数字
 
-**事实：**[历史 PLUGIN_MANIFESTS.md](https://github.com/qigao/salts/blob/8d19c98e1d0d208ae148bd1404fe59eca875f9ce/cmeta/PLUGIN_MANIFESTS.md) 同时提及 ABI 5 admission、
+**事实：**[历史 PLUGIN_MANIFESTS.md](https://github.com/qigao/cmeta/blob/8d19c98e1d0d208ae148bd1404fe59eca875f9ce/cmeta/PLUGIN_MANIFESTS.md) 同时提及 ABI 5 admission、
 “query 只接受 ABI 4”及“Reflection ABI 3 不变”。
 当前 [Plugin ABI 常量](../plugin/include/salts/plugin.h) 为 5，
 [Reflection ABI 常量](include/cmeta/abi.h) 为 4。
@@ -116,21 +116,21 @@ Linux installed suite 复用 ObjectRef RAII、operation、invokable 源码，提
 
 ## 实际执行证据
 
-[CI run 37495434846](https://github.com/qigao/salts/actions/runs/37495434846)
+[CI run 37495434846](https://github.com/qigao/cmeta/actions/runs/37495434846)
 对应上述完整 SHA，结论 success。下列数量是 CTest 注册测试数，并非每个测试内部断言数。
 
 | 记录 | 实际结果 | 与本次验收有关的范围 |
 |---|---|---|
-| [Linux native](https://github.com/qigao/salts/actions/runs/37495434846/job/112383104660) | 67/67 | bind、cleanup、data_select、Function、native thunk、原生 benchmark |
-| [Windows native](https://github.com/qigao/salts/actions/runs/37495434846/job/112383104804) | 70/70 | MSVC 公共头、Win64 native ABI、static-call、benchmark |
-| [Linux ASan native](https://github.com/qigao/salts/actions/runs/37495434846/job/112383104507) | 67/67 | 对应宿主 C/C++ 路径在 sanitizer 下运行；不声称动态机器码本身被插桩 |
-| [Linux Plugin](https://github.com/qigao/salts/actions/runs/37495434846/job/112383104786) | 57/57 | ELF linker、声明/诊断、lease、loader/lifecycle |
-| [Windows Plugin](https://github.com/qigao/salts/actions/runs/37495434846/job/112383104657) | 58/58 | COFF linker、声明/诊断、lease、Windows dependency |
-| [Linux execution](https://github.com/qigao/salts/actions/runs/37495434846/job/112383104511) | 47/47 | scope、CSTL identity/projection、lowering |
-| [Windows execution](https://github.com/qigao/salts/actions/runs/37495434846/job/112383104629) | 47/47 | 同类 MSVC lowering 与 rollback 契约 |
-| [macOS execution](https://github.com/qigao/salts/actions/runs/37495434846/job/112383104613) | 41/41 | GCC scope / lowering，非 Clang / Plugin linker 全资格 |
-| [macOS native](https://github.com/qigao/salts/actions/runs/37495434846/job/112383104637) | 60/60 | GCC capability / fastpath / reflection，非 x86 native thunk 扩展 |
-| [Linux projection + installed](https://github.com/qigao/salts/actions/runs/37495434846/job/112383104653) | 3/3 + 31/31 | CFlow projection、installed C/C++、Plugin linker/lease、native 消费者 |
+| [Linux native](https://github.com/qigao/cmeta/actions/runs/37495434846/job/112383104660) | 67/67 | bind、cleanup、data_select、Function、native thunk、原生 benchmark |
+| [Windows native](https://github.com/qigao/cmeta/actions/runs/37495434846/job/112383104804) | 70/70 | MSVC 公共头、Win64 native ABI、static-call、benchmark |
+| [Linux ASan native](https://github.com/qigao/cmeta/actions/runs/37495434846/job/112383104507) | 67/67 | 对应宿主 C/C++ 路径在 sanitizer 下运行；不声称动态机器码本身被插桩 |
+| [Linux Plugin](https://github.com/qigao/cmeta/actions/runs/37495434846/job/112383104786) | 57/57 | ELF linker、声明/诊断、lease、loader/lifecycle |
+| [Windows Plugin](https://github.com/qigao/cmeta/actions/runs/37495434846/job/112383104657) | 58/58 | COFF linker、声明/诊断、lease、Windows dependency |
+| [Linux execution](https://github.com/qigao/cmeta/actions/runs/37495434846/job/112383104511) | 47/47 | scope、CSTL identity/projection、lowering |
+| [Windows execution](https://github.com/qigao/cmeta/actions/runs/37495434846/job/112383104629) | 47/47 | 同类 MSVC lowering 与 rollback 契约 |
+| [macOS execution](https://github.com/qigao/cmeta/actions/runs/37495434846/job/112383104613) | 41/41 | GCC scope / lowering，非 Clang / Plugin linker 全资格 |
+| [macOS native](https://github.com/qigao/cmeta/actions/runs/37495434846/job/112383104637) | 60/60 | GCC capability / fastpath / reflection，非 x86 native thunk 扩展 |
+| [Linux projection + installed](https://github.com/qigao/cmeta/actions/runs/37495434846/job/112383104653) | 3/3 + 31/31 | CFlow projection、installed C/C++、Plugin linker/lease、native 消费者 |
 | 本次本地 MSVC 补跑 | 25/25 | G3 列出的 5 项行为测试与 20 项编译失败诊断 |
 
 run 中名为 `sdk-tests` 的发布相关 job 被跳过，不等于 installed tests 全部被跳过；
@@ -167,7 +167,7 @@ ctest --preset win-cmeta-native-release-user --no-tests=error --output-on-failur
 | E8 | [plugin_linker.h](../plugin/include/salts/plugin_linker.h)、[plugin_scope.h](../plugin/include/salts/plugin_scope.h)、[Plugin 契约](../plugin/README.md) | `linker 编排`（已删除）、linker/lease C++：跨 C/C++ TU、GC、DSO 隔离、缺片段计数拒绝、move、exception、borrow 先结束；ELF/COFF 实跑，Mach-O 见 G2；无 constructor/可变 registry/隐式 lease |
 | E9 | [admitted invocation](src/invokable.c)、[admitted field](src/object.c)、[CFlow admission](../cflow/src/function_projection.c)、[CFlow execution](../cflow/src/subscription.c)、[Plugin admission](../plugin/src/plugin.c) | invokable/object/bind、CFlow projection/execution、Plugin contract：raw 入口保留完整验证；已 admission 的 invocation/field 路径不重遍描述符图。CFlow 执行保留有限 callable flags/storage 检查，不把一切检查视为可删除开销；下游宏复用 CMETA_PP_* |
 | E10 | [bind.h](include/cmeta/bind.h)、[Function projection](src/function.c)、`bind tests`（已删除） | C/C++ receiver bind、普通函数非相邻参数 bind、value 快照、borrow、padding、flags/carrier/map 拒绝；capture compile-fail 验证 32-byte 上限及类别，不隐式管理 OWNED/SHARED |
-| E11 | [compiler presets](../presets/Compilers.json)、[当时的 CI 选择](https://github.com/qigao/salts/blob/8d19c98e1d0d208ae148bd1404fe59eca875f9ce/.github/workflows/native-tests.yml)、上文 run/job 链接 | GCC/MSVC C/C++ 有实际执行；macOS 为 GCC；Clang 当前运行资格见 G1，选例覆盖见 G3 |
+| E11 | [compiler presets](../presets/Compilers.json)、[当时的 CI 选择](https://github.com/qigao/cmeta/blob/8d19c98e1d0d208ae148bd1404fe59eca875f9ce/.github/workflows/native-tests.yml)、上文 run/job 链接 | GCC/MSVC C/C++ 有实际执行；macOS 为 GCC；Clang 当前运行资格见 G1，选例覆盖见 G3 |
 | E12 | `installed CMake graph`（已删除） | Linux 31/31 复用正式测试并链接 Salts imported targets，无 source-tree 公共 include 注入；包括 PP、bind、cleanup、ObjectRef、operation、scope、Function、Plugin linker/lease/declarations、native |
 | E13 | [native 契约](NATIVE_THUNKS.md)、[thunk API](include/cmeta/native/thunk.h)、[native 实现](native/thunk.c)、[code-memory owner](native/code_memory.c)、[Object adapter](native/object.c)、[static-call adapter](include/cmeta/native/static_call.h) | native_thunk C/C++、native_failure、native_object、native_static_call、Plugin native、installed native：Win64/SysV 寄存器映射、leaf tail-jump、负值/边界、重绑定、错误 ABI、预算、OS 失败、异常、先撤销借用后销毁；W^X、有界 caller owner，无隐式 retain |
 | E14 | [native benchmark](benchmarks/cmeta_native_benchmark.c)、[Plugin native test](../plugin/tests/plugin_native_test.c)、[测量契约](NATIVE_THUNKS.md) | 同 TU 目标/相同操作与显式 lease；分别测量调用与创建/重绑定成本。当前 Linux/Windows Release 结果见下表；不以 sanitizer 差异计算生产收益 |

@@ -1,10 +1,10 @@
 # #979 的语义审查与合并边界（#984）
 
-原组合 PR [#979](https://github.com/qigao/salts/pull/979) 保留原历史。
-核心 PR [#986](https://github.com/qigao/salts/pull/986) 使用新分支
+原组合 PR [#979](https://github.com/qigao/cmeta/pull/979) 保留原历史。
+核心 PR [#986](https://github.com/qigao/cmeta/pull/986) 使用新分支
 `review/cmeta-core-984`，通过隔离提交区分 A–D/G、公共命名迁移和 F；它不包含 #981
 的 native thunk 实现、构建选项或 installed native 测试。可选 E 使用其上的
-[`review/cmeta-native-981` / PR #987](https://github.com/qigao/salts/pull/987)，单独审查、构建与验收。以下表格定义语义依赖；网络、runner
+[`review/cmeta-native-981` / PR #987](https://github.com/qigao/cmeta/pull/987)，单独审查、构建与验收。以下表格定义语义依赖；网络、runner
 与 benchmark 的成功不能替代 CMeta 语义验收。
 
 | 单元 | 契约与主要文件 | 依赖 | 正式验收面 |
@@ -112,7 +112,7 @@ cmake --build --preset linux-clang-release-ci --parallel 2
 ctest --preset linux-clang-release-ci --no-tests=error --output-on-failure --timeout 60 -R '^(platform_fastpath_|cmeta_meta_header_test$|cmeta_trace_|cmeta_fastpath_|cmeta_function_reflection_test$|cmeta_abi_test$|cmeta_coroutine|coro_executor|cmeta_capabilities|cmeta_core_test$|cmeta_(bind|cleanup|data_select|native|lowering|interface_arity|object_scope)_|cmeta_(operation|invokable)_test$|cmeta_data_test$|cmeta_enum_bits_test$|cmeta_header_cpp_test$|cmeta_plugin_|cmeta_(pp|const|flags|layout|container)_|cmeta_fingerprint_|cmeta_manifest_)'
 ```
 
-历史事实：原 `b9734108` 的 [CI run 37515892751](https://github.com/qigao/salts/actions/runs/37515892751)
+历史事实：原 `b9734108` 的 [CI run 37515892751](https://github.com/qigao/cmeta/actions/runs/37515892751)
 中 macOS GCC / AppleClang 的 semantic 和 Plugin jobs 已通过；总运行含取消的 benchmark
 jobs，不能称整轮 CI 全部通过。该结果属于原提交，新分支以自己的 CI 结果为准。
 此前 Clang 全量测试的 `native_io_uring_batch_test` 两个内部用例失败也仍是独立模块

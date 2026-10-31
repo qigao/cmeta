@@ -106,12 +106,12 @@ deliver bounded messages to Actor; they do not own Graph state or Actor
 transition state.
 
 CNet network Server/Client strategy composition is tracked independently in
-[Salts #1050](https://github.com/qigao/salts/issues/1050). CNet does not integrate
+[Salts #1050](https://github.com/qigao/cmeta/issues/1050). CNet does not integrate
 with CFlow Actor or the IO Actor adapter; these remain independent CFlow models.
 
 #### Owner-bound SerialExecutor (experimental branch)
 
-[Phase 2a candidate PR #1016](https://github.com/qigao/salts/pull/1016)
+[Phase 2a candidate PR #1016](https://github.com/qigao/cmeta/pull/1016)
 provides an owner-thread-bound, bounded SerialExecutor backed by the existing
 CFlow typed Mailbox. It advertises `SERIAL|MANUAL|OWNER_AFFINE`: the host
 initializes it on the final owner thread, posts may come from other threads,

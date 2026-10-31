@@ -81,13 +81,13 @@ link/ABI choices made before packaging.
   kinds), CMeta generic semantic identity tests and exact component
   lease/drain tests alongside this negative export gate.
 - The historical original-release Linux ASan ODR positive/negative topology
-  comparison remains [#1167](https://github.com/qigao/salts/issues/1167)
-  and [#1180](https://github.com/qigao/salts/issues/1180); later source
+  comparison remains [#1167](https://github.com/qigao/cmeta/issues/1167)
+  and [#1180](https://github.com/qigao/cmeta/issues/1180); later source
   producer fixes were merged through #1187/#1193 and separately checked
   with TurboAgent full-source Provider DSO ASan+UBSan.
 - **Publishing is separate.** A new immutable `Salts.Native 2.3.0-rc.N`
   must be built from the chosen producer source, packed as a complete
   six-RID SDK, re-pinned by downstream consumers, and admitted by
   actual installed SDK tests and appropriate ASan/UBSan/TSan.
-  The release owner is [Salts #1081](https://github.com/qigao/salts/issues/1081),
+  The release owner is [Salts #1081](https://github.com/qigao/cmeta/issues/1081),
   not these historical test-only branches. Old binary tags are immutable.
