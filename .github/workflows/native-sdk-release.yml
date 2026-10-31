@@ -30,7 +30,7 @@ permissions:
 env:
   RELEASE_VERSION: 0.1.000
   PACKAGE_VERSION: 0.1.0
-  CORE_SHA: cfc1ed0d24364689b10ef7a85cff28d8776eb7db
+  CORE_SHA: a7b415b4c1a1afccf3487f06c2bf319a50bfdb81
 
 jobs:
   sdk:
