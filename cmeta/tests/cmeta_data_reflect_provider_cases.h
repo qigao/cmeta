@@ -138,8 +138,8 @@ suite("CMeta reflected provider lifecycle") {
          */
         reflect_text_refuse_restore = true;
         check_equal(cmeta_data_temp_try_close(&temp), CMETA_CALLBACK_ERROR);
-        check_equal(temp.storage, original_storage);
-        check_equal(temp.data, &reflect_text_data);
+        check_true(temp.storage == original_storage);
+        check_true(temp.data == &reflect_text_data);
         check_equal(reflect_text_releases, (size_t)0);
         check_equal(cmeta_data_buffer_read(
             &reflect_text_data, temp.storage, sizeof(raw),
