@@ -879,7 +879,27 @@ typedef struct cmeta_data_temp {
 cmeta_status cmeta_data_temp_open(
     const cmeta_data_desc *desc, size_t max_bytes, cmeta_data_temp *out);
 
-/** Restore semantic zero, release temporary storage, and clear the handle. */
+/**
+ * Checked temporary close, backed by the SAME canonical no-fail
+ * restore_zero provider (not a second lifecycle implementation).
+ *
+ * A provider that violates its no-fail semantic-zero contract can return
+ * CMETA_CALLBACK_ERROR. In that case, temp retains its original storage,
+ * descriptor and module-lifetime obligation; it MUST NOT be reused, moved,
+ * freed or have its provider unloaded. The caller must isolate the owner
+ * and treat the violation as fatal unless a higher owner has an explicit
+ * safe repair strategy. A failed close is NOT an ordinary retryable fault.
+ *
+ * A successful close clears temp; NULL/already-empty inputs are idempotent.
+ */
+cmeta_status cmeta_data_temp_try_close(cmeta_data_temp *temp);
+
+/**
+ * Strict no-fail destruction of temporary storage. This legacy void API
+ * aborts on any restore contract violation INSTEAD of freeing storage that
+ * might still own resources. Use try_close only when the calling owner can
+ * preserve the failed storage and original provider/module lease.
+ */
 void cmeta_data_temp_close(cmeta_data_temp *temp);
 
 
