@@ -40,6 +40,22 @@
         "SaltsCore_DIR": "$penv{SALTSCORE_PREFIX}/lib/cmake/SaltsCore",
         "CMAKE_INSTALL_PREFIX": "$penv{CMETA_INSTALL_PREFIX}",
         "CMAKE_TOOLCHAIN_FILE": "$penv{CMETA_TARGET_TOOLCHAIN_FILE}",
+        "BUILD_TESTING": "OFF",
+        "BUILD_EXAMPLES": "OFF",
+        "BUILD_BENCHMARKS": "OFF",
+        "BUILD_SHARED_LIBS": "OFF"
+      }
+    },
+    {
+      "name": "llvm-test-ci",
+      "displayName": "Salts 0.1 / LLVM Debug Test CI",
+      "generator": "Ninja",
+      "binaryDir": "$penv{CMETA_TEST_BINARY_DIR}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
+        "SaltsCore_DIR": "$penv{SALTSCORE_PREFIX}/lib/cmake/SaltsCore",
+        "CMAKE_TOOLCHAIN_FILE": "$penv{CMETA_TARGET_TOOLCHAIN_FILE}",
         "BUILD_TESTING": "ON",
         "BUILD_EXAMPLES": "OFF",
         "BUILD_BENCHMARKS": "OFF",
@@ -81,6 +97,10 @@
       "configurePreset": "llvm-release-ci"
     },
     {
+      "name": "llvm-test-ci",
+      "configurePreset": "llvm-test-ci"
+    },
+    {
       "name": "android-release-ci",
       "configurePreset": "android-release-ci"
     },
@@ -113,8 +133,8 @@
       }
     },
     {
-      "name": "llvm-release-ci",
-      "configurePreset": "llvm-release-ci",
+      "name": "llvm-test-ci",
+      "configurePreset": "llvm-test-ci",
       "output": {
         "outputOnFailure": true
       },

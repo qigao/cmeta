@@ -36,7 +36,7 @@ jobs:
   sdk:
     name: LLVM SDK / ${{ matrix.rid }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 240
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -53,6 +53,7 @@ jobs:
       RID: ${{ matrix.rid }}
       SOURCE_SHA: ${{ github.sha }}
       CMETA_BINARY_DIR: ${{ github.workspace }}/build/cmeta
+      CMETA_TEST_BINARY_DIR: ${{ github.workspace }}/build/cmeta-tests
       CMETA_INSTALL_PREFIX: ${{ github.workspace }}/package/sdk/${{ matrix.rid }}
       SALTSCORE_PREFIX: ${{ github.workspace }}/package/sdk/${{ matrix.rid }}
       CMETA_ANDROID_ABI: ${{ matrix.android_abi }}
@@ -160,6 +161,14 @@ jobs:
           cmake --preset "$preset"
           cmake --build --preset "install-$preset" --parallel "$BUILD_PARALLEL"
 
+      - name: Configure and build the native LLVM test graph
+        if: matrix.run_tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset llvm-test-ci
+          cmake --build --preset llvm-test-ci --parallel "$BUILD_PARALLEL"
+
       - name: Admit the selected release compiler
         shell: bash
         run: |
@@ -176,6 +185,9 @@ jobs:
           }
           admit_clang build/core
           admit_clang "$CMETA_BINARY_DIR"
+          if [[ '${{ matrix.run_tests }}' == true ]]; then
+            admit_clang "$CMETA_TEST_BINARY_DIR"
+          fi
           if [[ '${{ matrix.family }}' == android ]]; then
             admit_android_abi() {
               if ! grep -Eq \
@@ -191,6 +203,7 @@ jobs:
           else
             grep -Fq 'QIGAO_COMPILER_OBFUSCATION_ENABLED:BOOL=ON' build/core/CMakeCache.txt
             grep -Fq 'QIGAO_COMPILER_OBFUSCATION_ENABLED:BOOL=ON' "$CMETA_BINARY_DIR/CMakeCache.txt"
+            grep -Fq 'QIGAO_COMPILER_OBFUSCATION_ENABLED:BOOL=OFF' "$CMETA_TEST_BINARY_DIR/CMakeCache.txt"
           fi
 
       - name: Execute native C11 C++17 DSO and CFlow tests
@@ -205,13 +218,13 @@ jobs:
           else
             export LD_LIBRARY_PATH="$CMETA_INSTALL_PREFIX/lib:${LD_LIBRARY_PATH:-}"
           fi
-          ctest --preset llvm-release-ci
+          ctest --preset llvm-test-ci
           python3 tools/audit_native_owner.py \
             --core-tools _core_owner/tools \
             --core-prefix "$CMETA_INSTALL_PREFIX" \
             --salts-prefix "$CMETA_INSTALL_PREFIX" \
-            --build-dir "$CMETA_BINARY_DIR" \
-            --report "$CMETA_BINARY_DIR/one-owner-audit.json"
+            --build-dir "$CMETA_TEST_BINARY_DIR" \
+            --report "$CMETA_TEST_BINARY_DIR/one-owner-audit.json"
 
       - name: Attest installed SDK
         shell: bash
@@ -246,8 +259,8 @@ jobs:
         with:
           name: salts-native-${{ matrix.rid }}-evidence
           path: |
-            build/cmeta/Testing/Temporary/LastTest.log
-            build/cmeta/one-owner-audit.json
+            build/cmeta-tests/Testing/Temporary/LastTest.log
+            build/cmeta-tests/one-owner-audit.json
           if-no-files-found: warn
           retention-days: 14
 
