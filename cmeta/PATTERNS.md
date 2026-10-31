@@ -237,13 +237,11 @@ Actor owns state and bounded mailbox, Scheduler/Executor own progress, and
 borrowed Strategy/provider storage outlives Actor destruction. No new
 `cmeta_active_object`, hidden thread, Plugin lease, or second registry.
 
-An independent installed consumer in
-`cflow/tests/package_config/ace_actor` also builds through
-`find_package(Salts ... EXACT CONFIG REQUIRED)` and links only
-`Salts::CFlow`. Its executable creates a real Actor from installed headers,
-invokes reflected CMeta producer/Strategy methods, observes one terminal
-message and safely drains/destroys the Actor. This is run through the shared
-installed-SDK CMake test harness, not an additional CI orchestration wrapper.
+`cflow_actor_test` is the canonical executable evidence. It creates a real
+Actor, invokes reflected CMeta producer/Strategy methods, observes one
+terminal message and safely drains/destroys the Actor. Standalone installed
+consumer projects and their CI are intentionally not kept in this repository;
+downstream package qualification runs outside this source tree.
 
 ### ACE Pipes and Filters / Streams (2.3 candidate conformance)
 
@@ -266,12 +264,11 @@ with reactive demand. The Channel is owned outside the Subscription and is
 closed/destroyed after its Publisher and Subscription are quiescent. Neither
 CMeta nor CFlow automatically retries failed admission.
 
-The installed-SDK CMake consumer under
-`cflow/tests/package_config/ace_actor/pipes.c` compiles and executes the
-same public FILTER → MAP, Subscriber, demand/cancel and bounded Channel APIs
-against one exact installed `Salts::CFlow`. It shares the existing out-of-tree
-`find_package(Salts ... EXACT)` and SDK install test with the ACE Actor
-consumer; no second packaging workflow or fallback SDK is introduced.
+`cflow_ace_pipes_filters_test` compiles and executes the public FILTER →
+MAP, Subscriber, demand/cancel and bounded Channel APIs. Standalone installed
+consumer projects and their CI are forbidden; external downstream
+qualification may consume the immutable published SDK without adding another
+project to this repository.
 
 ### ACE Half-Sync/Half-Async over CNet and CFlow
 
@@ -304,13 +301,11 @@ retained producer before destroying borrowed scheduler/executor/graph storage.
 No new CMeta reactor, scheduling runtime, registry, Plugin lease, or fallback
 queue is introduced.
 
-The independent installed SDK consumer
-`cflow/tests/package_config/ace_actor/half_sync.c` additionally exercises
-public CNet TCP receive callbacks feeding the fixed-capacity CFlow Channel,
-then an explicit-demand Subscription using a canonical Subscriber. It links
-only exported `Salts::CFlowCNet` after exact `find_package(Salts ... EXACT)`
-and shares the same out-of-tree install verification harness as the ACE Actor
-and Pipes/Filters consumers; no separate packaging workflow is added.
+`cflow_ace_half_sync_async_test` exercises public CNet TCP receive callbacks
+feeding the fixed-capacity CFlow Channel, then an explicit-demand Subscription
+using a canonical Subscriber. Standalone installed consumer projects and
+their CI are forbidden; external downstream qualification uses the published
+`Salts::CFlowCNet` SDK outside this repository.
 
 ## Admission test for a new pattern helper
 

@@ -38,3 +38,10 @@
   the installed Release SDK graph fail-closed and protected, but qualify the
   same source with a separate LLVM Debug test graph (full build, CTest, and ABI
   owner audit); do not ship or attest the unprotected test graph as the SDK.
+- Standalone installer/consumer CI and SDK-probe subprojects are forbidden.
+  The old CMeta/CFlow/Plugin `tests/package_config` projects and their CTest
+  registrations were removed; release staging install and NuGet assembly are
+  retained inside the single SDK publication workflow.
+- Run `tools/audit_native_owner.py` with the current five-path contract:
+  `--core-tools`, `--core-prefix`, `--salts-prefix`, `--build-dir` and
+  `--report`; legacy `--cmeta-prefix`/`--rid` arguments are not accepted.

@@ -62,7 +62,7 @@ CFlow/CSTL topology; the static image-local visibility rule does **not**
 force-harden or automatically switch it. A shared-single product release
 requires its own versioned CMeta **data** import/export ABI (including
 Windows MSVC DLL/.lib consumers and the #1185 history), SDK target and
-manifest changes, installed native consumer/runtime qualification, and
+manifest changes, installed SDK ABI/runtime qualification, external downstream verification, and
 downstream CHttp/DataBind/Provider agreement. Do not fall back at runtime
 between private-static and shared-single descriptors; they are different
 link/ABI choices made before packaging.

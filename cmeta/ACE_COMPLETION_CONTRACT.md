@@ -58,7 +58,7 @@ exactly-one settlement + owned payload release
 2. Queue-full rejection preserves caller payload; FIFO dequeue within the single event ingress; callback errors and worker cancellation leave capacity and counts consistent.
 3. Close during blocked wait and active processing: wake all, reject late admission and join before storage/provider teardown; explicit generation-scope busy/drain test with a real DSO.
 4. C11 and C++17 exact typed Callable declarations, compile-negative wrong signature, ASan+UBSan and TSan where supported.
-5. Independent installed-SDK consumer **if** anything public is exported, plus a workload-specific comparison against ordinary SG. No speedup claims without measured data.
+5. External downstream SDK qualification **if** anything public is exported, plus a workload-specific comparison against ordinary SG. No standalone consumer project is added here and no speedup claim is made without measured data.
 
 **Decision gate:** the `platform_ace_leader_followers(_cpp)_test` fixtures now exercise a bounded CPU-event prototype with explicit pre-handler successor election and type checks. Until a concrete non-SG consumer is identified and lifetime/DSO/release gates pass, #1064 stays TEST-LOCAL ONLY / NOT QUALIFIED, not a fake 17/17 completion.
 
@@ -66,12 +66,12 @@ exactly-one settlement + owned payload release
 
 | Pattern | Actual contract to prove | Required failure/negative test |
 |---|---|---|
-| Wrapper Facade | Typed external/native resource open/use/close; status propagation; borrowed handle invalid after close | double-close, operation after close, failed-open leaves outputs unchanged; separate C11/C++17 consumer |
+| Wrapper Facade | Typed external/native resource open/use/close; status propagation; borrowed handle invalid after close | double-close, operation after close, failed-open leaves outputs unchanged; separate in-tree C11/C++17 tests |
 | Scoped Locking | Existing Platform mutex/RW lock acquired before guarded call and released at **every** return / C++ unwind | acquisition failure, early return, reversed nested release, no copyable active guard |
 | Safe Once / DCL intent | Platform once or portable acquire-release published initialization; no historical data-racy DCL | simultaneous first-use, failed initialization semantics, stale/non-published reads |
 | Thread-Specific Storage | Real `SALTS_THREAD_LOCAL` per-thread construction/use/teardown with typed CMeta view | cross-thread pointer borrow rejected, thread exit releases own data, address reuse not identity |
 
-For all four: type exactness, owned/borrowed lifetimes, C11/C++17 conformance and installed consumer when public. Presence of `cmeta_scope` or `cmeta_local_type` **alone** does not count as qualification.
+For all four: type exactness, owned/borrowed lifetimes, C11/C++17 conformance and external downstream qualification when public. Standalone installer/consumer projects and CI are forbidden in this repository. Presence of `cmeta_scope` or `cmeta_local_type` **alone** does not count as qualification.
 
 ## Phase A gap acceptance and actual CI authority
 

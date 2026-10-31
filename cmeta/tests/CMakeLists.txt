@@ -73,26 +73,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     "$<$<COMPILE_LANGUAGE:CXX>:-Werror=old-style-cast>")
 endif()
 
-# C11/C++17 independent SDK consumption of the five new ACE pattern facades.
-# Use the existing installed-consumer helper, not another workflow.
-if(NOT WIN32)
-  add_test(NAME cmeta_ace_patterns_installed_test
-    COMMAND "${CMAKE_COMMAND}"
-      "-DSALTS_BINARY_DIR=${CMAKE_BINARY_DIR}"
-      "-DSALTS_TEST_VERSION=${PROJECT_VERSION}"
-      "-DSALTS_TEST_CONFIG=$<CONFIG>"
-      "-DSALTS_GENERATOR=${CMAKE_GENERATOR}"
-      "-DSALTS_C_COMPILER=${CMAKE_C_COMPILER}"
-      "-DSALTS_CXX_COMPILER=${CMAKE_CXX_COMPILER}"
-      "-DSALTS_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
-      "-DCONSUMER_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/package_config/ace_patterns"
-      "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-ace-patterns"
-      "-DCTEST_COMMAND=${CMAKE_CTEST_COMMAND}"
-      -P "${PROJECT_SOURCE_DIR}/cmake/ci/verify-installed-consumer.cmake")
-  set_tests_properties(cmeta_ace_patterns_installed_test PROPERTIES
-    TIMEOUT 180 RUN_SERIAL TRUE)
-endif()
-
 cmake_add_test(cmeta_fastpath_component_test
   SOURCES cmeta_component_test.c
   LIBS Salts::CMeta Salts::TinyTest

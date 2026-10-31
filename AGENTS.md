@@ -15,8 +15,10 @@ cryptographic code and ASN.1 belong to **qigao/crypto**. Source ownership is sin
   source, installed SDK and native CI evidence.
 - Never substitute one OS's successful tests for another's native backend.
 - Run `python3 tools/check_ace_only_sources.py` before changes to the
-  package layout. Verify installed C11/C++17 consumers and original typed
-  runtime conformance after changes.
+  package layout. Verify original typed runtime conformance after changes.
+- Standalone installer/consumer CI, SDK-probe projects, and their source trees
+  are forbidden. Release staging install and package assembly remain part of
+  the single native SDK publication graph, not separate product projects.
 
 TinyMock and descriptor-driven SIMD execution belong to qigao/salts-utils;
 do not restore those implementation trees or make Salts depend on Utils.

@@ -22,7 +22,7 @@
 > checkpoints and CTest names, some of which use `ServiceHost`. The
 > currently integrated lifecycle targets are `Salts::Configurator` and
 > `Salts::ServiceHost`; Plugin remains the sole loader/Registry/quiescence/
-> unload authority. Current SDK and installed-consumer qualification is tracked
+> unload authority. Current SDK publication and external downstream qualification are tracked
 > in [PR #1260](https://github.com/qigao/salts/pull/1260).
 
 ## Goal and counting rule
@@ -35,7 +35,7 @@ Distinguish three independent questions per pattern:
 
 1. **Mechanism:** is actual behavior already present in an authoritative Salts runtime?
 2. **CMeta composition:** can canonical Type/FunctionDesc/FunctionAbi/Interface/ObjectRef/DataDesc/lifecycle + ordinary typed C11 glue represent the roles and constraints?
-3. **Conformance:** is the intended POSA2 pattern behavior, including failure and lifetime, proven by an appropriate executable test (and installed consumer when a public interface is required)?
+3. **Conformance:** is the intended POSA2 pattern behavior, including failure and lifetime, proven by an appropriate executable test (and external downstream qualification when a public interface is required)?
 
 Status vocabulary:
 
@@ -79,10 +79,10 @@ Status vocabulary:
 | Implementation | Native typed contract and authoritative runtime source/commit | 16 have implementation/reuse/composition; #1064 has a test-local prototype, not a consumer executor |
 | Behavioral conformance | Positive, invalid-admission, lifecycle/terminal and negative tests with CTest name | See pattern fixtures and exact-source ledger below; gaps must stay explicit |
 | Sanitizers | Selected ASan+UBSan / TSan results tied to exact commit and selected tests | [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) at `c8c27cc`; not final HEAD/release |
-| Installed SDK | Out-of-tree C11/C++17 compile+run, ABI/SONAME and wrong-minor rejection | Some installed ACE consumers exist; immutable candidate verification remains #1018 |
+| Installed SDK | ABI/SONAME, package integrity and wrong-minor rejection in the publication graph; downstream compile+run outside this repository | No standalone installer/consumer CI or source project is permitted; immutable candidate verification remains #1018 |
 | Release/downstream | Same immutable 2.3 candidate: host/device, CHttp/TurboFlow/TurboSCXML, explicit go/no-go | **OPEN**, owned by #1018 |
 
-**Representative case IDs (not an exhaustive proof of each column):** `cnet_ace_acceptor_connector_test` (real TCP); `cmeta_ace_patterns_installed_test` (external C11/C++17 consumer); `cmeta_native_component_plugin_act_iocp_test` (Windows real IOCP/DSO); `cmeta_native_component_plugin_publication_test` (real Plugin scope and Interceptor); shared C11/C++17 `cmeta_ace_sync_cases.h` (locking, monitor, TLS/once). Verify actual CTest selection and SHA before promoting a particular dimension.
+**Representative case IDs (not an exhaustive proof of each column):** `cnet_ace_acceptor_connector_test` (real TCP); `cflow_actor_test`, `cflow_ace_pipes_filters_test` and `cflow_ace_half_sync_async_test` (typed concurrency compositions); `cmeta_native_component_plugin_act_iocp_test` (Windows real IOCP/DSO); `cmeta_native_component_plugin_publication_test` (real Plugin scope and Interceptor); shared C11/C++17 `cmeta_ace_sync_cases.h` (locking, monitor, TLS/once). Verify actual CTest selection and SHA before promoting a particular dimension.
 
 **Release discipline:** #1013 stays Draft / DO NOT MERGE / DO NOT PUBLISH. #1018 documents the deliberate 2.3 native ABI break as an explicit compatibility exception; test-only exact SDK pins do not justify production dependency version pins. #1064 is not a 2.3 release blocker without a genuine non-SG consumer.
 
@@ -102,7 +102,7 @@ Every missing or unqualified pattern must specify: **Intent → ACE participants
 
 - The smallest complete executable slice wins. Use existing APIs, typed C11 functions, finite macros and explicit immutable descriptors.
 - Only introduce a CMeta public helper when it proves a previously unexpressed native type/ownership relation or removes demonstrably unsafe repeated glue. **No pattern-named aliases solely for aesthetic coverage.**
-- Qualified C11 and C++17 compiled tests for public typed declarations; compile-negative mismatch checks for exact FunctionAbi / Interface mappings. Cross-platform tests and installed-SDK consumer if an exported contract changes.
+- Qualified C11 and C++17 compiled tests for public typed declarations; compile-negative mismatch checks for exact FunctionAbi / Interface mappings. Cross-platform tests and external downstream qualification if an exported contract changes; do not add a standalone consumer project here.
 - Must preserve CNet/NativeIO I/O and terminal authority, CFlow scheduling authority, Concurrency/Platform mutex/TLS authority, Component composition authority and Plugin sole module lease/loader authority.
 - All bounded admission, no implicit retries, no hidden queues/thread pools, no global mutable CMeta registry. Do not dispatch every network packet through pattern reflection.
 - Documentation-only evidence changes do not reopen ACE functional freeze. **Any new source/public ABI work is post-freeze and requires separate approval, a precise issue/regression test, and the appropriate CI/SDK gates; do not silently merge into the frozen 2.3 candidate.**
@@ -117,7 +117,7 @@ frozen SHA `02b741a` does **not** qualify these new commits.
 | Pattern | Source / conformance | Remaining gate |
 |---|---|---|
 | Interceptor | [typed finite chain](include/cmeta/ace_interceptor.h) + C11/C++17 [pattern cases](tests/cmeta_pattern_cases.h) | Exact native FunctionAbi alignment, callback/Plugin lifetime and latest-head CI |
-| ACT | [NativeIO typed token](../native-io/include/salts/native_io_ace_token.h) + [real read/cancel tests](../native-io/tests/native_io_test.c) + [C++ test](../native-io/tests/native_io_header_cpp_test.cpp) | Further close/race, installed consumer and latest-head CI |
+| ACT | [NativeIO typed token](../native-io/include/salts/native_io_ace_token.h) + [real read/cancel tests](../native-io/tests/native_io_test.c) + [C++ test](../native-io/tests/native_io_header_cpp_test.cpp) | Further close/race, external downstream qualification and latest-head CI |
 | Strategized Locking | [fully reflected Lockable Interface](include/cmeta/ace_synchronization.h) + [mutex/RW tests](tests/cmeta_ace_sync_cases.h) | Additional policy-admission/lock ordering checks, CI |
 | Thread-Safe Interface | [typed guarded public call](include/cmeta/ace_synchronization.h) + [concurrent counter](tests/cmeta_ace_sync_cases.h) | Negative native ABI and thread-safety contract/TSan, CI |
 | Monitor Object | [real guarded monitor fixture](tests/cmeta_ace_sync_cases.h), using Platform condition | More cancellation/timeout/fairness cases, CI |
@@ -267,7 +267,7 @@ retroactively change frozen commit `02b741a`.
 | Interceptor, ACT (2) | Real loaded ServiceHost DSO invocation and real NativeIO request/cancel association; full host [#37869377431](https://github.com/qigao/salts/actions/runs/37869377431) at `6185834`; selected sanitizer suites [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) on later source | No implicit lease; final candidate SDK, full composition and downstream |
 | Strategized Locking, Thread-Safe Interface, Monitor Object (3) | Reflected C11/C++17 lockable/synchronized/condition tests, wrong-owner rejection and selected ASan+UBSan/TSan [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) | Exact final installed SDK and closure of any outstanding specific issue acceptance |
 | Wrapper Facade, Scoped Locking, safe Once/DCL, Thread-Specific Storage (4) | Shared real Platform primitives, negative lifecycle tests and native threads; host [#37875659581](https://github.com/qigao/salts/actions/runs/37875659581), latest TLS worker-lifetime host [#37877642307](https://github.com/qigao/salts/actions/runs/37877642307), and selected sanitizer [#37877974693](https://github.com/qigao/salts/actions/runs/37877974693) at `c8c27cc` | Wrapper requires quiescent close, TLS scalar cleanup is explicit (not automatic destructor); cross-platform exact-head/installed SDK release gates remain |
-| Leader/Followers (1) | **TEST-LOCAL PROTOTYPE / NOT QUALIFIED**: explicit pre-handler successor election, real mutex/condition workers, bounded copied FIFO and typed C11/C++17 callback contract in `platform_ace_leader_followers(_cpp)_test`; see [#1064](https://github.com/qigao/salts/issues/1064) and [commit `70c3f24`](https://github.com/qigao/salts/commit/70c3f249d1eff06122f35549a0bf8e27f7d68f72) | Named non-SG consumer, DSO provider scope, production ownership and installed SDK (only if exported), cross-platform/sanitizer qualification, comparison with SG if applicable |
+| Leader/Followers (1) | **TEST-LOCAL PROTOTYPE / NOT QUALIFIED**: explicit pre-handler successor election, real mutex/condition workers, bounded copied FIFO and typed C11/C++17 callback contract in `platform_ace_leader_followers(_cpp)_test`; see [#1064](https://github.com/qigao/salts/issues/1064) and [commit `70c3f24`](https://github.com/qigao/salts/commit/70c3f249d1eff06122f35549a0bf8e27f7d68f72) | Named non-SG use case, DSO provider scope, production ownership and external downstream qualification if exported, cross-platform/sanitizer qualification, comparison with SG if applicable |
 
 **Count:** 16 patterns have an implemented mechanism or executable composition
 at different qualification levels (including Reactor/Proactor REUSE);
