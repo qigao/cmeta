@@ -1,12 +1,13 @@
 # Canonical source and runtime architecture
 
-The Salts repository implements **only the CMeta/ACE/CFlow layer**.
+Salts centers on **CMeta and ACE-style component/service composition**.
+CFlow provides accompanying execution integrations built on CMeta.
 
 ```mermaid
 flowchart TD
     app["Applications and services"]
     utils["SaltsUtils: utilities, TinyMock, SIMD"]
-    salts["Salts 4: CMeta, Configurator, ServiceHost, CFlow"]
+    salts["Salts 4: CMeta and ACE"]
     core["SaltsCore: native runtime, I/O, TinyTest"]
     crypto["Crypto: static algorithms, ASN.1, TLS"]
     app --> utils
@@ -17,9 +18,13 @@ flowchart TD
     salts --> core
 ```
 
-CMeta/ACE owns type metadata, interfaces, resource scopes, reflection,
-interceptors, service construction, component activation and plugin leases.
-CFlow owns actor, reactive, DAG and state machine semantics. NativeIO owner,
+CMeta owns type metadata, typed interfaces, reflection and structured resource
+contracts. ACE uses those semantics for interceptors, component/service
+construction, activation, scoped lifetimes and Plugin leases. Configurator,
+ServiceHost and Plugin each retain their existing lifecycle authority.
+
+CFlow supplies CMeta-based actor, reactive, DAG and state machine execution
+integrations. NativeIO owner,
 TCP/UDP/KCP/SCTP transport and system I/O belong to **salts-core**;
 cryptographic algorithms, ASN.1 BER/DER and TLS/X.509 belong only to **crypto**.
 TinyMock behavior state and descriptor-driven SIMD execution belong to

@@ -1,8 +1,16 @@
-# Salts 4 — CMeta, ACE and CFlow
+# Salts 4 — CMeta and ACE
 
-Salts owns **CMeta reflection, typed interfaces and RAII, Component/Plugin
-contracts, Configurator/ServiceHost and CFlow execution**. It does not own
-native platform, networking, cryptography or string-runtime implementations.
+Salts focuses on **CMeta and ACE-style component/service composition**.
+
+- **CMeta** provides C11 metaprogramming, reflection, typed interfaces,
+  callable contracts and structured resource ownership.
+- **ACE** builds on those semantics for Configurator construction/rollback,
+  ServiceHost generation publication/drain, Plugin module leases,
+  Interceptors and scoped service lifetimes.
+
+CFlow supplies accompanying CMeta-based actor, reactive and graph execution
+capabilities. Native platform, networking and string-runtime implementations
+belong to SaltsCore; cryptography and ASN.1 belong to Crypto.
 
 ## Source ownership
 
