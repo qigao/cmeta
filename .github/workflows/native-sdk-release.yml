@@ -50,14 +50,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {rid: linux-x64, os: ubuntu-24.04, family: native, arch: x64, parallel: 2, run_tests: true}
-          - {rid: linux-arm64, os: ubuntu-24.04-arm, family: native, arch: arm64, parallel: 2, run_tests: true}
-          - {rid: windows-x64, os: windows-2025, family: windows, arch: x64, parallel: 2, run_tests: true}
-          - {rid: windows-arm64, os: windows-11-arm, family: windows, arch: arm64, parallel: 2, run_tests: true}
-          - {rid: macos-x64, os: macos-15-intel, family: native, arch: x64, parallel: 2, run_tests: true}
-          - {rid: macos-arm64, os: macos-15, family: native, arch: arm64, parallel: 3, run_tests: true}
-          - {rid: android-x64, os: ubuntu-24.04, family: android, arch: x64, android_abi: x86_64, parallel: 2, run_tests: false}
-          - {rid: android-arm64, os: ubuntu-24.04, family: android, arch: arm64, android_abi: arm64-v8a, parallel: 2, run_tests: false}
+          - {rid: linux-x64, os: ubuntu-24.04, family: native, arch: x64, triplet: x64-linux, host_triplet: x64-linux, parallel: 2, run_tests: true}
+          - {rid: linux-arm64, os: ubuntu-24.04-arm, family: native, arch: arm64, triplet: arm64-linux, host_triplet: arm64-linux, parallel: 2, run_tests: true}
+          - {rid: windows-x64, os: windows-2025, family: windows, arch: x64, triplet: qigao-x64-windows-llvm-mingw, host_triplet: qigao-x64-windows-llvm-mingw, parallel: 2, run_tests: true}
+          - {rid: windows-arm64, os: windows-11-arm, family: windows, arch: arm64, triplet: qigao-arm64-windows-llvm-mingw, host_triplet: qigao-arm64-windows-llvm-mingw, parallel: 2, run_tests: true}
+          - {rid: macos-x64, os: macos-15-intel, family: native, arch: x64, triplet: x64-osx, host_triplet: x64-osx, parallel: 2, run_tests: true}
+          - {rid: macos-arm64, os: macos-15, family: native, arch: arm64, triplet: arm64-osx, host_triplet: arm64-osx, parallel: 3, run_tests: true}
+          - {rid: android-x64, os: ubuntu-24.04, family: android, arch: x64, triplet: x64-android, host_triplet: x64-linux, android_abi: x86_64, parallel: 2, run_tests: false}
+          - {rid: android-arm64, os: ubuntu-24.04, family: android, arch: arm64, triplet: arm64-android, host_triplet: x64-linux, android_abi: arm64-v8a, parallel: 2, run_tests: false}
     env:
       RID: ${{ matrix.rid }}
       SOURCE_SHA: ${{ github.sha }}
@@ -119,6 +119,13 @@ jobs:
           build-type: toolchain-only
           obfuscator: "false"
 
+      - name: Set up shared dependency contract
+        id: vcpkg
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        with:
+          mode: read
+          token: ${{ github.token }}
+
       - name: Restore re2c and Unicode host data
         uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@529019437597fa71f7d8dcc561d26fc7b0603ae6
         with:
@@ -132,6 +139,7 @@ jobs:
           WINDOWS_TOOLCHAIN: ${{ steps.llvm_mingw.outputs.toolchain-file }}
           WINDOWS_OBFUSCATOR: ${{ steps.llvm_mingw.outputs.obfuscator-enabled }}
           ANDROID_OBFUSCATOR: ${{ steps.llvm_android_host.outputs.obfuscator-enabled }}
+          VCPKG_TOOLCHAIN: ${{ steps.vcpkg.outputs.toolchain_file }}
         run: |
           set -euo pipefail
           case '${{ matrix.family }}' in
@@ -145,7 +153,12 @@ jobs:
             echo "compiler obfuscator must remain disabled, got: $obfuscator" >&2
             exit 1
           fi
-          echo "CMETA_TARGET_TOOLCHAIN_FILE=$toolchain" >> "$GITHUB_ENV"
+          {
+            echo "CMETA_TARGET_TOOLCHAIN_FILE=$toolchain"
+            echo "CMETA_VCPKG_TOOLCHAIN_FILE=$VCPKG_TOOLCHAIN"
+            echo "CMETA_VCPKG_TARGET_TRIPLET=${{ matrix.triplet }}"
+            echo "CMETA_VCPKG_HOST_TRIPLET=${{ matrix.host_triplet }}"
+          } >> "$GITHUB_ENV"
 
       - name: Build and install exact SaltsCore owner
         shell: bash
@@ -155,7 +168,10 @@ jobs:
           if [[ '${{ matrix.family }}' == android ]]; then
             core_test=OFF
             cmake -S _core_owner -B build/core -G Ninja \
-              "-DCMAKE_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
+              "-DCMAKE_TOOLCHAIN_FILE=$CMETA_VCPKG_TOOLCHAIN_FILE" \
+              "-DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
+              "-DVCPKG_TARGET_TRIPLET=$CMETA_VCPKG_TARGET_TRIPLET" \
+              "-DVCPKG_HOST_TRIPLET=$CMETA_VCPKG_HOST_TRIPLET" \
               -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
               -DSALTSCORE_BUILD_URI=ON \
               "-DSALTSCORE_BUILD_TINYTEST=$core_test" \
@@ -164,7 +180,10 @@ jobs:
               -DANDROID_STL=c++_shared
           else
             cmake -S _core_owner -B build/core -G Ninja \
-              "-DCMAKE_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
+              "-DCMAKE_TOOLCHAIN_FILE=$CMETA_VCPKG_TOOLCHAIN_FILE" \
+              "-DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
+              "-DVCPKG_TARGET_TRIPLET=$CMETA_VCPKG_TARGET_TRIPLET" \
+              "-DVCPKG_HOST_TRIPLET=$CMETA_VCPKG_HOST_TRIPLET" \
               -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
               -DSALTSCORE_BUILD_URI=ON \
               "-DSALTSCORE_BUILD_TINYTEST=$core_test" \

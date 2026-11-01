@@ -109,3 +109,7 @@
   Reuse the same pinned `vcpkg-cache/setup-re2c-tools` action as Core CI for
   native, cross and sanitizer builds instead of assuming runner packages, and
   grant the workflow `packages: read` so its package download is authorized.
+- A direct Core build must use `setup-vcpkg-cache` as
+  `CMAKE_TOOLCHAIN_FILE` and chainload the selected LLVM/LLVM-MinGW/NDK
+  compiler toolchain with explicit target and host triplets. Passing only the
+  compiler toolchain hides manifest dependencies such as SIMDe.
