@@ -27,7 +27,7 @@ endif()
 
 cmake_config_target(
   cmeta_plugin
-  VERSION "${PROJECT_VERSION}" SOVERSION "${SALTS_NATIVE_SOVERSION}"
+  VERSION "${PROJECT_VERSION}" SOVERSION "${CMETA_NATIVE_SOVERSION}"
   ALIAS CMeta::Plugin
   FOLDER "plugin"
   EXPORT_NAME Plugin)
@@ -39,7 +39,7 @@ target_link_libraries(cmeta_plugin
 
 install(
   TARGETS cmeta_plugin_abi cmeta_plugin
-  EXPORT SaltsTargets)
+  EXPORT CMetaTargets)
 install(
   DIRECTORY include/cmeta
   DESTINATION include

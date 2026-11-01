@@ -66,6 +66,13 @@
   ServiceHost and Plugin headers were moved from `include/salts/`. The
   `include/salts/` namespace is reserved for imported qigao/salts-core headers;
   do not restore forwarding headers or duplicate compatibility trees.
+- The repository-owned release/package identity is `CMeta.Native`; its CMake
+  package is `CMeta` under `lib/cmake/CMeta` and exports `CMetaTargets.cmake`.
+  Per-RID release provenance is recorded in `cmeta-sdk-manifest.txt`.
+  Do not confuse that identity with imported `SaltsCore` packages or restore
+  `Salts.Native`, `find_package(Salts)` or `lib/cmake/Salts` compatibility
+  aliases. The already-published `v0.1.000` release is immutable, so correcting
+  its historical payload requires a new release version rather than retagging.
 - Keep exactly three non-overlapping workflows: eight-RID LLVM SDK/release,
   LLVM sanitizers, and narrow Lean generated-contract verification. The
   redundant Linux source-cutover workflow was removed. Native workflow path

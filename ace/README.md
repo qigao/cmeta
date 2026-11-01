@@ -2,7 +2,7 @@
 
 This directory contains the single canonical native component lifecycle runtime.
 The public runtime names are **CMeta::Configurator** and **CMeta::ServiceHost**.
-Salts 0.1 installs only these runtime owners and their version-2 native
+CMeta 0.1 installs only these runtime owners and their version-2 native
 contracts. No previous API compatibility targets or headers are provided.
 
 ## Ownership
@@ -76,10 +76,10 @@ CMake target name alone is not proof that the linked binary has the same ABI.
 ## SDK and release acceptance
 
 Rebuild the host, every generated binding and all native providers against one
-matching Salts 0.1 SDK:
+matching CMeta 0.1 SDK:
 
 ```cmake
-find_package(Salts 0.1 CONFIG REQUIRED)
+find_package(CMeta 0.1 CONFIG REQUIRED)
 target_link_libraries(my_host PRIVATE CMeta::ServiceHost)
 # A static-only composition client can link CMeta::Configurator instead.
 ```

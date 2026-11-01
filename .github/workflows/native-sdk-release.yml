@@ -1,4 +1,4 @@
-name: Salts 0.1 LLVM SDK
+name: CMeta 0.1 LLVM SDK
 
 # The only native packaging and publication workflow: build the immutable
 # Win/Linux/macOS/Android x64+arm64 SDK and publish only from v0.1.000.
@@ -29,7 +29,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: salts-native-sdk-${{ github.ref }}
+  group: cmeta-native-sdk-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
@@ -84,8 +84,8 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test "$(git -C _core_owner rev-parse HEAD)" = "$CORE_SHA"
-          grep -Fq 'project(Salts VERSION 0.1.0 LANGUAGES C CXX)' CMakeLists.txt
-          grep -Fq '<PackageId>Salts.Native</PackageId>' packaging/nuget/Salts.Native.csproj
+          grep -Fq 'project(CMeta VERSION 0.1.0 LANGUAGES C CXX)' CMakeLists.txt
+          grep -Fq '<PackageId>CMeta.Native</PackageId>' packaging/nuget/CMeta.Native.csproj
           python3 tools/check_ace_only_sources.py --core-root _core_owner
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             test "$GITHUB_REF_NAME" = "v$RELEASE_VERSION"
@@ -165,7 +165,7 @@ jobs:
           cmake --build build/core --config Release --parallel "$BUILD_PARALLEL"
           cmake --install build/core --config Release
 
-      - name: Configure and install Salts with its release preset
+      - name: Configure and install CMeta with its release preset
         shell: bash
         run: |
           set -euo pipefail
@@ -252,7 +252,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f "$CMETA_INSTALL_PREFIX/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$CMETA_INSTALL_PREFIX/lib/cmake/CMeta/CMetaConfig.cmake"
           test -f "$CMETA_INSTALL_PREFIX/lib/cmake/SaltsCore/SaltsCoreConfig.cmake"
           for header in configurator.h configurator_abi.h service_host.h \
               service_host_abi.h service_host_provider_abi.h \
@@ -261,7 +261,7 @@ jobs:
             test -f "$CMETA_INSTALL_PREFIX/include/cmeta/$header"
             test ! -e "$CMETA_INSTALL_PREFIX/include/salts/$header"
           done
-          targets="$CMETA_INSTALL_PREFIX/lib/cmake/Salts/SaltsTargets.cmake"
+          targets="$CMETA_INSTALL_PREFIX/lib/cmake/CMeta/CMetaTargets.cmake"
           for target in CMeta ConfiguratorABI PluginABI Plugin \
               ServiceHostProviderABI Configurator ServiceHost CFlow; do
             grep -Fq "CMeta::$target" "$targets"
@@ -280,11 +280,11 @@ jobs:
             'profile=release' \
             'compiler=llvm' \
             'protection=none' \
-            > "$CMETA_INSTALL_PREFIX/salts-sdk-manifest.txt"
+            > "$CMETA_INSTALL_PREFIX/cmeta-sdk-manifest.txt"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: salts-sdk-${{ matrix.rid }}
+          name: cmeta-sdk-${{ matrix.rid }}
           path: package
           if-no-files-found: error
           retention-days: 14
@@ -292,7 +292,7 @@ jobs:
       - if: always() && matrix.run_tests
         uses: actions/upload-artifact@v4
         with:
-          name: salts-native-${{ matrix.rid }}-evidence
+          name: cmeta-native-${{ matrix.rid }}-evidence
           path: |
             build/cmeta-tests/Testing/Temporary/LastTest.log
             build/cmeta-tests/one-owner-audit.json
@@ -312,7 +312,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          pattern: salts-sdk-*
+          pattern: cmeta-sdk-*
           path: package
           merge-multiple: true
       - uses: actions/setup-dotnet@v4
@@ -322,21 +322,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dotnet pack packaging/nuget/Salts.Native.csproj \
+          dotnet pack packaging/nuget/CMeta.Native.csproj \
             --configuration Release --output dist \
             -p:PackageVersion="$PACKAGE_VERSION" \
             -p:PackageRoot="$GITHUB_WORKSPACE/package" \
             -p:RepositoryCommit="$SOURCE_SHA"
-          package="dist/Salts.Native.$PACKAGE_VERSION.nupkg"
+          package="dist/CMeta.Native.$PACKAGE_VERSION.nupkg"
           python3 packaging/nuget/feed_hygiene.py verify \
             "$package" "$RELEASE_VERSION" "$PACKAGE_VERSION" \
             "$SOURCE_SHA" "$CORE_SHA"
           sha256sum "$package" > dist/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: salts-native-nuget
+          name: cmeta-native-nuget
           path: |
-            dist/Salts.Native.*.nupkg
+            dist/CMeta.Native.*.nupkg
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
@@ -360,7 +360,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: salts-native-nuget
+          name: cmeta-native-nuget
           path: dist
       - name: Refuse mutable or duplicate release identity
         shell: bash
@@ -375,7 +375,7 @@ jobs:
           fi
           inventory="$RUNNER_TEMP/published-versions.json"
           error="$RUNNER_TEMP/package-inventory.err"
-          if gh api --paginate '/users/qigao/packages/nuget/Salts.Native/versions?per_page=100' > "$inventory" 2> "$error"; then
+          if gh api --paginate '/users/qigao/packages/nuget/CMeta.Native/versions?per_page=100' > "$inventory" 2> "$error"; then
             :
           elif grep -Fq 'HTTP 404' "$error"; then
             printf '[]\n' > "$inventory"
@@ -399,9 +399,9 @@ jobs:
           dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
             --name github --username qigao --password "$GITHUB_TOKEN" \
             --store-password-in-clear-text --configfile "$config"
-          dotnet nuget push "dist/Salts.Native.$PACKAGE_VERSION.nupkg" \
+          dotnet nuget push "dist/CMeta.Native.$PACKAGE_VERSION.nupkg" \
             --api-key "$GITHUB_TOKEN" --source github --configfile "$config"
           gh release create "$GITHUB_REF_NAME" \
-            "dist/Salts.Native.$PACKAGE_VERSION.nupkg" dist/SHA256SUMS \
+            "dist/CMeta.Native.$PACKAGE_VERSION.nupkg" dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --verify-tag --target "$SOURCE_SHA" \
-            --title "Salts $RELEASE_VERSION" --generate-notes --latest
+            --title "CMeta $RELEASE_VERSION" --generate-notes --latest

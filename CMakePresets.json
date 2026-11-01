@@ -3,7 +3,7 @@
   "configurePresets": [
     {
       "name": "native-release",
-      "displayName": "Salts 0.1 / installed Core / Release",
+      "displayName": "CMeta 0.1 / installed Core / Release",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
@@ -17,7 +17,7 @@
     },
     {
       "name": "native-debug",
-      "displayName": "Salts 0.1 / installed Core / Debug",
+      "displayName": "CMeta 0.1 / installed Core / Debug",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": {
@@ -31,7 +31,7 @@
     },
     {
       "name": "llvm-release-ci",
-      "displayName": "Salts 0.1 / LLVM Release CI",
+      "displayName": "CMeta 0.1 / LLVM Release CI",
       "generator": "Ninja",
       "binaryDir": "$penv{CMETA_BINARY_DIR}",
       "cacheVariables": {
@@ -48,7 +48,7 @@
     },
     {
       "name": "llvm-test-ci",
-      "displayName": "Salts 0.1 / LLVM Debug Test CI",
+      "displayName": "CMeta 0.1 / LLVM Debug Test CI",
       "generator": "Ninja",
       "binaryDir": "$penv{CMETA_TEST_BINARY_DIR}",
       "cacheVariables": {
@@ -64,7 +64,7 @@
     },
     {
       "name": "android-release-ci",
-      "displayName": "Salts 0.1 / Android NDK LLVM Release CI",
+      "displayName": "CMeta 0.1 / Android NDK LLVM Release CI",
       "generator": "Ninja",
       "binaryDir": "$penv{CMETA_BINARY_DIR}",
       "cacheVariables": {

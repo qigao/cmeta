@@ -1,4 +1,4 @@
-# Salts 0.1 — CMeta, ACE and CFlow
+# CMeta 0.1 — CMeta, ACE and CFlow
 
 This repository owns the CMeta reflection/type system, ACE-style component and
 service composition, Plugin lifecycle integration, and CFlow actor/reactive/
@@ -37,7 +37,7 @@ and `CMETA_TARGET_TOOLCHAIN_FILE`. Android also takes `CMETA_ANDROID_ABI`.
 Consumers select the combined installed prefix and link the canonical targets:
 
 ```cmake
-find_package(Salts 0.1 CONFIG REQUIRED)
+find_package(CMeta 0.1 CONFIG REQUIRED)
 target_link_libraries(my_host PRIVATE CMeta::CMeta CMeta::ServiceHost)
 ```
 
@@ -50,7 +50,7 @@ ABI admission rules.
 ## Release 0.1.000
 
 The immutable external tag is `v0.1.000`; CMake and NuGet normalize the same
-version to `0.1.0`. `Salts.Native` contains combined SaltsCore and CMeta install
+version to `0.1.0`. `CMeta.Native` contains combined SaltsCore and CMeta install
 trees for Linux, Windows, macOS and Android, each on x64 and arm64.
 
 Desktop targets use the pinned `qigao/vcpkg-cache` LLVM setup in toolchain-only

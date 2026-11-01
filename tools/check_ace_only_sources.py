@@ -32,7 +32,7 @@ if not (ROOT / "CMakeUserPresets.json").is_file():
 
 cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 required = (
-    "project(Salts VERSION 0.1.0 LANGUAGES C CXX)",
+    "project(CMeta VERSION 0.1.0 LANGUAGES C CXX)",
     "find_package(SaltsCore 0.1 CONFIG REQUIRED)",
     "add_subdirectory(cmeta)",
     "add_subdirectory(ace)",

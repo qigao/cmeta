@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
-project(Salts VERSION 0.1.0 LANGUAGES C CXX)
+project(CMeta VERSION 0.1.0 LANGUAGES C CXX)
 # The public release is tagged v0.1.000. CMake and NuGet use the normalized
 # SemVer spelling 0.1.0; both identify the same immutable release.
-set(SALTS_NATIVE_SOVERSION "0.1")
+set(CMETA_NATIVE_SOVERSION "0.1")
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
@@ -25,7 +25,7 @@ include(CTest)
 if(BUILD_TESTS OR BUILD_EXAMPLES OR BUILD_BENCHMARKS OR
    CFLOW_BUILD_BENCHMARKS OR CMETA_BUILD_NATIVE_THUNKS OR
    CFLOW_ENABLE_MINICORO OR BUILD_SHARED_LIBS)
-  message(FATAL_ERROR "The Salts 0.1 package has no legacy native source modes")
+  message(FATAL_ERROR "The CMeta 0.1 package has no legacy native source modes")
 endif()
 include(CmakeUtils)
 find_package(Threads REQUIRED)
@@ -58,18 +58,18 @@ foreach(_retained IN ITEMS CMeta ConfiguratorABI PluginABI Plugin
   endif()
 endforeach()
 configure_package_config_file(
-  "${CMAKE_SOURCE_DIR}/cmake/SaltsConfig.cmake.in"
-  "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"
-  INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/Salts")
+  "${CMAKE_SOURCE_DIR}/cmake/CMetaConfig.cmake.in"
+  "${CMAKE_BINARY_DIR}/CMetaConfig.cmake"
+  INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/CMeta")
 write_basic_package_version_file(
-  "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
+  "${CMAKE_BINARY_DIR}/CMetaConfigVersion.cmake"
   VERSION ${PROJECT_VERSION} COMPATIBILITY SameMinorVersion)
 install(FILES
-  "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"
-  "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
-  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/Salts")
-export(EXPORT SaltsTargets
-  FILE "${CMAKE_BINARY_DIR}/SaltsTargets.cmake" NAMESPACE CMeta::)
-install(EXPORT SaltsTargets
-  FILE SaltsTargets.cmake NAMESPACE CMeta::
-  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/Salts")
+  "${CMAKE_BINARY_DIR}/CMetaConfig.cmake"
+  "${CMAKE_BINARY_DIR}/CMetaConfigVersion.cmake"
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/CMeta")
+export(EXPORT CMetaTargets
+  FILE "${CMAKE_BINARY_DIR}/CMetaTargets.cmake" NAMESPACE CMeta::)
+install(EXPORT CMetaTargets
+  FILE CMetaTargets.cmake NAMESPACE CMeta::
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/CMeta")

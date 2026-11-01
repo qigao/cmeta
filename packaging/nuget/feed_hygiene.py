@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed checks for the immutable Salts.Native 0.1 SDK package."""
+"""Fail-closed checks for the immutable CMeta.Native 0.1 SDK package."""
 
 from __future__ import annotations
 
@@ -85,17 +85,17 @@ def verify_package(path: Path, display_version: str, package_version: str,
         require(nuspec_version(package, names) == package_version,
                 "NuGet metadata version does not match the normalized release")
         expected_manifests = {
-            f"sdk/{rid}/salts-sdk-manifest.txt" for rid in RIDS
+            f"sdk/{rid}/cmeta-sdk-manifest.txt" for rid in RIDS
         }
         actual_manifests = {
-            name for name in names if name.endswith("/salts-sdk-manifest.txt")
+            name for name in names if name.endswith("/cmeta-sdk-manifest.txt")
         }
         require(actual_manifests == expected_manifests,
                 f"incorrect SDK RID set: {sorted(actual_manifests ^ expected_manifests)}")
 
         for rid, protection in sorted(RIDS.items()):
             prefix = f"sdk/{rid}/"
-            manifest_name = prefix + "salts-sdk-manifest.txt"
+            manifest_name = prefix + "cmeta-sdk-manifest.txt"
             manifest = fields(package.read(manifest_name), manifest_name)
             expected = {
                 "release": display_version,
@@ -114,9 +114,9 @@ def verify_package(path: Path, display_version: str, package_version: str,
                 "include/cflow/cflow.h",
                 "include/cmeta/configurator.h",
                 "include/cmeta/service_host.h",
-                "lib/cmake/Salts/SaltsConfig.cmake",
-                "lib/cmake/Salts/SaltsConfigVersion.cmake",
-                "lib/cmake/Salts/SaltsTargets.cmake",
+                "lib/cmake/CMeta/CMetaConfig.cmake",
+                "lib/cmake/CMeta/CMetaConfigVersion.cmake",
+                "lib/cmake/CMeta/CMetaTargets.cmake",
                 "lib/cmake/SaltsCore/SaltsCoreConfig.cmake",
             )
             for relative in required:

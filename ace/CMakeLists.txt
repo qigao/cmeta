@@ -53,7 +53,7 @@ target_link_libraries(salts_service_host
 
 install(TARGETS salts_configurator_abi salts_service_host_provider_abi
   salts_configurator salts_service_host
-  EXPORT SaltsTargets
+  EXPORT CMetaTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

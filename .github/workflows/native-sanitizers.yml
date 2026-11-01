@@ -1,7 +1,7 @@
 name: Salts LLVM sanitizers
 
 # Separate from the release graph because sanitizer instrumentation changes
-# code generation. Instrument the sole Salts 0.1 CMeta/ACE/CFlow owner
+# code generation. Instrument the sole CMeta 0.1 CMeta/ACE/CFlow owner
 # with the sole pinned native SaltsCore 0.1 owner.
 on:
   pull_request:
@@ -35,7 +35,7 @@ permissions:
 
 jobs:
   native-sanitizers:
-    name: Salts 0.1 LLVM ${{ matrix.kind }} sole native owner
+    name: CMeta 0.1 LLVM ${{ matrix.kind }} sole native owner
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -78,7 +78,7 @@ jobs:
           cmake --build build-instrumented-core-${{ matrix.kind }} --parallel 2
           cmake --install build-instrumented-core-${{ matrix.kind }} \
             --config RelWithDebInfo
-      - name: Build sole Salts 0.1 CMeta ACE CFlow sanitizer graph
+      - name: Build sole CMeta 0.1 CMeta ACE CFlow sanitizer graph
         shell: bash
         run: |
           set -euo pipefail

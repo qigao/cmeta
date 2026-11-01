@@ -8,7 +8,7 @@ cmake_config_target(cmeta_native VERSION "${PROJECT_VERSION}" SOVERSION "${PROJE
   ALIAS CMeta::CMetaNative EXPORT_NAME CMetaNative FOLDER "cmeta/native")
 target_link_libraries(cmeta_native PUBLIC CMeta::CMeta)
 target_compile_features(cmeta_native PUBLIC c_std_11)
-install(TARGETS cmeta_native EXPORT SaltsTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(TARGETS cmeta_native EXPORT CMetaTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 if(BUILD_TESTS)
   cmake_add_test(cmeta_native_failure_test SOURCES thunk.c ../tests/cmeta_native_failure_test.c
     ../tests/cmeta_native_targets.c LIBS CMeta::CMeta Salts::TinyTest FOLDER "cmeta/tests")
