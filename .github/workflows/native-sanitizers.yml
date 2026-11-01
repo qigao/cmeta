@@ -72,6 +72,7 @@ jobs:
           cmake -S _core_owner -B build-instrumented-core-${{ matrix.kind }} \
             "-DCMAKE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE" \
             -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF \
+            -DSALTSCORE_BUILD_URI=ON \
             -DSALTSCORE_BUILD_TINYTEST=ON \
             "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
             "-DCMAKE_INSTALL_PREFIX=$prefix"

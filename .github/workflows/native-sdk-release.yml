@@ -151,6 +151,7 @@ jobs:
             cmake -S _core_owner -B build/core -G Ninja \
               "-DCMAKE_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
               -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+              -DSALTSCORE_BUILD_URI=ON \
               "-DSALTSCORE_BUILD_TINYTEST=$core_test" \
               "-DCMAKE_INSTALL_PREFIX=$SALTSCORE_PREFIX" \
               "-DANDROID_ABI=$CMETA_ANDROID_ABI" -DANDROID_PLATFORM=24 \
@@ -159,6 +160,7 @@ jobs:
             cmake -S _core_owner -B build/core -G Ninja \
               "-DCMAKE_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
               -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+              -DSALTSCORE_BUILD_URI=ON \
               "-DSALTSCORE_BUILD_TINYTEST=$core_test" \
               "-DCMAKE_INSTALL_PREFIX=$SALTSCORE_PREFIX"
           fi

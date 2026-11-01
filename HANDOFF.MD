@@ -102,3 +102,6 @@
   identity without hard-coding a patch release. When the pinned Core release
   advances, update both SDK and sanitizer workflows to the same immutable Core
   commit; otherwise a version-only release can fail before compilation.
+- Raw instrumented/downstream Core configures must pass
+  `SALTSCORE_BUILD_URI=ON`; Core's formal presets already do this, but omitting
+  it from a direct `cmake -S` invocation fails before the sanitizer build.
