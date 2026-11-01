@@ -148,8 +148,8 @@
   "workflowPresets": [],
   "vendor": {
     "qigao/cmeta": {
-      "release-tag": "v0.1.000",
-      "package-version": "0.1.0"
+      "release-tag": "v0.1.002",
+      "package-version": "0.1.2"
     }
   }
 }
