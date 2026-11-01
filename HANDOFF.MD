@@ -79,3 +79,22 @@
   filters must name files that actually enter their configured build graph;
   documentation, benchmarks, examples and local-only presets must not start
   the eight-RID matrix.
+
+## 2026-11-01 Core value bridge and retained CSTL
+
+- The Core `CValue`/fixed-width reflection bridge depends on CMeta descriptors,
+  so it belongs here as `<cmeta/core_data.h>`, `<cmeta/core_fixed_width.h>` and
+  `cmeta/src/core_data.c`; it must not be moved back into dependency-free
+  SaltsCore or exposed under the old `cmeta_cmeta_data.h` name.
+- The corrected split package is release `v0.1.001` / NuGet `0.1.1` because
+  the historical `v0.1.000` tag is immutable. `CMeta.Native` must not bundle a
+  second SaltsCore install tree; the release workflow builds against the exact
+  Core commit in a separate prefix and packages only CMeta-owned files.
+- When switching the Core prefix, reconfigure the selected preset with
+  `--fresh`; an existing CMake cache can retain an older install. On Windows,
+  use the llvm-mingw `llvm-test-ci` preset for an llvm-mingw Core SDK—native
+  MSVC-ABI Clang links against a different CRT and is not equivalent evidence.
+- Retained CSTL and CSTLStream are part of the CMeta build/export graph. Keep
+  the root `add_subdirectory(cstl)` and use `BUILD_TESTING` for their formal
+  CTest registration; omitting that subdirectory can make a package appear
+  healthy while downstream container targets and metadata tests are absent.

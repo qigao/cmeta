@@ -117,11 +117,13 @@ def verify_package(path: Path, display_version: str, package_version: str,
                 "lib/cmake/CMeta/CMetaConfig.cmake",
                 "lib/cmake/CMeta/CMetaConfigVersion.cmake",
                 "lib/cmake/CMeta/CMetaTargets.cmake",
-                "lib/cmake/SaltsCore/SaltsCoreConfig.cmake",
             )
             for relative in required:
                 require(prefix + relative in names,
                         f"{rid}: missing installed SDK file {relative}")
+            require(not any(name.startswith(prefix + "lib/cmake/SaltsCore/")
+                            for name in names),
+                    f"{rid}: CMeta.Native must not duplicate SaltsCore")
 
     return {
         "status": "PASS",

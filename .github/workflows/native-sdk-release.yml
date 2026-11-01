@@ -1,7 +1,7 @@
-name: CMeta 0.1 LLVM SDK
+name: CMeta 0.1.001 LLVM SDK
 
 # The only native packaging and publication workflow: build the immutable
-# Win/Linux/macOS/Android x64+arm64 SDK and publish only from v0.1.000.
+# Win/Linux/macOS/Android x64+arm64 SDK and publish only from v0.1.001.
 
 on:
   pull_request:
@@ -16,7 +16,7 @@ on:
       - "cflow/src/**"
   push:
     branches: [master]
-    tags: ["v0.1.000"]
+    tags: ["v0.1.001"]
     paths:
       - "cmeta/include/**"
       - "cmeta/src/**"
@@ -36,9 +36,9 @@ permissions:
   contents: read
 
 env:
-  RELEASE_VERSION: 0.1.000
-  PACKAGE_VERSION: 0.1.0
-  CORE_SHA: b083cb8517a585a9042eb30fc963890ac03d5a74
+  RELEASE_VERSION: 0.1.001
+  PACKAGE_VERSION: 0.1.1
+  CORE_SHA: 28b6616d3e51fb70631679d3aea516ba45d51195
 
 jobs:
   sdk:
@@ -63,7 +63,7 @@ jobs:
       CMETA_BINARY_DIR: ${{ github.workspace }}/build/cmeta
       CMETA_TEST_BINARY_DIR: ${{ github.workspace }}/build/cmeta-tests
       CMETA_INSTALL_PREFIX: ${{ github.workspace }}/package/sdk/${{ matrix.rid }}
-      SALTSCORE_PREFIX: ${{ github.workspace }}/package/sdk/${{ matrix.rid }}
+      SALTSCORE_PREFIX: ${{ github.workspace }}/build/core-install/${{ matrix.rid }}
       CMETA_ANDROID_ABI: ${{ matrix.android_abi }}
       BUILD_PARALLEL: ${{ matrix.parallel }}
     steps:
@@ -84,7 +84,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test "$(git -C _core_owner rev-parse HEAD)" = "$CORE_SHA"
-          grep -Fq 'project(CMeta VERSION 0.1.0 LANGUAGES C CXX)' CMakeLists.txt
+          grep -Fq 'project(CMeta VERSION 0.1.1 LANGUAGES C CXX)' CMakeLists.txt
           grep -Fq '<PackageId>CMeta.Native</PackageId>' packaging/nuget/CMeta.Native.csproj
           python3 tools/check_ace_only_sources.py --core-root _core_owner
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
@@ -253,7 +253,8 @@ jobs:
         run: |
           set -euo pipefail
           test -f "$CMETA_INSTALL_PREFIX/lib/cmake/CMeta/CMetaConfig.cmake"
-          test -f "$CMETA_INSTALL_PREFIX/lib/cmake/SaltsCore/SaltsCoreConfig.cmake"
+          test -f "$SALTSCORE_PREFIX/lib/cmake/SaltsCore/SaltsCoreConfig.cmake"
+          test ! -e "$CMETA_INSTALL_PREFIX/lib/cmake/SaltsCore"
           for header in configurator.h configurator_abi.h service_host.h \
               service_host_abi.h service_host_provider_abi.h \
               native_io_ace_token.h plugin.h plugin_decl.h plugin_linker.h \
@@ -342,8 +343,8 @@ jobs:
           retention-days: 14
 
   publish:
-    name: Publish v0.1.000
-    if: github.event_name == 'push' && github.ref == 'refs/tags/v0.1.000'
+    name: Publish v0.1.001
+    if: github.event_name == 'push' && github.ref == 'refs/tags/v0.1.001'
     needs: package
     runs-on: ubuntu-24.04
     timeout-minutes: 30

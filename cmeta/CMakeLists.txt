@@ -5,6 +5,7 @@ add_library(${TARGET_NAME}
   src/cmeta.c
   src/component.c
   src/container_type.c
+  src/core_data.c
   src/data.c
   src/declared_type.c
   src/enum.c
@@ -46,6 +47,7 @@ target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
+target_link_libraries(${TARGET_NAME} PUBLIC Salts::Core)
 
 install(
   TARGETS ${TARGET_NAME}

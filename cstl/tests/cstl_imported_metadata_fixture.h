@@ -2,7 +2,7 @@
 #define CSTL_IMPORTED_METADATA_FIXTURE_H
 
 #include <cstl/typed.h>
-#include <cmeta_cmeta_data.h>
+#include <cmeta/core_data.h>
 
 #if defined(_WIN32)
 #if defined(CSTL_METADATA_PRODUCER)
@@ -71,18 +71,18 @@ cstl_typed_decl(HashSet, ImportedHashSet, int);
 cstl_typed_decl(HashMap, ImportedHashMap, int, tstr);
 #elif defined(CSTL_METADATA_PRODUCER)
 #define CSTL_DECLARE_SEQUENCE(kind, name, api, insert) \
-    cmeta_type(kind, name, tstr, SALTS_TSTR_CMETA_TYPE_REF, SALTS_TSTR_CMETA_DATA_REF);
+    cmeta_type(kind, name, tstr, CMETA_TSTR_TYPE_REF, CMETA_TSTR_DATA_REF);
 #define CSTL_DECLARE_MAP(kind, name, api, insert) \
     cmeta_type(kind, name, tstr, tstr, \
-               SALTS_TSTR_CMETA_TYPE_REF, SALTS_TSTR_CMETA_DATA_REF, \
-               SALTS_TSTR_CMETA_TYPE_REF, SALTS_TSTR_CMETA_DATA_REF);
+               CMETA_TSTR_TYPE_REF, CMETA_TSTR_DATA_REF, \
+               CMETA_TSTR_TYPE_REF, CMETA_TSTR_DATA_REF);
 cmeta_type(Heap, ImportedHeap, int);
 /* The canonical tstr provider has comparison but no hash/equality traits.
  * Use valid integer keys and keep an owned string value in the hash map. */
 cmeta_type(HashSet, ImportedHashSet, int, &cmeta_type_int, &cmeta_data_int);
 cmeta_type(HashMap, ImportedHashMap, int, tstr,
            &cmeta_type_int, &cmeta_data_int,
-           SALTS_TSTR_CMETA_TYPE_REF, SALTS_TSTR_CMETA_DATA_REF);
+           CMETA_TSTR_TYPE_REF, CMETA_TSTR_DATA_REF);
 #else
 #define CSTL_DECLARE_SEQUENCE(kind, name, api, insert) \
     cstl_typed_import(kind, name, tstr, api##_container(), api##_data(), api##_methods());

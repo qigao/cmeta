@@ -1,7 +1,7 @@
 # CMeta.Native
 
 Immutable native SDK payloads published from `qigao/cmeta`. Release tag
-`v0.1.000` maps to the normalized CMake and NuGet version `0.1.0`.
+`v0.1.001` maps to the normalized CMake and NuGet version `0.1.1`.
 
 The package contains eight LLVM-built install prefixes:
 
@@ -10,15 +10,15 @@ The package contains eight LLVM-built install prefixes:
 - `sdk/macos-x64` and `sdk/macos-arm64`
 - `sdk/android-x64` and `sdk/android-arm64`
 
-Every prefix contains the pinned SaltsCore install plus the CMeta, ACE and
-CFlow install, including headers, libraries, `lib/cmake/SaltsCore` and
-`lib/cmake/CMeta`. Desktop Release code is compiled with the pinned
+Every prefix contains the CMeta, ACE and CFlow install, including headers,
+libraries and `lib/cmake/CMeta`. SaltsCore is a separate required SDK and is
+not duplicated in this package. Desktop Release code is compiled with the pinned
 `vcpkg-cache` LLVM setup in toolchain-only mode. Compiler obfuscation is
 disabled on every target. Android uses the Android NDK Clang target toolchain;
 these cross-builds prove compile/install only, not device execution.
 
-Select the prefix matching the target OS, CPU and ABI, add it to
-`CMAKE_PREFIX_PATH`, then use:
+Select matching `SaltsCore.Native` and `CMeta.Native` prefixes, make the Core
+package available first, then use:
 
 ```cmake
 find_package(CMeta 0.1 CONFIG REQUIRED)

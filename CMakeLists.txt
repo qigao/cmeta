@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(CMeta VERSION 0.1.0 LANGUAGES C CXX)
-# The public release is tagged v0.1.000. CMake and NuGet use the normalized
-# SemVer spelling 0.1.0; both identify the same immutable release.
+project(CMeta VERSION 0.1.1 LANGUAGES C CXX)
+# The split-package release is tagged v0.1.001. CMake and NuGet use 0.1.1;
+# the already-published v0.1.000 identity remains immutable.
 set(CMETA_NATIVE_SOVERSION "0.1")
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -48,11 +48,12 @@ add_subdirectory(cmeta)
 add_subdirectory(plugin)
 add_subdirectory(ace)
 add_subdirectory(cflow)
+add_subdirectory(cstl)
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
 foreach(_retained IN ITEMS CMeta ConfiguratorABI PluginABI Plugin
-    ServiceHostProviderABI Configurator ServiceHost CFlow)
+    ServiceHostProviderABI Configurator ServiceHost CFlow CSTL CSTLStream)
   if(NOT TARGET "CMeta::${_retained}")
     message(FATAL_ERROR "Missing repository target CMeta::${_retained}")
   endif()
