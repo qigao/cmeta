@@ -125,3 +125,8 @@
   an offset. The implementation does not guarantee the natural alignment of an
   ordinary `unsigned char[]`; on ARM64, `storage + 1` can therefore be aligned
   by accident and make a valid portability test fail.
+- UUID data admission must compare stable data/type identity, native layout,
+  ownership and operation ABI semantically. Do not compare callback addresses:
+  Unix downstream graphs can carry equivalent CMeta instances through separate
+  DSOs, so address equality rejects the valid provider while Windows links the
+  same graph successfully.

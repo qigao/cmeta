@@ -13,6 +13,11 @@ add_test(NAME cmeta_pp_iso_c11_test COMMAND cmeta_pp_iso_c11_test)
 set_target_properties(cmeta_pp_iso_c11_test PROPERTIES
   FOLDER "cmeta/tests")
 
+cmake_add_test(cmeta_core_data_test
+  SOURCES cmeta_core_data_test.c
+  LIBS CMeta::CMeta Salts::TinyTest
+  FOLDER "cmeta/tests")
+
 cmake_add_test(cmeta_data_reflect_test
   SOURCES cmeta_data_reflect_test.c cmeta_data_reflect_peer.c
   LIBS CMeta::CMeta Salts::TinyTest

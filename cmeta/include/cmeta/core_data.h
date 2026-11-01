@@ -30,12 +30,19 @@ CMETA_CORE_STATIC_ASSERT(sizeof(cmeta_uuid_t) == SALTS_UUID_SIZE,
 
 #undef CMETA_CORE_STATIC_ASSERT
 
-/** Canonical process-wide UUID metadata exported by Salts::Core. */
+/** Canonical process-wide UUID metadata exported by CMeta. */
 extern const cmeta_type_desc cmeta_uuid_cmeta_type;
 extern const cmeta_data_buffer_shape cmeta_uuid_cmeta_shape;
 extern const cmeta_data_buffer_ops cmeta_uuid_cmeta_buffer_ops;
 extern const cmeta_data_fixed_ops cmeta_uuid_cmeta_fixed_ops;
 extern const cmeta_data_desc cmeta_uuid_cmeta_data;
+/**
+ * Admit a semantically equivalent UUID data provider.
+ *
+ * The stable data/type identities, native layout, ownership, operation ABI and
+ * complete callback capabilities must match. Callback addresses are not
+ * identities: an equivalent provider may originate in another TU or DSO.
+ */
 bool cmeta_uuid_cmeta_data_valid(
     const cmeta_data_desc *candidate);
 
