@@ -47,9 +47,9 @@ must be rebuilt against one matching SDK. See
 [ace/README.md](ace/README.md) for lifecycle and
 ABI admission rules.
 
-## Release 0.1.001
+## Release 0.1.002
 
-The immutable external tag is `v0.1.001`; CMake and NuGet use version `0.1.1`.
+The immutable external tag is `v0.1.002`; CMake and NuGet use version `0.1.2`.
 `CMeta.Native` contains CMeta, ACE and CFlow install trees for Linux, Windows,
 macOS and Android, each on x64 and arm64. SaltsCore is published and restored
 separately as `SaltsCore.Native`.

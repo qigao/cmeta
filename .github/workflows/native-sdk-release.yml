@@ -1,7 +1,7 @@
-name: CMeta 0.1.001 LLVM SDK
+name: CMeta 0.1.002 LLVM SDK
 
 # The only native packaging and publication workflow: build the immutable
-# Win/Linux/macOS/Android x64+arm64 SDK and publish only from v0.1.001.
+# Win/Linux/macOS/Android x64+arm64 SDK and publish only from v0.1.002.
 
 on:
   pull_request:
@@ -16,7 +16,7 @@ on:
       - "cflow/src/**"
   push:
     branches: [master]
-    tags: ["v0.1.001"]
+    tags: ["v0.1.002"]
     paths:
       - "cmeta/include/**"
       - "cmeta/src/**"
@@ -37,8 +37,8 @@ permissions:
   packages: read
 
 env:
-  RELEASE_VERSION: 0.1.001
-  PACKAGE_VERSION: 0.1.1
+  RELEASE_VERSION: 0.1.002
+  PACKAGE_VERSION: 0.1.2
   CORE_SHA: d346643cdd1a313712dbdf8b2a21aa483c89700b
 
 jobs:
@@ -85,7 +85,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test "$(git -C _core_owner rev-parse HEAD)" = "$CORE_SHA"
-          grep -Fq 'project(CMeta VERSION 0.1.1 LANGUAGES C CXX)' CMakeLists.txt
+          grep -Fq 'project(CMeta VERSION 0.1.2 LANGUAGES C CXX)' CMakeLists.txt
           grep -Fq '<PackageId>CMeta.Native</PackageId>' packaging/nuget/CMeta.Native.csproj
           python3 tools/check_ace_only_sources.py --core-root _core_owner
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
@@ -370,8 +370,8 @@ jobs:
           retention-days: 14
 
   publish:
-    name: Publish v0.1.001
-    if: github.event_name == 'push' && github.ref == 'refs/tags/v0.1.001'
+    name: Publish v0.1.002
+    if: github.event_name == 'push' && github.ref == 'refs/tags/v0.1.002'
     needs: package
     runs-on: ubuntu-24.04
     timeout-minutes: 30

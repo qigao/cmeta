@@ -130,3 +130,10 @@
   Unix downstream graphs can carry equivalent CMeta instances through separate
   DSOs, so address equality rejects the valid provider while Windows links the
   same graph successfully.
+
+## 2026-11-01 release 0.1.002
+
+- Release `v0.1.002` / NuGet `0.1.2` carries semantic UUID provider admission
+  for downstream graphs that load equivalent CMeta callbacks from separate
+  Unix DSOs. Keep the workflow, CMake project version, preset vendor metadata
+  and package documentation on the same immutable release identity.
