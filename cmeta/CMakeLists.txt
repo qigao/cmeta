@@ -5,6 +5,7 @@ add_library(${TARGET_NAME}
   src/cmeta.c
   src/component.c
   src/container_type.c
+  src/core_data.c
   src/data.c
   src/declared_type.c
   src/enum.c
@@ -23,7 +24,7 @@ add_library(${TARGET_NAME}
 
 cmake_config_target(
   ${TARGET_NAME}
-  VERSION "${PROJECT_VERSION}" SOVERSION "${SALTS_NATIVE_SOVERSION}"
+  VERSION "${PROJECT_VERSION}" SOVERSION "${CMETA_NATIVE_SOVERSION}"
   ALIAS CMeta::CMeta
   FOLDER "cmeta"
   EXPORT_NAME CMeta)
@@ -46,10 +47,11 @@ target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
+target_link_libraries(${TARGET_NAME} PUBLIC Salts::Core)
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT SaltsTargets
+  EXPORT CMetaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

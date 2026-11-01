@@ -187,7 +187,9 @@ spec("CSTL stable sort") {
     }
 
     it("rejects misaligned base and handles sorted and reverse inputs") {
-        unsigned char storage[sizeof(stable_item) * 2u + _Alignof(stable_item)];
+        _Alignas(stable_item)
+            unsigned char storage[sizeof(stable_item) * 2u +
+                                  _Alignof(stable_item)];
         stable_item sorted[] = {{1, 0}, {2, 1}, {3, 2}};
         stable_item reverse[] = {{3, 0}, {2, 1}, {1, 2}};
 

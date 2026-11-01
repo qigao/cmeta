@@ -35,7 +35,7 @@ unset(_salts_owner_type)
 
 cmake_config_target(
   ${TARGET_NAME}
-  VERSION "${PROJECT_VERSION}" SOVERSION "${SALTS_NATIVE_SOVERSION}"
+  VERSION "${PROJECT_VERSION}" SOVERSION "${CMETA_NATIVE_SOVERSION}"
   ALIAS CMeta::CSTL
   FOLDER "cstl"
   EXPORT_NAME CSTL)
@@ -52,7 +52,7 @@ add_library(cmeta_cstl_stream
   src/cflow_backend.c)
 cmake_config_target(
   cmeta_cstl_stream
-  VERSION "${PROJECT_VERSION}" SOVERSION "${SALTS_NATIVE_SOVERSION}"
+  VERSION "${PROJECT_VERSION}" SOVERSION "${CMETA_NATIVE_SOVERSION}"
   ALIAS CMeta::CSTLStream
   FOLDER "cstl"
   EXPORT_NAME CSTLStream)
@@ -63,14 +63,14 @@ target_compile_features(cmeta_cstl_stream PUBLIC c_std_11)
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT SaltsTargets
+  EXPORT CMetaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(
   TARGETS cmeta_cstl_stream
-  EXPORT SaltsTargets
+  EXPORT CMetaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
@@ -84,6 +84,6 @@ install(
   FILES include/cstl.h
   DESTINATION include)
 
-if(BUILD_TESTS)
+if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()

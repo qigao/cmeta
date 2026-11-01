@@ -1,7 +1,7 @@
 name: Salts LLVM sanitizers
 
 # Separate from the release graph because sanitizer instrumentation changes
-# code generation. Instrument the sole Salts 0.1 CMeta/ACE/CFlow owner
+# code generation. Instrument the sole CMeta 0.1 CMeta/ACE/CFlow owner
 # with the sole pinned native SaltsCore 0.1 owner.
 on:
   pull_request:
@@ -32,10 +32,11 @@ concurrency:
   cancel-in-progress: true
 permissions:
   contents: read
+  packages: read
 
 jobs:
   native-sanitizers:
-    name: Salts 0.1 LLVM ${{ matrix.kind }} sole native owner
+    name: CMeta 0.1 LLVM ${{ matrix.kind }} sole native owner
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -52,33 +53,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Select runner-native LLVM for non-published sanitizer builds
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@22ab039b6505c06e7a2f03f723305050d775ecf3
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@529019437597fa71f7d8dcc561d26fc7b0603ae6
         with:
           build-type: toolchain-only
+          obfuscator: "false"
+      - name: Set up shared dependency contract
+        id: vcpkg
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        with:
+          mode: read
+          token: ${{ github.token }}
+      - name: Restore re2c and Unicode host data
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        with:
+          token: ${{ github.token }}
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: b083cb8517a585a9042eb30fc963890ac03d5a74
+          ref: d346643cdd1a313712dbdf8b2a21aa483c89700b
           path: _core_owner
           persist-credentials: false
       - name: Install one exact shared Core native owner with instrumentation
         shell: bash
+        env:
+          VCPKG_TOOLCHAIN: ${{ steps.vcpkg.outputs.toolchain_file }}
         run: |
           set -euo pipefail
           python3 tools/check_ace_only_sources.py --core-root _core_owner
           test "$(git -C _core_owner rev-parse HEAD)" = \
-            b083cb8517a585a9042eb30fc963890ac03d5a74
+            d346643cdd1a313712dbdf8b2a21aa483c89700b
           prefix="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
           cmake -S _core_owner -B build-instrumented-core-${{ matrix.kind }} \
-            "-DCMAKE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE" \
+            "-DCMAKE_TOOLCHAIN_FILE=$VCPKG_TOOLCHAIN" \
+            "-DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux -DVCPKG_HOST_TRIPLET=x64-linux \
             -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF \
+            -DSALTSCORE_BUILD_URI=ON \
             -DSALTSCORE_BUILD_TINYTEST=ON \
             "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
             "-DCMAKE_INSTALL_PREFIX=$prefix"
           cmake --build build-instrumented-core-${{ matrix.kind }} --parallel 2
           cmake --install build-instrumented-core-${{ matrix.kind }} \
             --config RelWithDebInfo
-      - name: Build sole Salts 0.1 CMeta ACE CFlow sanitizer graph
+      - name: Build sole CMeta 0.1 CMeta ACE CFlow sanitizer graph
         shell: bash
         run: |
           set -euo pipefail

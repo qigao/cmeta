@@ -4,11 +4,11 @@
     <IsPackable>true</IsPackable>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
-    <PackageId>Salts.Native</PackageId>
+    <PackageId>CMeta.Native</PackageId>
     <PackageVersion Condition="'$(PackageVersion)' == ''">0.0.0-dev</PackageVersion>
     <Authors>qigao</Authors>
-    <Description>Prebuilt Salts CMeta, ACE, CFlow and SaltsCore C/C++ SDK install trees.</Description>
-    <PackageTags>salts;cmeta;ace;cflow;native;c;cpp;cmake;llvm;android</PackageTags>
+    <Description>Prebuilt CMeta, ACE and CFlow C/C++ SDK install trees.</Description>
+    <PackageTags>cmeta;ace;cflow;native;c;cpp;cmake;llvm;android</PackageTags>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/qigao/cmeta</RepositoryUrl>

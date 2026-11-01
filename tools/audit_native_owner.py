@@ -33,14 +33,14 @@ def main() -> int:
               "darwin" if sys.platform == "darwin" else "linux")
     errors: list[str] = []
     report = {"schema_version": 1, "platform": system,
-              "package": "Salts 0.1 native API", "ok": False}
+              "package": "CMeta 0.1 native API", "ok": False}
     try:
         core = args.core_prefix.resolve()
         salts = args.salts_prefix.resolve()
         build = args.build_dir.resolve()
-        expected_config = salts / "lib/cmake/Salts/SaltsTargets.cmake"
+        expected_config = salts / "lib/cmake/CMeta/CMetaTargets.cmake"
         if not expected_config.is_file():
-            errors.append(f"Missing actual installed SaltsTargets: {expected_config}")
+            errors.append(f"Missing actual installed CMetaTargets: {expected_config}")
         db = dumpbin_path(None) if system == "windows" else None
         images = {
             "core": find_library(core, "core", system),

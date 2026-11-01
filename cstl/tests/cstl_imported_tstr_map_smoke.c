@@ -1,11 +1,11 @@
 #include <cstl/typed.h>
-#include <cmeta_cmeta_data.h>
+#include <cmeta/core_data.h>
 
 #include <stddef.h>
 #include <tinytest.h>
 
 cmeta_type(Map, ImportSafeTstrSmokeMap, tstr, int,
-      SALTS_TSTR_CMETA_TYPE_REF, SALTS_TSTR_CMETA_DATA_REF,
+      CMETA_TSTR_TYPE_REF, CMETA_TSTR_DATA_REF,
       &cmeta_type_int, &cmeta_data_int);
 
 suite("CSTL imported tstr map") {
@@ -31,11 +31,11 @@ suite("CSTL imported tstr map") {
   group("imported type and data identity") {
     it("exposes comparison traits and canonical descriptors") {
       check_not_null(cmeta_tstr_cmeta_type.traits);
-      check_not_null(SALTS_TSTR_CMETA_TYPE_REF->traits);
+      check_not_null(CMETA_TSTR_TYPE_REF->traits);
       check_not_equal(cmeta_tstr_cmeta_type.traits->flags & CMETA_TRAIT_COMPARE, 0u);
-      check_not_equal(SALTS_TSTR_CMETA_TYPE_REF->traits->flags & CMETA_TRAIT_COMPARE, 0u);
-      check_true(cmeta_type_equal(SALTS_TSTR_CMETA_TYPE_REF, &cmeta_tstr_cmeta_type));
-      check_true(cmeta_data_desc_equal(SALTS_TSTR_CMETA_DATA_REF, &cmeta_tstr_cmeta_data));
+      check_not_equal(CMETA_TSTR_TYPE_REF->traits->flags & CMETA_TRAIT_COMPARE, 0u);
+      check_true(cmeta_type_equal(CMETA_TSTR_TYPE_REF, &cmeta_tstr_cmeta_type));
+      check_true(cmeta_data_desc_equal(CMETA_TSTR_DATA_REF, &cmeta_tstr_cmeta_data));
     }
   }
 
@@ -63,7 +63,7 @@ suite("CSTL imported tstr map") {
       check_true(method->abi->function == ImportSafeTstrSmokeMap_put_function());
       check_true(method->abi == ImportSafeTstrSmokeMap_put_function_abi());
       check_true(cmeta_type_equal(cmeta_function_param(method->abi->function, 1u)->type,
-                                 SALTS_TSTR_CMETA_TYPE_REF));
+                                 CMETA_TSTR_TYPE_REF));
       check_true(cmeta_type_equal(cmeta_function_param(method->abi->function, 2u)->type,
                                  &cmeta_type_int));
     }

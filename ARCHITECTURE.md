@@ -7,7 +7,7 @@ CFlow provides accompanying execution integrations built on CMeta.
 flowchart TD
     app["Applications and services"]
     utils["SaltsUtils: utilities, TinyMock, SIMD"]
-    salts["Salts 0.1: CMeta and ACE"]
+    salts["CMeta 0.1: CMeta and ACE"]
     core["SaltsCore: native runtime, I/O, TinyTest"]
     crypto["Crypto: static algorithms, ASN.1, TLS"]
     app --> utils

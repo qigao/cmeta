@@ -172,6 +172,7 @@ spec("Red-black-tree ordered Map") {
                     CMETA_RANGE_UNIQUE));
         check_true(cmeta_type_equal(range.element_type,
                                     &cmeta_type_ordered_entry));
+        check_true((range.flags & CMETA_RANGE_CONSTRUCTS_VALUES) != 0u);
         for (index = 0u; index < 5u; ++index) {
             cmeta_gen_status status = cmeta_range_next(&range, &cursor,
                                                        &entry);
@@ -180,6 +181,7 @@ spec("Red-black-tree ordered Map") {
             check_equal(*(const int *)entry.key, expected[index]);
             check_equal(*(const long *)entry.value,
                         (long)expected[index] * 10L);
+            range.element_type->traits->destroy(&entry);
         }
         map_destroy(&map);
     }

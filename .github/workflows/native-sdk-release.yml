@@ -1,7 +1,7 @@
-name: Salts 0.1 LLVM SDK
+name: CMeta 0.1.001 LLVM SDK
 
 # The only native packaging and publication workflow: build the immutable
-# Win/Linux/macOS/Android x64+arm64 SDK and publish only from v0.1.000.
+# Win/Linux/macOS/Android x64+arm64 SDK and publish only from v0.1.001.
 
 on:
   pull_request:
@@ -16,7 +16,7 @@ on:
       - "cflow/src/**"
   push:
     branches: [master]
-    tags: ["v0.1.000"]
+    tags: ["v0.1.001"]
     paths:
       - "cmeta/include/**"
       - "cmeta/src/**"
@@ -29,16 +29,17 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: salts-native-sdk-${{ github.ref }}
+  group: cmeta-native-sdk-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: read
+  packages: read
 
 env:
-  RELEASE_VERSION: 0.1.000
-  PACKAGE_VERSION: 0.1.0
-  CORE_SHA: b083cb8517a585a9042eb30fc963890ac03d5a74
+  RELEASE_VERSION: 0.1.001
+  PACKAGE_VERSION: 0.1.1
+  CORE_SHA: d346643cdd1a313712dbdf8b2a21aa483c89700b
 
 jobs:
   sdk:
@@ -49,21 +50,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {rid: linux-x64, os: ubuntu-24.04, family: native, arch: x64, parallel: 2, run_tests: true}
-          - {rid: linux-arm64, os: ubuntu-24.04-arm, family: native, arch: arm64, parallel: 2, run_tests: true}
-          - {rid: windows-x64, os: windows-2025, family: windows, arch: x64, parallel: 2, run_tests: true}
-          - {rid: windows-arm64, os: windows-11-arm, family: windows, arch: arm64, parallel: 2, run_tests: true}
-          - {rid: macos-x64, os: macos-15-intel, family: native, arch: x64, parallel: 2, run_tests: true}
-          - {rid: macos-arm64, os: macos-15, family: native, arch: arm64, parallel: 3, run_tests: true}
-          - {rid: android-x64, os: ubuntu-24.04, family: android, arch: x64, android_abi: x86_64, parallel: 2, run_tests: false}
-          - {rid: android-arm64, os: ubuntu-24.04, family: android, arch: arm64, android_abi: arm64-v8a, parallel: 2, run_tests: false}
+          - {rid: linux-x64, os: ubuntu-24.04, family: native, arch: x64, triplet: x64-linux, host_triplet: x64-linux, parallel: 2, run_tests: true}
+          - {rid: linux-arm64, os: ubuntu-24.04-arm, family: native, arch: arm64, triplet: arm64-linux, host_triplet: arm64-linux, parallel: 2, run_tests: true}
+          - {rid: windows-x64, os: windows-2025, family: windows, arch: x64, triplet: qigao-x64-windows-llvm-mingw, host_triplet: qigao-x64-windows-llvm-mingw, parallel: 2, run_tests: true}
+          - {rid: windows-arm64, os: windows-11-arm, family: windows, arch: arm64, triplet: qigao-arm64-windows-llvm-mingw, host_triplet: qigao-arm64-windows-llvm-mingw, parallel: 2, run_tests: true}
+          - {rid: macos-x64, os: macos-15-intel, family: native, arch: x64, triplet: x64-osx, host_triplet: x64-osx, parallel: 2, run_tests: true}
+          - {rid: macos-arm64, os: macos-15, family: native, arch: arm64, triplet: arm64-osx, host_triplet: arm64-osx, parallel: 3, run_tests: true}
+          - {rid: android-x64, os: ubuntu-24.04, family: android, arch: x64, triplet: x64-android, host_triplet: x64-linux, android_abi: x86_64, parallel: 2, run_tests: false}
+          - {rid: android-arm64, os: ubuntu-24.04, family: android, arch: arm64, triplet: arm64-android, host_triplet: x64-linux, android_abi: arm64-v8a, parallel: 2, run_tests: false}
     env:
       RID: ${{ matrix.rid }}
       SOURCE_SHA: ${{ github.sha }}
       CMETA_BINARY_DIR: ${{ github.workspace }}/build/cmeta
       CMETA_TEST_BINARY_DIR: ${{ github.workspace }}/build/cmeta-tests
       CMETA_INSTALL_PREFIX: ${{ github.workspace }}/package/sdk/${{ matrix.rid }}
-      SALTSCORE_PREFIX: ${{ github.workspace }}/package/sdk/${{ matrix.rid }}
+      SALTSCORE_PREFIX: ${{ github.workspace }}/build/core-install/${{ matrix.rid }}
       CMETA_ANDROID_ABI: ${{ matrix.android_abi }}
       BUILD_PARALLEL: ${{ matrix.parallel }}
     steps:
@@ -84,8 +85,8 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test "$(git -C _core_owner rev-parse HEAD)" = "$CORE_SHA"
-          grep -Fq 'project(Salts VERSION 0.1.0 LANGUAGES C CXX)' CMakeLists.txt
-          grep -Fq '<PackageId>Salts.Native</PackageId>' packaging/nuget/Salts.Native.csproj
+          grep -Fq 'project(CMeta VERSION 0.1.1 LANGUAGES C CXX)' CMakeLists.txt
+          grep -Fq '<PackageId>CMeta.Native</PackageId>' packaging/nuget/CMeta.Native.csproj
           python3 tools/check_ace_only_sources.py --core-root _core_owner
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             test "$GITHUB_REF_NAME" = "v$RELEASE_VERSION"
@@ -95,7 +96,7 @@ jobs:
       - name: Set up runner-native LLVM toolchain
         id: llvm_native
         if: matrix.family == 'native'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@22ab039b6505c06e7a2f03f723305050d775ecf3
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@529019437597fa71f7d8dcc561d26fc7b0603ae6
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -103,7 +104,7 @@ jobs:
       - name: Set up Windows llvm-mingw UCRT toolchain
         id: llvm_mingw
         if: matrix.family == 'windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@22ab039b6505c06e7a2f03f723305050d775ecf3
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@529019437597fa71f7d8dcc561d26fc7b0603ae6
         with:
           target: ${{ matrix.arch }}
           version: "20261020"
@@ -113,10 +114,22 @@ jobs:
       - name: Set up Android LLVM host
         id: llvm_android_host
         if: matrix.family == 'android'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@22ab039b6505c06e7a2f03f723305050d775ecf3
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@529019437597fa71f7d8dcc561d26fc7b0603ae6
         with:
           build-type: toolchain-only
           obfuscator: "false"
+
+      - name: Set up shared dependency contract
+        id: vcpkg
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        with:
+          mode: read
+          token: ${{ github.token }}
+
+      - name: Restore re2c and Unicode host data
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        with:
+          token: ${{ github.token }}
 
       - name: Select target LLVM toolchain
         shell: bash
@@ -126,6 +139,7 @@ jobs:
           WINDOWS_TOOLCHAIN: ${{ steps.llvm_mingw.outputs.toolchain-file }}
           WINDOWS_OBFUSCATOR: ${{ steps.llvm_mingw.outputs.obfuscator-enabled }}
           ANDROID_OBFUSCATOR: ${{ steps.llvm_android_host.outputs.obfuscator-enabled }}
+          VCPKG_TOOLCHAIN: ${{ steps.vcpkg.outputs.toolchain_file }}
         run: |
           set -euo pipefail
           case '${{ matrix.family }}' in
@@ -139,7 +153,12 @@ jobs:
             echo "compiler obfuscator must remain disabled, got: $obfuscator" >&2
             exit 1
           fi
-          echo "CMETA_TARGET_TOOLCHAIN_FILE=$toolchain" >> "$GITHUB_ENV"
+          {
+            echo "CMETA_TARGET_TOOLCHAIN_FILE=$toolchain"
+            echo "CMETA_VCPKG_TOOLCHAIN_FILE=$VCPKG_TOOLCHAIN"
+            echo "CMETA_VCPKG_TARGET_TRIPLET=${{ matrix.triplet }}"
+            echo "CMETA_VCPKG_HOST_TRIPLET=${{ matrix.host_triplet }}"
+          } >> "$GITHUB_ENV"
 
       - name: Build and install exact SaltsCore owner
         shell: bash
@@ -149,23 +168,31 @@ jobs:
           if [[ '${{ matrix.family }}' == android ]]; then
             core_test=OFF
             cmake -S _core_owner -B build/core -G Ninja \
-              "-DCMAKE_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
+              "-DCMAKE_TOOLCHAIN_FILE=$CMETA_VCPKG_TOOLCHAIN_FILE" \
+              "-DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
+              "-DVCPKG_TARGET_TRIPLET=$CMETA_VCPKG_TARGET_TRIPLET" \
+              "-DVCPKG_HOST_TRIPLET=$CMETA_VCPKG_HOST_TRIPLET" \
               -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+              -DSALTSCORE_BUILD_URI=ON \
               "-DSALTSCORE_BUILD_TINYTEST=$core_test" \
               "-DCMAKE_INSTALL_PREFIX=$SALTSCORE_PREFIX" \
               "-DANDROID_ABI=$CMETA_ANDROID_ABI" -DANDROID_PLATFORM=24 \
               -DANDROID_STL=c++_shared
           else
             cmake -S _core_owner -B build/core -G Ninja \
-              "-DCMAKE_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
+              "-DCMAKE_TOOLCHAIN_FILE=$CMETA_VCPKG_TOOLCHAIN_FILE" \
+              "-DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$CMETA_TARGET_TOOLCHAIN_FILE" \
+              "-DVCPKG_TARGET_TRIPLET=$CMETA_VCPKG_TARGET_TRIPLET" \
+              "-DVCPKG_HOST_TRIPLET=$CMETA_VCPKG_HOST_TRIPLET" \
               -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+              -DSALTSCORE_BUILD_URI=ON \
               "-DSALTSCORE_BUILD_TINYTEST=$core_test" \
               "-DCMAKE_INSTALL_PREFIX=$SALTSCORE_PREFIX"
           fi
           cmake --build build/core --config Release --parallel "$BUILD_PARALLEL"
           cmake --install build/core --config Release
 
-      - name: Configure and install Salts with its release preset
+      - name: Configure and install CMeta with its release preset
         shell: bash
         run: |
           set -euo pipefail
@@ -234,16 +261,16 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$RUNNER_OS" == Windows ]]; then
-            export PATH="$CMETA_INSTALL_PREFIX/bin:$PATH"
+            export PATH="$CMETA_INSTALL_PREFIX/bin:$SALTSCORE_PREFIX/bin:$PATH"
           elif [[ "$RUNNER_OS" == macOS ]]; then
-            export DYLD_LIBRARY_PATH="$CMETA_INSTALL_PREFIX/lib:${DYLD_LIBRARY_PATH:-}"
+            export DYLD_LIBRARY_PATH="$CMETA_INSTALL_PREFIX/lib:$SALTSCORE_PREFIX/lib:${DYLD_LIBRARY_PATH:-}"
           else
-            export LD_LIBRARY_PATH="$CMETA_INSTALL_PREFIX/lib:${LD_LIBRARY_PATH:-}"
+            export LD_LIBRARY_PATH="$CMETA_INSTALL_PREFIX/lib:$SALTSCORE_PREFIX/lib:${LD_LIBRARY_PATH:-}"
           fi
           ctest --preset llvm-test-ci
           python3 tools/audit_native_owner.py \
             --core-tools _core_owner/tools \
-            --core-prefix "$CMETA_INSTALL_PREFIX" \
+            --core-prefix "$SALTSCORE_PREFIX" \
             --salts-prefix "$CMETA_INSTALL_PREFIX" \
             --build-dir "$CMETA_TEST_BINARY_DIR" \
             --report "$CMETA_TEST_BINARY_DIR/one-owner-audit.json"
@@ -252,8 +279,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f "$CMETA_INSTALL_PREFIX/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$CMETA_INSTALL_PREFIX/lib/cmake/SaltsCore/SaltsCoreConfig.cmake"
+          test -f "$CMETA_INSTALL_PREFIX/lib/cmake/CMeta/CMetaConfig.cmake"
+          test -f "$SALTSCORE_PREFIX/lib/cmake/SaltsCore/SaltsCoreConfig.cmake"
+          test ! -e "$CMETA_INSTALL_PREFIX/lib/cmake/SaltsCore"
           for header in configurator.h configurator_abi.h service_host.h \
               service_host_abi.h service_host_provider_abi.h \
               native_io_ace_token.h plugin.h plugin_decl.h plugin_linker.h \
@@ -261,7 +289,7 @@ jobs:
             test -f "$CMETA_INSTALL_PREFIX/include/cmeta/$header"
             test ! -e "$CMETA_INSTALL_PREFIX/include/salts/$header"
           done
-          targets="$CMETA_INSTALL_PREFIX/lib/cmake/Salts/SaltsTargets.cmake"
+          targets="$CMETA_INSTALL_PREFIX/lib/cmake/CMeta/CMetaTargets.cmake"
           for target in CMeta ConfiguratorABI PluginABI Plugin \
               ServiceHostProviderABI Configurator ServiceHost CFlow; do
             grep -Fq "CMeta::$target" "$targets"
@@ -280,11 +308,11 @@ jobs:
             'profile=release' \
             'compiler=llvm' \
             'protection=none' \
-            > "$CMETA_INSTALL_PREFIX/salts-sdk-manifest.txt"
+            > "$CMETA_INSTALL_PREFIX/cmeta-sdk-manifest.txt"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: salts-sdk-${{ matrix.rid }}
+          name: cmeta-sdk-${{ matrix.rid }}
           path: package
           if-no-files-found: error
           retention-days: 14
@@ -292,7 +320,7 @@ jobs:
       - if: always() && matrix.run_tests
         uses: actions/upload-artifact@v4
         with:
-          name: salts-native-${{ matrix.rid }}-evidence
+          name: cmeta-native-${{ matrix.rid }}-evidence
           path: |
             build/cmeta-tests/Testing/Temporary/LastTest.log
             build/cmeta-tests/one-owner-audit.json
@@ -312,7 +340,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          pattern: salts-sdk-*
+          pattern: cmeta-sdk-*
           path: package
           merge-multiple: true
       - uses: actions/setup-dotnet@v4
@@ -322,28 +350,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dotnet pack packaging/nuget/Salts.Native.csproj \
+          dotnet pack packaging/nuget/CMeta.Native.csproj \
             --configuration Release --output dist \
             -p:PackageVersion="$PACKAGE_VERSION" \
             -p:PackageRoot="$GITHUB_WORKSPACE/package" \
             -p:RepositoryCommit="$SOURCE_SHA"
-          package="dist/Salts.Native.$PACKAGE_VERSION.nupkg"
+          package="dist/CMeta.Native.$PACKAGE_VERSION.nupkg"
           python3 packaging/nuget/feed_hygiene.py verify \
             "$package" "$RELEASE_VERSION" "$PACKAGE_VERSION" \
             "$SOURCE_SHA" "$CORE_SHA"
           sha256sum "$package" > dist/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: salts-native-nuget
+          name: cmeta-native-nuget
           path: |
-            dist/Salts.Native.*.nupkg
+            dist/CMeta.Native.*.nupkg
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
 
   publish:
-    name: Publish v0.1.000
-    if: github.event_name == 'push' && github.ref == 'refs/tags/v0.1.000'
+    name: Publish v0.1.001
+    if: github.event_name == 'push' && github.ref == 'refs/tags/v0.1.001'
     needs: package
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -360,7 +388,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: salts-native-nuget
+          name: cmeta-native-nuget
           path: dist
       - name: Refuse mutable or duplicate release identity
         shell: bash
@@ -375,7 +403,7 @@ jobs:
           fi
           inventory="$RUNNER_TEMP/published-versions.json"
           error="$RUNNER_TEMP/package-inventory.err"
-          if gh api --paginate '/users/qigao/packages/nuget/Salts.Native/versions?per_page=100' > "$inventory" 2> "$error"; then
+          if gh api --paginate '/users/qigao/packages/nuget/CMeta.Native/versions?per_page=100' > "$inventory" 2> "$error"; then
             :
           elif grep -Fq 'HTTP 404' "$error"; then
             printf '[]\n' > "$inventory"
@@ -399,9 +427,9 @@ jobs:
           dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
             --name github --username qigao --password "$GITHUB_TOKEN" \
             --store-password-in-clear-text --configfile "$config"
-          dotnet nuget push "dist/Salts.Native.$PACKAGE_VERSION.nupkg" \
+          dotnet nuget push "dist/CMeta.Native.$PACKAGE_VERSION.nupkg" \
             --api-key "$GITHUB_TOKEN" --source github --configfile "$config"
           gh release create "$GITHUB_REF_NAME" \
-            "dist/Salts.Native.$PACKAGE_VERSION.nupkg" dist/SHA256SUMS \
+            "dist/CMeta.Native.$PACKAGE_VERSION.nupkg" dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --verify-tag --target "$SOURCE_SHA" \
-            --title "Salts $RELEASE_VERSION" --generate-notes --latest
+            --title "CMeta $RELEASE_VERSION" --generate-notes --latest

@@ -55,7 +55,7 @@ COFF 的共同参考；未实现 optional linker aggregation，无需 backend-sp
 查询，把 owned payload 从 Pool 移至 Local，检查 source release、析构恰好一次、
 fingerprint 前中后不变，以及资源关闭后 static metadata 仍可查询。
 
-`tests/installed` 只通过本次安装的 `SaltsConfig.cmake` 链接 `CMeta::CMeta` 与 TinyTest。
+`tests/installed` 只通过本次安装的 `CMetaConfig.cmake` 链接 `CMeta::CMeta` 与 TinyTest。
 C11/C++17 实际查询 descriptor、Function ABI、manifest 与 fingerprint，并以 header
 guard 拒绝 runtime 经 aggregate 引入。Find_package 禁用默认路径，防止消费其他 checkout。
 

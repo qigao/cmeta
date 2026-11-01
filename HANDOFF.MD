@@ -66,9 +66,62 @@
   ServiceHost and Plugin headers were moved from `include/salts/`. The
   `include/salts/` namespace is reserved for imported qigao/salts-core headers;
   do not restore forwarding headers or duplicate compatibility trees.
+- The repository-owned release/package identity is `CMeta.Native`; its CMake
+  package is `CMeta` under `lib/cmake/CMeta` and exports `CMetaTargets.cmake`.
+  Per-RID release provenance is recorded in `cmeta-sdk-manifest.txt`.
+  Do not confuse that identity with imported `SaltsCore` packages or restore
+  `Salts.Native`, `find_package(Salts)` or `lib/cmake/Salts` compatibility
+  aliases. The already-published `v0.1.000` release is immutable, so correcting
+  its historical payload requires a new release version rather than retagging.
 - Keep exactly three non-overlapping workflows: eight-RID LLVM SDK/release,
   LLVM sanitizers, and narrow Lean generated-contract verification. The
   redundant Linux source-cutover workflow was removed. Native workflow path
   filters must name files that actually enter their configured build graph;
   documentation, benchmarks, examples and local-only presets must not start
   the eight-RID matrix.
+
+## 2026-11-01 Core value bridge and retained CSTL
+
+- The Core `CValue`/fixed-width reflection bridge depends on CMeta descriptors,
+  so it belongs here as `<cmeta/core_data.h>`, `<cmeta/core_fixed_width.h>` and
+  `cmeta/src/core_data.c`; it must not be moved back into dependency-free
+  SaltsCore or exposed under the old `cmeta_cmeta_data.h` name.
+- The corrected split package is release `v0.1.001` / NuGet `0.1.1` because
+  the historical `v0.1.000` tag is immutable. `CMeta.Native` must not bundle a
+  second SaltsCore install tree; the release workflow builds against the exact
+  Core commit in a separate prefix and packages only CMeta-owned files.
+- When switching the Core prefix, reconfigure the selected preset with
+  `--fresh`; an existing CMake cache can retain an older install. On Windows,
+  use the llvm-mingw `llvm-test-ci` preset for an llvm-mingw Core SDK—native
+  MSVC-ABI Clang links against a different CRT and is not equivalent evidence.
+- Retained CSTL and CSTLStream are part of the CMeta build/export graph. Keep
+  the root `add_subdirectory(cstl)` and use `BUILD_TESTING` for their formal
+  CTest registration; omitting that subdirectory can make a package appear
+  healthy while downstream container targets and metadata tests are absent.
+- Source-ownership checks must validate the versioned `project(CMeta ...)`
+  identity without hard-coding a patch release. When the pinned Core release
+  advances, update both SDK and sanitizer workflows to the same immutable Core
+  commit; otherwise a version-only release can fail before compilation.
+- Raw instrumented/downstream Core configures must pass
+  `SALTSCORE_BUILD_URI=ON`; Core's formal presets already do this, but omitting
+  it from a direct `cmake -S` invocation fails before the sanitizer build.
+- Core URI configuration also needs the host-side re2c/Unicode tool contract.
+  Reuse the same pinned `vcpkg-cache/setup-re2c-tools` action as Core CI for
+  native, cross and sanitizer builds instead of assuming runner packages, and
+  grant the workflow `packages: read` so its package download is authorized.
+- A direct Core build must use `setup-vcpkg-cache` as
+  `CMAKE_TOOLCHAIN_FILE` and chainload the selected LLVM/LLVM-MinGW/NDK
+  compiler toolchain with explicit target and host triplets. Passing only the
+  compiler toolchain hides manifest dependencies such as SIMDe.
+- CSTL entry ranges set `CMETA_RANGE_CONSTRUCTS_VALUES`: every successful
+  `cmeta_range_next` returns one owned entry that must be destroyed through the
+  range element traits before reusing the output, even when the underlying key
+  and value are trivial scalar types.
+- After Core and CMeta are installed into separate prefixes, native test loader
+  paths must contain both prefixes and `audit_native_owner.py --core-prefix`
+  must point at the Core prefix. Pointing both owners at the CMeta prefix hides
+  the dependency during local tests and makes the physical-owner audit fail.
+- A misalignment test must start with explicitly aligned storage before adding
+  an offset. The implementation does not guarantee the natural alignment of an
+  ordinary `unsigned char[]`; on ARM64, `storage + 1` can therefore be aligned
+  by accident and make a valid portability test fail.
