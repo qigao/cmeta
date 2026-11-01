@@ -98,3 +98,7 @@
   the root `add_subdirectory(cstl)` and use `BUILD_TESTING` for their formal
   CTest registration; omitting that subdirectory can make a package appear
   healthy while downstream container targets and metadata tests are absent.
+- Source-ownership checks must validate the versioned `project(CMeta ...)`
+  identity without hard-coding a patch release. When the pinned Core release
+  advances, update both SDK and sanitizer workflows to the same immutable Core
+  commit; otherwise a version-only release can fail before compilation.

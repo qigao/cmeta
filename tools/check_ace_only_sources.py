@@ -32,7 +32,6 @@ if not (ROOT / "CMakeUserPresets.json").is_file():
 
 cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 required = (
-    "project(CMeta VERSION 0.1.0 LANGUAGES C CXX)",
     "find_package(SaltsCore 0.1 CONFIG REQUIRED)",
     "add_subdirectory(cmeta)",
     "add_subdirectory(ace)",
@@ -41,6 +40,11 @@ required = (
 for item in required:
     if item not in cmake:
         raise SystemExit(f"Missing sole ACE owner: {item}")
+if not re.search(
+    r"(?m)^project\(CMeta VERSION [0-9]+\.[0-9]+\.[0-9]+ LANGUAGES C CXX\)$",
+    cmake,
+):
+    raise SystemExit("Missing versioned CMeta project identity")
 for line in cmake.splitlines():
     if re.search(r"\badd_subdirectory\((?:platform|concurrency|coroutine|native-io|cnet|utils|uri|unicode|idna|cserde|tinytest|asn1|vendor)\)", line):
         raise SystemExit(f"Native implementation compiled by Salts: {line}")
