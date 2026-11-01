@@ -107,4 +107,5 @@
   it from a direct `cmake -S` invocation fails before the sanitizer build.
 - Core URI configuration also needs the host-side re2c/Unicode tool contract.
   Reuse the same pinned `vcpkg-cache/setup-re2c-tools` action as Core CI for
-  native, cross and sanitizer builds instead of assuming runner packages.
+  native, cross and sanitizer builds instead of assuming runner packages, and
+  grant the workflow `packages: read` so its package download is authorized.

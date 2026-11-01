@@ -34,6 +34,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: read
 
 env:
   RELEASE_VERSION: 0.1.001

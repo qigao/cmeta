@@ -32,6 +32,7 @@ concurrency:
   cancel-in-progress: true
 permissions:
   contents: read
+  packages: read
 
 jobs:
   native-sanitizers:
