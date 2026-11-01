@@ -22,6 +22,9 @@
   action output and reject any actual CMake cache with
   `QIGAO_COMPILER_OBFUSCATION_ENABLED=ON`. Android remains target-owned by NDK
   Clang and a host cross-build must not be reported as device execution.
+- Keep both the per-RID SDK manifest and `packaging/nuget/feed_hygiene.py`
+  aligned on `protection=none`; otherwise all platform builds can pass while
+  the final fail-closed NuGet assembly rejects the correct artifacts.
 - CI path filters admit only product source/public-header directories (and the
   formal Lean source directories). Workflow, build/configuration, test, tool,
   documentation and packaging files must not independently trigger CI. Tag

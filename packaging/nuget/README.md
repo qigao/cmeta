@@ -13,9 +13,9 @@ The package contains eight LLVM-built install prefixes:
 Every prefix contains the pinned SaltsCore install plus the CMeta, ACE and
 CFlow install, including headers, libraries, `lib/cmake/SaltsCore` and
 `lib/cmake/Salts`. Desktop Release code is compiled with the pinned
-`vcpkg-cache` LLVM setup and its required product-wide obfuscator pass. Android
-uses the Android NDK Clang target toolchain; these cross-builds prove
-compile/install only, not device execution.
+`vcpkg-cache` LLVM setup in toolchain-only mode. Compiler obfuscation is
+disabled on every target. Android uses the Android NDK Clang target toolchain;
+these cross-builds prove compile/install only, not device execution.
 
 Select the prefix matching the target OS, CPU and ABI, add it to
 `CMAKE_PREFIX_PATH`, then use:
@@ -28,4 +28,4 @@ target_link_libraries(my_host PRIVATE CMeta::CMeta CMeta::ServiceHost)
 Windows payloads use llvm-mingw with UCRT and are not ABI-compatible with
 MSVC-built dependencies. Each prefix carries `salts-sdk-manifest.txt` with the
 release version, CMeta source SHA, pinned SaltsCore SHA, RID and compiler
-protection provenance.
+protection provenance (`none` for this release).

@@ -13,14 +13,14 @@ import zipfile
 
 
 RIDS = {
-    "linux-x64": "llvm-obfuscator",
-    "linux-arm64": "llvm-obfuscator",
-    "windows-x64": "llvm-obfuscator",
-    "windows-arm64": "llvm-obfuscator",
-    "macos-x64": "llvm-obfuscator",
-    "macos-arm64": "llvm-obfuscator",
-    "android-x64": "android-ndk-clang",
-    "android-arm64": "android-ndk-clang",
+    "linux-x64": "none",
+    "linux-arm64": "none",
+    "windows-x64": "none",
+    "windows-arm64": "none",
+    "macos-x64": "none",
+    "macos-arm64": "none",
+    "android-x64": "none",
+    "android-arm64": "none",
 }
 SHA = re.compile(r"^[0-9a-f]{40}$")
 PACKAGE_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
