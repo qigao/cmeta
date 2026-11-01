@@ -171,12 +171,14 @@ spec("CSTL trees") {
         check_true(cmeta_container_range_view(&tree,
                                               CMETA_CONTAINER_VIEW_DEFAULT,
                                               &range));
+        check_true((range.flags & CMETA_RANGE_CONSTRUCTS_VALUES) != 0u);
         for (key = 0; key < 32; ++key) {
             cmeta_gen_status status = cmeta_range_next(&range, &cursor, &entry);
             check_true(status == CMETA_GEN_VALUE ||
                        status == CMETA_GEN_VALUE_AND_DONE);
             check_equal(*(const int *)entry.key, key);
             check_equal(*(const long *)entry.value, (long)key * 10L);
+            range.element_type->traits->destroy(&entry);
         }
         btree_destroy(&tree);
     }
@@ -236,12 +238,14 @@ spec("CSTL trees") {
         check_true(cmeta_container_range_view(&tree,
                                               CMETA_CONTAINER_VIEW_ENTRIES,
                                               &range));
+        check_true((range.flags & CMETA_RANGE_CONSTRUCTS_VALUES) != 0u);
         for (key = 0; key < 48; ++key) {
             cmeta_gen_status status = cmeta_range_next(&range, &cursor, &entry);
             check_true(status == CMETA_GEN_VALUE ||
                        status == CMETA_GEN_VALUE_AND_DONE);
             check_equal(*(const int *)entry.key, key);
             check_equal(*(const long *)entry.value, (long)key + 100L);
+            range.element_type->traits->destroy(&entry);
         }
         generation = bplus_tree_generation(&tree);
         check_equal(int_bplus_put(&tree, 12, 999L), STL_OK);
@@ -295,6 +299,7 @@ spec("CSTL trees") {
         check_true(cmeta_container_range_view(&tree,
                                               CMETA_CONTAINER_VIEW_ENTRIES,
                                               &range));
+        check_true((range.flags & CMETA_RANGE_CONSTRUCTS_VALUES) != 0u);
         for (key = 3; key < 4; ++key) {
             cmeta_gen_status status = cmeta_range_next(&range, &cursor,
                                                        &entry);
@@ -302,6 +307,7 @@ spec("CSTL trees") {
                        status == CMETA_GEN_VALUE_AND_DONE);
             check_equal(*(const int *)entry.key, key);
             check_equal(*(const long *)entry.value, (long)key + 100L);
+            range.element_type->traits->destroy(&entry);
         }
         check_equal(cmeta_range_next(&range, &cursor, &entry),
                     CMETA_GEN_DONE);
@@ -504,6 +510,8 @@ spec("CSTL trees") {
             check_true(cmeta_container_range_view(&bplus,
                                                   CMETA_CONTAINER_VIEW_ENTRIES,
                                                   &bplus_range));
+            check_true((btree_range.flags & CMETA_RANGE_CONSTRUCTS_VALUES) != 0u);
+            check_true((bplus_range.flags & CMETA_RANGE_CONSTRUCTS_VALUES) != 0u);
             for (ordered_key = 0; ordered_key < KEY_COUNT; ++ordered_key) {
                 if (!present[ordered_key]) continue;
                 cmeta_gen_status btree_status = cmeta_range_next(
@@ -520,6 +528,8 @@ spec("CSTL trees") {
                             model[ordered_key]);
                 check_equal(*(const long *)bplus_entry.value,
                             model[ordered_key]);
+                btree_range.element_type->traits->destroy(&btree_entry);
+                bplus_range.element_type->traits->destroy(&bplus_entry);
                 ++observed;
             }
             check_equal(observed, live);

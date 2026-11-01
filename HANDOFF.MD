@@ -113,3 +113,7 @@
   `CMAKE_TOOLCHAIN_FILE` and chainload the selected LLVM/LLVM-MinGW/NDK
   compiler toolchain with explicit target and host triplets. Passing only the
   compiler toolchain hides manifest dependencies such as SIMDe.
+- CSTL entry ranges set `CMETA_RANGE_CONSTRUCTS_VALUES`: every successful
+  `cmeta_range_next` returns one owned entry that must be destroyed through the
+  range element traits before reusing the output, even when the underlying key
+  and value are trivial scalar types.
