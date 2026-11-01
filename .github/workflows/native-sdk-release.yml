@@ -138,23 +138,23 @@ jobs:
             test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$SOURCE_SHA"
           fi
 
-      - name: Set up protected runner-native LLVM
+      - name: Set up runner-native LLVM toolchain
         id: llvm_native
         if: matrix.family == 'native'
         uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@22ab039b6505c06e7a2f03f723305050d775ecf3
         with:
-          build-type: Release
-          obfuscator: "true"
+          build-type: toolchain-only
+          obfuscator: "false"
 
-      - name: Set up protected Windows llvm-mingw UCRT
+      - name: Set up Windows llvm-mingw UCRT toolchain
         id: llvm_mingw
         if: matrix.family == 'windows'
         uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@22ab039b6505c06e7a2f03f723305050d775ecf3
         with:
           target: ${{ matrix.arch }}
           version: "20261020"
-          build-type: Release
-          obfuscator: "true"
+          build-type: toolchain-only
+          obfuscator: "false"
 
       - name: Set up Android LLVM host
         id: llvm_android_host
@@ -162,21 +162,29 @@ jobs:
         uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@22ab039b6505c06e7a2f03f723305050d775ecf3
         with:
           build-type: toolchain-only
+          obfuscator: "false"
 
       - name: Select target LLVM toolchain
         shell: bash
         env:
           NATIVE_TOOLCHAIN: ${{ steps.llvm_native.outputs.toolchain-file }}
+          NATIVE_OBFUSCATOR: ${{ steps.llvm_native.outputs.obfuscator-enabled }}
           WINDOWS_TOOLCHAIN: ${{ steps.llvm_mingw.outputs.toolchain-file }}
+          WINDOWS_OBFUSCATOR: ${{ steps.llvm_mingw.outputs.obfuscator-enabled }}
+          ANDROID_OBFUSCATOR: ${{ steps.llvm_android_host.outputs.obfuscator-enabled }}
         run: |
           set -euo pipefail
           case '${{ matrix.family }}' in
-            native) toolchain="$NATIVE_TOOLCHAIN" ;;
-            windows) toolchain="$WINDOWS_TOOLCHAIN" ;;
-            android) toolchain="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" ;;
+            native) toolchain="$NATIVE_TOOLCHAIN"; obfuscator="$NATIVE_OBFUSCATOR" ;;
+            windows) toolchain="$WINDOWS_TOOLCHAIN"; obfuscator="$WINDOWS_OBFUSCATOR" ;;
+            android) toolchain="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake"; obfuscator="$ANDROID_OBFUSCATOR" ;;
             *) echo 'unknown compiler family' >&2; exit 2 ;;
           esac
           test -f "$toolchain"
+          if [[ "$obfuscator" != false ]]; then
+            echo "compiler obfuscator must remain disabled, got: $obfuscator" >&2
+            exit 1
+          fi
           echo "CMETA_TARGET_TOOLCHAIN_FILE=$toolchain" >> "$GITHUB_ENV"
 
       - name: Build and install exact SaltsCore owner
@@ -254,11 +262,17 @@ jobs:
             }
             admit_android_abi build/core
             admit_android_abi "$CMETA_BINARY_DIR"
-          else
-            grep -Fq 'QIGAO_COMPILER_OBFUSCATION_ENABLED:BOOL=ON' build/core/CMakeCache.txt
-            grep -Fq 'QIGAO_COMPILER_OBFUSCATION_ENABLED:BOOL=ON' "$CMETA_BINARY_DIR/CMakeCache.txt"
-            grep -Fq 'QIGAO_COMPILER_OBFUSCATION_ENABLED:BOOL=OFF' "$CMETA_TEST_BINARY_DIR/CMakeCache.txt"
           fi
+          caches=(build/core/CMakeCache.txt "$CMETA_BINARY_DIR/CMakeCache.txt")
+          if [[ '${{ matrix.run_tests }}' == true ]]; then
+            caches+=("$CMETA_TEST_BINARY_DIR/CMakeCache.txt")
+          fi
+          for cache in "${caches[@]}"; do
+            if grep -Fq 'QIGAO_COMPILER_OBFUSCATION_ENABLED:BOOL=ON' "$cache"; then
+              echo "compiler obfuscation unexpectedly enabled in $cache" >&2
+              exit 1
+            fi
+          done
 
       - name: Execute native C11 C++17 DSO and CFlow tests
         if: matrix.run_tests
@@ -303,10 +317,6 @@ jobs:
             echo 'repository-owned target leaked into the Salts:: namespace' >&2
             exit 1
           fi
-          protection=llvm-obfuscator
-          if [[ '${{ matrix.family }}' == android ]]; then
-            protection=android-ndk-clang
-          fi
           printf '%s\n' \
             "release=$RELEASE_VERSION" \
             "package=$PACKAGE_VERSION" \
@@ -315,7 +325,7 @@ jobs:
             "rid=$RID" \
             'profile=release' \
             'compiler=llvm' \
-            "protection=$protection" \
+            'protection=none' \
             > "$CMETA_INSTALL_PREFIX/salts-sdk-manifest.txt"
 
       - uses: actions/upload-artifact@v4

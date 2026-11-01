@@ -53,12 +53,12 @@ The immutable external tag is `v0.1.000`; CMake and NuGet normalize the same
 version to `0.1.0`. `Salts.Native` contains combined SaltsCore and CMeta install
 trees for Linux, Windows, macOS and Android, each on x64 and arm64.
 
-Desktop targets use the pinned `qigao/vcpkg-cache` LLVM setup. Protected
-Release compilation enables its required product-wide LLVM pass and the
-workflow rejects caches without `QIGAO_COMPILER_OBFUSCATION_ENABLED=ON`.
-Android uses NDK Clang for target compilation. The six desktop targets execute
-the repository CTest suite on native runners; Android x64/arm64 are cross-build
-and install checks and do not claim device execution.
+Desktop targets use the pinned `qigao/vcpkg-cache` LLVM setup in toolchain-only
+mode. All targets build the Release profile with compiler obfuscation disabled;
+the workflow rejects an action output or CMake cache that enables it. Android
+uses NDK Clang for target compilation. The six desktop targets execute the
+repository CTest suite on native runners; Android x64/arm64 are cross-build and
+install checks and do not claim device execution.
 
 Each SDK artifact records both the CMeta source commit and the exact SaltsCore
 commit. The NuGet publisher combines those qualified artifacts without

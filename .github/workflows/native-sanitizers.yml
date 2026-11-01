@@ -1,7 +1,7 @@
 name: Salts LLVM sanitizers
 
-# Separate from the protected release graph because sanitizer instrumentation
-# changes code generation. Instrument the sole Salts 0.1 CMeta/ACE/CFlow owner
+# Separate from the release graph because sanitizer instrumentation changes
+# code generation. Instrument the sole Salts 0.1 CMeta/ACE/CFlow owner
 # with the sole pinned native SaltsCore 0.1 owner.
 on:
   pull_request:
