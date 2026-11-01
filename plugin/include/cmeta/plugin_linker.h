@@ -1,7 +1,7 @@
 #ifndef CMETA_PLUGIN_LINKER_H
 #define CMETA_PLUGIN_LINKER_H
 
-#include <salts/plugin_decl.h>
+#include <cmeta/plugin_decl.h>
 
 /* One explicit discovery set per DSO. Link fragments as objects (or explicitly
  * extract their archive members). The checked count makes omission fail closed.

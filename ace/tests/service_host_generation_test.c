@@ -2,7 +2,7 @@
 #include "configurator_test_fixture.h"
 #include "tinytest.h"
 
-#include <salts/service_host.h>
+#include <cmeta/service_host.h>
 #include <cmeta/object_scope.h>
 
 #ifndef COMPONENT_PROVIDER_SECONDARY_PLUGIN_PATH

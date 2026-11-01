@@ -1,9 +1,9 @@
 #ifndef SALTS_ABI_TEST_DSO_SCENARIO_H
 #define SALTS_ABI_TEST_DSO_SCENARIO_H
 #include "service_host_fixture.h"
-#include <salts/configurator.h>
-#include <salts/service_host.h>
-#include <salts/service_host_abi.h>
+#include <cmeta/configurator.h>
+#include <cmeta/service_host.h>
+#include <cmeta/service_host_abi.h>
 #include <stdio.h>
 #include <stdint.h>
 

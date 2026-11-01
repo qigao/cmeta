@@ -1,5 +1,5 @@
 /* Canonical Salts ServiceHost: single Plugin generation/Scope owner. */
-#include <salts/service_host.h>
+#include <cmeta/service_host.h>
 #include <salts/thread.h>
 
 #include <string.h>

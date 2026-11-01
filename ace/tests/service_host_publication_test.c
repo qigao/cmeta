@@ -1,7 +1,7 @@
 #include "service_host_publication_fixture.h"
 #include "configurator_test_fixture.h"
 #include "tinytest.h"
-#include <salts/native_io_ace_token.h>
+#include <cmeta/native_io_ace_token.h>
 #include <cmeta/ace_interceptor.h>
 
 /* This adversarial Provider corrupts its caller-owned ObjectRef from

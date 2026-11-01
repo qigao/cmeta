@@ -1,5 +1,5 @@
 /* Original PluginRegistry path validator against standalone Core. */
-#include <salts/plugin.h>
+#include <cmeta/plugin.h>
 #include <salts_core/utf8.h>
 #include <stdio.h>
 #include <string.h>

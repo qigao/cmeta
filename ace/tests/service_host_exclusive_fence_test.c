@@ -1,7 +1,7 @@
 #include "service_host_fixture.h"
 #include "tinytest.h"
 
-#include <salts/service_host.h>
+#include <cmeta/service_host.h>
 
 /*
  * ACE N -> N+1 exclusive-resource handoff.

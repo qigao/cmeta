@@ -3,7 +3,7 @@
 
 #include "service_host_fixture.h"
 
-#include <salts/service_host.h>
+#include <cmeta/service_host.h>
 
 typedef struct publication_generation_fixture {
     salts_service_host_generation generation;

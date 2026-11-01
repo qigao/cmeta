@@ -3,9 +3,9 @@
 #ifndef SALTS_SERVICE_HOST_H
 #define SALTS_SERVICE_HOST_H
 
-#include <salts/service_host_provider_abi.h>
-#include <salts/configurator.h>
-#include <salts/plugin.h>
+#include <cmeta/service_host_provider_abi.h>
+#include <cmeta/configurator.h>
+#include <cmeta/plugin.h>
 
 #include <stddef.h>
 #include <stdint.h>

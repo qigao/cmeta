@@ -1,7 +1,7 @@
 #ifndef CMETA_PLUGIN_DECL_H
 #define CMETA_PLUGIN_DECL_H
 
-#include <salts/plugin.h>
+#include <cmeta/plugin.h>
 #include <cmeta/invoke_decl.h>
 
 /* Publication is explicit and immutable. No registration, allocation or lease

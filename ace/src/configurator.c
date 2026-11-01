@@ -1,5 +1,5 @@
 /* Canonical Salts Configurator: single bounded static graph/lifecycle owner. */
-#include <salts/configurator.h>
+#include <cmeta/configurator.h>
 
 #include <string.h>
 

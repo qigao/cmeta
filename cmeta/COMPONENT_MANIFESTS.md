@@ -107,12 +107,12 @@ DSO
 
 ## Canonical construction and ownership
 
-`CMeta::ConfiguratorABI` provides `<salts/configurator_abi.h>`: Configurator
+`CMeta::ConfiguratorABI` provides `<cmeta/configurator_abi.h>`: Configurator
 status, dependency views and the version-2 ProviderBinding with exact create,
 activate and deactivate callbacks. These callbacks construct objects; service
 methods use the original typed CMeta Interface projection.
 
-`CMeta::ServiceHostProviderABI` provides `<salts/service_host_provider_abi.h>`.
+`CMeta::ServiceHostProviderABI` provides `<cmeta/service_host_provider_abi.h>`.
 Its reflected `salts_service_host_provider` Interface returns one borrowed
 `salts_configurator_provider_binding`. Dynamic publication requires contract
 `salts.service_host.provider.v2`, contract version 2 and binding ABI version 2.
@@ -124,9 +124,9 @@ composes that graph with the existing Plugin Registry, generations and Scopes.
 `CMeta::Plugin` remains the sole DSO loader and unload authority.
 
 ```c
-#include <salts/configurator.h>
-#include <salts/service_host.h>
-#include <salts/service_host_abi.h>
+#include <cmeta/configurator.h>
+#include <cmeta/service_host.h>
+#include <cmeta/service_host_abi.h>
 
 salts_configurator_context context = SALTS_CONFIGURATOR_CONTEXT_INIT;
 salts_service_host_runtime runtime = SALTS_SERVICE_HOST_RUNTIME_INIT;

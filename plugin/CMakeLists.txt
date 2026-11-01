@@ -41,7 +41,7 @@ install(
   TARGETS cmeta_plugin_abi cmeta_plugin
   EXPORT SaltsTargets)
 install(
-  DIRECTORY include/salts
+  DIRECTORY include/cmeta
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
 

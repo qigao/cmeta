@@ -1,6 +1,6 @@
-#include <salts/service_host_abi.h>
-#include <salts/configurator.h>
-#include <salts/service_host.h>
+#include <cmeta/service_host_abi.h>
+#include <cmeta/configurator.h>
+#include <cmeta/service_host.h>
 #include <cstdint>
 static_assert(SALTS_SERVICE_HOST_ABI_MAJOR == 2u, "unexpected ABI epoch");
 static_assert(SALTS_SERVICE_HOST_ABI_VERSION == 0x00020000u, "unexpected ABI version");

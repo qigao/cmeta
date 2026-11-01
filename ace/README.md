@@ -85,8 +85,8 @@ target_link_libraries(my_host PRIVATE CMeta::ServiceHost)
 ```
 
 Provider DSOs use `CMeta::ServiceHostProviderABI` and `CMeta::PluginABI`.
-The public headers are `salts/configurator.h`, `salts/configurator_abi.h`, `salts/service_host.h`,
-`salts/service_host_provider_abi.h` and `salts/service_host_abi.h`.
+The public headers are `cmeta/configurator.h`, `cmeta/configurator_abi.h`, `cmeta/service_host.h`,
+`cmeta/service_host_provider_abi.h` and `cmeta/service_host_abi.h`.
 
 Release qualification verifies the installed exports and ABI header for eight
 RIDs: Linux, Windows, macOS and Android, each on x64 and arm64.

@@ -89,7 +89,7 @@ Status vocabulary:
 ## Grounded implementation / conformance evidence
 
 - **Canonical pattern primitives:** [PATTERNS.md](PATTERNS.md), [Interface source](include/cmeta/interface.h), [Function metadata](include/cmeta/function.h), [Object Interface](include/cmeta/object_interface.h), [pattern C11/C++17 conformance](tests/cmeta_pattern_cases.h).
-- **Component:** [declaration](include/cmeta/component.h), [runtime](../ace/include/salts/configurator.h), [ServiceHost scopes](../ace/include/salts/service_host.h); freeze tests and generation/epoch evidence in [ACE_FREEZE.md](ACE_FREEZE.md).
+- **Component:** [declaration](include/cmeta/component.h), [runtime](../ace/include/cmeta/configurator.h), [ServiceHost scopes](../ace/include/cmeta/service_host.h); freeze tests and generation/epoch evidence in [ACE_FREEZE.md](ACE_FREEZE.md).
 - **Reactor / Proactor:** [NativeIO public model](../native-io/include/salts/native_io.h) + [backend implementation](../native-io/src/native_io.c) + [native tests](../native-io/tests/native_io_test.c); [CNet](../cnet/README.md). Backend-kind distinction is explicit: epoll/kqueue = readiness; IOCP/io_uring = completion. Do not create another loop.
 - **Acceptor-Connector:** [real TCP ACE conformance](../cnet/tests/cnet_ace_acceptor_connector_test.c).
 - **Active Object / Half-Sync:** [Actor conformance](../cflow/tests/cflow_actor_test.c), [TCP → Channel → Actor fixture](../cflow/cnet-adapter/tests/cflow_ace_half_sync_async_test.c), [ACE_FREEZE.md](ACE_FREEZE.md).
@@ -117,7 +117,7 @@ frozen SHA `02b741a` does **not** qualify these new commits.
 | Pattern | Source / conformance | Remaining gate |
 |---|---|---|
 | Interceptor | [typed finite chain](include/cmeta/ace_interceptor.h) + C11/C++17 [pattern cases](tests/cmeta_pattern_cases.h) | Exact native FunctionAbi alignment, callback/Plugin lifetime and latest-head CI |
-| ACT | [NativeIO typed token](../native-io/include/salts/native_io_ace_token.h) + [real read/cancel tests](../native-io/tests/native_io_test.c) + [C++ test](../native-io/tests/native_io_header_cpp_test.cpp) | Further close/race, external downstream qualification and latest-head CI |
+| ACT | [NativeIO typed token](../ace/include/cmeta/native_io_ace_token.h) + [real read/cancel tests](../native-io/tests/native_io_test.c) + [C++ test](../native-io/tests/native_io_header_cpp_test.cpp) | Further close/race, external downstream qualification and latest-head CI |
 | Strategized Locking | [fully reflected Lockable Interface](include/cmeta/ace_synchronization.h) + [mutex/RW tests](tests/cmeta_ace_sync_cases.h) | Additional policy-admission/lock ordering checks, CI |
 | Thread-Safe Interface | [typed guarded public call](include/cmeta/ace_synchronization.h) + [concurrent counter](tests/cmeta_ace_sync_cases.h) | Negative native ABI and thread-safety contract/TSan, CI |
 | Monitor Object | [real guarded monitor fixture](tests/cmeta_ace_sync_cases.h), using Platform condition | More cancellation/timeout/fairness cases, CI |

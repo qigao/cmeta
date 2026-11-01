@@ -1,7 +1,7 @@
 #ifndef SALTS_CONFIGURATOR_CANDIDATE_TEST_FIXTURE_H
 #define SALTS_CONFIGURATOR_CANDIDATE_TEST_FIXTURE_H
 
-#include <salts/configurator.h>
+#include <cmeta/configurator.h>
 
 #define TEST_LOG_METHODS(X, I) \
     X(I, R0, int, get, _)

@@ -286,6 +286,13 @@ jobs:
           set -euo pipefail
           test -f "$CMETA_INSTALL_PREFIX/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$CMETA_INSTALL_PREFIX/lib/cmake/SaltsCore/SaltsCoreConfig.cmake"
+          for header in configurator.h configurator_abi.h service_host.h \
+              service_host_abi.h service_host_provider_abi.h \
+              native_io_ace_token.h plugin.h plugin_decl.h plugin_linker.h \
+              plugin_scope.h; do
+            test -f "$CMETA_INSTALL_PREFIX/include/cmeta/$header"
+            test ! -e "$CMETA_INSTALL_PREFIX/include/salts/$header"
+          done
           targets="$CMETA_INSTALL_PREFIX/lib/cmake/Salts/SaltsTargets.cmake"
           for target in CMeta ConfiguratorABI PluginABI Plugin \
               ServiceHostProviderABI Configurator ServiceHost CFlow; do

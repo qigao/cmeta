@@ -1,7 +1,7 @@
 #ifndef SALTS_SERVICE_HOST_FIXTURE_H
 #define SALTS_SERVICE_HOST_FIXTURE_H
 
-#include <salts/service_host_provider_abi.h>
+#include <cmeta/service_host_provider_abi.h>
 
 #define COMPONENT_PROVIDER_EXPORT_ID "component-provider"
 #define COMPONENT_PROVIDER_AUX_EXPORT_ID "component-provider-aux"

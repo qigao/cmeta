@@ -1,5 +1,5 @@
-#include <salts/service_host_abi.h>
-#include <salts/service_host.h>
+#include <cmeta/service_host_abi.h>
+#include <cmeta/service_host.h>
 uint32_t salts_service_host_abi_version(void)
 {
     return SALTS_SERVICE_HOST_ABI_VERSION;

@@ -1,7 +1,7 @@
 #ifndef CMETA_PLUGIN_SCOPE_H
 #define CMETA_PLUGIN_SCOPE_H
 
-#include <salts/plugin.h>
+#include <cmeta/plugin.h>
 #include <cmeta/cleanup.h>
 #include <stdlib.h>
 

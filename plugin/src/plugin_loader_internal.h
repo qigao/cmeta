@@ -1,7 +1,7 @@
 #ifndef CMETA_PLUGIN_LOADER_INTERNAL_H
 #define CMETA_PLUGIN_LOADER_INTERNAL_H
 
-#include <salts/plugin.h>
+#include <cmeta/plugin.h>
 
 typedef struct cmeta_plugin_library {
     void *handle;

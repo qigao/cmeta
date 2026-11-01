@@ -1,4 +1,4 @@
-#include <salts/configurator.h>
+#include <cmeta/configurator.h>
 #include "tinytest.hpp"
 
 suite("Salts Component C++ header") {

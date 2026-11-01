@@ -58,13 +58,13 @@ install(TARGETS salts_configurator_abi salts_service_host_provider_abi
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES
-  include/salts/configurator_abi.h
-  include/salts/service_host_provider_abi.h
-  include/salts/configurator.h
-  include/salts/service_host.h
-  include/salts/service_host_abi.h
-  include/salts/native_io_ace_token.h
-  DESTINATION include/salts)
+  include/cmeta/configurator_abi.h
+  include/cmeta/service_host_provider_abi.h
+  include/cmeta/configurator.h
+  include/cmeta/service_host.h
+  include/cmeta/service_host_abi.h
+  include/cmeta/native_io_ace_token.h
+  DESTINATION include/cmeta)
 
 if(BUILD_TESTING)
   add_subdirectory(tests)

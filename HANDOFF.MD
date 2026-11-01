@@ -52,6 +52,10 @@
   qigao/salts-core owners such as `Salts::Core`, `Salts::Platform` and
   `Salts::NativeIO` retain the `Salts::` namespace; do not add compatibility
   aliases for the old repository-owned names.
+- Repository-owned public headers use `include/cmeta/`: ACE Configurator /
+  ServiceHost and Plugin headers were moved from `include/salts/`. The
+  `include/salts/` namespace is reserved for imported qigao/salts-core headers;
+  do not restore forwarding headers or duplicate compatibility trees.
 - Keep exactly three non-overlapping workflows: eight-RID LLVM SDK/release,
   LLVM sanitizers, and narrow Lean generated-contract verification. The
   redundant Linux source-cutover workflow was removed. Native workflow path

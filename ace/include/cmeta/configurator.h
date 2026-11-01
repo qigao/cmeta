@@ -3,7 +3,7 @@
 #ifndef SALTS_CONFIGURATOR_H
 #define SALTS_CONFIGURATOR_H
 
-#include <salts/configurator_abi.h>
+#include <cmeta/configurator_abi.h>
 
 #ifdef __cplusplus
 extern "C" {

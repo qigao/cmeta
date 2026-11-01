@@ -1,4 +1,4 @@
-#include <salts/plugin_decl.h>
+#include <cmeta/plugin_decl.h>
 
 /* A passive, no-export DSO exercises the real loader and Registry without
  * introducing a second lifecycle owner or source-level callback fixture. */

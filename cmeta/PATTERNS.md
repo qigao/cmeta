@@ -12,7 +12,7 @@ CMeta composition evidence, already-reused runtimes and post-freeze gaps.
 > latest-HEAD CI, packaging and ABI decisions are still outstanding.
 > The Pattern interfaces are `<cmeta/ace_interceptor.h>` and
 > `<cmeta/ace_synchronization.h>`; ACT is a thin typed adapter over
-> NativeIO in `<salts/native_io_ace_token.h>`. Monitor uses an existing
+> NativeIO in `<cmeta/native_io_ace_token.h>`. Monitor uses an existing
 > CMeta Interface with Platform mutex/condition instead of a new runtime.
 
 > The next public Salts release is **2.3.0** (latest published: 2.2.0).

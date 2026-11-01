@@ -1,5 +1,5 @@
 #include "tinytest.h"
-#include <salts/service_host.h>
+#include <cmeta/service_host.h>
 #include "service_host_runtime_failure_adapter.h"
 
 /* The test-only adapter compiles the production lifecycle TU against these

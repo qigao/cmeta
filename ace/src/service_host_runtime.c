@@ -1,6 +1,6 @@
 /* Canonical ServiceHost runtime synchronization and resource admission.
  * Plugin loading and lifecycle authority remain in CMeta::Plugin. */
-#include <salts/service_host.h>
+#include <cmeta/service_host.h>
 #include <salts/thread.h>
 
 #include <string.h>

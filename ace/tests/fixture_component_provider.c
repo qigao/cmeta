@@ -1,5 +1,5 @@
 #include "service_host_fixture.h"
-#include <salts/plugin_decl.h>
+#include <cmeta/plugin_decl.h>
 
 cmeta_component(ServiceHostProviderFixture,
     cmeta_provides(service_host_provider_value));

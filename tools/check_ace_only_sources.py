@@ -24,6 +24,9 @@ for name in ("vcpkg.json", "vcpkg-configuration.json"):
 for name in (".github/actions", "cmake/vcpkg-cache.nuget.config"):
     if (ROOT / name).exists():
         raise SystemExit(f"Obsolete native build dependency: {name}")
+for name in ("ace/include/salts", "plugin/include/salts"):
+    if (ROOT / name).exists():
+        raise SystemExit(f"Repository-owned header restored under Core namespace: {name}")
 if not (ROOT / "CMakeUserPresets.json").is_file():
     raise SystemExit("Missing version-controlled first-party user presets")
 

@@ -1,5 +1,5 @@
-#include <salts/service_host_abi.h>
-#include <salts/configurator.h>
+#include <cmeta/service_host_abi.h>
+#include <cmeta/configurator.h>
 _Static_assert(SALTS_SERVICE_HOST_ABI_MAJOR == 2u, "ABI epoch mismatch");
 int main(void)
 {

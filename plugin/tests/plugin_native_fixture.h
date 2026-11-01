@@ -1,6 +1,6 @@
 #ifndef CMETA_PLUGIN_NATIVE_FIXTURE_H
 #define CMETA_PLUGIN_NATIVE_FIXTURE_H
-#include <salts/plugin_decl.h>
+#include <cmeta/plugin_decl.h>
 #include <cmeta/native/thunk.h>
 #include <cmeta/invokable.h>
 

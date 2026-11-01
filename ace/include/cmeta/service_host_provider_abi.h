@@ -1,7 +1,7 @@
 #ifndef SALTS_SERVICE_HOST_PROVIDER_ABI_H
 #define SALTS_SERVICE_HOST_PROVIDER_ABI_H
 
-#include <salts/configurator_abi.h>
+#include <cmeta/configurator_abi.h>
 
 #ifdef __cplusplus
 extern "C" {
