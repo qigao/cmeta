@@ -5,7 +5,7 @@
 #include "machine_instance_internal.h"
 #include "statechart_instance_internal.h"
 
-#include <salts/thread.h>
+#include <thread.h>
 
 #include <stdatomic.h>
 #include <stdint.h>

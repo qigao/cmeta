@@ -1,8 +1,8 @@
 #include <cflow/actor.h>
 #include "cflow_ace_active_object_pattern.h"
 
-#include <salts/clock.h>
-#include <salts/thread.h>
+#include <clock.h>
+#include <thread.h>
 
 #include "tinytest.h"
 

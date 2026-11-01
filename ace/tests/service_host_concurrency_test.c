@@ -1,6 +1,6 @@
 #include "service_host_publication_fixture.h"
 #include "tinytest.h"
-#include <salts/thread.h>
+#include <thread.h>
 
 enum { PUBLICATION_READERS = 4, PUBLICATION_RACE_ROUNDS = 32 };
 static const uint64_t PUBLICATION_WAIT_NS = UINT64_C(5000000000);

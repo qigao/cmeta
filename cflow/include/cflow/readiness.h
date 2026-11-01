@@ -2,7 +2,7 @@
 #define CFLOW_READINESS_H
 
 #include <cflow/publishers.h>
-#include <salts/readiness.h>
+#include <readiness.h>
 
 #ifdef __cplusplus
 extern "C" {

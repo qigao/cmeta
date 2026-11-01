@@ -3,7 +3,7 @@
 
 #include <cflow/io_actor.h>
 #include <cflow/io_publisher.h>
-#include <salts/native_io.h>
+#include <native_io.h>
 
 #include <stdbool.h>
 #include <stddef.h>

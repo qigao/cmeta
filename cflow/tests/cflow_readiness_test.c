@@ -2,8 +2,8 @@
 #include <cflow/readiness.h>
 
 #include "../src/readiness_internal.h"
-#include <salts/error_codes.h>
-#include <salts/thread.h>
+#include <error_codes.h>
+#include <thread.h>
 
 #include "readiness_contract_suite.h"
 #include "tinytest.h"

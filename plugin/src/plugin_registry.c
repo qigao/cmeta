@@ -2,8 +2,8 @@
 
 #include "plugin_loader_internal.h"
 
-#include <salts/thread.h>
-#include <salts_core/utf8.h>
+#include <thread.h>
+#include <utf8.h>
 
 #include <limits.h>
 #include <stdlib.h>

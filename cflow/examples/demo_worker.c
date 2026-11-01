@@ -1,7 +1,7 @@
 #include <cflow/reactive.h>
 #include <cflow/publishers.h>
 #include <cflow/stream.h>
-#include <salts/thread.h>
+#include <thread.h>
 #include "ops.h"
 
 #include <stdatomic.h>

@@ -1,7 +1,7 @@
 # CMeta.Native
 
 Immutable native SDK payloads published from `qigao/cmeta`. Release tag
-`v0.1.002` maps to the normalized CMake and NuGet version `0.1.2`.
+`v0.1.003` maps to the normalized CMake and NuGet version `0.1.3`.
 
 The package contains eight LLVM-built install prefixes:
 

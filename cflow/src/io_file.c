@@ -2,8 +2,8 @@
 
 #include "io_native_internal.h"
 
-#include <salts/error_codes.h>
-#include <salts/thread.h>
+#include <error_codes.h>
+#include <thread.h>
 
 #include <limits.h>
 #include <stdlib.h>

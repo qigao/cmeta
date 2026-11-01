@@ -1,6 +1,6 @@
 #include <cflow/cflow.h>
 #include <cnet/cnet.h>
-#include <salts/clock.h>
+#include <clock.h>
 #include "tinytest.h"
 
 #include <stdatomic.h>

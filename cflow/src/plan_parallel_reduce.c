@@ -2,7 +2,7 @@
 #include "executor_internal.h"
 #include "result_storage.h"
 #include "value_storage.h"
-#include <salts/thread.h>
+#include <thread.h>
 
 #include <stdint.h>
 #include <stdlib.h>

@@ -2,7 +2,7 @@
 #define CMETA_LOCAL_H
 
 #include <cmeta/lifecycle.h>
-#include <salts/thread.h>
+#include <thread.h>
 
 #include <stdbool.h>
 

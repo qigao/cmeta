@@ -4,7 +4,7 @@
 #include "executor_internal.h"
 #include "event_internal.h"
 
-#include <salts/thread.h>
+#include <thread.h>
 
 #include <assert.h>
 #include <stdint.h>

@@ -3,7 +3,7 @@
 #include <cflow/cflow.h>
 #include <cflow/function_projection.h>
 #include <cflow/plan_internal.h>
-#include <salts/thread.h>
+#include <thread.h>
 
 #include <stdint.h>
 #include <stdatomic.h>

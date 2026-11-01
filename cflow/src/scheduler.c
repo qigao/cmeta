@@ -3,7 +3,7 @@
 #include <cflow/scheduler.h>
 #include "scheduler_internal.h"
 #include "timer_queue.h"
-#include <salts/thread.h>
+#include <thread.h>
 
 #include <stdlib.h>
 #include <string.h>

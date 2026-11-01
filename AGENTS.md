@@ -9,8 +9,9 @@ cryptographic code and ASN.1 belong to **qigao/crypto**. Source ownership is sin
 
 - Repository-owned public CMake targets use `CMeta::XXX`; imported native
   owners from qigao/salts-core keep their canonical `Salts::XXX` names.
-- Repository-owned public headers live under `include/cmeta/`; `include/salts/`
-  is reserved for imported qigao/salts-core APIs.
+- Repository-owned public headers live under `include/cmeta/`. Imported
+  qigao/salts-core headers use their published flat or functional paths; no
+  `include/salts/` or `include/salts_core/` namespace exists.
 - No legacy interface, compatibility shim, alias, fallback, provider DSO
   for Crypto, copied native implementation or alternate build profile.
 - No CMeta dependency is permitted inside the Core/Crypto repositories.

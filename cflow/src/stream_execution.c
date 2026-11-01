@@ -3,7 +3,7 @@
 #include <cflow/lower.h>
 #include <cflow/reactive.h>
 #include <cflow/publishers.h>
-#include <salts/thread.h>
+#include <thread.h>
 
 #include "publishers_internal.h"
 #include "subscription_internal.h"

@@ -1,6 +1,6 @@
 #include <cflow/actor.h>
-#include <salts/clock.h>
-#include <salts/thread.h>
+#include <clock.h>
+#include <thread.h>
 #include <fmt.h>
 #include <tlog.h>
 #include "tinytest.h"

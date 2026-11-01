@@ -1,10 +1,10 @@
 #include <cflow/cflow.h>
 #include <cflow/status.h>
 #include <cmeta/cmeta.h>
-#include <salts/native_io.h>
-#include <salts/thread.h>
-#include <salts/error_codes.h>
-#include <salts_core/runtime_abi.h>
+#include <native_io.h>
+#include <thread.h>
+#include <error_codes.h>
+#include <runtime_abi.h>
 #include <cstring>
 #include <type_traits>
 

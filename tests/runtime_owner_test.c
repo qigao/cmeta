@@ -2,10 +2,10 @@
 #include <cmeta/service_host.h>
 #include <cmeta/plugin.h>
 #include <cmeta/service_host_abi.h>
-#include <salts_core/runtime_abi.h>
-#include <salts_core/utf8.h>
+#include <runtime_abi.h>
+#include <utf8.h>
 #include <cmeta_buffer.h>
-#include <salts/thread.h>
+#include <thread.h>
 #include <stdio.h>
 #include <string.h>
 #ifndef SALTS_TEST_PROVIDER

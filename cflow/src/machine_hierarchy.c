@@ -3,7 +3,7 @@
 #include "machine_instance_internal.h"
 #include "timer_event_internal.h"
 
-#include <salts/thread.h>
+#include <thread.h>
 
 #include <stdint.h>
 #include <stdlib.h>

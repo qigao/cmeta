@@ -1,6 +1,6 @@
 #include <cflow/subflow.h>
 #include <cflow/publishers.h>
-#include <salts/thread.h>
+#include <thread.h>
 
 #include "value_storage.h"
 

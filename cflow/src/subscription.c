@@ -6,7 +6,7 @@
 #include <cflow/subflow.h>
 #include <cflow/coord.h>
 #include <cflow/relation_exec.h>
-#include <salts/thread.h>
+#include <thread.h>
 
 #include "value_storage.h"
 #include "subscription_internal.h"

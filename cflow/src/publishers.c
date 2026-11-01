@@ -1,5 +1,5 @@
 #include <cflow/publishers.h>
-#include <salts/thread.h>
+#include <thread.h>
 
 #include "publishers_internal.h"
 #include "value_storage.h"

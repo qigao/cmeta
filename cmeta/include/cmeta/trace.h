@@ -2,7 +2,7 @@
 #define CMETA_TRACE_H
 
 #include <cmeta/fastpath.h>
-#include <salts/fastpath.h>
+#include <fastpath.h>
 #include <cmeta/struct.h>
 
 #ifndef __cplusplus

@@ -2,7 +2,7 @@
 #include <cflow/executor.h>
 #include <cflow/scheduler.h>
 #include <cflow/time.h>
-#include <salts/thread.h>
+#include <thread.h>
 #include "scheduler_internal.h"
 #include "timer_queue.h"
 #include "tinytest.h"

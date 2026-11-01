@@ -5,7 +5,7 @@
 #include "statechart_internal.h"
 #include "value_storage.h"
 
-#include <salts/thread.h>
+#include <thread.h>
 
 #include <stdatomic.h>
 #include <stdlib.h>

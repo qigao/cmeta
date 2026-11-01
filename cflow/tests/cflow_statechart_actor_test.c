@@ -1,7 +1,7 @@
 #include <cflow/cflow.h>
 
-#include <salts/clock.h>
-#include <salts/thread.h>
+#include <clock.h>
+#include <thread.h>
 
 #include "tinytest.h"
 

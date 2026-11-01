@@ -1,7 +1,7 @@
 #include "cmeta_trace_fixture.h"
 #include <cmeta/manifest.h>
 #include "tinytest.h"
-#include <salts/thread.h>
+#include <thread.h>
 
 enum { TRACE_WORKERS = 4, TRACE_ROUNDS = 10000, TRACE_REQUEST = 42, TRACE_STATUS = 200 };
 cmeta_tracepoint(http_request, cmeta_field(uint64_t, request_id) cmeta_field(int, status));

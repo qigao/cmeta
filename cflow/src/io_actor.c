@@ -1,8 +1,8 @@
 #include <cflow/io_actor.h>
 
-#include <salts/disruptor.h>
-#include <salts/error_codes.h>
-#include <salts/thread.h>
+#include <disruptor.h>
+#include <error_codes.h>
+#include <thread.h>
 
 #include <limits.h>
 #include <stdlib.h>
