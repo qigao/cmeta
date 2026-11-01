@@ -261,16 +261,16 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$RUNNER_OS" == Windows ]]; then
-            export PATH="$CMETA_INSTALL_PREFIX/bin:$PATH"
+            export PATH="$CMETA_INSTALL_PREFIX/bin:$SALTSCORE_PREFIX/bin:$PATH"
           elif [[ "$RUNNER_OS" == macOS ]]; then
-            export DYLD_LIBRARY_PATH="$CMETA_INSTALL_PREFIX/lib:${DYLD_LIBRARY_PATH:-}"
+            export DYLD_LIBRARY_PATH="$CMETA_INSTALL_PREFIX/lib:$SALTSCORE_PREFIX/lib:${DYLD_LIBRARY_PATH:-}"
           else
-            export LD_LIBRARY_PATH="$CMETA_INSTALL_PREFIX/lib:${LD_LIBRARY_PATH:-}"
+            export LD_LIBRARY_PATH="$CMETA_INSTALL_PREFIX/lib:$SALTSCORE_PREFIX/lib:${LD_LIBRARY_PATH:-}"
           fi
           ctest --preset llvm-test-ci
           python3 tools/audit_native_owner.py \
             --core-tools _core_owner/tools \
-            --core-prefix "$CMETA_INSTALL_PREFIX" \
+            --core-prefix "$SALTSCORE_PREFIX" \
             --salts-prefix "$CMETA_INSTALL_PREFIX" \
             --build-dir "$CMETA_TEST_BINARY_DIR" \
             --report "$CMETA_TEST_BINARY_DIR/one-owner-audit.json"

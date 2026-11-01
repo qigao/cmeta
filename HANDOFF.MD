@@ -117,3 +117,11 @@
   `cmeta_range_next` returns one owned entry that must be destroyed through the
   range element traits before reusing the output, even when the underlying key
   and value are trivial scalar types.
+- After Core and CMeta are installed into separate prefixes, native test loader
+  paths must contain both prefixes and `audit_native_owner.py --core-prefix`
+  must point at the Core prefix. Pointing both owners at the CMeta prefix hides
+  the dependency during local tests and makes the physical-owner audit fail.
+- A misalignment test must start with explicitly aligned storage before adding
+  an offset. The implementation does not guarantee the natural alignment of an
+  ordinary `unsigned char[]`; on ARM64, `storage + 1` can therefore be aligned
+  by accident and make a valid portability test fail.
