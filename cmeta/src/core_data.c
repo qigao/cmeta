@@ -111,10 +111,7 @@ bool cmeta_uuid_cmeta_data_valid(const cmeta_data_desc *candidate) {
 
   if (ops == NULL || fixed_ops == NULL) return false;
 
-  return strcmp(candidate->stable_id, "salts.uuid.data") == 0 &&
-         strcmp(candidate->display_name, "cmeta_uuid_t") == 0 &&
-         candidate->kind == CMETA_DATA_STRING &&
-         cmeta_type_equal(candidate->storage_type, &cmeta_uuid_cmeta_type) &&
+  return cmeta_data_desc_equal(candidate, &cmeta_uuid_cmeta_data) &&
          candidate->storage_type->kind == cmeta_uuid_cmeta_type.kind &&
          candidate->storage_type->size == sizeof(cmeta_uuid_t) &&
          candidate->storage_type->align == CMETA_ALIGNOF(cmeta_uuid_t) &&
@@ -122,15 +119,7 @@ bool cmeta_uuid_cmeta_data_valid(const cmeta_data_desc *candidate) {
              CMETA_DATA_BUFFER_OWNED &&
          ops->abi_version == CMETA_DATA_BUFFER_OPS_ABI_VERSION &&
          ops->ownership == CMETA_DATA_BUFFER_OWNED &&
-         ops->is_zero == cmeta_uuid_cmeta_buffer_ops.is_zero &&
-         ops->assign == cmeta_uuid_cmeta_buffer_ops.assign &&
-         ops->restore_zero == cmeta_uuid_cmeta_buffer_ops.restore_zero &&
-         ops->init_zero == cmeta_uuid_cmeta_buffer_ops.init_zero &&
-         ops->move == cmeta_uuid_cmeta_buffer_ops.move &&
-         fixed_ops->extent == sizeof(cmeta_uuid_t) &&
-         fixed_ops->is_zero == cmeta_uuid_cmeta_fixed_ops.is_zero &&
-         fixed_ops->copy == cmeta_uuid_cmeta_fixed_ops.copy &&
-         fixed_ops->restore_zero == cmeta_uuid_cmeta_fixed_ops.restore_zero;
+         fixed_ops->extent == sizeof(cmeta_uuid_t);
 }
 
 static bool cmeta_tstr_cmeta_is_zero(const void *object) {
