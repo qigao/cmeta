@@ -12,7 +12,7 @@
 | A：#976 声明基础 | `include/cmeta/{pp,compiler,function,interface,struct}.h` 及声明生成器；有限 PP、编译器能力、精确类型证明 | 无新 runtime authority | `cmeta_pp_*`、`cmeta_lowering_*`、`cmeta_interface_arity_*`、compile-fail、C/C++ installed SDK |
 | B：#980/#982/#983 生命周期 | `include/cmeta/{lifecycle,scope,cleanup,object_scope}.h`；static/checked admission、partial rollback、LIFO、move、exception、no-fail discharge | A；ObjectRef 使用 C 的唯一模型 | `cmeta_scope_*`、`cmeta_cleanup_*`、`cmeta_object_scope_*`、`cmeta_pool_cpp_test`、Plugin scope/fatal tests |
 | C：receiver 收敛 | `include/cmeta/{operation,function,invokable,object}.h` 及对应 `src/`；FunctionAbi 是唯一 callable 事实源 | A；与 B 的 ObjectRef 适配一起验收 | `cmeta_operation_test`、`cmeta_invokable_test`、`cstl_semantic_projection_test`、`cflow_function_projection_test`、旧 epoch 拒绝 |
-| D：#977 Plugin | `plugin/include/salts/plugin*.h`、`plugin/src/`；精确 adapter、manifest/query、跨 TU 聚合与 lease | A、C；scope 适配使用 B | `cmeta_plugin_*`、ELF/Mach-O/COFF linker tests、installed SDK |
+| D：#977 Plugin | `plugin/include/cmeta/plugin*.h`、`plugin/src/`；精确 adapter、manifest/query、跨 TU 聚合与 lease | A、C；scope 适配使用 B | `cmeta_plugin_*`、ELF/Mach-O/COFF linker tests、installed SDK |
 | E：#981 可选 native | `cmeta/native/`、`include/cmeta/native*.h`、相关 Platform executable-memory backend | A–D admission 已完成后才可执行 specialization | `cmeta_native_*`、W^X/ABI/失败回滚、独立 benchmark；不作为 B 的前提 |
 | F：独立修复 | CNet、NativeIO、runner、benchmark workflow | 各模块自身契约 | 各模块 CTest 与独立 benchmark jobs |
 | G：#985 TinyMock 消费者 | [`qigao/salts-utils/tinymock`](https://github.com/qigao/salts-utils/tree/move/tinymock-simd-from-salts/tinymock)（当前唯一源码归属）；history/action/return 只拥有行为状态，复用 CMeta 类型和 ownership | A–D；不依赖 E | `cmeta_tinymock_*`、TinyTest 独立链接、C/C++ installed SDK |

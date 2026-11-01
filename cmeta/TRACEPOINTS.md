@@ -53,7 +53,7 @@ int main(void) {
 }
 ```
 
-示例行为由 `cmeta_trace_test` 的正式 TinyTest 用例验证，另外覆盖失败和并发边界。独立示例需链接 `Salts::CMeta` 与 `Salts::Platform`。Manifest 的零 fingerprint 表示未声明 fingerprint，不是新的算法或有效性检查。
+示例行为由 `cmeta_trace_test` 的正式 TinyTest 用例验证，另外覆盖失败和并发边界。独立示例需链接 `CMeta::CMeta` 与 `Salts::Platform`。Manifest 的零 fingerprint 表示未声明 fingerprint，不是新的算法或有效性检查。
 
 ## 控制入口
 

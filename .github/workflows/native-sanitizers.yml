@@ -1,0 +1,118 @@
+name: Salts LLVM sanitizers
+
+# Separate from the release graph because sanitizer instrumentation changes
+# code generation. Instrument the sole Salts 0.1 CMeta/ACE/CFlow owner
+# with the sole pinned native SaltsCore 0.1 owner.
+on:
+  pull_request:
+    paths:
+      - "cmeta/include/**"
+      - "cmeta/src/**"
+      - "plugin/include/**"
+      - "plugin/src/**"
+      - "ace/include/**"
+      - "ace/src/**"
+      - "cflow/include/**"
+      - "cflow/src/**"
+  push:
+    branches: [master]
+    paths:
+      - "cmeta/include/**"
+      - "cmeta/src/**"
+      - "plugin/include/**"
+      - "plugin/src/**"
+      - "ace/include/**"
+      - "ace/src/**"
+      - "cflow/include/**"
+      - "cflow/src/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+
+jobs:
+  native-sanitizers:
+    name: Salts 0.1 LLVM ${{ matrix.kind }} sole native owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CC: clang
+      CXX: clang++
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: asan-ubsan
+            flags: "-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1"
+          - kind: tsan
+            flags: "-fsanitize=thread -fno-omit-frame-pointer -g -O1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select runner-native LLVM for non-published sanitizer builds
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@22ab039b6505c06e7a2f03f723305050d775ecf3
+        with:
+          build-type: toolchain-only
+      - uses: actions/checkout@v4
+        with:
+          repository: qigao/salts-core
+          ref: b083cb8517a585a9042eb30fc963890ac03d5a74
+          path: _core_owner
+          persist-credentials: false
+      - name: Install one exact shared Core native owner with instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check_ace_only_sources.py --core-root _core_owner
+          test "$(git -C _core_owner rev-parse HEAD)" = \
+            b083cb8517a585a9042eb30fc963890ac03d5a74
+          prefix="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
+          cmake -S _core_owner -B build-instrumented-core-${{ matrix.kind }} \
+            "-DCMAKE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE" \
+            -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTING=OFF \
+            -DSALTSCORE_BUILD_TINYTEST=ON \
+            "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_INSTALL_PREFIX=$prefix"
+          cmake --build build-instrumented-core-${{ matrix.kind }} --parallel 2
+          cmake --install build-instrumented-core-${{ matrix.kind }} \
+            --config RelWithDebInfo
+      - name: Build sole Salts 0.1 CMeta ACE CFlow sanitizer graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
+          salts="$RUNNER_TEMP/salts3-asan-${{ matrix.kind }}"
+          cmake -S . -B build-instrumented-salts-${{ matrix.kind }} \
+            "-DCMAKE_TOOLCHAIN_FILE=$QIGAO_COMPILER_TOOLCHAIN_FILE" \
+            -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DBUILD_TESTING=ON \
+            -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}" \
+            "-DCMAKE_PREFIX_PATH=$core" "-DCMAKE_INSTALL_PREFIX=$salts"
+          cmake --build build-instrumented-salts-${{ matrix.kind }} --parallel 2
+          cmake --install build-instrumented-salts-${{ matrix.kind }} \
+            --config RelWithDebInfo
+      - name: Execute full original source parity under fail-on-report sanitizers
+        shell: bash
+        run: |
+          set -euo pipefail
+          core="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
+          export LD_LIBRARY_PATH="$core/lib:${LD_LIBRARY_PATH:-}"
+          if [[ '${{ matrix.kind }}' == 'asan-ubsan' ]]; then
+            export ASAN_OPTIONS='detect_leaks=1:halt_on_error=1:abort_on_error=1'
+            export UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1'
+          else
+            export TSAN_OPTIONS='halt_on_error=1:exitcode=66'
+          fi
+          ctest --test-dir build-instrumented-salts-${{ matrix.kind }} \
+            -C RelWithDebInfo --output-on-failure --no-tests=error --timeout 120
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: salts-sanitizer-${{ matrix.kind }}-ctest
+          path: build-instrumented-salts-${{ matrix.kind }}/Testing/Temporary/LastTest.log
+          if-no-files-found: warn

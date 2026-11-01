@@ -33,7 +33,7 @@ def main() -> int:
               "darwin" if sys.platform == "darwin" else "linux")
     errors: list[str] = []
     report = {"schema_version": 1, "platform": system,
-              "package": "Salts 4.0 native API", "ok": False}
+              "package": "Salts 0.1 native API", "ok": False}
     try:
         core = args.core_prefix.resolve()
         salts = args.salts_prefix.resolve()

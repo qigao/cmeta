@@ -7,7 +7,7 @@ CFlow provides accompanying execution integrations built on CMeta.
 flowchart TD
     app["Applications and services"]
     utils["SaltsUtils: utilities, TinyMock, SIMD"]
-    salts["Salts 4: CMeta and ACE"]
+    salts["Salts 0.1: CMeta and ACE"]
     core["SaltsCore: native runtime, I/O, TinyTest"]
     crypto["Crypto: static algorithms, ASN.1, TLS"]
     app --> utils
@@ -37,7 +37,8 @@ complete SDK build is blocked. See the [current integration status](README.md#me
 
 ## Invariants
 
-1. Each exported target is **`Salts::Name`** regardless of owning package.
+1. This repository exports **`CMeta::Name`** targets. Imported native owners
+   from SaltsCore retain **`Salts::Name`**.
 2. Salts imports a clean, installed **shared SaltsCore** and never links or
    compiles a second copy of native state.
 3. No package aliases, 2.x fallback build, retained native implementation
@@ -50,6 +51,6 @@ complete SDK build is blocked. See the [current integration status](README.md#me
 7. Debug/tracing/metrics/adapters implemented with CMeta belong to Salts;
    underlying native resources and handles are owned by Core.
 
-See public headers in `cmeta/`, `component-runtime/`, `plugin/`, and
+See public headers in `cmeta/`, `ace/`, `plugin/`, and
 `cflow/` for concrete ABI and lifecycle contracts. The canonical installed
 SDK CI exercises genuine owner and Provider DSO unload paths.

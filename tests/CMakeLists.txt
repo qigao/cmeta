@@ -4,11 +4,11 @@ function(salts_native_case name source)
   add_executable(salts_native_${name} "${source}")
   target_compile_features(salts_native_${name} PRIVATE c_std_11 cxx_std_17)
   target_include_directories(salts_native_${name} PRIVATE
-    "${PROJECT_SOURCE_DIR}/component-runtime/tests"
+    "${PROJECT_SOURCE_DIR}/ace/tests"
     "${PROJECT_SOURCE_DIR}/cflow/src")
   target_link_libraries(salts_native_${name} PRIVATE
-    Salts::TinyTest Salts::CMeta Salts::CFlow Salts::ServiceHost
-    Salts::Plugin Salts::Core Salts::Platform Salts::NativeIO Salts::Concurrency)
+    Salts::TinyTest CMeta::CMeta CMeta::CFlow CMeta::ServiceHost
+    CMeta::Plugin Salts::Core Salts::Platform Salts::NativeIO Salts::Concurrency)
   if(WIN32)
     target_link_libraries(salts_native_${name} PRIVATE ws2_32)
   endif()
@@ -17,6 +17,8 @@ function(salts_native_case name source)
 endfunction()
 
 salts_native_case(plugin_utf8_path utf8_plugin_path_test.c)
+salts_native_case(cmeta_data_temp
+  "${PROJECT_SOURCE_DIR}/cmeta/tests/cmeta_data_temp_test.c")
 foreach(flow IN ITEMS status stream_slice ace_pipes_filters event_mailbox
     io_native_adapter io_native_sharded_adapter machine_instance)
   salts_native_case(cflow_${flow}
@@ -34,7 +36,7 @@ foreach(pair IN ITEMS "owner_c11|runtime_owner_test.c"
   add_executable(salts_${name} "${source}")
   target_compile_features(salts_${name} PRIVATE c_std_11 cxx_std_17)
   target_link_libraries(salts_${name} PRIVATE
-    Salts::ServiceHost Salts::Plugin Salts::CFlow Salts::Core
+    CMeta::ServiceHost CMeta::Plugin CMeta::CFlow Salts::Core
     Salts::NativeIO Salts::Platform)
   add_test(NAME salts.native.${name} COMMAND salts_${name})
 endforeach()

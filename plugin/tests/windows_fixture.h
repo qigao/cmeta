@@ -1,7 +1,7 @@
 #ifndef SALTS_PLUGIN_WINDOWS_FIXTURE_H
 #define SALTS_PLUGIN_WINDOWS_FIXTURE_H
 
-#include <salts/plugin_decl.h>
+#include <cmeta/plugin_decl.h>
 
 #define PLUGIN_WINDOWS_EXPORT_ID "windows.transform"
 #define PLUGIN_WINDOWS_CONTRACT_ID "test.plugin.windows.transform"

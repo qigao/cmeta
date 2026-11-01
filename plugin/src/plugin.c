@@ -1,4 +1,4 @@
-#include <salts/plugin.h>
+#include <cmeta/plugin.h>
 
 static bool bounded_string_valid(const char *value, size_t max_bytes) {
     size_t index;

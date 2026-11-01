@@ -18,19 +18,24 @@ MIGRATED = (
 for name in MIGRATED:
     if (ROOT / name).exists():
         raise SystemExit(f"Duplicate native ownership in Salts: {name}")
-for name in ("vcpkg.json", "vcpkg-configuration.json", "CMakeUserPresets.json"):
+for name in ("vcpkg.json", "vcpkg-configuration.json"):
     if (ROOT / name).exists():
         raise SystemExit(f"Obsolete dependency/compatibility manifest: {name}")
 for name in (".github/actions", "cmake/vcpkg-cache.nuget.config"):
     if (ROOT / name).exists():
         raise SystemExit(f"Obsolete native build dependency: {name}")
+for name in ("ace/include/salts", "plugin/include/salts"):
+    if (ROOT / name).exists():
+        raise SystemExit(f"Repository-owned header restored under Core namespace: {name}")
+if not (ROOT / "CMakeUserPresets.json").is_file():
+    raise SystemExit("Missing version-controlled first-party user presets")
 
 cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
 required = (
-    "project(Salts VERSION 4.0.0 LANGUAGES C CXX)",
+    "project(Salts VERSION 0.1.0 LANGUAGES C CXX)",
     "find_package(SaltsCore 0.1 CONFIG REQUIRED)",
     "add_subdirectory(cmeta)",
-    "add_subdirectory(component-runtime)",
+    "add_subdirectory(ace)",
     "add_subdirectory(cflow)",
 )
 for item in required:
@@ -41,12 +46,14 @@ for line in cmake.splitlines():
         raise SystemExit(f"Native implementation compiled by Salts: {line}")
 if "SALTS_CORE_BACKED_PROFILE" in cmake or "GmSSL::" in cmake or "SaltsCore::" in cmake:
     raise SystemExit("Compatibility namespace or second native source owner")
+if "NAMESPACE CMeta::" not in cmake or "NAMESPACE Salts::" in cmake:
+    raise SystemExit("Repository-owned exports must use only the CMeta:: namespace")
 
 # Check active retained targets, not just the root. Forbid restoring former
 # native provider namespaces by hidden CMake source/profile declarations.
 for owner in (
     "cmeta", "cflow", "cstl",
-    "component-runtime", "plugin",
+    "ace", "plugin",
 ):
     cmake_path = ROOT / owner / "CMakeLists.txt"
     if not cmake_path.is_file():
@@ -54,6 +61,7 @@ for owner in (
     active_cmake = cmake_path.read_text(encoding="utf-8")
     for old in (
         "SaltsCore::", "SaltsCrypto::", "Crypto::", "GmSSL::",
+        "ALIAS Salts::",
         "SALTS_CORE_BACKED_PROFILE", "SALTS_PLUGIN_USE_SALTSCORE",
         "SALTS_CFLOW_USE_SALTSCORE",
     ):
@@ -63,33 +71,34 @@ for owner in (
 def verify_core_owner(core: Path) -> None:
     """Ensure all removed native files have one source owner, never shims."""
     required = (
-        "src/core/cmeta_buffer.c",
-        "src/platform/c11_threads.c",
-        "src/concurrency/disruptor.c",
-        "src/coroutine/coro.c",
-        "src/native-io/native_io.c",
-        "src/cnet/cnet_owner.c",
-        "src/cnet/cnet_ipc.c",
-        "cnet/sctp/src/sctp_session.c",
-        "src/uri/uri_parser.c",
+        "core/src/cmeta_buffer.c",
+        "platform/src/c11_threads.c",
+        "concurrency/src/disruptor.c",
+        "coroutine/src/coro.c",
+        "native-io/src/native_io.c",
+        "cnet/src/cnet_owner.c",
+        "cnet/src/cnet_ipc.c",
+        "sctp/src/sctp_session.c",
+        "uri/src/uri_parser.c",
         "unicode/src/salts_unicode_case.c",
         "idna/src/salts_idna.c",
         "cserde/src/reader.c",
         "tinytest/src/tinytest.c",
-        "src/fs/fs_root.c",
-        "src/process/process.c",
-        "include/vstr.h",
+        "asn1/src/reader.c",
+        "fs/src/fs_root.c",
+        "process/src/process.c",
+        "core/include/vstr.h",
         "cmake/SaltsCoreConfig.cmake.in",
     )
     for name in required:
         if not (core / name).is_file():
             raise SystemExit(f"Native implementation absent from sole Core owner: {name}")
-    vstr = (core / "include/vstr.h").read_text(encoding="utf-8")
+    vstr = (core / "core/include/vstr.h").read_text(encoding="utf-8")
     if "CMETA_" in vstr or re.search(r"#\s*include\s*[<\"]cmeta[/>\"]", vstr):
         raise SystemExit("Native borrowed vstr must not depend on CMeta reflection")
     c = (core / "CMakeLists.txt").read_text(encoding="utf-8")
     if "NAMESPACE Salts::" not in c or "add_library(Salts::CNet ALIAS" not in (
-        core / "cmake/SaltsCoreCNet.cmake"
+        core / "cnet/CMakeLists.txt"
     ).read_text(encoding="utf-8"):
         raise SystemExit("Canonical Salts:: native target owners missing from Core")
 

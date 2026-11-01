@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
-project(Salts VERSION 4.0.0 LANGUAGES C CXX)
-# This is the sole CMeta/ACE/CFlow package epoch. No previous package,
-# native-ownership profile or compatibility/fallback switch exists.
-set(SALTS_NATIVE_SOVERSION "4.0")
+project(Salts VERSION 0.1.0 LANGUAGES C CXX)
+# The public release is tagged v0.1.000. CMake and NuGet use the normalized
+# SemVer spelling 0.1.0; both identify the same immutable release.
+set(SALTS_NATIVE_SOVERSION "0.1")
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
@@ -11,6 +11,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+# Keep Windows DLL identities stable across MSVC-ABI Clang and llvm-mingw.
+# MinGW's Unix-style `lib` prefix is not part of the published Windows ABI.
+if(WIN32)
+  set(CMAKE_SHARED_LIBRARY_PREFIX "")
+endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -20,7 +25,7 @@ include(CTest)
 if(BUILD_TESTS OR BUILD_EXAMPLES OR BUILD_BENCHMARKS OR
    CFLOW_BUILD_BENCHMARKS OR CMETA_BUILD_NATIVE_THUNKS OR
    CFLOW_ENABLE_MINICORO OR BUILD_SHARED_LIBS)
-  message(FATAL_ERROR "The Salts 3 package has no legacy native source modes")
+  message(FATAL_ERROR "The Salts 0.1 package has no legacy native source modes")
 endif()
 include(CmakeUtils)
 find_package(Threads REQUIRED)
@@ -41,15 +46,15 @@ endforeach()
 # implementations must belong to their appropriate Core/Crypto repositories.
 add_subdirectory(cmeta)
 add_subdirectory(plugin)
-add_subdirectory(component-runtime)
+add_subdirectory(ace)
 add_subdirectory(cflow)
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
 foreach(_retained IN ITEMS CMeta ConfiguratorABI PluginABI Plugin
     ServiceHostProviderABI Configurator ServiceHost CFlow)
-  if(NOT TARGET "Salts::${_retained}")
-    message(FATAL_ERROR "Missing CMeta/ACE target Salts::${_retained}")
+  if(NOT TARGET "CMeta::${_retained}")
+    message(FATAL_ERROR "Missing repository target CMeta::${_retained}")
   endif()
 endforeach()
 configure_package_config_file(
@@ -64,7 +69,7 @@ install(FILES
   "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/Salts")
 export(EXPORT SaltsTargets
-  FILE "${CMAKE_BINARY_DIR}/SaltsTargets.cmake" NAMESPACE Salts::)
+  FILE "${CMAKE_BINARY_DIR}/SaltsTargets.cmake" NAMESPACE CMeta::)
 install(EXPORT SaltsTargets
-  FILE SaltsTargets.cmake NAMESPACE Salts::
+  FILE SaltsTargets.cmake NAMESPACE CMeta::
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/Salts")

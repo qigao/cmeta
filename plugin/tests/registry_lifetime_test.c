@@ -1,4 +1,4 @@
-#include <salts/plugin.h>
+#include <cmeta/plugin.h>
 #include <tinytest.h>
 
 #ifndef PLUGIN_REGISTRY_LIFETIME_PATH

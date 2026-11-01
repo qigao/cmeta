@@ -1,7 +1,7 @@
 /* Native runtime owner and Provider lease regression. */
-#include <salts/service_host.h>
-#include <salts/plugin.h>
-#include <salts/service_host_abi.h>
+#include <cmeta/service_host.h>
+#include <cmeta/plugin.h>
+#include <cmeta/service_host_abi.h>
 #include <salts_core/runtime_abi.h>
 #include <salts_core/utf8.h>
 #include <cmeta_buffer.h>

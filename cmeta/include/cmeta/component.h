@@ -76,7 +76,7 @@ bool cmeta_component_desc_valid(const cmeta_component_desc *desc);
     CMETA_COMPONENT_EXPAND_(name_, \
         CMETA_MANIFEST_TYPED_POINTER_(cmeta_data_desc, config_), ~ __VA_ARGS__)
 /* Empty membership still emits an ordinary immutable descriptor, not a live
- * Salts::Configurator instance or a discovery entry. Publication remains explicit. */
+ * CMeta::Configurator instance or a discovery entry. Publication remains explicit. */
 #define cmeta_component_empty(name_) \
     CMETA_COMPONENT_DESC_(name_, NULL, NULL, 0u)
 #define cmeta_component_configured_empty(name_, config_) \

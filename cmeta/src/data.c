@@ -1,4 +1,4 @@
-#if !defined(_MSC_VER) && !defined(_POSIX_C_SOURCE)
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
   #define _POSIX_C_SOURCE 200112L
 #endif
 
@@ -8,7 +8,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-#if defined(_MSC_VER)
+#if defined(_WIN32)
   #include <malloc.h>
 #endif
 
@@ -2335,7 +2335,7 @@ cmeta_status cmeta_data_temp_open(const cmeta_data_desc *desc, size_t max_bytes,
   } else {
     if (extent > SIZE_MAX - (alignment - 1u)) return CMETA_CAPACITY_EXCEEDED;
     padded = (extent + alignment - 1u) & ~(alignment - 1u);
-#if defined(_MSC_VER)
+#if defined(_WIN32)
     storage = _aligned_malloc(padded, alignment);
 #elif defined(__wasm__)
     /* A Wasm C11 libc need not expose POSIX. padded is an alignment multiple,
@@ -2350,7 +2350,7 @@ cmeta_status cmeta_data_temp_open(const cmeta_data_desc *desc, size_t max_bytes,
   memset(storage, 0, padded);
   status = cmeta_data_temp_init(desc, storage, &lifecycle);
   if (status != CMETA_OK) {
-#if defined(_MSC_VER)
+#if defined(_WIN32)
     if (alignment > CMETA_ALIGNOF(cmeta_capture_storage)) _aligned_free(storage);
     else free(storage);
 #else
@@ -2369,7 +2369,7 @@ cmeta_status cmeta_data_temp_open(const cmeta_data_desc *desc, size_t max_bytes,
 void cmeta_data_temp_close(cmeta_data_temp *temp) {
   if (temp == NULL || temp->storage == NULL) return;
   if (temp->data != NULL) (void)cmeta_data_value_restore_zero(temp->data, temp->storage);
-#if defined(_MSC_VER)
+#if defined(_WIN32)
   if (temp->alignment > CMETA_ALIGNOF(cmeta_capture_storage)) _aligned_free(temp->storage);
   else free(temp->storage);
 #else

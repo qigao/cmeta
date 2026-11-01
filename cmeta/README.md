@@ -192,7 +192,7 @@ The pointer is an unevaluated type witness. Both C11 and C++17 select the same
 canonical descriptor, reject unknown/volatile pointer types, and evaluate only
 the selected descriptor expression once. See [typed selection](LANGUAGE_REFERENCE.md#schema-driven-data-selection).
 
-Optional `Salts::CMetaNative` specializes admitted `int(int)` calls and borrowed
+Optional `CMeta::CMetaNative` specializes admitted `int(int)` calls and borrowed
 `int(void *, int)` receiver bindings as bounded leaf thunks. Enable
 `CMETA_BUILD_NATIVE_THUNKS` explicitly on x86-64 Windows/Linux; the default is OFF.
 Redirection requires quiescence and never extends provider/Plugin lifetimes.
@@ -257,7 +257,7 @@ and rejects excess input or an insufficient item budget with
 allocation or ownership registry. Element payload allocation remains governed
 by the element provider's byte budget.
 
-For example, a consumer linked with `Salts::CMeta` can use:
+For example, a consumer linked with `CMeta::CMeta` can use:
 
 ```c
 #include <cmeta/fixed_array.h>

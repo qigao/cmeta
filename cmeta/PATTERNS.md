@@ -12,7 +12,7 @@ CMeta composition evidence, already-reused runtimes and post-freeze gaps.
 > latest-HEAD CI, packaging and ABI decisions are still outstanding.
 > The Pattern interfaces are `<cmeta/ace_interceptor.h>` and
 > `<cmeta/ace_synchronization.h>`; ACT is a thin typed adapter over
-> NativeIO in `<salts/native_io_ace_token.h>`. Monitor uses an existing
+> NativeIO in `<cmeta/native_io_ace_token.h>`. Monitor uses an existing
 > CMeta Interface with Platform mutex/condition instead of a new runtime.
 
 > The next public Salts release is **2.3.0** (latest published: 2.2.0).
@@ -42,11 +42,11 @@ pattern authoring
 Runtime mechanism remains with its existing owner.
 
 The current canonical runtime consumer is the ACE-style Configurator /
-ServiceHost composition: `Salts::Configurator` owns the static graph and
-`Salts::ServiceHost` owns published generations, Scope admission/drain and
-Plugin lease settlement. `Salts::Plugin` remains the sole dynamic loader and
+ServiceHost composition: `CMeta::Configurator` owns the static graph and
+`CMeta::ServiceHost` owns published generations, Scope admission/drain and
+Plugin lease settlement. `CMeta::Plugin` remains the sole dynamic loader and
 unload authority. The installed lifecycle targets are
-`Salts::Configurator` and `Salts::ServiceHost`. CHttp, TurboFlow and
+`CMeta::Configurator` and `CMeta::ServiceHost`. CHttp, TurboFlow and
 TurboSCXML remain downstream conformance profiles, not sources of
 consumer-private component semantics.
 
@@ -181,7 +181,7 @@ stable component/provider identity
 It does not load modules, resolve dependencies, select providers, own leases, or
 advance lifecycle.
 
-This metadata is the canonical component/provider capability declaration. Dynamic module publication and lease ownership remain under `Salts::Plugin`. There is no second static Plugin declaration vocabulary in the 2.3.0 candidate.
+This metadata is the canonical component/provider capability declaration. Dynamic module publication and lease ownership remain under `CMeta::Plugin`. There is no second static Plugin declaration vocabulary in the 2.3.0 candidate.
 
 ## Patterns that do not belong in CMeta runtime
 
@@ -196,8 +196,8 @@ mechanism remains outside CMeta:
 | Message Queue | Concurrency / Actor / CFlow |
 | Half-Sync/Half-Async | domain runtime + bounded handoff |
 | Streams execution | CFlow / domain runtime |
-| Plugin module lifecycle | Salts::Plugin |
-| Component resolution/lifecycle graph | Salts::Configurator |
+| Plugin module lifecycle | CMeta::Plugin |
+| Component resolution/lifecycle graph | CMeta::Configurator |
 
 CMeta may describe typed policies, messages, interfaces, factories and
 lifecycle contracts for these mechanisms.
@@ -237,13 +237,11 @@ Actor owns state and bounded mailbox, Scheduler/Executor own progress, and
 borrowed Strategy/provider storage outlives Actor destruction. No new
 `cmeta_active_object`, hidden thread, Plugin lease, or second registry.
 
-An independent installed consumer in
-`cflow/tests/package_config/ace_actor` also builds through
-`find_package(Salts ... EXACT CONFIG REQUIRED)` and links only
-`Salts::CFlow`. Its executable creates a real Actor from installed headers,
-invokes reflected CMeta producer/Strategy methods, observes one terminal
-message and safely drains/destroys the Actor. This is run through the shared
-installed-SDK CMake test harness, not an additional CI orchestration wrapper.
+`cflow_actor_test` is the canonical executable evidence. It creates a real
+Actor, invokes reflected CMeta producer/Strategy methods, observes one
+terminal message and safely drains/destroys the Actor. Standalone installed
+consumer projects and their CI are intentionally not kept in this repository;
+downstream package qualification runs outside this source tree.
 
 ### ACE Pipes and Filters / Streams (2.3 candidate conformance)
 
@@ -266,12 +264,11 @@ with reactive demand. The Channel is owned outside the Subscription and is
 closed/destroyed after its Publisher and Subscription are quiescent. Neither
 CMeta nor CFlow automatically retries failed admission.
 
-The installed-SDK CMake consumer under
-`cflow/tests/package_config/ace_actor/pipes.c` compiles and executes the
-same public FILTER → MAP, Subscriber, demand/cancel and bounded Channel APIs
-against one exact installed `Salts::CFlow`. It shares the existing out-of-tree
-`find_package(Salts ... EXACT)` and SDK install test with the ACE Actor
-consumer; no second packaging workflow or fallback SDK is introduced.
+`cflow_ace_pipes_filters_test` compiles and executes the public FILTER →
+MAP, Subscriber, demand/cancel and bounded Channel APIs. Standalone installed
+consumer projects and their CI are forbidden; external downstream
+qualification may consume the immutable published SDK without adding another
+project to this repository.
 
 ### ACE Half-Sync/Half-Async over CNet and CFlow
 
@@ -304,13 +301,11 @@ retained producer before destroying borrowed scheduler/executor/graph storage.
 No new CMeta reactor, scheduling runtime, registry, Plugin lease, or fallback
 queue is introduced.
 
-The independent installed SDK consumer
-`cflow/tests/package_config/ace_actor/half_sync.c` additionally exercises
-public CNet TCP receive callbacks feeding the fixed-capacity CFlow Channel,
-then an explicit-demand Subscription using a canonical Subscriber. It links
-only exported `Salts::CFlowCNet` after exact `find_package(Salts ... EXACT)`
-and shares the same out-of-tree install verification harness as the ACE Actor
-and Pipes/Filters consumers; no separate packaging workflow is added.
+`cflow_ace_half_sync_async_test` exercises public CNet TCP receive callbacks
+feeding the fixed-capacity CFlow Channel, then an explicit-demand Subscription
+using a canonical Subscriber. Standalone installed consumer projects and
+their CI are forbidden; external downstream qualification uses the published
+`CMeta::CFlowCNet` SDK outside this repository.
 
 ## Admission test for a new pattern helper
 
@@ -337,15 +332,15 @@ Interface / Function / Object / Lifecycle / Manifest
              provides / requires
                         |
                         v
-              Salts::Configurator
+              CMeta::Configurator
              resolver / lifecycle graph
                         |
                         v
-            Salts::ServiceHost
+            CMeta::ServiceHost
                 generation scopes
                         |
                         v
-                 Salts::Plugin
+                 CMeta::Plugin
 ```
 
 The Configurator adds only the runtime semantics not already owned by

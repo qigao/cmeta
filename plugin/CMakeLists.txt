@@ -5,14 +5,14 @@
 add_library(cmeta_plugin_abi INTERFACE)
 cmake_config_target(
   cmeta_plugin_abi
-  ALIAS Salts::PluginABI
+  ALIAS CMeta::PluginABI
   FOLDER "plugin"
   EXPORT_NAME PluginABI)
 target_compile_features(cmeta_plugin_abi INTERFACE c_std_11)
 target_include_directories(cmeta_plugin_abi INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-target_link_libraries(cmeta_plugin_abi INTERFACE Salts::CMeta)
+target_link_libraries(cmeta_plugin_abi INTERFACE CMeta::CMeta)
 
 # Host-side loader/registry/lifecycle runtime.
 add_library(cmeta_plugin STATIC
@@ -28,7 +28,7 @@ endif()
 cmake_config_target(
   cmeta_plugin
   VERSION "${PROJECT_VERSION}" SOVERSION "${SALTS_NATIVE_SOVERSION}"
-  ALIAS Salts::Plugin
+  ALIAS CMeta::Plugin
   FOLDER "plugin"
   EXPORT_NAME Plugin)
 
@@ -41,7 +41,7 @@ install(
   TARGETS cmeta_plugin_abi cmeta_plugin
   EXPORT SaltsTargets)
 install(
-  DIRECTORY include/salts
+  DIRECTORY include/cmeta
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
 

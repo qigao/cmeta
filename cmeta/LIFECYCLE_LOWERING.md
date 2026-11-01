@@ -142,7 +142,7 @@ C++ `cmeta::cleanup_scope` 在异常展开时执行同一义务。耗时 O(count
 - ObjectRef adapter 调用 `cmeta_object_release()`；BORROWED 清空视图，SHARED release，
   OWNED destroy。`cmeta::object_scope` 的 take/move 不 retain，拒绝 busy 目标且保持双方
   原状；close 幂等，detach 显式转出释放义务。metadata/provider/module 仍由外层 owner 保活。
-- Plugin adapter 位于 `salts/plugin_scope.h`，调用原 registry release。把 lease 放在依赖
+- Plugin adapter 位于 `cmeta/plugin_scope.h`，调用原 registry release。把 lease 放在依赖
   记录之前，逆序清理时先结束借用；释放失败代表既有 lease 契约被破坏，按原 RAII 规则终止。
 
 ### 自动清理的 no-fail 契约（#983）

@@ -59,7 +59,7 @@
 
 ### G2 — MED：Mach-O 跨 TU Plugin 聚合缺少本次运行证据
 
-**事实：**[linker 后端](../plugin/include/salts/plugin_linker.h) 已有 COFF/ELF/Mach-O 实现，
+**事实：**[linker 后端](../plugin/include/cmeta/plugin_linker.h) 已有 COFF/ELF/Mach-O 实现，
 `正式测试`（已删除） 已设置各平台 dead-strip / section-GC。
 Linux 和 Windows 的 Plugin suite 实际运行 `cmeta_plugin_linker_test` 和
 `cmeta_plugin_scope_cpp_test`。本次 macOS 仅选择 execution / native suites，
@@ -107,7 +107,7 @@ Linux installed suite 复用 ObjectRef RAII、operation、invokable 源码，提
 
 **事实：**[历史 PLUGIN_MANIFESTS.md](https://github.com/qigao/salts/blob/8d19c98e1d0d208ae148bd1404fe59eca875f9ce/cmeta/PLUGIN_MANIFESTS.md) 同时提及 ABI 5 admission、
 “query 只接受 ABI 4”及“Reflection ABI 3 不变”。
-当前 [Plugin ABI 常量](../plugin/include/salts/plugin.h) 为 5，
+当前 [Plugin ABI 常量](../plugin/include/cmeta/plugin.h) 为 5，
 [Reflection ABI 常量](include/cmeta/abi.h) 为 4。
 
 **影响：**跨 DSO 消费者可能按旧文档协商错误版本；运行时 exact admission 本身仍在。
@@ -163,8 +163,8 @@ ctest --preset win-cmeta-native-release-user --no-tests=error --output-on-failur
 | E4 | [function.h](include/cmeta/function.h)、[struct.h](include/cmeta/struct.h)、[enum.h](include/cmeta/enum.h)、[data_select.h](include/cmeta/data_select.h) | data_select C/C++ 与错误选择 compile-fail；`lowering 错误声明`（已删除） 及 C++：layout、callback、result flags/carrier；本次 MSVC 20/20 负向诊断含 capture 项 |
 | E5 | [lifecycle.h](include/cmeta/lifecycle.h)、[scope.h](include/cmeta/scope.h)、[cleanup.h](include/cmeta/cleanup.h)、[object_scope.h](include/cmeta/object_scope.h)、[lowering 契约](LIFECYCLE_LOWERING.md) | cleanup C/C++、scope/逃逸 compile-fail、`ObjectRef RAII`（已删除）、[CSTL lifecycle](../cstl/tests/cstl_header_typed_test.c)：partial restore 一次、LIFO、move、nested、exception、busy/detach、trivial 无 live/ops；Linux installed 复用 |
 | E6 | [Function projection](src/function.c)、[operation.h](include/cmeta/operation.h)、[invokable.c](src/invokable.c)、[ObjectRef](src/object.c)、[CSTL schema](../cstl/include/cstl/detail/typed_facade.h) | function_reflection、operation、invokable、object、cstl_generic_identity / semantic_projection；operation 只存 alias + ABI，ABI 拥有唯一 FunctionDesc；旧 receiver_method API 检索无残留；本次 MSVC operation/invokable 2/2，Linux installed 复用 |
-| E7 | [invoke_decl.h](include/cmeta/invoke_decl.h)、[plugin_decl.h](../plugin/include/salts/plugin_decl.h)、[runtime admission](../plugin/src/plugin.c) | `Plugin declaration`（已删除）、C++ / empty passive+managed / compile-fail、contract / manifest / loader / lifecycle；void/nonvoid、0/nonzero、精确 carrier、显式发布、ABI 5 拒绝错误版本 |
-| E8 | [plugin_linker.h](../plugin/include/salts/plugin_linker.h)、[plugin_scope.h](../plugin/include/salts/plugin_scope.h)、[Plugin 契约](../plugin/README.md) | `linker 编排`（已删除）、linker/lease C++：跨 C/C++ TU、GC、DSO 隔离、缺片段计数拒绝、move、exception、borrow 先结束；ELF/COFF 实跑，Mach-O 见 G2；无 constructor/可变 registry/隐式 lease |
+| E7 | [invoke_decl.h](include/cmeta/invoke_decl.h)、[plugin_decl.h](../plugin/include/cmeta/plugin_decl.h)、[runtime admission](../plugin/src/plugin.c) | `Plugin declaration`（已删除）、C++ / empty passive+managed / compile-fail、contract / manifest / loader / lifecycle；void/nonvoid、0/nonzero、精确 carrier、显式发布、ABI 5 拒绝错误版本 |
+| E8 | [plugin_linker.h](../plugin/include/cmeta/plugin_linker.h)、[plugin_scope.h](../plugin/include/cmeta/plugin_scope.h)、[Plugin 契约](../plugin/README.md) | `linker 编排`（已删除）、linker/lease C++：跨 C/C++ TU、GC、DSO 隔离、缺片段计数拒绝、move、exception、borrow 先结束；ELF/COFF 实跑，Mach-O 见 G2；无 constructor/可变 registry/隐式 lease |
 | E9 | [admitted invocation](src/invokable.c)、[admitted field](src/object.c)、[CFlow admission](../cflow/src/function_projection.c)、[CFlow execution](../cflow/src/subscription.c)、[Plugin admission](../plugin/src/plugin.c) | invokable/object/bind、CFlow projection/execution、Plugin contract：raw 入口保留完整验证；已 admission 的 invocation/field 路径不重遍描述符图。CFlow 执行保留有限 callable flags/storage 检查，不把一切检查视为可删除开销；下游宏复用 CMETA_PP_* |
 | E10 | [bind.h](include/cmeta/bind.h)、[Function projection](src/function.c)、`bind tests`（已删除） | C/C++ receiver bind、普通函数非相邻参数 bind、value 快照、borrow、padding、flags/carrier/map 拒绝；capture compile-fail 验证 32-byte 上限及类别，不隐式管理 OWNED/SHARED |
 | E11 | [compiler presets](../presets/Compilers.json)、[当时的 CI 选择](https://github.com/qigao/salts/blob/8d19c98e1d0d208ae148bd1404fe59eca875f9ce/.github/workflows/native-tests.yml)、上文 run/job 链接 | GCC/MSVC C/C++ 有实际执行；macOS 为 GCC；Clang 当前运行资格见 G1，选例覆盖见 G3 |

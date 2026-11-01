@@ -23,10 +23,10 @@ remains **DO NOT MERGE. DO NOT PUBLISH.** Feature freeze is **not** 2.3.0
 native SDK, downstream or stable release qualification.
 
 **Current ownership mapping:** the graph below uses the current public owner
-names for the corresponding responsibilities. `Salts::Configurator` owns static
-graph resolution and activation; `Salts::ServiceHost` owns generation
+names for the corresponding responsibilities. `CMeta::Configurator` owns static
+graph resolution and activation; `CMeta::ServiceHost` owns generation
 publication, Scope admission and drain, and Plugin lease settlement.
-`Salts::Plugin` remains the sole DSO loader and unload authority. Frozen test
+`CMeta::Plugin` remains the sole DSO loader and unload authority. Frozen test
 names and run links below apply to their historical source only. They do not
 qualify the current Salts 4.0 / ABI 2.0 implementation.
 
@@ -34,11 +34,11 @@ qualify the current Salts 4.0 / ABI 2.0 implementation.
 CMeta: immutable Type / Interface / FunctionAbi / DataDesc / ObjectRef /
        Lifecycle / Manifest / typed macro + inline declarations
     |
-    +--> Salts::Configurator: bounded static selection, graph/lifecycle
+    +--> CMeta::Configurator: bounded static selection, graph/lifecycle
     |        |
-    |        +--> Salts::ServiceHost: generation publication + scope admission
+    |        +--> CMeta::ServiceHost: generation publication + scope admission
     |                    |
-    |                    +--> Salts::Plugin: sole DSO load/unload + module lease
+    |                    +--> CMeta::Plugin: sole DSO load/unload + module lease
     |
     +--> CNet / NativeIO: transport, accept/connect, Reactor/Proactor owner
     |
@@ -147,9 +147,9 @@ concurrency qualification; no hidden authority is added to CMeta.
 | Copied/stale scope, 2-generation capacity, close/reopen | `cmeta_native_component_plugin_publication_test` |
 | Exclusive domain resource fencing and single close | `cmeta_native_component_plugin_exclusive_fence_test` |
 | Real CNet Acceptor/Connector and Handler lifetime | `cnet_ace_acceptor_connector_test` |
-| Typed CFlow Active Object, bounded mailbox and stale producer | `cflow_actor_test` / installed Actor consumer |
-| FILTER -> MAP demand, channel FULL, cancellation | `cflow_ace_pipes_filters_test` / installed Pipes consumer |
-| Real TCP -> Channel -> Subscription -> Actor | `cflow_ace_half_sync_async_test` / installed CFlowCNet consumer |
+| Typed CFlow Active Object, bounded mailbox and stale producer | `cflow_actor_test` |
+| FILTER -> MAP demand, channel FULL, cancellation | `cflow_ace_pipes_filters_test` |
+| Real TCP -> Channel -> Subscription -> Actor | `cflow_ace_half_sync_async_test` |
 
 **Functional freeze admission:** all applicable above tests must compile,
 execute and pass in the branch's selected Linux complete CTest/Lean gate,
@@ -192,10 +192,11 @@ be qualified in the relevant downstream execution owner, not introduced
 as a second CMeta runtime.
 
 In-repository `salts_configurator_context_init` call sites were audited:
-all direct Component C11/C++17 and independently installed consumers use
+all direct Component C11/C++17 tests use
 `SALTS_CONFIGURATOR_CONTEXT_INIT` before first use; the ServiceHost
-generation initializes its embedded context before calling init. Domain
-repositories' final exact-2.3 consumer qualification remains in #1018.
+generation initializes its embedded context before calling init. External
+downstream repositories' final exact-2.3 qualification remains in #1018;
+standalone consumer source projects are not kept here.
 
 ### Remaining work is release and consumer acceptance, **not new ACE APIs**
 

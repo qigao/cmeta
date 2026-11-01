@@ -1,6 +1,6 @@
 # Salts Plugin
 
-`Salts::Plugin` is the Salts-owned dynamic-module publication and lifecycle
+`CMeta::Plugin` is the Salts-owned dynamic-module publication and lifecycle
 runtime built directly on canonical CMeta semantics.
 
 Plugin and CFlow are independent capabilities. Plugin owns module publication,
@@ -47,11 +47,11 @@ Plugin 的公开宏和枚举常量统一使用 `CMETA_PLUGIN_*` 前缀，类型�
 `cmeta_plugin_*` 前缀。宿主和 provider 必须同步迁移源码并重新编译；动态库入口
 为 `cmeta_plugin_query`，不查找旧入口。manifest 布局与 ABI epoch 5 保持不变。
 
-`<salts/plugin_decl.h>` 复用 CMeta 精确 Function 声明和 Interface carrier。
+`<cmeta/plugin_decl.h>` 复用 CMeta 精确 Function 声明和 Interface carrier。
 普通反射声明不会自动发布任何 export。完整 C provider 示例：
 
 ```c
-#include <salts/plugin_decl.h>
+#include <cmeta/plugin_decl.h>
 
 FunctionInvokeDecl(value, int, twice, (int, input, CMETA_PARAM_IN));
 int twice(int input) { return input * 2; }
@@ -63,7 +63,7 @@ CMETA_PLUGIN_DECLARE(math_plugin, "example.math", (1u,0u,0u),
     MATH_EXPORTS, CMETA_PLUGIN_PASSIVE());
 ```
 
-以普通 DSO target 编译该源文件并链接 `Salts::PluginABI`。安装 SDK 与 in-tree
+以普通 DSO target 编译该源文件并链接 `CMeta::PluginABI`。安装 SDK 与 in-tree
 使用相同头文件和声明。每个 DSO 在一个 TU 中声明一次 query。
 
 `CMETA_PLUGIN_DECLARE(name,id,version,exports,lifecycle)` 的参数为：本地符号前缀、
@@ -79,7 +79,7 @@ ID、版本、capabilities 均为显式声明，不从 Reflection 推断。
 不会创建零长数组或占位 export；passive 和 managed provider 都适用。例如独立源文件：
 
 ```c
-#include <salts/plugin_decl.h>
+#include <cmeta/plugin_decl.h>
 CMETA_PLUGIN_DECLARE_EMPTY(empty_plugin,"example.empty",(1u,0u,0u),CMETA_PLUGIN_PASSIVE());
 ```
 
@@ -103,7 +103,7 @@ C 使用静态初始化的 const export 表。C++17 使用显式 CMeta `AsAbi` �
 通过 TU-local 值构造辅助函数初始化。该初始化不注册对象，不改写 manifest，不持有 lease；
 不得在其他 TU 的静态初始化期间提前消费此表。
 没有 constructor 驱动的注册表、全局可变发现列表或 linker 失败回退。
-跨 TU 聚合通过可选 `<salts/plugin_linker.h>` 显式启用；lease 作用域入口见下文。
+跨 TU 聚合通过可选 `<cmeta/plugin_linker.h>` 显式启用；lease 作用域入口见下文。
 普通声明继续以生成的静态数组为参考表示。
 
 正式验证包含 `cmeta_plugin_declaration_test`、C++ 同源用例、空导出的 passive/managed 用例、
@@ -125,7 +125,7 @@ ctest --preset win-dev-user -R "(^(cmeta_(pp|const|flags|layout|interface)_|cmet
 
 ## 跨 TU linker 聚合（#977）
 
-`<salts/plugin_linker.h>` 提供两个声明宏：
+`<cmeta/plugin_linker.h>` 提供两个声明宏：
 
 - `CMETA_PLUGIN_EXPORT_FRAGMENT(name,exports)`：在一个 TU 内将非空 X-list 发布为分片。
   `name` 是 DSO 内唯一的外部 C 符号，`exports` 使用与普通声明完全相同的 Function/Interface 行。
@@ -172,7 +172,7 @@ query 的时间/额外空间都是 O(1)，既有 manifest validation 的复杂�
 
 ## Lease 作用域（#977）
 
-宿主包含 `<salts/plugin_scope.h>` 并链接 `Salts::Plugin`。
+宿主包含 `<cmeta/plugin_scope.h>` 并链接 `CMeta::Plugin`。
 C 使用 `cmeta_plugin_with_lease(registry,ref,body,context)`：
 `registry` 和 `ref` 指定已有 provider，`body` 接收借用的 const manifest 与原样 context。
 空 body 返回 `CMETA_PLUGIN_INVALID_ARGUMENT`；acquire 失败原样返回状态且不调用 body；
@@ -207,18 +207,18 @@ installed SDK 测试图，覆盖分片缺失、错误计数、ABI 拒绝、并�
 ## Targets
 
 ```text
-Salts::PluginABI
-    -> <salts/plugin.h>
-    -> Salts::CMeta
+CMeta::PluginABI
+    -> <cmeta/plugin.h>
+    -> CMeta::CMeta
 
-Salts::Plugin
-    -> Salts::PluginABI
+CMeta::Plugin
+    -> CMeta::PluginABI
     -> Salts::Core
     -> Salts::Platform
     -> platform dynamic loader
 ```
 
-`Salts::PluginABI` is publication-only and carries no loader/registry runtime.
+`CMeta::PluginABI` is publication-only and carries no loader/registry runtime.
 Plugin providers can therefore publish CMeta Function/Interface exports without
 linking the host runtime.
 
