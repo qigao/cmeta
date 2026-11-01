@@ -52,9 +52,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Select runner-native LLVM for non-published sanitizer builds
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@22ab039b6505c06e7a2f03f723305050d775ecf3
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@529019437597fa71f7d8dcc561d26fc7b0603ae6
         with:
           build-type: toolchain-only
+          obfuscator: "false"
+      - name: Restore re2c and Unicode host data
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        with:
+          token: ${{ github.token }}
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core

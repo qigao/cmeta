@@ -105,3 +105,6 @@
 - Raw instrumented/downstream Core configures must pass
   `SALTSCORE_BUILD_URI=ON`; Core's formal presets already do this, but omitting
   it from a direct `cmake -S` invocation fails before the sanitizer build.
+- Core URI configuration also needs the host-side re2c/Unicode tool contract.
+  Reuse the same pinned `vcpkg-cache/setup-re2c-tools` action as Core CI for
+  native, cross and sanitizer builds instead of assuming runner packages.
