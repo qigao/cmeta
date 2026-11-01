@@ -4,7 +4,7 @@
 #include <cflow/io_actor.h>
 #include <cflow/publishers.h>
 
-#include <salts/error_codes.h>
+#include <error_codes.h>
 
 #include <stdbool.h>
 #include <stddef.h>

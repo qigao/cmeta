@@ -1,7 +1,7 @@
 #include <cmeta/service_host.h>
 #include <cmeta/plugin.h>
 #include <cmeta/service_host_abi.h>
-#include <salts_core/runtime_abi.h>
+#include <runtime_abi.h>
 #include <cmeta_buffer.h>
 #include <type_traits>
 static_assert(std::is_standard_layout<salts_service_host_scope>::value,

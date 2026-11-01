@@ -1,5 +1,5 @@
 #include <cflow/event.h>
-#include <salts/thread.h>
+#include <thread.h>
 
 #include "tinytest.h"
 

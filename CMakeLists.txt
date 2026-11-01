@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(CMeta VERSION 0.1.2 LANGUAGES C CXX)
-# The current split-package release is tagged v0.1.002. CMake and NuGet use
-# 0.1.2; the already-published v0.1.000 and v0.1.001 identities are immutable.
+project(CMeta VERSION 0.1.3 LANGUAGES C CXX)
+# The current split-package release is tagged v0.1.003. CMake and NuGet use
+# 0.1.3; the already-published v0.1.000 through v0.1.002 identities are immutable.
 set(CMETA_NATIVE_SOVERSION "0.1")
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)

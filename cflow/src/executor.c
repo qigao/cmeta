@@ -1,7 +1,7 @@
 #include <cflow/executor.h>
 #include "executor_internal.h"
-#include <salts/error_codes.h>
-#include <salts/thread_pool.h>
+#include <error_codes.h>
+#include <thread_pool.h>
 
 #include <limits.h>
 #include <stdint.h>

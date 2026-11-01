@@ -1,6 +1,6 @@
 #include "cmeta_fastpath_fixture.h"
 #include "tinytest.h"
-#include <salts/thread.h>
+#include <thread.h>
 
 enum {
     FASTPATH_INPUT = 5,

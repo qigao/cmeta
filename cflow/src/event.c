@@ -2,7 +2,7 @@
 
 #include "event_internal.h"
 
-#include <salts/thread.h>
+#include <thread.h>
 
 #include <stdbool.h>
 #include <stdint.h>

@@ -1457,7 +1457,7 @@ reentrant callback. Neither mode may call close or destroy from the callback.
 
 ```c
 #include <cflow/cflow.h>
-#include <salts/error_codes.h>
+#include <error_codes.h>
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -1853,8 +1853,8 @@ files, and accepted buffers remain borrowed through terminal callback return.
 
 ```c
 #include <cflow/io_file.h>
-#include <salts/error_codes.h>
-#include <salts/thread.h>
+#include <error_codes.h>
+#include <thread.h>
 
 #include <stdio.h>
 

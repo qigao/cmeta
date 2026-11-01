@@ -1,5 +1,5 @@
 #include <cflow/coord.h>
-#include <salts/thread.h>
+#include <thread.h>
 
 #include "value_storage.h"
 

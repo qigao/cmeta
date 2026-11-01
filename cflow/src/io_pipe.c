@@ -1,7 +1,7 @@
 #include <cflow/io_pipe.h>
 
-#include <salts/error_codes.h>
-#include <salts/native_ipc.h>
+#include <error_codes.h>
+#include <native_ipc.h>
 
 #include <stdlib.h>
 

@@ -1,7 +1,7 @@
 #include <cflow/machine_instance.h>
 
-#include <salts/clock.h>
-#include <salts/thread.h>
+#include <clock.h>
+#include <thread.h>
 
 #include "../src/machine_instance_internal.h"
 #include "tinytest.h"

@@ -3,7 +3,7 @@
 #include "../src/io_publisher_internal.h"
 #include "tinytest.h"
 
-#include <salts/thread.h>
+#include <thread.h>
 
 #include <stdio.h>
 #include <stdlib.h>

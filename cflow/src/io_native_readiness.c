@@ -7,9 +7,9 @@
 
 #include "io_native_internal.h"
 
-#include <salts/error_codes.h>
-#include <salts/readiness.h>
-#include <salts/thread.h>
+#include <error_codes.h>
+#include <readiness.h>
+#include <thread.h>
 
 #include <errno.h>
 #include <fcntl.h>

@@ -1,8 +1,8 @@
 #ifndef SALTS_NATIVE_IO_ACE_TOKEN_H
 #define SALTS_NATIVE_IO_ACE_TOKEN_H
 
-#include <salts/native_io.h>
-#include <salts/error_codes.h>
+#include <native_io.h>
+#include <error_codes.h>
 
 /*
  * POSA2 Asynchronous Completion Token (ACT).

@@ -4,7 +4,7 @@
 #define TINYTEST_NO_MAIN
 #include "tinytest.h"
 
-#include <salts/thread.h>
+#include <thread.h>
 
 static size_t file_init_failure_backend_calls;
 static size_t file_forget_backend_calls;

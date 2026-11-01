@@ -6,7 +6,7 @@
 
 > **Post-rc.5 LF implementation (2026-10-10):** the opt-in CPU backend now lives in
 > [Salts::Concurrency](../concurrency/src/thread_pool_lf.c), with a versioned
-> [public creator/stats contract](../concurrency/include/salts/thread_pool.h),
+> [public creator/stats contract](../concurrency/include/thread_pool.h),
 > [formal lifecycle tests](../concurrency/tests/thread_pool_lf_test.c) and a
 > [small public-API benchmark](../concurrency/benchmarks/thread_pool_lf_benchmark.c).
 > See [design and validation scope](../concurrency/LEADER_FOLLOWERS_DESIGN.md).
@@ -90,11 +90,11 @@ Status vocabulary:
 
 - **Canonical pattern primitives:** [PATTERNS.md](PATTERNS.md), [Interface source](include/cmeta/interface.h), [Function metadata](include/cmeta/function.h), [Object Interface](include/cmeta/object_interface.h), [pattern C11/C++17 conformance](tests/cmeta_pattern_cases.h).
 - **Component:** [declaration](include/cmeta/component.h), [runtime](../ace/include/cmeta/configurator.h), [ServiceHost scopes](../ace/include/cmeta/service_host.h); freeze tests and generation/epoch evidence in [ACE_FREEZE.md](ACE_FREEZE.md).
-- **Reactor / Proactor:** [NativeIO public model](../native-io/include/salts/native_io.h) + [backend implementation](../native-io/src/native_io.c) + [native tests](../native-io/tests/native_io_test.c); [CNet](../cnet/README.md). Backend-kind distinction is explicit: epoll/kqueue = readiness; IOCP/io_uring = completion. Do not create another loop.
+- **Reactor / Proactor:** [NativeIO public model](../native-io/include/native_io.h) + [backend implementation](../native-io/src/native_io.c) + [native tests](../native-io/tests/native_io_test.c); [CNet](../cnet/README.md). Backend-kind distinction is explicit: epoll/kqueue = readiness; IOCP/io_uring = completion. Do not create another loop.
 - **Acceptor-Connector:** [real TCP ACE conformance](../cnet/tests/cnet_ace_acceptor_connector_test.c).
 - **Active Object / Half-Sync:** [Actor conformance](../cflow/tests/cflow_actor_test.c), [TCP → Channel → Actor fixture](../cflow/cnet-adapter/tests/cflow_ace_half_sync_async_test.c), [ACE_FREEZE.md](ACE_FREEZE.md).
-- **Scoped lifetime / TLS / synchronization primitives:** [CMeta scope](include/cmeta/scope.h), [thread-local CMeta façade](include/cmeta/local.h), [Platform mutex/condition/once/TLS](../platform/include/salts/thread.h), [C11 atomics](../concurrency/include/salts/atomic.h), [execution primitives contract](EXECUTION_PRIMITIVES.md). None alone certifies the entire corresponding ACE pattern.
-- **ACT starting point:** [NativeIO request, operation and completion identity](../native-io/include/salts/native_io.h) and [NativeIO tests](../native-io/tests/native_io_test.c); `user_data` is a copied association value, **not** a lease or ownership transfer.
+- **Scoped lifetime / TLS / synchronization primitives:** [CMeta scope](include/cmeta/scope.h), [thread-local CMeta façade](include/cmeta/local.h), [Platform mutex/condition/once/TLS](../platform/include/thread.h), [C11 atomics](../concurrency/include/atomic.h), [execution primitives contract](EXECUTION_PRIMITIVES.md). None alone certifies the entire corresponding ACE pattern.
+- **ACT starting point:** [NativeIO request, operation and completion identity](../native-io/include/native_io.h) and [NativeIO tests](../native-io/tests/native_io_test.c); `user_data` is a copied association value, **not** a lease or ownership transfer.
 
 ## Acceptance contract for each gap
 

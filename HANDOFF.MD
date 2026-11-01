@@ -63,9 +63,10 @@
   `Salts::NativeIO` retain the `Salts::` namespace; do not add compatibility
   aliases for the old repository-owned names.
 - Repository-owned public headers use `include/cmeta/`: ACE Configurator /
-  ServiceHost and Plugin headers were moved from `include/salts/`. The
-  `include/salts/` namespace is reserved for imported qigao/salts-core headers;
-  do not restore forwarding headers or duplicate compatibility trees.
+  ServiceHost and Plugin headers were formerly exposed under `include/salts/`.
+  Imported qigao/salts-core headers now use flat or functional paths without
+  `salts/` or `salts_core/`; do not restore forwarding headers or duplicate
+  compatibility trees.
 - The repository-owned release/package identity is `CMeta.Native`; its CMake
   package is `CMeta` under `lib/cmake/CMeta` and exports `CMetaTargets.cmake`.
   Per-RID release provenance is recorded in `cmeta-sdk-manifest.txt`.
@@ -130,6 +131,12 @@
   Unix downstream graphs can carry equivalent CMeta instances through separate
   DSOs, so address equality rejects the valid provider while Windows links the
   same graph successfully.
+
+## 2026-11-01 release 0.1.003
+
+- Release `v0.1.003` / NuGet `0.1.3` consumes the flattened Core 0.1.2 public
+  header layout. Keep `CORE_SHA`, the CMake project version, preset vendor
+  metadata, workflow tag, and package documentation aligned.
 
 ## 2026-11-01 release 0.1.002
 

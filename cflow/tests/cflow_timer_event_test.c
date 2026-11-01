@@ -1,7 +1,7 @@
 #include <cflow/clock.h>
 #include <cflow/machine_instance.h>
 #include <cflow/timer_event.h>
-#include <salts/thread.h>
+#include <thread.h>
 
 #include "tinytest.h"
 #include "timer_event_internal.h"

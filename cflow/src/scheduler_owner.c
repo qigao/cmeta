@@ -2,7 +2,7 @@
 #include "scheduler_internal.h"
 #include "executor_internal.h"
 
-#include <salts/thread.h>
+#include <thread.h>
 
 #include <assert.h>
 #include <stdint.h>

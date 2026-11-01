@@ -1,7 +1,7 @@
 #include <cflow/io_actor.h>
 
-#include <salts/error_codes.h>
-#include <salts/thread.h>
+#include <error_codes.h>
+#include <thread.h>
 
 #include "tinytest.h"
 

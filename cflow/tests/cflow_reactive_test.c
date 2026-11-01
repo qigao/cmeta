@@ -1,6 +1,6 @@
 #include <cflow/cflow.h>
-#include <salts/clock.h>
-#include <salts/thread.h>
+#include <clock.h>
+#include <thread.h>
 #include <cflow/opt.h>
 #include "cflow_test_ops.h"
 #include "../src/value_storage.h"

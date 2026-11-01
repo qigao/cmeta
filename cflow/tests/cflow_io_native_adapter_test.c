@@ -4,10 +4,10 @@
 
 #include <cflow/cflow.h>
 
-#include <salts/clock.h>
-#include <salts/error_codes.h>
-#include <salts/thread.h>
-#include <salts/thread_pool.h>
+#include <clock.h>
+#include <error_codes.h>
+#include <thread.h>
+#include <thread_pool.h>
 
 #include "tinytest.h"
 

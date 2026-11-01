@@ -2,7 +2,7 @@
 #define CFLOW_EXECUTOR_INTERNAL_H
 
 #include <cflow/executor.h>
-#include <salts/thread_pool.h>
+#include <thread_pool.h>
 
 int cmeta_threadpool_is_current_internal(const cmeta_threadpool_t *pool);
 

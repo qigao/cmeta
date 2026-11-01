@@ -18,11 +18,11 @@ metadata carrier/protocol，以及这些声明所需的有限编译期 machinery
 include。Core archive 不链接 Platform、Concurrency、Coroutine、Core、CFlow 或 Plugin。
 `generated/builtin_signature_manifest.h` 是生成的 Core schema。
 
-Atomic 与 RCU 直接属于 Concurrency，使用 `<salts/atomic.h>` 的
-`SALTS_ATOMIC_TYPE` 和 `<salts/rcu.h>` 的 `SALTS_RCU_TYPE`。
+Atomic 与 RCU 直接属于 Concurrency，使用 `<atomic.h>` 的
+`SALTS_ATOMIC_TYPE` 和 `<rcu.h>` 的 `SALTS_RCU_TYPE`。
 Pool 的 storage/lease/BUSY 归 Core `object_pool_owner_state`；Local affinity/TLS
 归 Platform `cmeta_thread_affine_state`；CMeta 只增加 canonical DataDesc 生命周期 binding。
-Platform `<salts/fastpath.h>` 拥有 C 原子 fast key 与一次性消费，
+Platform `<fastpath.h>` 拥有 C 原子 fast key 与一次性消费，
 CMeta static-call/tracepoint 增加 Function ABI/typed payload metadata。
 纯 fault 控制直接使用 Platform API，不提供另一套 CMeta spelling。
 

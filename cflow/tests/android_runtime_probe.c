@@ -4,10 +4,10 @@
 #include <cflow/scheduler.h>
 #include <cflow/stream.h>
 #include <cmeta/cmeta.h>
-#include <salts/clock.h>
-#include <salts/deadline_queue.h>
-#include <salts/error_codes.h>
-#include <salts/thread.h>
+#include <clock.h>
+#include <deadline_queue.h>
+#include <error_codes.h>
+#include <thread.h>
 
 #include <stdatomic.h>
 #include <stdint.h>

@@ -2,7 +2,7 @@
 #define CFLOW_IO_NATIVE_SHARDED_ADAPTER_H
 
 #include <cflow/io_actor.h>
-#include <salts/native_io_sharded.h>
+#include <native_io_sharded.h>
 
 #include <stdbool.h>
 #include <stddef.h>

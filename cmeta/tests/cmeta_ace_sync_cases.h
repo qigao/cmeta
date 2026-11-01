@@ -2,7 +2,7 @@
 #define CMETA_ACE_SYNC_CASES_H
 
 #include <cmeta/ace_synchronization.h>
-#include <salts/thread.h>
+#include <thread.h>
 #include <stdint.h>
 
 #ifdef __cplusplus

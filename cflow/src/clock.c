@@ -1,5 +1,5 @@
 #include <cflow/clock.h>
-#include <salts/clock.h>
+#include <clock.h>
 
 #include <stdlib.h>
 #include <string.h>

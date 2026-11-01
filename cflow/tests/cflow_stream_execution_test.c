@@ -1,5 +1,5 @@
 #include <cflow/cflow.h>
-#include <salts/thread.h>
+#include <thread.h>
 
 #include "subscription_internal.h"
 #include "tinytest.h"

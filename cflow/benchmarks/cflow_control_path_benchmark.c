@@ -5,9 +5,9 @@
 #include <cflow/cflow.h>
 #include <cflow/io_native_adapter.h>
 
-#include <salts/clock.h>
-#include <salts/error_codes.h>
-#include <salts/native_io.h>
+#include <clock.h>
+#include <error_codes.h>
+#include <native_io.h>
 
 #include <inttypes.h>
 #include <stdbool.h>

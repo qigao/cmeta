@@ -70,7 +70,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: d346643cdd1a313712dbdf8b2a21aa483c89700b
+          ref: 7d54e859c8fb982ef1fa81a5e48e6b4b45509d1a
           path: _core_owner
           persist-credentials: false
       - name: Install one exact shared Core native owner with instrumentation
@@ -81,7 +81,7 @@ jobs:
           set -euo pipefail
           python3 tools/check_ace_only_sources.py --core-root _core_owner
           test "$(git -C _core_owner rev-parse HEAD)" = \
-            d346643cdd1a313712dbdf8b2a21aa483c89700b
+            7d54e859c8fb982ef1fa81a5e48e6b4b45509d1a
           prefix="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
           cmake -S _core_owner -B build-instrumented-core-${{ matrix.kind }} \
             "-DCMAKE_TOOLCHAIN_FILE=$VCPKG_TOOLCHAIN" \

@@ -5,9 +5,9 @@
 #include <cflow/lower.h>
 #include <cflow/scheduler.h>
 
-#include <salts/error_codes.h>
-#include <salts/native_io_sharded.h>
-#include <salts/thread.h>
+#include <error_codes.h>
+#include <native_io_sharded.h>
+#include <thread.h>
 
 #include "tinytest.h"
 

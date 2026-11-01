@@ -2,7 +2,7 @@
 
 #include <cflow/cflow.h>
 #include <cflow/plan_internal.h>
-#include <salts/clock.h>
+#include <clock.h>
 
 #include "../src/result_storage.h"
 
