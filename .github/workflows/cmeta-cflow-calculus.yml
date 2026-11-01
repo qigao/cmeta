@@ -5,19 +5,17 @@ name: CMeta-CFlow Lean contracts
 on:
   pull_request:
     paths:
-      - ".github/workflows/cmeta-cflow-calculus.yml"
-      - "formal/cmeta_cflow_calculus/**"
-      - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
-      - "cflow/include/cflow/generated/builtin_operator_policy.h"
-      - "cflow/include/cflow/generated/machine_schema.h"
+      - "formal/cmeta_cflow_calculus/*.lean"
+      - "formal/cmeta_cflow_calculus/CMetaCFlowCalculus/**"
+      - "cmeta/include/cmeta/generated/**"
+      - "cflow/include/cflow/generated/**"
   push:
     branches: [master]
     paths:
-      - ".github/workflows/cmeta-cflow-calculus.yml"
-      - "formal/cmeta_cflow_calculus/**"
-      - "cmeta/include/cmeta/generated/builtin_signature_manifest.h"
-      - "cflow/include/cflow/generated/builtin_operator_policy.h"
-      - "cflow/include/cflow/generated/machine_schema.h"
+      - "formal/cmeta_cflow_calculus/*.lean"
+      - "formal/cmeta_cflow_calculus/CMetaCFlowCalculus/**"
+      - "cmeta/include/cmeta/generated/**"
+      - "cflow/include/cflow/generated/**"
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
