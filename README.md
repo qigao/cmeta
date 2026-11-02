@@ -26,6 +26,14 @@ repository does not retain compatibility copies or fallback implementations.
 Install the matching SaltsCore 0.1 SDK, set `SALTSCORE_PREFIX`, then use the
 versioned presets:
 
+For the local LLVM build, set `CMETA_TARGET_TOOLCHAIN_FILE` to the product
+compiler toolchain used for that Core SDK. If the Core SDK's transitive
+dependencies are installed separately, set `SALTSCORE_DEPENDENCY_PREFIX` to
+the matching dependency prefix restored by Core's manifest (for a local Core
+build, its `vcpkg_installed/<target-triplet>` directory). Core's Crypto export
+requires that GmSSL package. CMeta consumes this installed dependency; it does
+not own another dependency manifest or restore another native runtime.
+
 ```sh
 cmake --preset user-release
 cmake --build --preset release
@@ -68,3 +76,40 @@ rebuilding them, rejects an existing package version, then publishes the same
 bytes to the GitHub Release.
 
 Static source ownership policy: `python3 tools/check_ace_only_sources.py`.
+
+## Optional CNet policy adapter
+
+`<cmeta/cnet_policy.h>` composes the new CNet resource/policy contracts without
+introducing a CMeta dependency into SaltsCore. This adapter requires the
+matching SaltsCore `a6dd893077bf60322a3d6abf6c9a6398727c9033` SDK; the released 0.1.2
+SDK does not contain these declarations. Build and test against that SDK's
+installed prefix before qualifying a combined release.
+
+The adapter provides read-only descriptors for `cnet_send_limits`,
+`cnet_send_usage`, `cnet_backoff_input` and `cnet_pool_snapshot`. They support
+inspection through the normal CMeta Data/Object APIs and grant no construction
+or mutation authority over live I/O owners. Native policy callbacks and
+providers remain explicit typed bindings supplied by the host.
+
+For a caller-owned canonical slice, arm a cleanup obligation and bind it to
+the existing C++ scope (C callers use `cmeta_with_cleanups`):
+
+```cpp
+cmeta_cleanup obligation = CMETA_CLEANUP_INIT;
+if (cmeta_cnet_slice_cleanup(&obligation, &owned_slice) != CMETA_OK) {
+    // Handle the error; the caller still owns the slice.
+    return;
+}
+cmeta::cleanup_scope guard(obligation);
+// Submit through CNet. Successful admission retains its own reference.
+// Leaving this scope, including by exception, releases only owned_slice.
+```
+
+Keep the slice and cleanup record address-stable until scope exit. The buffer
+adapter similarly accepts a `mem_buffer_t **` and clears the caller's slot on
+release. Neither helper drives I/O nor destroys a pool. Explicitly stop, drain
+and destroy CNet/Manager/Pool owners and handle their errors; these fallible
+operations are not hidden in lexical cleanup.
+
+The original `salts.native.cmeta_data_temp` and `salts.native.owner_cpp17`
+tests cover descriptor inspection, error-return cleanup and exception unwind.

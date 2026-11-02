@@ -7,12 +7,41 @@
     {
       "name": "user-release",
       "displayName": "Local Release with installed SaltsCore",
-      "inherits": "native-release"
+      "inherits": "native-release",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$penv{CMETA_TARGET_TOOLCHAIN_FILE}"
+      }
     },
     {
       "name": "user-debug",
       "displayName": "Local Debug with installed SaltsCore",
       "inherits": "native-debug"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release",
+      "configurePreset": "user-release"
+    },
+    {
+      "name": "install-release",
+      "configurePreset": "user-release",
+      "targets": [
+        "install"
+      ]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "release",
+      "configurePreset": "user-release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "timeout": 120
+      }
     }
   ]
 }

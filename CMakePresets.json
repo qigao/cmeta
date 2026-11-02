@@ -8,7 +8,7 @@
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
+        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX};$penv{SALTSCORE_DEPENDENCY_PREFIX}",
         "BUILD_TESTING": "ON",
         "BUILD_EXAMPLES": "OFF",
         "BUILD_BENCHMARKS": "OFF",
@@ -22,7 +22,7 @@
       "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
+        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX};$penv{SALTSCORE_DEPENDENCY_PREFIX}",
         "BUILD_TESTING": "ON",
         "BUILD_EXAMPLES": "OFF",
         "BUILD_BENCHMARKS": "OFF",
@@ -36,7 +36,7 @@
       "binaryDir": "$penv{CMETA_BINARY_DIR}",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
+        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX};$penv{SALTSCORE_DEPENDENCY_PREFIX}",
         "SaltsCore_DIR": "$penv{SALTSCORE_PREFIX}/lib/cmake/SaltsCore",
         "CMAKE_INSTALL_PREFIX": "$penv{CMETA_INSTALL_PREFIX}",
         "CMAKE_TOOLCHAIN_FILE": "$penv{CMETA_TARGET_TOOLCHAIN_FILE}",
@@ -53,7 +53,7 @@
       "binaryDir": "$penv{CMETA_TEST_BINARY_DIR}",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
+        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX};$penv{SALTSCORE_DEPENDENCY_PREFIX}",
         "SaltsCore_DIR": "$penv{SALTSCORE_PREFIX}/lib/cmake/SaltsCore",
         "CMAKE_TOOLCHAIN_FILE": "$penv{CMETA_TARGET_TOOLCHAIN_FILE}",
         "BUILD_TESTING": "ON",
@@ -69,7 +69,7 @@
       "binaryDir": "$penv{CMETA_BINARY_DIR}",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
+        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX};$penv{SALTSCORE_DEPENDENCY_PREFIX}",
         "SaltsCore_DIR": "$penv{SALTSCORE_PREFIX}/lib/cmake/SaltsCore",
         "CMAKE_INSTALL_PREFIX": "$penv{CMETA_INSTALL_PREFIX}",
         "CMAKE_TOOLCHAIN_FILE": "$penv{CMETA_TARGET_TOOLCHAIN_FILE}",
@@ -84,10 +84,6 @@
     }
   ],
   "buildPresets": [
-    {
-      "name": "release",
-      "configurePreset": "native-release"
-    },
     {
       "name": "debug",
       "configurePreset": "native-debug"
@@ -113,25 +109,9 @@
       "name": "install-android-release-ci",
       "configurePreset": "android-release-ci",
       "targets": ["install"]
-    },
-    {
-      "name": "install-release",
-      "configurePreset": "native-release",
-      "targets": ["install"]
     }
   ],
   "testPresets": [
-    {
-      "name": "release",
-      "configurePreset": "native-release",
-      "output": {
-        "outputOnFailure": true
-      },
-      "execution": {
-        "noTestsAction": "error",
-        "timeout": 120
-      }
-    },
     {
       "name": "llvm-test-ci",
       "configurePreset": "llvm-test-ci",

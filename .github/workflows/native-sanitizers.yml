@@ -70,7 +70,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: 7d54e859c8fb982ef1fa81a5e48e6b4b45509d1a
+          ref: a6dd893077bf60322a3d6abf6c9a6398727c9033
           path: _core_owner
           persist-credentials: false
       - name: Install one exact shared Core native owner with instrumentation
@@ -81,7 +81,7 @@ jobs:
           set -euo pipefail
           python3 tools/check_ace_only_sources.py --core-root _core_owner
           test "$(git -C _core_owner rev-parse HEAD)" = \
-            7d54e859c8fb982ef1fa81a5e48e6b4b45509d1a
+            a6dd893077bf60322a3d6abf6c9a6398727c9033
           prefix="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
           cmake -S _core_owner -B build-instrumented-core-${{ matrix.kind }} \
             "-DCMAKE_TOOLCHAIN_FILE=$VCPKG_TOOLCHAIN" \
@@ -109,7 +109,7 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
             "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}" \
-            "-DCMAKE_PREFIX_PATH=$core" "-DCMAKE_INSTALL_PREFIX=$salts"
+            "-DCMAKE_PREFIX_PATH=$core;$GITHUB_WORKSPACE/build-instrumented-core-${{ matrix.kind }}/vcpkg_installed/x64-linux" "-DCMAKE_INSTALL_PREFIX=$salts"
           cmake --build build-instrumented-salts-${{ matrix.kind }} --parallel 2
           cmake --install build-instrumented-salts-${{ matrix.kind }} \
             --config RelWithDebInfo

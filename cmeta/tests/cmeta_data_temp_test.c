@@ -1,5 +1,7 @@
 #include "tinytest.h"
 #include <cmeta/data.h>
+#include <cmeta/cnet_policy.h>
+#include <cmeta/object.h>
 
 #include <stdint.h>
 #include <string.h>
@@ -89,4 +91,40 @@ suite("CMeta data temporary storage") {
     check_equal(temp.alignment, (size_t)0u);
     check_equal(temp.lifecycle, CMETA_DATA_TEMP_NONE);
   }
+}
+
+static cmeta_status cnet_cleanup_error_body(void *user) {
+    (void)user;
+    return CMETA_INVALID_ARGUMENT;
+}
+suite("CNet policy reflection and explicit cleanup") {
+    it("inspects native limits without granting construct or write authority") {
+        cnet_send_limits limits = {0};
+        limits.connection_bytes = 4096u;
+        const cmeta_data_desc *data = cmeta_reflected_data(cnet_send_limits);
+        cmeta_object_ref object;
+        const cmeta_data_desc *field_data = NULL;
+        const void *field = NULL;
+        check_true(cmeta_data_desc_valid(data));
+        check_false(cmeta_data_struct_constructible(data));
+        check_equal(cmeta_object_borrow(&object, &limits, data, NULL), CMETA_OK);
+        check_equal(cmeta_object_field_read(&object, "connection_bytes", &field_data, &field), CMETA_OK);
+        check_equal(*(const size_t *)field, (size_t)4096u);
+        cmeta_object_release(&object);
+    }
+    it("releases only the caller buffer reference when a scoped operation fails") {
+        mem_buffer_t *owned = mem_get_buffer(mem_global(), 16u);
+        check_not_null(owned);
+        mem_buffer_t *other = mem_buffer_retain(owned);
+        cmeta_cleanup obligation = CMETA_CLEANUP_INIT;
+        check_equal(cmeta_cnet_buffer_cleanup(&obligation, &owned), CMETA_OK);
+        cmeta_status status = cmeta_with_cleanups(&obligation, 1u, cnet_cleanup_error_body, NULL);
+        bool cleared = owned == NULL;
+        uint32_t remaining = mem_buffer_ref_count(other);
+        cmeta_cleanup_run(&obligation);
+        mem_buffer_release(other);
+        check_equal(status, CMETA_INVALID_ARGUMENT);
+        check_true(cleared);
+        check_equal(remaining, (uint32_t)1u);
+    }
 }
