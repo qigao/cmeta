@@ -23,6 +23,14 @@ cryptographic code and ASN.1 belong to **qigao/crypto**. Source ownership is sin
 - Standalone installer/consumer CI, SDK-probe projects, and their source trees
   are forbidden. Release staging install and package assembly remain part of
   the single native SDK publication graph, not separate product projects.
+- Use plain CMake to build the project's formal tests and CTest to run them.
+  Do not register tests that invoke `cmake -P`, install an SDK, configure/build
+  another project or run consumer/smoke validation, including platform-only
+  variants. Put behavioral regressions in the existing formal test suites.
+- Resolve dependencies with explicit REQUIRED package declarations and target
+  links. Do not add directory/file probes, package `*_DIR` overrides, fallback
+  searches, configure-time compile probes or diagnostic-log scanning. Missing
+  dependencies and invalid inputs must fail at their normal configure/build step.
 
 TinyMock and descriptor-driven SIMD execution belong to qigao/salts-utils;
 do not restore those implementation trees or make Salts depend on Utils.

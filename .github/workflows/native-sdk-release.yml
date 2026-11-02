@@ -6,6 +6,11 @@ name: CMeta 0.1.003 LLVM SDK
 on:
   pull_request:
     paths:
+      - "**/CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - "cmake/**"
+      - ".github/workflows/native-sdk-release.yml"
       - "cmeta/include/**"
       - "cmeta/src/**"
       - "plugin/include/**"
@@ -18,6 +23,11 @@ on:
     branches: [master]
     tags: ["v0.1.003"]
     paths:
+      - "**/CMakeLists.txt"
+      - "CMakePresets.json"
+      - "CMakeUserPresets.json"
+      - "cmake/**"
+      - ".github/workflows/native-sdk-release.yml"
       - "cmeta/include/**"
       - "cmeta/src/**"
       - "plugin/include/**"
@@ -39,7 +49,7 @@ permissions:
 env:
   RELEASE_VERSION: 0.1.003
   PACKAGE_VERSION: 0.1.3
-  CORE_SHA: 7d54e859c8fb982ef1fa81a5e48e6b4b45509d1a
+  CORE_SHA: 61d42472583e9923ca22ea2929c651b6a4c12450
 
 jobs:
   sdk:
