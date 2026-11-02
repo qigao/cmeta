@@ -31,6 +31,13 @@ typedef struct cmeta_generic_desc {
 } cmeta_generic_desc;
 
 typedef struct cmeta_type_identity cmeta_type_identity;
+/* Admission and equality share finite limits. Root depth is zero; nodes count
+ * visits, including repeated DAG branches. Over-budget/cyclic graphs reject.
+ * Descriptors remain immutable and borrowed throughout each operation. */
+enum {
+    CMETA_TYPE_IDENTITY_MAX_DEPTH = 64u,
+    CMETA_TYPE_IDENTITY_MAX_NODES = 4096u
+};
 struct cmeta_type_identity {
     cmeta_type_form form;
     const char *stable_atom_id;

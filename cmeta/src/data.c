@@ -17,6 +17,9 @@
 #define CMETA_DATA_DESC_BUFFER_OPS_SIZE CMETA_FIELD_END(cmeta_data_desc, buffer_ops)
 #define CMETA_DATA_DESC_ENUM_OPS_SIZE CMETA_FIELD_END(cmeta_data_desc, enum_ops)
 #define CMETA_DATA_DESC_VARIANT_OPS_SIZE CMETA_FIELD_END(cmeta_data_desc, variant_ops)
+#define CMETA_DATA_HAS_OPS(desc, member) \
+  ((desc)->struct_size >= offsetof(cmeta_data_desc, member) + sizeof((desc)->member) && \
+   (desc)->member != NULL)
 #define CMETA_DATA_DESC_FIXED_OPS_SIZE CMETA_FIELD_END(cmeta_data_desc, fixed_ops)
 #define CMETA_DATA_DESC_ENUM_BITS_OPS_SIZE CMETA_FIELD_END(cmeta_data_desc, enum_bits_ops)
 #define CMETA_DATA_ENUM_BITS_OPS_PREFIX_SIZE CMETA_FIELD_END(cmeta_data_enum_bits_ops, restore_zero)
@@ -1461,7 +1464,7 @@ static cmeta_status cmeta_data_construct_ops_status(const cmeta_data_desc *desc,
   if (ops->struct_size < CMETA_CONSTRUCT_OPS_SIZE ||
       ops->abi_version != CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION || ops->storage_type == NULL ||
       !cmeta_type_desc_valid(ops->storage_type) || ops->init_zero == NULL ||
-      ops->restore_zero == NULL || ops->move == NULL || !cmeta_lifecycle_flags_valid(ops))
+      ops->restore_zero == NULL || !cmeta_lifecycle_flags_valid(ops))
     return CMETA_INVALID_ARGUMENT;
   if (desc->storage_type == NULL || !cmeta_type_equal(desc->storage_type, ops->storage_type) ||
       desc->storage_type->size != ops->storage_type->size ||
@@ -1504,6 +1507,7 @@ cmeta_status cmeta_data_construct_move(const cmeta_data_desc *desc, void *destin
   if (destination == NULL || source == NULL || destination == source) return CMETA_INVALID_ARGUMENT;
   status = cmeta_data_construct_ops_status(desc, &ops);
   if (status != CMETA_OK) return status;
+  if (ops->move == NULL) return CMETA_TRAIT_MISSING;
   ops->move(destination, source);
   return CMETA_OK;
 }
@@ -1603,8 +1607,8 @@ cmeta_status cmeta_data_value_init_zero(const cmeta_data_desc *desc, void *objec
   if (!cmeta_data_desc_valid(desc) || object == NULL || desc->storage_type == NULL)
     return CMETA_INVALID_ARGUMENT;
   if (cmeta_data_reflection_is_view(desc)) return CMETA_TRAIT_MISSING;
-  if (desc->fixed_ops != NULL) return cmeta_data_fixed_restore_zero(desc, object);
-  if (desc->variant_ops != NULL) {
+  if (CMETA_DATA_HAS_OPS(desc, fixed_ops)) return cmeta_data_fixed_restore_zero(desc, object);
+  if (CMETA_DATA_HAS_OPS(desc, variant_ops)) {
     /* A tagged provider must initialize raw storage without inspecting an
      * indeterminate tag. Existing providers without construction ops keep
      * their established zero-storage contract. */
@@ -1625,7 +1629,7 @@ cmeta_status cmeta_data_value_init_zero(const cmeta_data_desc *desc, void *objec
   case CMETA_DATA_BYTES:
     return cmeta_data_buffer_init_zero(desc, object);
   case CMETA_DATA_ENUM:
-    if (desc->enum_bits_ops != NULL) return cmeta_data_enum_bits_restore_zero(desc, object);
+    if (CMETA_DATA_HAS_OPS(desc, enum_bits_ops)) return cmeta_data_enum_bits_restore_zero(desc, object);
     return cmeta_data_enum_restore_zero(desc, object);
   case CMETA_DATA_STRUCT:
     return cmeta_data_struct_init_zero(desc, object);
@@ -1639,8 +1643,8 @@ cmeta_status cmeta_data_value_restore_zero(const cmeta_data_desc *desc, void *ob
   if (!cmeta_data_desc_valid(desc) || object == NULL || desc->storage_type == NULL)
     return CMETA_INVALID_ARGUMENT;
   if (cmeta_data_reflection_is_view(desc)) return CMETA_TRAIT_MISSING;
-  if (desc->fixed_ops != NULL) return cmeta_data_fixed_restore_zero(desc, object);
-  if (desc->variant_ops != NULL) return cmeta_data_variant_restore_zero(desc, object);
+  if (CMETA_DATA_HAS_OPS(desc, fixed_ops)) return cmeta_data_fixed_restore_zero(desc, object);
+  if (CMETA_DATA_HAS_OPS(desc, variant_ops)) return cmeta_data_variant_restore_zero(desc, object);
   switch (desc->kind) {
   case CMETA_DATA_BOOL:
   case CMETA_DATA_SINT:
@@ -1652,7 +1656,7 @@ cmeta_status cmeta_data_value_restore_zero(const cmeta_data_desc *desc, void *ob
   case CMETA_DATA_BYTES:
     return cmeta_data_buffer_restore_zero(desc, object);
   case CMETA_DATA_ENUM:
-    if (desc->enum_bits_ops != NULL) return cmeta_data_enum_bits_restore_zero(desc, object);
+    if (CMETA_DATA_HAS_OPS(desc, enum_bits_ops)) return cmeta_data_enum_bits_restore_zero(desc, object);
     return cmeta_data_enum_restore_zero(desc, object);
   case CMETA_DATA_STRUCT:
     return cmeta_data_struct_restore_zero(desc, object);
@@ -1778,7 +1782,7 @@ cmeta_status cmeta_data_value_is_zero(const cmeta_data_desc *desc, const void *o
   return cmeta_data_value_is_zero_depth(desc, object, out, 0u);
 }
 
-static bool cmeta_data_value_move_supported_depth(const cmeta_data_desc *desc, unsigned depth) {
+static bool cmeta_data_value_lifecycle_supported_depth(const cmeta_data_desc *desc, unsigned depth, bool require_move) {
   const cmeta_data_struct_shape *shape;
   size_t i;
   if (depth > 64u || !cmeta_data_desc_valid(desc) || desc->storage_type == NULL) return false;
@@ -1798,7 +1802,7 @@ static bool cmeta_data_value_move_supported_depth(const cmeta_data_desc *desc, u
     for (i = 0u; i < shape->field_count; ++i) {
       const cmeta_data_field_desc *field = &shape->fields[i];
       if (!cmeta_data_struct_field_bounds_valid(desc, field) ||
-          !cmeta_data_value_move_supported_depth(field->value, depth + 1u))
+          !cmeta_data_value_lifecycle_supported_depth(field->value, depth + 1u, require_move))
         return false;
     }
     return true;
@@ -1809,19 +1813,25 @@ static bool cmeta_data_value_move_supported_depth(const cmeta_data_desc *desc, u
       return false;
     for (i = 0u; i < variant->case_count; ++i) {
       const cmeta_data_variant_case *item = &variant->cases[i];
-      if (item->value == NULL || !cmeta_data_value_move_supported_depth(item->value, depth + 1u))
+      if (item->value == NULL || !cmeta_data_value_lifecycle_supported_depth(item->value, depth + 1u, require_move))
         return false;
     }
     return true;
   }
-  default:
-    return cmeta_data_construct_ops_of(desc) != NULL;
+  default: {
+    const cmeta_data_construct_ops *ops = cmeta_data_construct_ops_of(desc);
+    return ops != NULL && (!require_move || ops->move != NULL);
+  }
   }
 }
 
 bool cmeta_data_struct_constructible(const cmeta_data_desc *desc) {
   return desc != NULL && desc->kind == CMETA_DATA_STRUCT &&
-         cmeta_data_value_move_supported_depth(desc, 0u);
+         cmeta_data_value_lifecycle_supported_depth(desc, 0u, false);
+}
+
+static bool cmeta_data_value_move_supported_depth(const cmeta_data_desc *desc, unsigned depth) {
+  return cmeta_data_value_lifecycle_supported_depth(desc, depth, true);
 }
 
 static cmeta_status cmeta_data_struct_init_zero(const cmeta_data_desc *desc, void *object) {
@@ -1865,7 +1875,7 @@ static cmeta_status cmeta_data_struct_move(const cmeta_data_desc *desc, void *de
                                            void *source) {
   const cmeta_data_struct_shape *shape;
   size_t i;
-  if (!cmeta_data_struct_constructible(desc) || destination == NULL || source == NULL ||
+  if (!cmeta_data_value_move_supported_depth(desc, 0u) || destination == NULL || source == NULL ||
       destination == source)
     return CMETA_TRAIT_MISSING;
   shape = (const cmeta_data_struct_shape *)desc->shape;
@@ -2282,11 +2292,11 @@ static cmeta_status cmeta_data_temp_init(const cmeta_data_desc *desc, void *stor
   if (desc == NULL || storage == NULL || lifecycle == NULL) return CMETA_INVALID_ARGUMENT;
   status = cmeta_data_value_init_zero(desc, storage);
   if (status != CMETA_OK) return status;
-  if (desc->fixed_ops != NULL) {
+  if (CMETA_DATA_HAS_OPS(desc, fixed_ops)) {
     *lifecycle = CMETA_DATA_TEMP_FIXED;
     return CMETA_OK;
   }
-  if (desc->variant_ops != NULL) {
+  if (CMETA_DATA_HAS_OPS(desc, variant_ops)) {
     *lifecycle = CMETA_DATA_TEMP_VARIANT;
     return CMETA_OK;
   }
@@ -2302,7 +2312,7 @@ static cmeta_status cmeta_data_temp_init(const cmeta_data_desc *desc, void *stor
     *lifecycle = CMETA_DATA_TEMP_BUFFER;
     break;
   case CMETA_DATA_ENUM:
-    *lifecycle = desc->enum_bits_ops != NULL ? CMETA_DATA_TEMP_ENUM_BITS : CMETA_DATA_TEMP_ENUM;
+    *lifecycle = CMETA_DATA_HAS_OPS(desc, enum_bits_ops) ? CMETA_DATA_TEMP_ENUM_BITS : CMETA_DATA_TEMP_ENUM;
     break;
   default:
     *lifecycle = CMETA_DATA_TEMP_CONSTRUCT;
@@ -2366,9 +2376,17 @@ cmeta_status cmeta_data_temp_open(const cmeta_data_desc *desc, size_t max_bytes,
   return CMETA_OK;
 }
 
-void cmeta_data_temp_close(cmeta_data_temp *temp) {
-  if (temp == NULL || temp->storage == NULL) return;
-  if (temp->data != NULL) (void)cmeta_data_value_restore_zero(temp->data, temp->storage);
+cmeta_status cmeta_data_temp_try_close(cmeta_data_temp *temp) {
+  cmeta_status status = CMETA_OK;
+  if (temp == NULL || temp->storage == NULL) return CMETA_OK;
+  /* The borrowed provider and its original code module MUST stay live
+   * if a no-fail restore callback violates the semantic-zero contract.
+   * Never release even the raw allocation after a failed restore.
+   */
+  if (temp->data != NULL) {
+    status = cmeta_data_value_restore_zero(temp->data, temp->storage);
+    if (status != CMETA_OK) return status;
+  }
 #if defined(_WIN32)
   if (temp->alignment > CMETA_ALIGNOF(cmeta_capture_storage)) _aligned_free(temp->storage);
   else free(temp->storage);
@@ -2376,6 +2394,15 @@ void cmeta_data_temp_close(cmeta_data_temp *temp) {
   free(temp->storage);
 #endif
   *temp = (cmeta_data_temp){0};
+  return CMETA_OK;
+}
+
+void cmeta_data_temp_close(cmeta_data_temp *temp) {
+  /* Keep the old void API's no-fail contract. A broken provider cannot be
+   * safely recovered here, so fail-stop rather than free an owning value
+   * with an incompletely restored native representation.
+   */
+  if (cmeta_data_temp_try_close(temp) != CMETA_OK) abort();
 }
 
 cmeta_status cmeta_data_map_accept(const cmeta_data_desc *desc, cmeta_collector *collector,

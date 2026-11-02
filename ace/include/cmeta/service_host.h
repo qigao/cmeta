@@ -78,6 +78,14 @@ typedef struct salts_service_host_failure {
     salts_configurator_status configurator_status;
 } salts_service_host_failure;
 
+/* A Configurator construction failure also retains its scalar phase,
+ * component/dependency indices and Provider status in generation.components.
+ * Query them through salts_configurator_context_failure(). They survive full
+ * storage/lease cleanup and recovery until a new generation build is admitted. The
+ * retained diagnostic does not keep Provider metadata or backing arrays alive.
+ * As with other mutable generation fields, inspect it only with exclusive
+ * access or after the operation that produced it has completed. */
+
 typedef struct salts_service_host_runtime salts_service_host_runtime;
 
 typedef struct salts_service_host_generation {
@@ -123,8 +131,15 @@ typedef struct salts_service_host_scope {
  * After init, publish/close/acquire/release/drain synchronize runtime admission
  * and generation counts. Each scope is used by one thread at a time; provider
  * services retain their own concurrency contracts. Build/discard and reuse of
- * a generation require exclusive access to that bundle. Never inspect mutable
- * runtime/generation fields concurrently with these operations.
+ * a generation require exclusive access to that bundle. Publishing also
+ * requires exclusive access to the detached BUILT candidate until the call
+ * returns; never publish the same bundle concurrently to different runtimes.
+ * Once attached, its Configurator lifecycle belongs to ServiceHost: do not call
+ * Configurator lifecycle APIs directly on that nested context. Never inspect
+ * or mutate runtime/generation fields concurrently with these operations.
+ * Full graph validation and stop callbacks run outside the runtime admission
+ * mutex; the runtime synchronizes state transitions and reserves a STOPPING
+ * bundle for exactly one drainer.
  *
  * Init/destroy require exclusive access to the runtime, including exclusion of
  * concurrent API calls. Destroy returns BUSY until close and drain complete. */
