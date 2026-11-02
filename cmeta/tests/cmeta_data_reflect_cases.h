@@ -1,6 +1,151 @@
 #include "cmeta_data_reflect_fixture.h"
 #include <cmeta/object.h>
 #include <cmeta/fingerprint.h>
+#include <cmeta/lifecycle.h>
+#include <stdlib.h>
+#include <string.h>
+
+static unsigned reflect_nonmovable_inits, reflect_nonmovable_restores;
+static cmeta_status reflect_nonmovable_init(void *value) {
+    ++reflect_nonmovable_inits;
+    *(int *)value = 0;
+    return CMETA_OK;
+}
+static void reflect_nonmovable_restore(void *value) {
+    ++reflect_nonmovable_restores;
+    *(int *)value = 0;
+}
+static const cmeta_data_construct_ops reflect_nonmovable_ops = {
+    sizeof(cmeta_data_construct_ops), CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,
+    &cmeta_type_int, reflect_nonmovable_init, reflect_nonmovable_restore,
+    NULL, CMETA_LIFECYCLE_INIT_NOFAIL
+};
+static const int reflect_nonmovable_shape = 0;
+static const cmeta_data_desc reflect_nonmovable_data = {
+    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
+    "test.reflect.Nonmovable", "Nonmovable", CMETA_DATA_CUSTOM,
+    &cmeta_type_int, &reflect_nonmovable_shape,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, &reflect_nonmovable_ops
+};
+typedef struct ReflectNonmovableRecord { int value; } ReflectNonmovableRecord;
+cmeta_reflect_value(ReflectNonmovableRecord, "test.reflect.NonmovableRecord",
+    cmeta_data_field(int, value, &reflect_nonmovable_data)
+);
+
+suite("CMeta bounded reflection admission and lifecycle") {
+    it("uses only present descriptor fields for every admitted v1 prefix") {
+        const size_t prefix = offsetof(cmeta_data_desc, buffer_ops);
+        for (size_t bytes = prefix; bytes <= sizeof(cmeta_data_desc); ++bytes) {
+            /* Allocate exactly the advertised size: a full backing struct with
+             * a shortened size would hide the original out-of-bounds read. */
+            cmeta_data_desc *data = (cmeta_data_desc *)malloc(bytes);
+            int source = 17, destination = 23;
+            bool zero = false;
+            cmeta_data_temp temp = {0};
+            check_not_null(data);
+            memcpy(data, &cmeta_data_int, bytes);
+            data->struct_size = bytes;
+            check_true(cmeta_data_desc_valid(data));
+            check_equal(cmeta_data_value_init_zero(data, &destination), CMETA_OK);
+            check_equal(destination, 0);
+            check_equal(cmeta_data_value_copy(data, &destination, &source), CMETA_OK);
+            check_equal(destination, 17);
+            check_equal(cmeta_data_value_restore_zero(data, &destination), CMETA_OK);
+            check_equal(cmeta_data_value_move(data, &destination, &source), CMETA_OK);
+            check_equal(destination, 17);
+            check_equal(cmeta_data_value_is_zero(data, &source, &zero), CMETA_OK);
+            check_true(zero);
+            check_equal(cmeta_data_temp_open(data, sizeof(int), &temp), CMETA_OK);
+            check_equal(cmeta_data_temp_try_close(&temp), CMETA_OK);
+            check_null(temp.storage);
+            free(data);
+        }
+    }
+
+    it("rejects cyclic identities even when both equality operands are the same") {
+        cmeta_type_identity left = CMETA_TYPE_ID_POINTER_INIT(NULL);
+        cmeta_type_identity right = CMETA_TYPE_ID_CONST_INIT(&left);
+        const cmeta_type_identity *args[] = {&left};
+        cmeta_type_identity application = CMETA_TYPE_ID_APPLY_INIT(&cmeta_option_generic_desc, args);
+        left.base = &left;
+        check_false(cmeta_type_identity_valid(&left));
+        check_false(cmeta_type_identity_equal(&left, &left));
+        left.base = &right;
+        check_false(cmeta_type_identity_valid(&left));
+        check_false(cmeta_type_identity_equal(&left, &right));
+        left.base = &application;
+        check_false(cmeta_type_identity_valid(&application));
+        check_false(cmeta_type_application_valid(&cmeta_option_generic_desc, args, 1u));
+        check_false(cmeta_type_identity_equal(&application, &application));
+    }
+
+    it("admits the depth boundary and rejects excessive depth and DAG expansion") {
+        cmeta_type_identity chain[CMETA_TYPE_IDENTITY_MAX_DEPTH + 2u];
+        cmeta_type_identity peer[CMETA_TYPE_IDENTITY_MAX_DEPTH + 2u];
+        const cmeta_type_identity atom = CMETA_TYPE_ID_ATOM_INIT("test.depth.atom");
+        chain[0] = peer[0] = atom;
+        for (size_t i = 1u; i < CMETA_TYPE_IDENTITY_MAX_DEPTH + 2u; ++i) {
+            const cmeta_type_identity a = CMETA_TYPE_ID_CONST_INIT(&chain[i - 1u]);
+            const cmeta_type_identity b = CMETA_TYPE_ID_CONST_INIT(&peer[i - 1u]);
+            chain[i] = a;
+            peer[i] = b;
+        }
+        check_true(cmeta_type_identity_valid(&chain[CMETA_TYPE_IDENTITY_MAX_DEPTH]));
+        check_true(cmeta_type_identity_equal(&chain[CMETA_TYPE_IDENTITY_MAX_DEPTH],
+                                            &peer[CMETA_TYPE_IDENTITY_MAX_DEPTH]));
+        check_false(cmeta_type_identity_valid(&chain[CMETA_TYPE_IDENTITY_MAX_DEPTH + 1u]));
+        check_false(cmeta_type_identity_equal(&chain[CMETA_TYPE_IDENTITY_MAX_DEPTH + 1u],
+                                             &peer[CMETA_TYPE_IDENTITY_MAX_DEPTH + 1u]));
+        /* Twelve binary levels have only thirteen physical nodes but 8191
+         * visits. A depth limit alone cannot bound such schema expansion. */
+        cmeta_type_identity dag[13];
+        const cmeta_type_identity *children[12][2];
+        dag[0] = atom;
+        for (size_t i = 1u; i < 13u; ++i) {
+            children[i - 1u][0] = children[i - 1u][1] = &dag[i - 1u];
+            const cmeta_type_identity node = CMETA_TYPE_ID_APPLY_INIT(
+                &cmeta_pair_generic_desc, children[i - 1u]);
+            dag[i] = node;
+        }
+        check_true(cmeta_type_identity_valid(&dag[11]));
+        check_false(cmeta_type_identity_valid(&dag[12]));
+        check_false(cmeta_type_identity_equal(&dag[12], &dag[12]));
+    }
+
+    it("initializes and restores nonmovable values through the same canonical ops") {
+        cmeta_lifecycle_binding binding = CMETA_LIFECYCLE_BINDING_INIT;
+        cmeta_data_temp temp = {0};
+        int source = 42, destination = 0;
+        ReflectNonmovableRecord record = {7}, other = {0};
+        const cmeta_data_desc *record_data = cmeta_reflected_data(ReflectNonmovableRecord);
+        reflect_nonmovable_inits = reflect_nonmovable_restores = 0u;
+        check_equal(cmeta_lifecycle_admit(&reflect_nonmovable_data, sizeof(int),
+            CMETA_ALIGNOF(int), &binding), CMETA_OK);
+        check_equal(cmeta_lifecycle_init(&binding, &source), CMETA_OK);
+        check_equal(cmeta_lifecycle_restore(&binding, &source), CMETA_OK);
+        check_equal(cmeta_data_value_init_zero(&reflect_nonmovable_data, &source), CMETA_OK);
+        check_equal(cmeta_data_value_restore_zero(&reflect_nonmovable_data, &source), CMETA_OK);
+        check_equal(cmeta_data_temp_open(&reflect_nonmovable_data, sizeof(int), &temp), CMETA_OK);
+        check_equal(cmeta_data_temp_try_close(&temp), CMETA_OK);
+        check_equal(reflect_nonmovable_inits, 3u);
+        check_equal(reflect_nonmovable_restores, 3u);
+        source = 42;
+        check_false(cmeta_data_value_move_supported(&reflect_nonmovable_data));
+        check_equal(cmeta_data_construct_move(&reflect_nonmovable_data, &destination, &source),
+                    CMETA_TRAIT_MISSING);
+        check_equal(source, 42);
+        check_equal(destination, 0);
+        check_true(cmeta_data_struct_constructible(record_data));
+        check_false(cmeta_data_value_move_supported(record_data));
+        check_equal(cmeta_data_value_move(record_data, &other, &record), CMETA_TRAIT_MISSING);
+        check_equal(record.value, 7);
+        check_equal(other.value, 0);
+        check_equal(cmeta_data_value_init_zero(record_data, &record), CMETA_OK);
+        check_equal(cmeta_data_value_restore_zero(record_data, &record), CMETA_OK);
+        check_equal(reflect_nonmovable_inits, 4u);
+        check_equal(reflect_nonmovable_restores, 4u);
+    }
+}
 
 suite("CMeta data reflection of existing native records") {
     it("keeps partial views outside semantic lifecycle without changing objects") {

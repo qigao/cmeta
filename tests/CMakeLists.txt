@@ -1,7 +1,7 @@
 # Original runtime regressions in the production build graph. No second project,
 # installed consumer harness, private runtime copy or alternate test profile.
 function(salts_native_case name source)
-  add_executable(salts_native_${name} "${source}")
+  add_executable(salts_native_${name} "${source}" ${ARGN})
   target_compile_features(salts_native_${name} PRIVATE c_std_11 cxx_std_17)
   target_include_directories(salts_native_${name} PRIVATE
     "${PROJECT_SOURCE_DIR}/ace/tests"
@@ -19,6 +19,14 @@ endfunction()
 salts_native_case(plugin_utf8_path utf8_plugin_path_test.c)
 salts_native_case(cmeta_data_temp
   "${PROJECT_SOURCE_DIR}/cmeta/tests/cmeta_data_temp_test.c")
+# Run the original reflection suites in the canonical BUILD_TESTING graph.
+# The retired BUILD_TESTS switch cannot enable cmeta/tests in this package.
+salts_native_case(cmeta_data_reflect
+  "${PROJECT_SOURCE_DIR}/cmeta/tests/cmeta_data_reflect_test.c"
+  "${PROJECT_SOURCE_DIR}/cmeta/tests/cmeta_data_reflect_peer.c")
+salts_native_case(cmeta_data_reflect_cpp
+  "${PROJECT_SOURCE_DIR}/cmeta/tests/cmeta_data_reflect_cpp_test.cpp"
+  "${PROJECT_SOURCE_DIR}/cmeta/tests/cmeta_data_reflect_peer.c")
 foreach(flow IN ITEMS status stream_slice ace_pipes_filters event_mailbox
     io_native_adapter io_native_sharded_adapter machine_instance)
   salts_native_case(cflow_${flow}

@@ -1,5 +1,6 @@
 #include <cmeta/configurator.h>
 #include "tinytest.hpp"
+#include "configurator_test_cases.h"
 
 suite("Salts Component C++ header") {
     it("exposes the bounded runtime without C++ wrappers") {
