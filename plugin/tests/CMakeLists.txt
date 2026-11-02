@@ -8,14 +8,43 @@ target_link_libraries(cmeta_plugin_registry_lifetime_fixture
 set_target_properties(cmeta_plugin_registry_lifetime_fixture PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
   FOLDER "plugin/tests/fixtures")
+add_library(cmeta_plugin_registry_other_fixture SHARED
+  registry_lifetime_fixture.c)
+target_link_libraries(cmeta_plugin_registry_other_fixture
+  PRIVATE CMeta::PluginABI)
+target_compile_definitions(cmeta_plugin_registry_other_fixture PRIVATE
+  "REGISTRY_LIFETIME_FIXTURE_ID=\"test.plugin.registry.other\"")
+set_target_properties(cmeta_plugin_registry_other_fixture PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+  FOLDER "plugin/tests/fixtures")
+# A distinct DSO with the original identity lets admission be checked without
+# reloading the just-closed binary into its former address range.
+add_library(cmeta_plugin_registry_duplicate_fixture SHARED
+  registry_lifetime_fixture.c)
+target_link_libraries(cmeta_plugin_registry_duplicate_fixture
+  PRIVATE CMeta::PluginABI)
+set_target_properties(cmeta_plugin_registry_duplicate_fixture PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+  FOLDER "plugin/tests/fixtures")
+# Compile the original Registry through its test-local close adapter so the
+# existing suite can observe the interval after native close and before slot
+# retirement. Platform/Core and the native loader remain their original owners.
 cmake_add_test(cmeta_plugin_registry_lifetime_test
-  SOURCES registry_lifetime_test.c
-  LIBS CMeta::Plugin Salts::TinyTest
+  SOURCES registry_lifetime_test.c registry_lifetime_adapter.c ../src/plugin.c
+  LIBS CMeta::PluginABI Salts::Core Salts::Platform Salts::TinyTest ${CMAKE_DL_LIBS}
   DEFS
     "PLUGIN_REGISTRY_LIFETIME_PATH=\"$<TARGET_FILE:cmeta_plugin_registry_lifetime_fixture>\""
+    "PLUGIN_REGISTRY_OTHER_PATH=\"$<TARGET_FILE:cmeta_plugin_registry_other_fixture>\""
+    "PLUGIN_REGISTRY_DUPLICATE_PATH=\"$<TARGET_FILE:cmeta_plugin_registry_duplicate_fixture>\""
   FOLDER "plugin/tests")
+if(WIN32)
+  target_sources(cmeta_plugin_registry_lifetime_test PRIVATE ../src/plugin_windows.c)
+else()
+  target_sources(cmeta_plugin_registry_lifetime_test PRIVATE ../src/plugin_posix.c)
+endif()
 add_dependencies(cmeta_plugin_registry_lifetime_test
-  cmeta_plugin_registry_lifetime_fixture)
+  cmeta_plugin_registry_lifetime_fixture cmeta_plugin_registry_other_fixture
+  cmeta_plugin_registry_duplicate_fixture)
 set_target_properties(cmeta_plugin_registry_lifetime_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 

@@ -45,6 +45,6 @@ install(
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
 
-if(BUILD_TESTS)
+if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()

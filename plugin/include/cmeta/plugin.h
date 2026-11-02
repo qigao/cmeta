@@ -317,6 +317,10 @@ cmeta_plugin_status cmeta_plugin_registry_load(
     const char *path,
     cmeta_plugin_ref *out_ref);
 
+/* Identity lookup does not acquire a DSO borrow. A slot remains findable and
+ * reserves its plugin ID until native unload completes; start/acquire reject
+ * it while unloading. Identity is Registry-owned, so lookup and duplicate
+ * admission never read an unloading DSO's manifest. */
 cmeta_plugin_status cmeta_plugin_registry_find(
     const cmeta_plugin_registry *registry,
     const char *plugin_id,

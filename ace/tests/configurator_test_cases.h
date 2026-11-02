@@ -5,6 +5,94 @@
 #include <stdlib.h>
 
 suite("Salts static Component Configurator") {
+    it("rejects projection callback reentry without changing the ACTIVE graph") {
+        unsigned named;
+        for (named = 0u; named < 2u; ++named) {
+            test_lookup_fixture fixture;
+            salts_configurator_service service;
+            salts_configurator_status status;
+            check_equal(test_lookup_fixture_start(&fixture, 17), SALTS_CONFIGURATOR_OK);
+            fixture.armed = true;
+            status = named != 0u
+                ? salts_configurator_context_find_service_from(&fixture.context,
+                    cmeta_component_meta(TestLogger)->stable_id, test_log_interface(), &service)
+                : salts_configurator_context_find_service(
+                    &fixture.context, test_log_interface(), &service);
+            check_equal(status, SALTS_CONFIGURATOR_OK);
+            check_equal(fixture.calls, 1u);
+            check_equal(fixture.observed_state, SALTS_CONFIGURATOR_CONTEXT_ACTIVE);
+            check_equal(fixture.stop_status, SALTS_CONFIGURATOR_INVALID_STATE);
+            check_equal(fixture.lookup_status, SALTS_CONFIGURATOR_INVALID_STATE);
+            check_equal(fixture.named_lookup_status, SALTS_CONFIGURATOR_INVALID_STATE);
+            check_equal(fixture.context.state, SALTS_CONFIGURATOR_CONTEXT_ACTIVE);
+            check_true(service.object == &fixture.instance.object);
+            check_true(cmeta_object_ref_valid(service.object));
+            check_equal(fixture.provider.deactivates, 0u);
+            check_equal(fixture.provider.destroys, 0u);
+            check_equal(salts_configurator_context_stop(&fixture.context), SALTS_CONFIGURATOR_OK);
+            check_equal(fixture.provider.deactivates, 1u);
+            check_equal(fixture.provider.destroys, 1u);
+        }
+    }
+
+    it("releases lookup reentry protection after rejected or invalid projections") {
+        unsigned named, invalid;
+        for (named = 0u; named < 2u; ++named) {
+            for (invalid = 0u; invalid < 2u; ++invalid) {
+                test_lookup_fixture fixture;
+                salts_configurator_service service = {0};
+                salts_configurator_status status;
+                check_equal(test_lookup_fixture_start(&fixture, 19), SALTS_CONFIGURATOR_OK);
+                fixture.armed = true;
+                fixture.projection_status = invalid != 0u ? CMETA_OK : CMETA_CALLBACK_ERROR;
+                fixture.invalid_projection = invalid != 0u;
+                status = named != 0u
+                    ? salts_configurator_context_find_service_from(&fixture.context,
+                        cmeta_component_meta(TestLogger)->stable_id, test_log_interface(), &service)
+                    : salts_configurator_context_find_service(
+                        &fixture.context, test_log_interface(), &service);
+                check_equal(status, SALTS_CONFIGURATOR_INTERFACE_UNAVAILABLE);
+                check_equal(fixture.stop_status, SALTS_CONFIGURATOR_INVALID_STATE);
+                check_equal(fixture.context.state, SALTS_CONFIGURATOR_CONTEXT_ACTIVE);
+                check_null(service.object);
+                fixture.projection_status = CMETA_OK;
+                fixture.invalid_projection = false;
+                check_equal(salts_configurator_context_find_service(
+                    &fixture.context, test_log_interface(), &service), SALTS_CONFIGURATOR_OK);
+                check_equal(fixture.calls, 2u);
+                check_true(service.object == &fixture.instance.object);
+                check_equal(salts_configurator_context_stop(&fixture.context), SALTS_CONFIGURATOR_OK);
+                check_equal(fixture.provider.deactivates, 1u);
+                check_equal(fixture.provider.destroys, 1u);
+            }
+        }
+    }
+
+    it("allows another Context lookup while protecting all outer Contexts") {
+        test_lookup_fixture outer, nested;
+        salts_configurator_service service;
+        check_equal(test_lookup_fixture_start(&outer, 23), SALTS_CONFIGURATOR_OK);
+        check_equal(test_lookup_fixture_start(&nested, 29), SALTS_CONFIGURATOR_OK);
+        outer.nested = &nested;
+        nested.outer = &outer;
+        outer.armed = nested.armed = true;
+        check_equal(salts_configurator_context_find_service(
+            &outer.context, test_log_interface(), &service), SALTS_CONFIGURATOR_OK);
+        check_equal(outer.calls, 1u);
+        check_equal(nested.calls, 1u);
+        check_equal(outer.nested_status, SALTS_CONFIGURATOR_OK);
+        check_true(outer.nested_service.object == &nested.instance.object);
+        check_equal(outer.stop_status, SALTS_CONFIGURATOR_INVALID_STATE);
+        check_equal(nested.stop_status, SALTS_CONFIGURATOR_INVALID_STATE);
+        check_equal(nested.outer_stop_status, SALTS_CONFIGURATOR_INVALID_STATE);
+        check_equal(nested.outer_lookup_status, SALTS_CONFIGURATOR_INVALID_STATE);
+        check_true(service.object == &outer.instance.object);
+        check_equal(salts_configurator_context_stop(&nested.context), SALTS_CONFIGURATOR_OK);
+        check_equal(salts_configurator_context_stop(&outer.context), SALTS_CONFIGURATOR_OK);
+        check_equal(nested.provider.destroys, 1u);
+        check_equal(outer.provider.destroys, 1u);
+    }
+
     it("does not revisit expired construction configuration during lookup or stop") {
         test_provider_state logger, app;
         salts_configurator_provider_binding providers[2];

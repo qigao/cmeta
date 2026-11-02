@@ -103,6 +103,78 @@ static void drain_worker(void *arg) {
         drainer->runtime, drainer->generation);
 }
 
+/* Hold every lookup inside its Provider projection at once. This distinguishes
+ * per-thread reentry protection from a shared mutable Context busy flag. */
+cmeta_component(ServiceHostLookupOverlap,
+    cmeta_provides(service_host_provider_value));
+
+typedef struct lookup_overlap_provider {
+    publication_gate *gate;
+    int value;
+    bool armed;
+} lookup_overlap_provider;
+
+typedef struct lookup_overlap_reader {
+    salts_service_host_runtime *runtime;
+    bool named;
+    salts_service_host_status acquire;
+    salts_service_host_status lookup;
+    salts_service_host_status release;
+    int value;
+} lookup_overlap_reader;
+
+static int lookup_overlap_get(void *self) {
+    return *(int *)self;
+}
+
+CMETA_IMPLEMENTS(service_host_provider_value, lookup_overlap_value, 0u,
+    .get = lookup_overlap_get);
+
+static cmeta_status lookup_overlap_create(
+    void *user, const cmeta_data_desc *config_data, const void *config_value,
+    const salts_configurator_dependency *dependencies, size_t dependency_count,
+    cmeta_object_ref *out) {
+    lookup_overlap_provider *provider = user;
+    (void)config_data;
+    (void)config_value;
+    (void)dependencies;
+    (void)dependency_count;
+    return cmeta_object_borrow(out, &provider->value, &cmeta_data_int, NULL);
+}
+
+static cmeta_status lookup_overlap_project(
+    void *user, const cmeta_object_ref *object,
+    const cmeta_interface_desc *expected, cmeta_interface_projection *out) {
+    lookup_overlap_provider *provider = user;
+    if (!cmeta_interface_desc_equal(expected, service_host_provider_value_interface()))
+        return CMETA_TRAIT_MISSING;
+    if (provider->armed)
+        gate_arrive(provider->gate, &provider->gate->entered, 1u);
+    out->size = sizeof(*out);
+    out->interface = service_host_provider_value_interface();
+    out->self = object->object;
+    out->dispatch = &lookup_overlap_value_vtable;
+    return CMETA_OK;
+}
+
+static void lookup_overlap_worker(void *arg) {
+    lookup_overlap_reader *reader = arg;
+    salts_service_host_scope scope = SALTS_SERVICE_HOST_SCOPE_INIT;
+    salts_configurator_service service;
+    reader->acquire = salts_service_host_scope_acquire(reader->runtime, &scope);
+    if (reader->acquire != SALTS_SERVICE_HOST_OK)
+        return;
+    reader->lookup = reader->named
+        ? salts_service_host_scope_find_service_from(&scope,
+            cmeta_component_meta(ServiceHostLookupOverlap)->stable_id,
+            service_host_provider_value_interface(), &service)
+        : salts_service_host_scope_find_service(
+            &scope, service_host_provider_value_interface(), &service);
+    if (reader->lookup == SALTS_SERVICE_HOST_OK)
+        reader->value = *(const int *)service.object->object;
+    reader->release = salts_service_host_scope_release(&scope);
+}
+
 suite("ServiceHost concurrent admission and drain") {
     static cmeta_plugin_registry registry;
     static cmeta_plugin_ref ref;
@@ -339,5 +411,59 @@ suite("ServiceHost concurrent admission and drain") {
         check_equal(generations[0].generation.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
         check_null(generations[0].generation.runtime_owner);
         check_null(generations[0].generation.registry);
+    }
+
+    it("allows simultaneous Provider projections through independent live Scopes") {
+        static lookup_overlap_provider provider;
+        static cmeta_object_interface_provider interfaces;
+        static salts_configurator_provider_binding binding;
+        static lookup_overlap_reader overlap_readers[PUBLICATION_READERS];
+        publication_generation_fixture *fixture = &generations[0];
+        const salts_service_host_generation_storage storage = {
+            fixture->deployments, 1u, fixture->instances, 1u,
+            fixture->dependencies, 1u, fixture->activation_order, 1u,
+            fixture->modules, 1u
+        };
+        salts_configurator_deployment deployment;
+        salts_service_host_generation *previous = NULL;
+        provider = (lookup_overlap_provider){&gate, 43, false};
+        interfaces = (cmeta_object_interface_provider){
+            sizeof(cmeta_object_interface_provider), &provider, lookup_overlap_project
+        };
+        binding = (salts_configurator_provider_binding){
+            sizeof(salts_configurator_provider_binding),
+            SALTS_CONFIGURATOR_PROVIDER_BINDING_ABI_VERSION,
+            cmeta_component_meta(ServiceHostLookupOverlap), &provider, &interfaces,
+            lookup_overlap_create, NULL, NULL
+        };
+        deployment = (salts_configurator_deployment){&binding, NULL, NULL};
+        check_equal(salts_service_host_generation_build(&fixture->generation,
+            UINT64_C(1), NULL, &storage, &deployment, 1u, NULL, 0u, NULL, 0u),
+            SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_runtime_publish(
+            &runtime, &fixture->generation, &previous), SALTS_SERVICE_HOST_OK);
+        provider.armed = true;
+        for (size_t i = 0u; i < PUBLICATION_READERS; ++i) {
+            overlap_readers[i] = (lookup_overlap_reader){0};
+            overlap_readers[i].runtime = &runtime;
+            overlap_readers[i].named = (i % 2u) != 0u;
+            check_equal(cmeta_thread_create(
+                &threads[i], lookup_overlap_worker, &overlap_readers[i]), 0);
+        }
+        check_equal(gate_wait(&gate, &gate.entered), 0);
+        check_equal(salts_service_host_runtime_close(&runtime, &previous),
+                    SALTS_SERVICE_HOST_OK);
+        check_equal(salts_service_host_generation_drain(&runtime, previous),
+                    SALTS_SERVICE_HOST_BUSY);
+        gate_advance(&gate, 1u);
+        for (size_t i = 0u; i < PUBLICATION_READERS; ++i) {
+            check_equal(cmeta_thread_join(&threads[i]), 0);
+            check_equal(overlap_readers[i].acquire, SALTS_SERVICE_HOST_OK);
+            check_equal(overlap_readers[i].lookup, SALTS_SERVICE_HOST_OK);
+            check_equal(overlap_readers[i].release, SALTS_SERVICE_HOST_OK);
+            check_equal(overlap_readers[i].value, 43);
+        }
+        check_equal(salts_service_host_generation_drain(&runtime, previous),
+                    SALTS_SERVICE_HOST_OK);
     }
 }

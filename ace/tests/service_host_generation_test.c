@@ -63,6 +63,22 @@ static cmeta_status test_logger_create_noncanonical(
     return CMETA_CALLBACK_ERROR;
 }
 
+typedef struct test_lookup_discard {
+    salts_service_host_generation *generation;
+    salts_service_host_status result;
+    bool enabled;
+} test_lookup_discard;
+
+static cmeta_status test_project_with_discard(
+    void *context, const cmeta_object_ref *object,
+    const cmeta_interface_desc *expected, cmeta_interface_projection *out) {
+    test_lookup_discard *probe = context;
+    cmeta_status status = test_interface_project(NULL, object, expected, out);
+    if (probe->enabled)
+        probe->result = salts_service_host_generation_discard(probe->generation);
+    return status;
+}
+
 suite("ServiceHost generation") {
     before_each() {
         const cmeta_plugin_registry_config config = {2};
@@ -116,6 +132,42 @@ suite("ServiceHost generation") {
         check_equal(cmeta_plugin_registry_unload(
             &registry, ref), CMETA_PLUGIN_OK);
         check_equal(cmeta_plugin_registry_destroy(&registry), CMETA_PLUGIN_OK);
+    }
+
+    it("keeps a built generation retryable after discard from a lookup callback") {
+        test_provider_state logger;
+        salts_service_host_generation candidate = SALTS_SERVICE_HOST_GENERATION_INIT;
+        test_lookup_discard probe = {&candidate, SALTS_SERVICE_HOST_OK, false};
+        const cmeta_object_interface_provider interfaces = {
+            sizeof(interfaces), &probe, test_project_with_discard
+        };
+        salts_configurator_provider_binding provider;
+        salts_configurator_deployment source, admitted;
+        salts_configurator_instance instance;
+        salts_configurator_service service;
+        size_t order;
+        const salts_service_host_generation_storage storage = {
+            &admitted, 1u, &instance, 1u, NULL, 0u, &order, 1u, NULL, 0u
+        };
+        test_provider_state_init(&logger, 7, NULL);
+        provider = TEST_PROVIDER_BINDING(TestLogger, &logger, test_logger_create);
+        provider.interfaces = &interfaces;
+        source = TEST_DEPLOYMENT(&provider, NULL, NULL);
+        check_equal(salts_service_host_generation_build(&candidate, 1u, NULL,
+            &storage, &source, 1u, NULL, 0u, NULL, 0u), SALTS_SERVICE_HOST_OK);
+        probe.enabled = true;
+        check_equal(salts_configurator_context_find_service(&candidate.components,
+            test_log_interface(), &service), SALTS_CONFIGURATOR_OK);
+        check_equal(probe.result, SALTS_SERVICE_HOST_CONFIGURATOR_ERROR);
+        check_equal(candidate.state, SALTS_SERVICE_HOST_GENERATION_BUILT);
+        check_equal(candidate.components.state, SALTS_CONFIGURATOR_CONTEXT_ACTIVE);
+        check_true(service.object == &instance.object);
+        check_equal(logger.deactivates, 0u);
+        check_equal(logger.destroys, 0u);
+        check_equal(salts_service_host_generation_discard(&candidate), SALTS_SERVICE_HOST_OK);
+        check_equal(candidate.state, SALTS_SERVICE_HOST_GENERATION_DRAINED);
+        check_equal(logger.deactivates, 1u);
+        check_equal(logger.destroys, 1u);
     }
 
     it("keeps resolve diagnostics after detaching failed generation storage") {
