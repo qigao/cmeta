@@ -139,6 +139,13 @@ jobs:
           build-type: toolchain-only
           obfuscator: "false"
 
+      - name: Use selected native LLVM for dependency resolution and builds
+        if: matrix.family == 'native'
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'CC=%s\nCXX=%s\n' "$LLVM_NATIVE_CC" "$LLVM_NATIVE_CXX" >> "$GITHUB_ENV"
+
       - name: Restore exact Core dependencies using curl
         id: vcpkg
         uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@d618d4f3b91fa1112e2b52b0c5761713eaeedc85
