@@ -44,6 +44,9 @@ ctest --preset release
 
 The CI presets additionally take `CMETA_BINARY_DIR`, `CMETA_INSTALL_PREFIX`
 and `CMETA_TARGET_TOOLCHAIN_FILE`. Android also takes `CMETA_ANDROID_ABI`.
+The Android preset declares `SALTSCORE_PREFIX` as both the installed package
+prefix and a target search root. Package lookup stays `ONLY` within the target
+roots, so the NDK can resolve this ABI's Core SDK without searching host packages.
 Consumers select the combined installed prefix and link the canonical targets:
 
 ```cmake

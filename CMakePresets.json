@@ -68,6 +68,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
+        "CMAKE_FIND_ROOT_PATH": "$penv{SALTSCORE_PREFIX}",
+        "CMAKE_FIND_ROOT_PATH_MODE_PACKAGE": "ONLY",
         "CMAKE_INSTALL_PREFIX": "$penv{CMETA_INSTALL_PREFIX}",
         "CMAKE_TOOLCHAIN_FILE": "$penv{CMETA_TARGET_TOOLCHAIN_FILE}",
         "ANDROID_ABI": "$penv{CMETA_ANDROID_ABI}",
