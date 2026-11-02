@@ -14,6 +14,16 @@ on:
       - "ace/src/**"
       - "cflow/include/**"
       - "cflow/src/**"
+      - "**/CMakeLists.txt"
+      - "CMakeLists.txt"
+      - "CMake*Presets.json"
+      - "cmake/**"
+      - "**/tests/**"
+      - "tests/**"
+      - "cstl/**"
+      - "tools/**"
+      - "packaging/**"
+      - ".github/workflows/native-*.yml"
   push:
     branches: [master]
     paths:
@@ -25,6 +35,16 @@ on:
       - "ace/src/**"
       - "cflow/include/**"
       - "cflow/src/**"
+      - "**/CMakeLists.txt"
+      - "CMakeLists.txt"
+      - "CMake*Presets.json"
+      - "cmake/**"
+      - "**/tests/**"
+      - "tests/**"
+      - "cstl/**"
+      - "tools/**"
+      - "packaging/**"
+      - ".github/workflows/native-*.yml"
   workflow_dispatch:
 
 concurrency:

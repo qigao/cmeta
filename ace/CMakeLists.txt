@@ -1,58 +1,31 @@
-# Canonical ABI contracts live beside their only runtime implementations.
-add_library(salts_configurator_abi INTERFACE)
-cmake_config_target(salts_configurator_abi
-  ALIAS CMeta::ConfiguratorABI FOLDER "ace"
-  EXPORT_NAME ConfiguratorABI)
-target_compile_features(salts_configurator_abi INTERFACE c_std_11)
-target_include_directories(salts_configurator_abi INTERFACE
+# Provider declarations carry CMeta and Plugin contracts without ACE runtime.
+add_library(cmeta_provider INTERFACE)
+cmake_config_target(cmeta_provider
+  ALIAS CMeta::Provider FOLDER "ace"
+  EXPORT_NAME Provider)
+target_compile_features(cmeta_provider INTERFACE c_std_11)
+target_include_directories(cmeta_provider INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-target_link_libraries(salts_configurator_abi INTERFACE CMeta::CMeta)
+target_link_libraries(cmeta_provider INTERFACE CMeta::CMeta CMeta::PluginABI)
 
-add_library(salts_service_host_provider_abi INTERFACE)
-cmake_config_target(salts_service_host_provider_abi
-  ALIAS CMeta::ServiceHostProviderABI FOLDER "ace"
-  EXPORT_NAME ServiceHostProviderABI)
-target_compile_features(salts_service_host_provider_abi INTERFACE c_std_11)
-target_include_directories(salts_service_host_provider_abi INTERFACE
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
-target_link_libraries(salts_service_host_provider_abi INTERFACE
-  CMeta::ConfiguratorABI CMeta::PluginABI)
-
-# The only installed lifecycle graph and Plugin generation owner.
-# ServiceHost composes Configurator, CMeta ProviderABI and the existing Plugin
-# registry; it does not load modules or retain callbacks through a second path.
-add_library(salts_configurator STATIC
-  src/configurator.c src/configurator_abi.c)
-cmake_config_target(salts_configurator
-  ALIAS CMeta::Configurator
-  FOLDER "ace"
-  EXPORT_NAME Configurator
-  OUTPUT_NAME salts_configurator)
-target_compile_features(salts_configurator PUBLIC c_std_11)
-target_include_directories(salts_configurator PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>)
-target_link_libraries(salts_configurator PUBLIC CMeta::ConfiguratorABI)
-
-add_library(salts_service_host STATIC
+# One static owner for Configurator construction and ServiceHost generations.
+# Plugin remains the independent loader, Registry and lease/unload authority.
+add_library(cmeta_ace STATIC
+  src/configurator.c src/configurator_abi.c
   src/service_host.c src/service_host_runtime.c src/service_host_abi.c)
-cmake_config_target(salts_service_host
-  ALIAS CMeta::ServiceHost
-  FOLDER "ace"
-  EXPORT_NAME ServiceHost
-  OUTPUT_NAME salts_service_host)
-target_compile_features(salts_service_host PUBLIC c_std_11)
-target_include_directories(salts_service_host PUBLIC
+cmake_config_target(cmeta_ace
+  ALIAS CMeta::ACE FOLDER "ace"
+  EXPORT_NAME ACE OUTPUT_NAME cmeta_ace)
+target_compile_features(cmeta_ace PUBLIC c_std_11)
+target_include_directories(cmeta_ace PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-target_link_libraries(salts_service_host
-  PUBLIC CMeta::Configurator CMeta::ServiceHostProviderABI
+target_link_libraries(cmeta_ace
+  PUBLIC CMeta::Provider
   PRIVATE CMeta::Plugin Salts::Platform)
 
-install(TARGETS salts_configurator_abi salts_service_host_provider_abi
-  salts_configurator salts_service_host
+install(TARGETS cmeta_provider cmeta_ace
   EXPORT CMetaTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

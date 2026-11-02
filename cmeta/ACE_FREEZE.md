@@ -22,27 +22,20 @@ Long-lived `feature/cmeta-ace-patterns` [Draft PR #1013](https://github.com/qiga
 remains **DO NOT MERGE. DO NOT PUBLISH.** Feature freeze is **not** 2.3.0
 native SDK, downstream or stable release qualification.
 
-**Current ownership mapping:** the graph below uses the current public owner
-names for the corresponding responsibilities. `CMeta::Configurator` owns static
-graph resolution and activation; `CMeta::ServiceHost` owns generation
-publication, Scope admission and drain, and Plugin lease settlement.
+**Current ownership mapping:** `CMeta::ACE` contains Configurator static graph
+resolution/activation and ServiceHost generation publication, Scope admission,
+drain and Plugin lease settlement. `CMeta::Provider` supplies their declarations.
 `CMeta::Plugin` remains the sole DSO loader and unload authority. Frozen test
 names and run links below apply to their historical source only. They do not
-qualify the current Salts 4.0 / ABI 2.0 implementation.
+qualify the current CMeta 0.1 / ABI 2.0 implementation.
 
-```text
-CMeta: immutable Type / Interface / FunctionAbi / DataDesc / ObjectRef /
-       Lifecycle / Manifest / typed macro + inline declarations
-    |
-    +--> CMeta::Configurator: bounded static selection, graph/lifecycle
-    |        |
-    |        +--> CMeta::ServiceHost: generation publication + scope admission
-    |                    |
-    |                    +--> CMeta::Plugin: sole DSO load/unload + module lease
-    |
-    +--> CNet / NativeIO: transport, accept/connect, Reactor/Proactor owner
-    |
-    +--> CFlow / Actor: bounded mailbox, scheduler, Graph, Channel, Stream
+```mermaid
+flowchart TD
+    meta["CMeta declarations"] --> config["ACE Configurator: selection and lifecycle"]
+    config --> host["ACE ServiceHost: generations and Scopes"]
+    host --> plugin["Plugin: loader, unload and leases"]
+    meta --> native["Core CNet and NativeIO"]
+    meta --> flow["CFlow and Actor execution"]
 ```
 
 **No new public ACE pattern DSL, runtime scheduler, dynamic service locator,

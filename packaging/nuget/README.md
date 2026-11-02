@@ -21,8 +21,9 @@ Select matching `SaltsCore.Native` and `CMeta.Native` prefixes, make the Core
 package available first, then use:
 
 ```cmake
-find_package(CMeta 0.1 CONFIG REQUIRED)
-target_link_libraries(my_host PRIVATE CMeta::CMeta CMeta::ServiceHost)
+find_package(CMeta CONFIG REQUIRED)
+target_link_libraries(my_host PRIVATE CMeta::ACE)
+target_link_libraries(my_provider PRIVATE CMeta::Provider)
 ```
 
 Windows payloads use llvm-mingw with UCRT and are not ABI-compatible with
