@@ -116,7 +116,7 @@ jobs:
       - name: Set up runner-native LLVM toolchain
         id: llvm_native
         if: matrix.family == 'native'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@d618d4f3b91fa1112e2b52b0c5761713eaeedc85
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -124,7 +124,7 @@ jobs:
       - name: Set up Windows llvm-mingw UCRT toolchain
         id: llvm_mingw
         if: matrix.family == 'windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@d618d4f3b91fa1112e2b52b0c5761713eaeedc85
         with:
           target: ${{ matrix.arch }}
           version: "20261020"
@@ -134,20 +134,23 @@ jobs:
       - name: Set up Android LLVM host
         id: llvm_android_host
         if: matrix.family == 'android'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@d618d4f3b91fa1112e2b52b0c5761713eaeedc85
         with:
           build-type: toolchain-only
           obfuscator: "false"
 
-      - name: Set up shared dependency contract
+      - name: Restore exact Core dependencies using curl
         id: vcpkg
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@d618d4f3b91fa1112e2b52b0c5761713eaeedc85
         with:
           mode: read
           token: ${{ github.token }}
+          manifest-root: _core_owner
+          triplet: ${{ matrix.triplet }}
+          host-triplet: ${{ matrix.host_triplet }}
 
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@d618d4f3b91fa1112e2b52b0c5761713eaeedc85
         with:
           token: ${{ github.token }}
 
