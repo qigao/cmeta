@@ -347,3 +347,69 @@ suite("CSTL imported metadata") {
     tstr_free(value);
   }
 }
+
+cmeta_type(Map, ImportedTstrIntMap, tstr, int,
+      CMETA_TSTR_TYPE_REF, CMETA_TSTR_DATA_REF,
+      &cmeta_type_int, &cmeta_data_int);
+
+suite("CSTL imported tstr map") {
+  static ImportedTstrIntMap values;
+  static tstr beta, alpha, query;
+
+  before_each() {
+    beta = tstr_dup("beta");
+    alpha = tstr_dup("alpha");
+    query = tstr_dup("alpha");
+    check_not_null(beta);
+    check_not_null(alpha);
+    check_not_null(query);
+  }
+  after_each() {
+    ImportedTstrIntMap_destroy(&values);
+    tstr_free(alpha);
+    tstr_free(beta);
+    tstr_free(query);
+    alpha = beta = query = NULL;
+  }
+
+  group("imported type and data identity") {
+    it("exposes comparison traits and canonical descriptors") {
+      check_not_null(cmeta_tstr_cmeta_type.traits);
+      check_not_null(CMETA_TSTR_TYPE_REF->traits);
+      check_not_equal(cmeta_tstr_cmeta_type.traits->flags & CMETA_TRAIT_COMPARE, 0u);
+      check_not_equal(CMETA_TSTR_TYPE_REF->traits->flags & CMETA_TRAIT_COMPARE, 0u);
+      check_true(cmeta_type_equal(CMETA_TSTR_TYPE_REF, &cmeta_tstr_cmeta_type));
+      check_true(cmeta_data_desc_equal(CMETA_TSTR_DATA_REF, &cmeta_tstr_cmeta_data));
+    }
+  }
+
+  group("typed map operations") {
+    it("finds keys by value and preserves caller-owned strings on destruction") {
+      check_equal(ImportedTstrIntMap_init(&values, 4u), STL_OK);
+      check_equal(ImportedTstrIntMap_put(&values, beta, 20), STL_OK);
+      check_equal(ImportedTstrIntMap_put(&values, alpha, 10), STL_OK);
+      const int *found = ImportedTstrIntMap_get_const(&values, query);
+      check_not_null(found);
+      check_equal(*found, 10);
+      check_equal(ImportedTstrIntMap_size(&values), 2u);
+      ImportedTstrIntMap_destroy(&values);
+      check_equal(tstr_len(alpha), 5u);
+      check_equal(tstr_len(beta), 4u);
+      check_equal(tstr_len(query), 5u);
+    }
+
+    it("reflects the canonical put signature") {
+      const cmeta_receiver_operation_set *set = ImportedTstrIntMap_receiver_operation_set();
+      check_true(cmeta_receiver_operation_set_valid(set));
+      check_true(cmeta_generic_desc_equal(set->owner, &stl_map_generic_desc));
+      const cmeta_receiver_operation *method = cmeta_receiver_operation_find(set, "put");
+      check_not_null(method);
+      check_true(method->abi->function == ImportedTstrIntMap_put_function());
+      check_true(method->abi == ImportedTstrIntMap_put_function_abi());
+      check_true(cmeta_type_equal(cmeta_function_param(method->abi->function, 1u)->type,
+                                 CMETA_TSTR_TYPE_REF));
+      check_true(cmeta_type_equal(cmeta_function_param(method->abi->function, 2u)->type,
+                                 &cmeta_type_int));
+    }
+  }
+}

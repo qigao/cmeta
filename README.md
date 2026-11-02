@@ -27,12 +27,14 @@ Install the matching SaltsCore 0.1 SDK, set `SALTSCORE_PREFIX`, then use the
 versioned presets:
 
 For the local LLVM build, set `CMETA_TARGET_TOOLCHAIN_FILE` to the product
-compiler toolchain used for that Core SDK. If the Core SDK's transitive
-dependencies are installed separately, set `SALTSCORE_DEPENDENCY_PREFIX` to
-the matching dependency prefix restored by Core's manifest (for a local Core
-build, its `vcpkg_installed/<target-triplet>` directory). Core's Crypto export
-requires that GmSSL package. CMeta consumes this installed dependency; it does
-not own another dependency manifest or restore another native runtime.
+compiler toolchain used for that Core SDK. CMeta requires only the installed
+Core SDK; it does not find or link Crypto/GmSSL and needs no provider dependency
+prefix. Core's private transport implementation is owned by its shared runtime.
+
+Tests are ordinary executables in the project build graph, registered with
+CTest. No test installs the SDK, configures another project, or invokes CMake
+scripts to build/run a consumer. SDK installation and release assembly remain
+normal build operations, separate from test execution.
 
 ```sh
 cmake --preset user-release
@@ -81,7 +83,7 @@ Static source ownership policy: `python3 tools/check_ace_only_sources.py`.
 
 `<cmeta/cnet_policy.h>` composes the new CNet resource/policy contracts without
 introducing a CMeta dependency into SaltsCore. This adapter requires the
-matching SaltsCore `a6dd893077bf60322a3d6abf6c9a6398727c9033` SDK; the released 0.1.2
+matching SaltsCore `61d42472583e9923ca22ea2929c651b6a4c12450` SDK; the released 0.1.2
 SDK does not contain these declarations. Build and test against that SDK's
 installed prefix before qualifying a combined release.
 
