@@ -6,11 +6,6 @@ name: CMeta 0.1.003 LLVM SDK
 on:
   pull_request:
     paths:
-      - "**/CMakeLists.txt"
-      - "CMakePresets.json"
-      - "CMakeUserPresets.json"
-      - "cmake/**"
-      - ".github/workflows/native-sdk-release.yml"
       - "cmeta/include/**"
       - "cmeta/src/**"
       - "plugin/include/**"
@@ -19,15 +14,20 @@ on:
       - "ace/src/**"
       - "cflow/include/**"
       - "cflow/src/**"
+      - "**/CMakeLists.txt"
+      - "CMakeLists.txt"
+      - "CMake*Presets.json"
+      - "cmake/**"
+      - "**/tests/**"
+      - "tests/**"
+      - "cstl/**"
+      - "tools/**"
+      - "packaging/**"
+      - ".github/workflows/native-*.yml"
   push:
     branches: [master]
     tags: ["v0.1.003"]
     paths:
-      - "**/CMakeLists.txt"
-      - "CMakePresets.json"
-      - "CMakeUserPresets.json"
-      - "cmake/**"
-      - ".github/workflows/native-sdk-release.yml"
       - "cmeta/include/**"
       - "cmeta/src/**"
       - "plugin/include/**"
@@ -36,6 +36,16 @@ on:
       - "ace/src/**"
       - "cflow/include/**"
       - "cflow/src/**"
+      - "**/CMakeLists.txt"
+      - "CMakeLists.txt"
+      - "CMake*Presets.json"
+      - "cmake/**"
+      - "**/tests/**"
+      - "tests/**"
+      - "cstl/**"
+      - "tools/**"
+      - "packaging/**"
+      - ".github/workflows/native-*.yml"
   workflow_dispatch:
 
 concurrency:
@@ -300,13 +310,12 @@ jobs:
             test ! -e "$CMETA_INSTALL_PREFIX/include/$header"
           done
           targets="$CMETA_INSTALL_PREFIX/lib/cmake/CMeta/CMetaTargets.cmake"
-          for target in CMeta ConfiguratorABI PluginABI Plugin \
-              ServiceHostProviderABI Configurator ServiceHost CFlow; do
+          for target in CMeta Provider ACE PluginABI Plugin CFlow CSTL CSTLStream; do
             grep -Fq "CMeta::$target" "$targets"
           done
-          if grep -Eq 'Salts::(CMeta|Configurator|Plugin|ServiceHost|CFlow)' \
+          if grep -Eq 'CMeta::(Configurator|ServiceHost)|Salts::(CMeta|ACE|Provider|Configurator|Plugin|ServiceHost|CFlow)' \
               "$targets"; then
-            echo 'repository-owned target leaked into the Salts:: namespace' >&2
+            echo 'obsolete or misnamespaced repository target in installed exports' >&2
             exit 1
           fi
           printf '%s\n' \

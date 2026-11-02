@@ -22,6 +22,9 @@ CMeta owns type metadata, typed interfaces, reflection and structured resource
 contracts. ACE uses those semantics for interceptors, component/service
 construction, activation, scoped lifetimes and Plugin leases. Configurator,
 ServiceHost and Plugin each retain their existing lifecycle authority.
+`CMeta::ACE` packages Configurator and ServiceHost in one static archive;
+`CMeta::Provider` supplies both declaration contracts without the ACE runtime.
+`CMeta::Plugin` remains the independent loader and Registry owner.
 
 CFlow supplies CMeta-based actor, reactive, DAG and state machine execution
 integrations. NativeIO owner,

@@ -9,6 +9,11 @@ cryptographic code and ASN.1 belong to **qigao/crypto**. Source ownership is sin
 
 - Repository-owned public CMake targets use `CMeta::XXX`; imported native
   owners from qigao/salts-core keep their canonical `Salts::XXX` names.
+- `CMeta::ACE` is the sole Configurator/ServiceHost runtime target;
+  `CMeta::Provider` carries their declarations without linking that runtime.
+- CMeta package lookups are unversioned: `find_package(CMeta CONFIG REQUIRED)`
+  and `find_dependency(CMeta CONFIG REQUIRED)`. Package release versions and
+  source provenance remain independently recorded.
 - Repository-owned public headers live under `include/cmeta/`. Imported
   qigao/salts-core headers use their published flat or functional paths; no
   `include/salts/` or `include/salts_core/` namespace exists.

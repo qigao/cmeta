@@ -11,10 +11,14 @@ ASN.1 belong to the Crypto repository.
 The installed package exports:
 
 - `CMeta::CMeta`
-- `CMeta::ConfiguratorABI` and `CMeta::Configurator`
+- `CMeta::Provider` and `CMeta::ACE`
 - `CMeta::PluginABI` and `CMeta::Plugin`
-- `CMeta::ServiceHostProviderABI` and `CMeta::ServiceHost`
 - `CMeta::CFlow`
+- `CMeta::CSTL` and `CMeta::CSTLStream`
+
+`CMeta::ACE` is one static library containing Configurator and ServiceHost.
+`CMeta::Provider` carries both Provider declaration contracts without linking
+ACE; Plugin remains the independent loader and Registry library.
 
 SaltsCore supplies the imported shared owners `Salts::Core`,
 `Salts::Platform`, `Salts::Concurrency`, `Salts::Coroutine` and
@@ -50,10 +54,12 @@ roots, so the NDK can resolve this ABI's Core SDK without searching host package
 Consumers select the combined installed prefix and link the canonical targets:
 
 ```cmake
-find_package(CMeta 0.1 CONFIG REQUIRED)
-target_link_libraries(my_host PRIVATE CMeta::CMeta CMeta::ServiceHost)
+find_package(CMeta CONFIG REQUIRED)
+target_link_libraries(my_host PRIVATE CMeta::ACE)
+target_link_libraries(my_provider PRIVATE CMeta::Provider)
 ```
 
+The former separate lifecycle and Provider ABI targets have been removed.
 Configurator and ServiceHost retain native ABI epoch 2.0, Provider contract v2
 and Configurator binding v2. All hosts, generated bindings and Provider DSOs
 must be rebuilt against one matching SDK. See

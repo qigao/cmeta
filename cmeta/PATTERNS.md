@@ -42,11 +42,11 @@ pattern authoring
 Runtime mechanism remains with its existing owner.
 
 The current canonical runtime consumer is the ACE-style Configurator /
-ServiceHost composition: `CMeta::Configurator` owns the static graph and
-`CMeta::ServiceHost` owns published generations, Scope admission/drain and
-Plugin lease settlement. `CMeta::Plugin` remains the sole dynamic loader and
-unload authority. The installed lifecycle targets are
-`CMeta::Configurator` and `CMeta::ServiceHost`. CHttp, TurboFlow and
+ServiceHost composition in `CMeta::ACE`: Configurator owns the static graph;
+ServiceHost owns published generations, Scope admission/drain and Plugin lease
+settlement. `CMeta::Plugin` remains the sole dynamic loader and
+unload authority. The installed runtime target is `CMeta::ACE`; Provider
+declarations use `CMeta::Provider`. CHttp, TurboFlow and
 TurboSCXML remain downstream conformance profiles, not sources of
 consumer-private component semantics.
 
@@ -197,7 +197,7 @@ mechanism remains outside CMeta:
 | Half-Sync/Half-Async | domain runtime + bounded handoff |
 | Streams execution | CFlow / domain runtime |
 | Plugin module lifecycle | CMeta::Plugin |
-| Component resolution/lifecycle graph | CMeta::Configurator |
+| Component resolution/lifecycle graph | CMeta::ACE |
 
 CMeta may describe typed policies, messages, interfaces, factories and
 lifecycle contracts for these mechanisms.
@@ -322,26 +322,10 @@ Do not add a helper solely to introduce a pattern name.
 
 ## Component Configurator integration
 
-The candidate composition is:
-
-```text
-Interface / Function / Object / Lifecycle / Manifest
-                        |
-                        v
-              Component descriptor
-             provides / requires
-                        |
-                        v
-              CMeta::Configurator
-             resolver / lifecycle graph
-                        |
-                        v
-            CMeta::ServiceHost
-                generation scopes
-                        |
-                        v
-                 CMeta::Plugin
-```
+The composition uses one `CMeta::ACE` runtime. Immutable CMeta descriptors
+supply the component contract; Configurator resolves and activates the graph,
+ServiceHost manages generation Scopes, and `CMeta::Plugin` retains sole loader
+and lease authority.
 
 The Configurator adds only the runtime semantics not already owned by
 CMeta:
