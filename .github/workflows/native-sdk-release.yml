@@ -116,7 +116,7 @@ jobs:
       - name: Set up runner-native LLVM toolchain
         id: llvm_native
         if: matrix.family == 'native'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@9785f54b61f9fac1635147f1a260452b048da066
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -124,7 +124,7 @@ jobs:
       - name: Set up Windows llvm-mingw UCRT toolchain
         id: llvm_mingw
         if: matrix.family == 'windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@9785f54b61f9fac1635147f1a260452b048da066
         with:
           target: ${{ matrix.arch }}
           version: "20261020"
@@ -134,20 +134,31 @@ jobs:
       - name: Set up Android LLVM host
         id: llvm_android_host
         if: matrix.family == 'android'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@9785f54b61f9fac1635147f1a260452b048da066
         with:
           build-type: toolchain-only
           obfuscator: "false"
 
-      - name: Set up shared dependency contract
+      - name: Use selected native LLVM for dependency resolution and builds
+        if: matrix.family == 'native'
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'CC=%s\nCXX=%s\n' "$LLVM_NATIVE_CC" "$LLVM_NATIVE_CXX" >> "$GITHUB_ENV"
+
+      - name: Prepare curl-only tools for the normal Core dependency build
         id: vcpkg
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@9785f54b61f9fac1635147f1a260452b048da066
         with:
           mode: read
+          restore-packages: "false"
           token: ${{ github.token }}
+          manifest-root: _core_owner
+          triplet: ${{ matrix.triplet }}
+          host-triplet: ${{ matrix.host_triplet }}
 
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@529019437597fa71f7d8dcc561d26fc7b0603ae6
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@9785f54b61f9fac1635147f1a260452b048da066
         with:
           token: ${{ github.token }}
 

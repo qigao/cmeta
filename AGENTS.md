@@ -23,6 +23,11 @@ cryptographic code and ASN.1 belong to **qigao/crypto**. Source ownership is sin
 - Preserve bounded owner/lease/cancel/stop/unload behavior and exact-head
   source, installed SDK and native CI evidence.
 - Never substitute one OS's successful tests for another's native backend.
+- CI must never install or invoke Mono, nuget.exe, or the vcpkg NuGet provider.
+  Download external files, including GitHub Packages and compiler archives,
+  through curl with exact package/version selection and existing digest checks.
+  Use the shared curl-only cache action with the real dependency manifest;
+  do not add a local downloader, fallback transport, or cache-probe project.
 - Run `python3 tools/check_ace_only_sources.py` before changes to the
   package layout. Verify original typed runtime conformance after changes.
 - Standalone installer/consumer CI, SDK-probe projects, and their source trees

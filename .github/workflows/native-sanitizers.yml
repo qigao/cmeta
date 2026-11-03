@@ -72,27 +72,31 @@ jobs:
             flags: "-fsanitize=thread -fno-omit-frame-pointer -g -O1"
     steps:
       - uses: actions/checkout@v4
-      - name: Select runner-native LLVM for non-published sanitizer builds
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@529019437597fa71f7d8dcc561d26fc7b0603ae6
-        with:
-          build-type: toolchain-only
-          obfuscator: "false"
-      - name: Set up shared dependency contract
-        id: vcpkg
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@529019437597fa71f7d8dcc561d26fc7b0603ae6
-        with:
-          mode: read
-          token: ${{ github.token }}
-      - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@529019437597fa71f7d8dcc561d26fc7b0603ae6
-        with:
-          token: ${{ github.token }}
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
           ref: 61d42472583e9923ca22ea2929c651b6a4c12450
           path: _core_owner
           persist-credentials: false
+      - name: Select runner-native LLVM for non-published sanitizer builds
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@9785f54b61f9fac1635147f1a260452b048da066
+        with:
+          build-type: toolchain-only
+          obfuscator: "false"
+      - name: Prepare curl-only tools for the normal Core dependency build
+        id: vcpkg
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@9785f54b61f9fac1635147f1a260452b048da066
+        with:
+          mode: read
+          restore-packages: "false"
+          token: ${{ github.token }}
+          manifest-root: _core_owner
+          triplet: x64-linux
+          host-triplet: x64-linux
+      - name: Restore re2c and Unicode host data
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@9785f54b61f9fac1635147f1a260452b048da066
+        with:
+          token: ${{ github.token }}
       - name: Install one exact shared Core native owner with instrumentation
         shell: bash
         env:

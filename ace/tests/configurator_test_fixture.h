@@ -314,4 +314,89 @@ static cmeta_status test_cycle_create(
         (test_provider_state *)provider_context, out_instance);
 }
 
+/* Projection is a Provider callback too. Keep every graph address stable so
+ * nested lookups exercise the real Context ownership boundary. */
+typedef struct test_lookup_fixture {
+    test_provider_state provider;
+    salts_configurator_context context;
+    cmeta_object_interface_provider interfaces;
+    salts_configurator_provider_binding binding;
+    salts_configurator_deployment deployment;
+    salts_configurator_instance instance;
+    size_t order;
+    struct test_lookup_fixture *nested;
+    struct test_lookup_fixture *outer;
+    salts_configurator_service nested_service;
+    salts_configurator_status stop_status;
+    salts_configurator_status lookup_status;
+    salts_configurator_status named_lookup_status;
+    salts_configurator_status nested_status;
+    salts_configurator_status outer_stop_status;
+    salts_configurator_status outer_lookup_status;
+    salts_configurator_context_state observed_state;
+    cmeta_status projection_status;
+    unsigned calls;
+    bool armed;
+    bool inside;
+    bool invalid_projection;
+} test_lookup_fixture;
+
+static cmeta_status test_lookup_project(
+    void *user, const cmeta_object_ref *object,
+    const cmeta_interface_desc *expected, cmeta_interface_projection *out) {
+    test_lookup_fixture *fixture = (test_lookup_fixture *)user;
+    salts_configurator_service unused;
+    cmeta_status status = test_interface_project(NULL, object, expected, out);
+    if (status != CMETA_OK || !fixture->armed || fixture->inside)
+        return status;
+
+    fixture->inside = true;
+    ++fixture->calls;
+    fixture->observed_state = fixture->context.state;
+    fixture->stop_status = salts_configurator_context_stop(&fixture->context);
+    fixture->lookup_status = salts_configurator_context_find_service(
+        &fixture->context, test_log_interface(), &unused);
+    fixture->named_lookup_status = salts_configurator_context_find_service_from(
+        &fixture->context, cmeta_component_meta(TestLogger)->stable_id,
+        test_log_interface(), &unused);
+    if (fixture->nested != NULL)
+        fixture->nested_status = salts_configurator_context_find_service_from(
+            &fixture->nested->context, cmeta_component_meta(TestLogger)->stable_id,
+            test_log_interface(), &fixture->nested_service);
+    if (fixture->outer != NULL) {
+        fixture->outer_stop_status =
+            salts_configurator_context_stop(&fixture->outer->context);
+        fixture->outer_lookup_status = salts_configurator_context_find_service(
+            &fixture->outer->context, test_log_interface(), &unused);
+    }
+    fixture->inside = false;
+    if (fixture->projection_status != CMETA_OK)
+        return fixture->projection_status;
+    if (fixture->invalid_projection)
+        out->self = NULL;
+    return CMETA_OK;
+}
+
+static salts_configurator_status test_lookup_fixture_start(
+    test_lookup_fixture *fixture, int value) {
+    salts_configurator_status status;
+    *fixture = (test_lookup_fixture){0};
+    test_provider_state_init(&fixture->provider, value, NULL);
+    fixture->interfaces = (cmeta_object_interface_provider){
+        sizeof(cmeta_object_interface_provider), fixture, test_lookup_project
+    };
+    fixture->binding = TEST_PROVIDER_BINDING(
+        TestLogger, &fixture->provider, test_logger_create);
+    fixture->binding.interfaces = &fixture->interfaces;
+    fixture->deployment = TEST_DEPLOYMENT(&fixture->binding, NULL, NULL);
+    status = salts_configurator_context_init(&fixture->context,
+        &fixture->deployment, 1u, NULL, 0u, &fixture->instance, 1u,
+        NULL, 0u, &fixture->order, 1u);
+    if (status == SALTS_CONFIGURATOR_OK)
+        status = salts_configurator_context_resolve(&fixture->context);
+    if (status == SALTS_CONFIGURATOR_OK)
+        status = salts_configurator_context_start(&fixture->context);
+    return status;
+}
+
 #endif

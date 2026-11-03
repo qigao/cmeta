@@ -44,6 +44,14 @@ borrowed only through create(). ACTIVE graph validation, publication and drain
 use Provider metadata and owned instance records, not expired configuration
 inputs. Provider/component metadata remains borrowed until teardown settles.
 
+During service lookup, a thread-local call frame rejects same-context stop and
+recursive lookup from Provider projection callbacks, including attempts to
+close an outer graph from a nested lookup in a different graph. It leaves the
+shared ACTIVE graph unchanged so independent ServiceHost readers can overlap.
+The caller retains its context and outer Scope through the complete call;
+Provider callbacks must return normally, without exceptions, longjmp or
+coroutine suspension/migration across the C API.
+
 ServiceHost builds a complete candidate before publication. A failed N+1 build
 does not withdraw the current N. Publication atomically changes admission for
 new Scopes; existing Scopes keep the old generation alive. Drain returns

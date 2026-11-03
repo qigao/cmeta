@@ -2,6 +2,28 @@
 #include "configurator_internal.h"
 
 #include <string.h>
+#include <thread.h>
+
+/* Lookup is read-only and may run concurrently under independent ServiceHost
+ * scopes. Keep callback reentry admission on the calling thread, not in the
+ * shared context. Frames also protect an outer graph during a nested lookup
+ * in another graph. This does not replace the caller's lifetime/serialization
+ * contract; callbacks must return normally rather than unwind across C. */
+typedef struct salts_configurator_lookup_frame {
+    const salts_configurator_context *context;
+    struct salts_configurator_lookup_frame *previous;
+} salts_configurator_lookup_frame;
+
+static SALTS_THREAD_LOCAL salts_configurator_lookup_frame *salts_configurator_lookups;
+
+static bool salts_configurator_lookup_inflight(
+    const salts_configurator_context *context) {
+    const salts_configurator_lookup_frame *frame;
+    for (frame = salts_configurator_lookups; frame != NULL; frame = frame->previous)
+        if (frame->context == context)
+            return true;
+    return false;
+}
 
 static salts_configurator_failure salts_configurator_failure_none(void) {
     salts_configurator_failure failure;
@@ -975,6 +997,7 @@ salts_configurator_status salts_configurator_context_stop(
     if (context == NULL)
         return SALTS_CONFIGURATOR_INVALID_ARGUMENT;
     if (context->state != SALTS_CONFIGURATOR_CONTEXT_ACTIVE ||
+        salts_configurator_lookup_inflight(context) ||
         !salts_configurator_activation_plan_valid(context, true))
         return SALTS_CONFIGURATOR_INVALID_STATE;
 
@@ -1015,7 +1038,7 @@ salts_configurator_status salts_configurator_context_stop(
     return SALTS_CONFIGURATOR_OK;
 }
 
-salts_configurator_status salts_configurator_context_find_service_from(
+static salts_configurator_status salts_configurator_find_service_from_impl(
     const salts_configurator_context *context,
     const char *provider_component_id,
     const cmeta_interface_desc *interface_desc,
@@ -1057,7 +1080,7 @@ salts_configurator_status salts_configurator_context_find_service_from(
     return SALTS_CONFIGURATOR_OK;
 }
 
-salts_configurator_status salts_configurator_context_find_service(
+static salts_configurator_status salts_configurator_find_service_impl(
     const salts_configurator_context *context,
     const cmeta_interface_desc *interface_desc,
     salts_configurator_service *out_service) {
@@ -1105,6 +1128,48 @@ salts_configurator_status salts_configurator_context_find_service(
     candidate_service.interfaces = salts_configurator_provider_at(context, candidate)->interfaces;
     *out_service = candidate_service;
     return SALTS_CONFIGURATOR_OK;
+}
+
+static salts_configurator_status salts_configurator_lookup(
+    const salts_configurator_context *context,
+    const char *provider_component_id,
+    bool explicit_provider,
+    const cmeta_interface_desc *interface_desc,
+    salts_configurator_service *out_service) {
+    salts_configurator_lookup_frame frame;
+    salts_configurator_status status;
+
+    if (context == NULL)
+        return SALTS_CONFIGURATOR_INVALID_ARGUMENT;
+    if (salts_configurator_lookup_inflight(context))
+        return SALTS_CONFIGURATOR_INVALID_STATE;
+
+    frame.context = context;
+    frame.previous = salts_configurator_lookups;
+    salts_configurator_lookups = &frame;
+    status = explicit_provider
+        ? salts_configurator_find_service_from_impl(context,
+            provider_component_id, interface_desc, out_service)
+        : salts_configurator_find_service_impl(context, interface_desc, out_service);
+    salts_configurator_lookups = frame.previous;
+    return status;
+}
+
+salts_configurator_status salts_configurator_context_find_service_from(
+    const salts_configurator_context *context,
+    const char *provider_component_id,
+    const cmeta_interface_desc *interface_desc,
+    salts_configurator_service *out_service) {
+    return salts_configurator_lookup(context, provider_component_id, true,
+        interface_desc, out_service);
+}
+
+salts_configurator_status salts_configurator_context_find_service(
+    const salts_configurator_context *context,
+    const cmeta_interface_desc *interface_desc,
+    salts_configurator_service *out_service) {
+    return salts_configurator_lookup(context, NULL, false,
+        interface_desc, out_service);
 }
 
 const salts_configurator_failure *salts_configurator_context_failure(

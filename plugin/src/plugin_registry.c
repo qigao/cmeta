@@ -7,10 +7,15 @@
 
 #include <limits.h>
 #include <stdlib.h>
+#include <string.h>
 
 typedef struct cmeta_plugin_registry_slot {
     cmeta_plugin_library library;
     const cmeta_plugin_manifest *manifest;
+    /* Identity remains readable while native close runs outside the lock.
+     * A manifest belongs to the DSO and may already be unmapped before the
+     * closing thread can acquire the lock to retire this occupied slot. */
+    char plugin_id[CMETA_PLUGIN_ID_MAX + 1u];
     uint32_t generation;
     cmeta_plugin_lifecycle_state state;
     cmeta_plugin_status failure;
@@ -150,6 +155,7 @@ static void clear_slot_locked(
     size_t index;
 
     slot->manifest = NULL;
+    slot->plugin_id[0] = '\0';
     slot->occupied = false;
     slot->unloading = false;
     slot->destroy_called = false;
@@ -285,7 +291,7 @@ cmeta_plugin_status cmeta_plugin_registry_load(
     for (index = 0u; index < impl->capacity; ++index) {
         const cmeta_plugin_registry_slot *existing = &impl->slots[index];
         if (existing->occupied &&
-            plugin_id_equal(existing->manifest->plugin_id,
+            plugin_id_equal(existing->plugin_id,
                             manifest->plugin_id)) {
             status = CMETA_PLUGIN_DUPLICATE_PLUGIN_ID;
             goto reject_locked;
@@ -305,6 +311,8 @@ cmeta_plugin_status cmeta_plugin_registry_load(
 
     slot->library = library;
     slot->manifest = manifest;
+    memcpy(slot->plugin_id, manifest->plugin_id,
+           strlen(manifest->plugin_id) + 1u);
     slot->state = CMETA_PLUGIN_LIFECYCLE_LOADED;
     slot->failure = CMETA_PLUGIN_OK;
     slot->occupied = true;
@@ -345,7 +353,7 @@ cmeta_plugin_status cmeta_plugin_registry_find(
     for (index = 0u; index < impl->capacity; ++index) {
         const cmeta_plugin_registry_slot *slot = &impl->slots[index];
         if (slot->occupied &&
-            plugin_id_equal(slot->manifest->plugin_id, plugin_id)) {
+            plugin_id_equal(slot->plugin_id, plugin_id)) {
             out_ref->slot = (uint32_t)(index + 1u);
             out_ref->generation = slot->generation;
             cmeta_mutex_unlock(&impl->lock);

@@ -148,6 +148,13 @@ salts_configurator_status salts_configurator_context_stop(
  * Control-plane service lookup. The returned view borrows the ACTIVE context.
  * Bind the exact typed Interface once and retain the appropriate outer scope;
  * do not route hot calls through repeated lookup.
+ * A projection callback cannot stop or recursively look up the same context
+ * (including an outer context in a nested lookup); those calls return
+ * INVALID_STATE. The guard is thread-local and does not change the graph or
+ * serialize independent ServiceHost readers. The caller must keep the context
+ * and any owning ServiceHost scope live for the entire lookup. Provider
+ * callbacks must return normally; do not throw, longjmp or suspend/migrate
+ * a coroutine across the C API.
  */
 salts_configurator_status salts_configurator_context_find_service(
     const salts_configurator_context *context,

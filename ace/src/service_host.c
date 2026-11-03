@@ -576,16 +576,24 @@ salts_service_host_status salts_service_host_generation_build(
 salts_service_host_status salts_service_host_generation_discard(
     salts_service_host_generation *generation) {
     cmeta_plugin_status plugin_status;
+    salts_configurator_context_state component_state;
+    salts_configurator_status configurator_status;
 
     if (generation == NULL)
         return SALTS_SERVICE_HOST_INVALID_ARGUMENT;
     if (generation->state != SALTS_SERVICE_HOST_GENERATION_BUILT)
         return SALTS_SERVICE_HOST_INVALID_STATE;
 
-    if (salts_configurator_context_stop(&generation->components) !=
-        SALTS_CONFIGURATOR_OK)
-        return generation_fail_configurator(
-            generation, SALTS_CONFIGURATOR_INVALID_STATE);
+    component_state = generation->components.state;
+    configurator_status = salts_configurator_context_stop(&generation->components);
+    if (configurator_status != SALTS_CONFIGURATOR_OK) {
+        /* A rejected lookup-callback reentry has not begun teardown. Preserve
+         * BUILT and its owners so the caller can discard after lookup returns,
+         * just as drain preserves its original state after a rejected stop. */
+        if (generation->components.state == component_state)
+            return SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
+        return generation_fail_configurator(generation, configurator_status);
+    }
 
     plugin_status = release_modules(generation);
     if (plugin_status != CMETA_PLUGIN_OK)
