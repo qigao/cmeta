@@ -79,13 +79,13 @@ jobs:
           path: _core_owner
           persist-credentials: false
       - name: Select runner-native LLVM for non-published sanitizer builds
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@0782309544c2e2b41e6972d3defdb147df806d45
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@9785f54b61f9fac1635147f1a260452b048da066
         with:
           build-type: toolchain-only
           obfuscator: "false"
       - name: Prepare curl-only tools for the normal Core dependency build
         id: vcpkg
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@0782309544c2e2b41e6972d3defdb147df806d45
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@9785f54b61f9fac1635147f1a260452b048da066
         with:
           mode: read
           restore-packages: "false"
@@ -94,7 +94,7 @@ jobs:
           triplet: x64-linux
           host-triplet: x64-linux
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@0782309544c2e2b41e6972d3defdb147df806d45
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@9785f54b61f9fac1635147f1a260452b048da066
         with:
           token: ${{ github.token }}
       - name: Install one exact shared Core native owner with instrumentation

@@ -116,7 +116,7 @@ jobs:
       - name: Set up runner-native LLVM toolchain
         id: llvm_native
         if: matrix.family == 'native'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@0782309544c2e2b41e6972d3defdb147df806d45
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@9785f54b61f9fac1635147f1a260452b048da066
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -124,7 +124,7 @@ jobs:
       - name: Set up Windows llvm-mingw UCRT toolchain
         id: llvm_mingw
         if: matrix.family == 'windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@0782309544c2e2b41e6972d3defdb147df806d45
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@9785f54b61f9fac1635147f1a260452b048da066
         with:
           target: ${{ matrix.arch }}
           version: "20261020"
@@ -134,7 +134,7 @@ jobs:
       - name: Set up Android LLVM host
         id: llvm_android_host
         if: matrix.family == 'android'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@0782309544c2e2b41e6972d3defdb147df806d45
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@9785f54b61f9fac1635147f1a260452b048da066
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -148,7 +148,7 @@ jobs:
 
       - name: Prepare curl-only tools for the normal Core dependency build
         id: vcpkg
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@0782309544c2e2b41e6972d3defdb147df806d45
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@9785f54b61f9fac1635147f1a260452b048da066
         with:
           mode: read
           restore-packages: "false"
@@ -158,7 +158,7 @@ jobs:
           host-triplet: ${{ matrix.host_triplet }}
 
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@0782309544c2e2b41e6972d3defdb147df806d45
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@9785f54b61f9fac1635147f1a260452b048da066
         with:
           token: ${{ github.token }}
 
