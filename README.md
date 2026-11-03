@@ -86,6 +86,17 @@ commit. The NuGet publisher combines those qualified artifacts without
 rebuilding them, rejects an existing package version, then publishes the same
 bytes to the GitHub Release.
 
+Native SDK and sanitizer CI persist vcpkg binary archives/downloads and use
+the shared curl-installed ccache 4.14.2 for both Core and CMeta compilation.
+Caches are isolated by OS/architecture, SDK RID or sanitizer profile, shared
+dependency revision, runner image and configuration. Compiler caches are
+bounded to 256 MiB per lane and reuse earlier commits with matching configuration;
+ccache still checks compiler contents, source/header inputs and compile flags.
+Dependency caches are saved after configure and compiler caches after build,
+before formal tests. Every run still resolves dependencies, builds and tests;
+installed SDKs, CMake build trees and credentials are never cache payloads.
+PR caches remain scoped to that PR; master populates caches for subsequent PRs.
+
 Static source ownership policy: `python3 tools/check_ace_only_sources.py`.
 
 ## Optional CNet policy adapter
