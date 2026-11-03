@@ -62,6 +62,10 @@ jobs:
     env:
       CC: clang
       CXX: clang++
+      VCPKG_DOWNLOADS: ${{ github.workspace }}/build/vcpkg-downloads
+      CCACHE_DIR: ${{ github.workspace }}/build/ccache
+      CCACHE_MAXSIZE: 256MiB
+      CCACHE_COMPILERCHECK: content
     strategy:
       fail-fast: false
       matrix:
@@ -83,6 +87,9 @@ jobs:
         with:
           build-type: toolchain-only
           obfuscator: "false"
+      - name: Prepare dependency download cache
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DOWNLOADS | Out-Null
       - name: Prepare curl-only tools for the normal Core dependency build
         id: vcpkg
         uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@9785f54b61f9fac1635147f1a260452b048da066
@@ -97,7 +104,39 @@ jobs:
         uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@9785f54b61f9fac1635147f1a260452b048da066
         with:
           token: ${{ github.token }}
-      - name: Install one exact shared Core native owner with instrumentation
+      - uses: qigao/vcpkg-cache/.github/actions/setup-ccache@77b084421712ed24e1ce6f223d296efb5c3cd273
+        id: ccache
+      - name: Prepare cache paths and runner identity
+        id: cache-environment
+        shell: pwsh
+        run: |
+          "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
+          "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $env:GITHUB_ENV
+          "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $env:GITHUB_ENV
+      - uses: actions/cache/restore@v4
+        id: dependency-cache
+        with:
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-sanitizer-${{ matrix.kind }}-${{ env.VCPKG_CACHE_REVISION }}-${{ steps.cache-environment.outputs.image }}--${{ hashFiles('CMake*Presets.json', '_core_owner/vcpkg*.json', '_core_owner/CMake*Presets.json', '_core_owner/CMakeOptions.cmake', '.github/workflows/native-*.yml') }}
+          restore-keys: |
+            vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-sanitizer-${{ matrix.kind }}-${{ env.VCPKG_CACHE_REVISION }}-
+      - uses: actions/cache/restore@v4
+        id: compiler-cache
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ steps.ccache.outputs.version }}-${{ steps.dependency-cache.outputs.cache-primary-key }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ steps.ccache.outputs.version }}-${{ steps.dependency-cache.outputs.cache-primary-key }}-
+      - name: Start compiler cache statistics
+        id: cache-ready
+        shell: bash
+        run: |
+          ccache --version
+          ccache --zero-stats
+
+      - name: Configure exact Core native owner with instrumentation
         shell: bash
         env:
           VCPKG_TOOLCHAIN: ${{ steps.vcpkg.outputs.toolchain_file }}
@@ -116,6 +155,18 @@ jobs:
             -DSALTSCORE_BUILD_TINYTEST=ON \
             "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
             "-DCMAKE_INSTALL_PREFIX=$prefix"
+      - name: Save dependency cache after configure
+        if: steps.dependency-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
+      - name: Build and install exact instrumented Core owner
+        shell: bash
+        run: |
+          set -euo pipefail
           cmake --build build-instrumented-core-${{ matrix.kind }} --parallel 2
           cmake --install build-instrumented-core-${{ matrix.kind }} \
             --config RelWithDebInfo
@@ -137,6 +188,16 @@ jobs:
           cmake --build build-instrumented-salts-${{ matrix.kind }} --parallel 2
           cmake --install build-instrumented-salts-${{ matrix.kind }} \
             --config RelWithDebInfo
+      - name: Report compiler cache statistics
+        if: always() && steps.cache-ready.outcome == 'success'
+        shell: bash
+        run: ccache --show-stats --verbose
+      - name: Save compiler cache before tests
+        if: success() && steps.compiler-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
       - name: Execute full original source parity under fail-on-report sanitizers
         shell: bash
         run: |

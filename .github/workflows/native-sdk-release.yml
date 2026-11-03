@@ -87,6 +87,10 @@ jobs:
       SALTSCORE_PREFIX: ${{ github.workspace }}/build/core-install/${{ matrix.rid }}
       CMETA_ANDROID_ABI: ${{ matrix.android_abi }}
       BUILD_PARALLEL: ${{ matrix.parallel }}
+      VCPKG_DOWNLOADS: ${{ github.workspace }}/build/vcpkg-downloads
+      CCACHE_DIR: ${{ github.workspace }}/build/ccache
+      CCACHE_MAXSIZE: 256MiB
+      CCACHE_COMPILERCHECK: content
     steps:
       - uses: actions/checkout@v4
         with:
@@ -146,6 +150,10 @@ jobs:
           set -euo pipefail
           printf 'CC=%s\nCXX=%s\n' "$LLVM_NATIVE_CC" "$LLVM_NATIVE_CXX" >> "$GITHUB_ENV"
 
+      - name: Prepare dependency download cache
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DOWNLOADS | Out-Null
+
       - name: Prepare curl-only tools for the normal Core dependency build
         id: vcpkg
         uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@9785f54b61f9fac1635147f1a260452b048da066
@@ -191,7 +199,39 @@ jobs:
             echo "CMETA_VCPKG_HOST_TRIPLET=${{ matrix.host_triplet }}"
           } >> "$GITHUB_ENV"
 
-      - name: Build and install exact SaltsCore owner
+      - uses: qigao/vcpkg-cache/.github/actions/setup-ccache@77b084421712ed24e1ce6f223d296efb5c3cd273
+        id: ccache
+      - name: Prepare cache paths and runner identity
+        id: cache-environment
+        shell: pwsh
+        run: |
+          "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
+          "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $env:GITHUB_ENV
+          "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $env:GITHUB_ENV
+      - uses: actions/cache/restore@v4
+        id: dependency-cache
+        with:
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-sdk-${{ matrix.rid }}-${{ env.VCPKG_CACHE_REVISION }}-${{ steps.cache-environment.outputs.image }}-${{ steps.llvm_mingw.outputs.version }}-${{ hashFiles('CMake*Presets.json', '_core_owner/vcpkg*.json', '_core_owner/CMake*Presets.json', '_core_owner/CMakeOptions.cmake', '.github/workflows/native-*.yml') }}
+          restore-keys: |
+            vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-sdk-${{ matrix.rid }}-${{ env.VCPKG_CACHE_REVISION }}-
+      - uses: actions/cache/restore@v4
+        id: compiler-cache
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ steps.ccache.outputs.version }}-${{ steps.dependency-cache.outputs.cache-primary-key }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ steps.ccache.outputs.version }}-${{ steps.dependency-cache.outputs.cache-primary-key }}-
+      - name: Start compiler cache statistics
+        id: cache-ready
+        shell: bash
+        run: |
+          ccache --version
+          ccache --zero-stats
+
+      - name: Configure exact SaltsCore owner
         shell: bash
         run: |
           set -euo pipefail
@@ -220,6 +260,19 @@ jobs:
               "-DSALTSCORE_BUILD_TINYTEST=$core_test" \
               "-DCMAKE_INSTALL_PREFIX=$SALTSCORE_PREFIX"
           fi
+      - name: Save dependency cache after configure
+        if: steps.dependency-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
+
+      - name: Build and install exact SaltsCore owner
+        shell: bash
+        run: |
+          set -euo pipefail
           cmake --build build/core --config Release --parallel "$BUILD_PARALLEL"
           cmake --install build/core --config Release
 
@@ -242,6 +295,18 @@ jobs:
           set -euo pipefail
           cmake --preset llvm-test-ci
           cmake --build --preset llvm-test-ci --parallel "$BUILD_PARALLEL"
+
+      - name: Report compiler cache statistics
+        if: always() && steps.cache-ready.outcome == 'success'
+        shell: bash
+        run: ccache --show-stats --verbose
+
+      - name: Save compiler cache before tests
+        if: success() && steps.compiler-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
 
       - name: Admit the selected release compiler
         shell: bash
