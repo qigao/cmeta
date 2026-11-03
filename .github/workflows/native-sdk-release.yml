@@ -24,7 +24,6 @@ on:
       - "tools/**"
       - "packaging/**"
       - ".github/workflows/native-*.yml"
-      - ".github/actions/**"
   push:
     branches: [master]
     tags: ["v0.1.003"]
@@ -47,7 +46,6 @@ on:
       - "tools/**"
       - "packaging/**"
       - ".github/workflows/native-*.yml"
-      - ".github/actions/**"
   workflow_dispatch:
 
 concurrency:
@@ -201,12 +199,37 @@ jobs:
             echo "CMETA_VCPKG_HOST_TRIPLET=${{ matrix.host_triplet }}"
           } >> "$GITHUB_ENV"
 
-      - name: Restore dependency and compiler caches
-        id: build-cache
-        uses: ./.github/actions/restore-build-caches
+      - uses: qigao/vcpkg-cache/.github/actions/setup-ccache@77b084421712ed24e1ce6f223d296efb5c3cd273
+        id: ccache
+      - name: Prepare cache paths and runner identity
+        id: cache-environment
+        shell: pwsh
+        run: |
+          "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
+          "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $env:GITHUB_ENV
+          "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $env:GITHUB_ENV
+      - uses: actions/cache/restore@v4
+        id: dependency-cache
         with:
-          profile: sdk-${{ matrix.rid }}
-          compiler-version: ${{ steps.llvm_mingw.outputs.version }}
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-sdk-${{ matrix.rid }}-${{ env.VCPKG_CACHE_REVISION }}-${{ steps.cache-environment.outputs.image }}-${{ steps.llvm_mingw.outputs.version }}-${{ hashFiles('CMake*Presets.json', '_core_owner/vcpkg*.json', '_core_owner/CMake*Presets.json', '_core_owner/CMakeOptions.cmake', '.github/workflows/native-*.yml') }}
+          restore-keys: |
+            vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-sdk-${{ matrix.rid }}-${{ env.VCPKG_CACHE_REVISION }}-
+      - uses: actions/cache/restore@v4
+        id: compiler-cache
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ steps.ccache.outputs.version }}-${{ steps.dependency-cache.outputs.cache-primary-key }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ steps.ccache.outputs.version }}-${{ steps.dependency-cache.outputs.cache-primary-key }}-
+      - name: Start compiler cache statistics
+        id: cache-ready
+        shell: bash
+        run: |
+          ccache --version
+          ccache --zero-stats
 
       - name: Configure exact SaltsCore owner
         shell: bash
@@ -238,13 +261,13 @@ jobs:
               "-DCMAKE_INSTALL_PREFIX=$SALTSCORE_PREFIX"
           fi
       - name: Save dependency cache after configure
-        if: steps.build-cache.outputs.dependency-hit != 'true'
+        if: steps.dependency-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
             ${{ env.VCPKG_BINARY_CACHE }}
             ${{ env.VCPKG_DOWNLOADS }}
-          key: ${{ steps.build-cache.outputs.dependency-key }}
+          key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
 
       - name: Build and install exact SaltsCore owner
         shell: bash
@@ -274,16 +297,16 @@ jobs:
           cmake --build --preset llvm-test-ci --parallel "$BUILD_PARALLEL"
 
       - name: Report compiler cache statistics
-        if: always() && steps.build-cache.outcome == 'success'
+        if: always() && steps.cache-ready.outcome == 'success'
         shell: bash
         run: ccache --show-stats --verbose
 
       - name: Save compiler cache before tests
-        if: success() && steps.build-cache.outputs.compiler-hit != 'true'
+        if: success() && steps.compiler-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ${{ steps.build-cache.outputs.compiler-key }}
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
 
       - name: Admit the selected release compiler
         shell: bash

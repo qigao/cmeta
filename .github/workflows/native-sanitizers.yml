@@ -24,7 +24,6 @@ on:
       - "tools/**"
       - "packaging/**"
       - ".github/workflows/native-*.yml"
-      - ".github/actions/**"
   push:
     branches: [master]
     paths:
@@ -46,7 +45,6 @@ on:
       - "tools/**"
       - "packaging/**"
       - ".github/workflows/native-*.yml"
-      - ".github/actions/**"
   workflow_dispatch:
 
 concurrency:
@@ -106,11 +104,38 @@ jobs:
         uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@9785f54b61f9fac1635147f1a260452b048da066
         with:
           token: ${{ github.token }}
-      - name: Restore dependency and compiler caches
-        id: build-cache
-        uses: ./.github/actions/restore-build-caches
+      - uses: qigao/vcpkg-cache/.github/actions/setup-ccache@77b084421712ed24e1ce6f223d296efb5c3cd273
+        id: ccache
+      - name: Prepare cache paths and runner identity
+        id: cache-environment
+        shell: pwsh
+        run: |
+          "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
+          "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $env:GITHUB_ENV
+          "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $env:GITHUB_ENV
+      - uses: actions/cache/restore@v4
+        id: dependency-cache
         with:
-          profile: sanitizer-${{ matrix.kind }}
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-sanitizer-${{ matrix.kind }}-${{ env.VCPKG_CACHE_REVISION }}-${{ steps.cache-environment.outputs.image }}--${{ hashFiles('CMake*Presets.json', '_core_owner/vcpkg*.json', '_core_owner/CMake*Presets.json', '_core_owner/CMakeOptions.cmake', '.github/workflows/native-*.yml') }}
+          restore-keys: |
+            vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-sanitizer-${{ matrix.kind }}-${{ env.VCPKG_CACHE_REVISION }}-
+      - uses: actions/cache/restore@v4
+        id: compiler-cache
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ steps.ccache.outputs.version }}-${{ steps.dependency-cache.outputs.cache-primary-key }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ steps.ccache.outputs.version }}-${{ steps.dependency-cache.outputs.cache-primary-key }}-
+      - name: Start compiler cache statistics
+        id: cache-ready
+        shell: bash
+        run: |
+          ccache --version
+          ccache --zero-stats
+
       - name: Configure exact Core native owner with instrumentation
         shell: bash
         env:
@@ -131,13 +156,13 @@ jobs:
             "-DCMAKE_C_FLAGS=${{ matrix.flags }}" \
             "-DCMAKE_INSTALL_PREFIX=$prefix"
       - name: Save dependency cache after configure
-        if: steps.build-cache.outputs.dependency-hit != 'true'
+        if: steps.dependency-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
             ${{ env.VCPKG_BINARY_CACHE }}
             ${{ env.VCPKG_DOWNLOADS }}
-          key: ${{ steps.build-cache.outputs.dependency-key }}
+          key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
       - name: Build and install exact instrumented Core owner
         shell: bash
         run: |
@@ -164,15 +189,15 @@ jobs:
           cmake --install build-instrumented-salts-${{ matrix.kind }} \
             --config RelWithDebInfo
       - name: Report compiler cache statistics
-        if: always() && steps.build-cache.outcome == 'success'
+        if: always() && steps.cache-ready.outcome == 'success'
         shell: bash
         run: ccache --show-stats --verbose
       - name: Save compiler cache before tests
-        if: success() && steps.build-cache.outputs.compiler-hit != 'true'
+        if: success() && steps.compiler-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ${{ steps.build-cache.outputs.compiler-key }}
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
       - name: Execute full original source parity under fail-on-report sanitizers
         shell: bash
         run: |
