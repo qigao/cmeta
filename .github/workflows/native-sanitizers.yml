@@ -83,7 +83,7 @@ jobs:
           path: _core_owner
           persist-credentials: false
       - name: Select runner-native LLVM for non-published sanitizer builds
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.5
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -92,7 +92,7 @@ jobs:
         run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DOWNLOADS | Out-Null
       - name: Prepare curl-only tools for the normal Core dependency build
         id: vcpkg
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.5
         with:
           mode: read
           restore-packages: "false"
@@ -101,10 +101,10 @@ jobs:
           triplet: x64-linux
           host-triplet: x64-linux
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.5
         with:
           token: ${{ github.token }}
-      - uses: qigao/vcpkg-cache/.github/actions/setup-ccache@77b084421712ed24e1ce6f223d296efb5c3cd273
+      - uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.5
         id: ccache
       - name: Prepare cache paths and runner identity
         id: cache-environment
