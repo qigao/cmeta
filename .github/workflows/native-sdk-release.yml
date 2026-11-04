@@ -120,7 +120,7 @@ jobs:
       - name: Set up runner-native LLVM toolchain
         id: llvm_native
         if: matrix.family == 'native'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.4
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -128,7 +128,7 @@ jobs:
       - name: Set up Windows llvm-mingw UCRT toolchain
         id: llvm_mingw
         if: matrix.family == 'windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.4
         with:
           target: ${{ matrix.arch }}
           version: "20261020"
@@ -138,7 +138,7 @@ jobs:
       - name: Set up Android LLVM host
         id: llvm_android_host
         if: matrix.family == 'android'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.4
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -156,7 +156,7 @@ jobs:
 
       - name: Prepare curl-only tools for the normal Core dependency build
         id: vcpkg
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.4
         with:
           mode: read
           restore-packages: "false"
@@ -166,7 +166,7 @@ jobs:
           host-triplet: ${{ matrix.host_triplet }}
 
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.4
         with:
           token: ${{ github.token }}
 
@@ -199,7 +199,7 @@ jobs:
             echo "CMETA_VCPKG_HOST_TRIPLET=${{ matrix.host_triplet }}"
           } >> "$GITHUB_ENV"
 
-      - uses: qigao/vcpkg-cache/.github/actions/setup-ccache@77b084421712ed24e1ce6f223d296efb5c3cd273
+      - uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.4
         id: ccache
       - name: Prepare cache paths and runner identity
         id: cache-environment
