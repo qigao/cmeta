@@ -151,7 +151,7 @@
   default exact-ABI restoration; the per-repository Actions cache restores first.
   Cache misses compile normally and save after dependency configuration. TLS,
   authentication and integrity failures remain failures.
-- Pin Core to `abfdbded25161eb064e3dba0ebb6020b1928c731`. The former Core source
+- Pin Core to `dcb67bcc6d38ee1881533a0b161a3ed982f6fcd0`. The former Core source
   `61d42472583e9923ca22ea2929c651b6a4c12450` still referenced the deleted provider
   tag v0.1.0, and cannot be repaired by changing only CMeta's setup Action.
   Updating the owning Core source preserves a single registry fact source;

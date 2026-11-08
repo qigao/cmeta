@@ -80,7 +80,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: abfdbded25161eb064e3dba0ebb6020b1928c731
+          ref: dcb67bcc6d38ee1881533a0b161a3ed982f6fcd0
           path: _core_owner
           persist-credentials: false
       - name: Select runner-native LLVM for non-published sanitizer builds
@@ -149,7 +149,7 @@ jobs:
           set -euo pipefail
           python3 tools/check_ace_only_sources.py --core-root _core_owner
           test "$(git -C _core_owner rev-parse HEAD)" = \
-            abfdbded25161eb064e3dba0ebb6020b1928c731
+            dcb67bcc6d38ee1881533a0b161a3ed982f6fcd0
           prefix="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
           cmake -S _core_owner -B build-instrumented-core-${{ matrix.kind }} \
             "-DCMAKE_TOOLCHAIN_FILE=$VCPKG_TOOLCHAIN" \

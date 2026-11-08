@@ -59,7 +59,7 @@ permissions:
 env:
   RELEASE_VERSION: 0.1.003
   PACKAGE_VERSION: 0.1.3
-  CORE_SHA: abfdbded25161eb064e3dba0ebb6020b1928c731
+  CORE_SHA: dcb67bcc6d38ee1881533a0b161a3ed982f6fcd0
 
 jobs:
   sdk:
