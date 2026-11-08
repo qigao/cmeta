@@ -144,3 +144,24 @@
   for downstream graphs that load equivalent CMeta callbacks from separate
   Unix DSOs. Keep the workflow, CMake project version, preset vendor metadata
   and package documentation on the same immutable release identity.
+
+## 2026-11-09 — shared v0.1.1 binary cache and current Core source
+
+- Native SDK and sanitizer workflows consume vcpkg-cache v0.1.1 Actions with
+  default exact-ABI restoration; the per-repository Actions cache restores first.
+  Cache misses compile normally and save after dependency configuration. TLS,
+  authentication and integrity failures remain failures.
+- Pin Core to `abfdbded25161eb064e3dba0ebb6020b1928c731`. The former Core source
+  `61d42472583e9923ca22ea2929c651b6a4c12450` still referenced the deleted provider
+  tag v0.1.0, and cannot be repaired by changing only CMeta's setup Action.
+  Updating the owning Core source preserves a single registry fact source;
+  do not patch the checked-out dependency's manifest in the consumer workflow.
+- The new Core source retains GmSSL #44; Windows has native pkgconf setup and
+  no unconditional pkgconf package dependency. Provider v0.1.1's five native
+  cache producers passed with 148 ABI archives; Windows producer logs contain
+  no MSYS2 acquisition. The Core source and source-closure check pass together.
+- Actual Windows local verification used the existing user-release configure,
+  release complete build, and install-release presets, with the new installed
+  Core SDK and its exact vcpkg prefix. `ctest --preset release -R
+  "^salts.native."` passed all 15 native integration cases. Workflow YAML and
+  diff checks passed. The remaining platform/sanitizer CI is separate.

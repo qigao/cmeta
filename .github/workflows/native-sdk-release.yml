@@ -59,7 +59,7 @@ permissions:
 env:
   RELEASE_VERSION: 0.1.003
   PACKAGE_VERSION: 0.1.3
-  CORE_SHA: 61d42472583e9923ca22ea2929c651b6a4c12450
+  CORE_SHA: abfdbded25161eb064e3dba0ebb6020b1928c731
 
 jobs:
   sdk:
@@ -88,6 +88,7 @@ jobs:
       CMETA_ANDROID_ABI: ${{ matrix.android_abi }}
       BUILD_PARALLEL: ${{ matrix.parallel }}
       VCPKG_DOWNLOADS: ${{ github.workspace }}/build/vcpkg-downloads
+      VCPKG_BINARY_CACHE: ${{ github.workspace }}/build/vcpkg-binary-cache
       CCACHE_DIR: ${{ github.workspace }}/build/ccache
       CCACHE_MAXSIZE: 256MiB
       CCACHE_COMPILERCHECK: content
@@ -120,7 +121,7 @@ jobs:
       - name: Set up runner-native LLVM toolchain
         id: llvm_native
         if: matrix.family == 'native'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.1
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -128,7 +129,7 @@ jobs:
       - name: Set up Windows llvm-mingw UCRT toolchain
         id: llvm_mingw
         if: matrix.family == 'windows'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-mingw@v0.1.1
         with:
           target: ${{ matrix.arch }}
           version: "20261020"
@@ -138,7 +139,7 @@ jobs:
       - name: Set up Android LLVM host
         id: llvm_android_host
         if: matrix.family == 'android'
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.1
         with:
           build-type: toolchain-only
           obfuscator: "false"
@@ -154,19 +155,32 @@ jobs:
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DOWNLOADS | Out-Null
 
+      - name: Record dependency cache runner identity
+        id: dependency-environment
+        shell: pwsh
+        run: '"image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT'
+      - uses: actions/cache/restore@v4
+        id: dependency-cache
+        with:
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: vcpkg-v2-${{ runner.os }}-${{ runner.arch }}-sdk-${{ matrix.rid }}-v0.1.1-${{ steps.dependency-environment.outputs.image }}-${{ steps.llvm_mingw.outputs.version }}-${{ hashFiles('CMake*Presets.json', '_core_owner/vcpkg*.json', '_core_owner/CMake*Presets.json', '_core_owner/CMakeOptions.cmake', '.github/workflows/native-*.yml') }}
+          restore-keys: |
+            vcpkg-v2-${{ runner.os }}-${{ runner.arch }}-sdk-${{ matrix.rid }}-v0.1.1-
+
       - name: Prepare curl-only tools for the normal Core dependency build
         id: vcpkg
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.1
         with:
           mode: read
-          restore-packages: "false"
           token: ${{ github.token }}
           manifest-root: _core_owner
           triplet: ${{ matrix.triplet }}
           host-triplet: ${{ matrix.host_triplet }}
 
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.1
         with:
           token: ${{ github.token }}
 
@@ -199,7 +213,7 @@ jobs:
             echo "CMETA_VCPKG_HOST_TRIPLET=${{ matrix.host_triplet }}"
           } >> "$GITHUB_ENV"
 
-      - uses: qigao/vcpkg-cache/.github/actions/setup-ccache@77b084421712ed24e1ce6f223d296efb5c3cd273
+      - uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.1
         id: ccache
       - name: Prepare cache paths and runner identity
         id: cache-environment
@@ -208,15 +222,6 @@ jobs:
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
           "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $env:GITHUB_ENV
           "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $env:GITHUB_ENV
-      - uses: actions/cache/restore@v4
-        id: dependency-cache
-        with:
-          path: |
-            ${{ env.VCPKG_BINARY_CACHE }}
-            ${{ env.VCPKG_DOWNLOADS }}
-          key: vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-sdk-${{ matrix.rid }}-${{ env.VCPKG_CACHE_REVISION }}-${{ steps.cache-environment.outputs.image }}-${{ steps.llvm_mingw.outputs.version }}-${{ hashFiles('CMake*Presets.json', '_core_owner/vcpkg*.json', '_core_owner/CMake*Presets.json', '_core_owner/CMakeOptions.cmake', '.github/workflows/native-*.yml') }}
-          restore-keys: |
-            vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-sdk-${{ matrix.rid }}-${{ env.VCPKG_CACHE_REVISION }}-
       - uses: actions/cache/restore@v4
         id: compiler-cache
         with:

@@ -77,7 +77,11 @@ headers from SaltsCore 0.1.2 and exposes no compatibility `salts/` tree.
 Desktop targets use the pinned `qigao/vcpkg-cache` LLVM setup in toolchain-only
 mode. All targets build the Release profile with compiler obfuscation disabled;
 the workflow rejects an action output or CMake cache that enables it. Android
-uses NDK Clang for target compilation. The six desktop targets execute the
+uses NDK Clang for target compilation. CI uses the shared `v0.1.1` cache
+Actions, restores its local Actions cache first, then downloads published exact
+ABI archives. Missing ABIs compile through the normal Core dependency build and
+are saved for later runs. Authentication, TLS and artifact-integrity failures
+stop restoration. The six desktop targets execute the
 repository CTest suite on native runners; Android x64/arm64 are cross-build and
 install checks and do not claim device execution.
 

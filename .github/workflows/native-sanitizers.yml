@@ -63,6 +63,7 @@ jobs:
       CC: clang
       CXX: clang++
       VCPKG_DOWNLOADS: ${{ github.workspace }}/build/vcpkg-downloads
+      VCPKG_BINARY_CACHE: ${{ github.workspace }}/build/vcpkg-binary-cache
       CCACHE_DIR: ${{ github.workspace }}/build/ccache
       CCACHE_MAXSIZE: 256MiB
       CCACHE_COMPILERCHECK: content
@@ -79,32 +80,45 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: qigao/salts-core
-          ref: 61d42472583e9923ca22ea2929c651b6a4c12450
+          ref: abfdbded25161eb064e3dba0ebb6020b1928c731
           path: _core_owner
           persist-credentials: false
       - name: Select runner-native LLVM for non-published sanitizer builds
-        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-llvm-native@v0.1.1
         with:
           build-type: toolchain-only
           obfuscator: "false"
       - name: Prepare dependency download cache
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DOWNLOADS | Out-Null
+      - name: Record dependency cache runner identity
+        id: dependency-environment
+        shell: pwsh
+        run: '"image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT'
+      - uses: actions/cache/restore@v4
+        id: dependency-cache
+        with:
+          path: |
+            ${{ env.VCPKG_BINARY_CACHE }}
+            ${{ env.VCPKG_DOWNLOADS }}
+          key: vcpkg-v2-${{ runner.os }}-${{ runner.arch }}-sanitizer-${{ matrix.kind }}-v0.1.1-${{ steps.dependency-environment.outputs.image }}--${{ hashFiles('CMake*Presets.json', '_core_owner/vcpkg*.json', '_core_owner/CMake*Presets.json', '_core_owner/CMakeOptions.cmake', '.github/workflows/native-*.yml') }}
+          restore-keys: |
+            vcpkg-v2-${{ runner.os }}-${{ runner.arch }}-sanitizer-${{ matrix.kind }}-v0.1.1-
+
       - name: Prepare curl-only tools for the normal Core dependency build
         id: vcpkg
-        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-curl-cache@v0.1.1
         with:
           mode: read
-          restore-packages: "false"
           token: ${{ github.token }}
           manifest-root: _core_owner
           triplet: x64-linux
           host-triplet: x64-linux
       - name: Restore re2c and Unicode host data
-        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@9785f54b61f9fac1635147f1a260452b048da066
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@v0.1.1
         with:
           token: ${{ github.token }}
-      - uses: qigao/vcpkg-cache/.github/actions/setup-ccache@77b084421712ed24e1ce6f223d296efb5c3cd273
+      - uses: qigao/vcpkg-cache/.github/actions/setup-ccache@v0.1.1
         id: ccache
       - name: Prepare cache paths and runner identity
         id: cache-environment
@@ -113,15 +127,6 @@ jobs:
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
           "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $env:GITHUB_ENV
           "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $env:GITHUB_ENV
-      - uses: actions/cache/restore@v4
-        id: dependency-cache
-        with:
-          path: |
-            ${{ env.VCPKG_BINARY_CACHE }}
-            ${{ env.VCPKG_DOWNLOADS }}
-          key: vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-sanitizer-${{ matrix.kind }}-${{ env.VCPKG_CACHE_REVISION }}-${{ steps.cache-environment.outputs.image }}--${{ hashFiles('CMake*Presets.json', '_core_owner/vcpkg*.json', '_core_owner/CMake*Presets.json', '_core_owner/CMakeOptions.cmake', '.github/workflows/native-*.yml') }}
-          restore-keys: |
-            vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-sanitizer-${{ matrix.kind }}-${{ env.VCPKG_CACHE_REVISION }}-
       - uses: actions/cache/restore@v4
         id: compiler-cache
         with:
@@ -144,7 +149,7 @@ jobs:
           set -euo pipefail
           python3 tools/check_ace_only_sources.py --core-root _core_owner
           test "$(git -C _core_owner rev-parse HEAD)" = \
-            61d42472583e9923ca22ea2929c651b6a4c12450
+            abfdbded25161eb064e3dba0ebb6020b1928c731
           prefix="$RUNNER_TEMP/saltscore-asan-${{ matrix.kind }}"
           cmake -S _core_owner -B build-instrumented-core-${{ matrix.kind }} \
             "-DCMAKE_TOOLCHAIN_FILE=$VCPKG_TOOLCHAIN" \
