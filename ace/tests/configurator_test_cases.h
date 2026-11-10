@@ -475,7 +475,7 @@ suite("Salts static Component Configurator") {
         /* Restore the valid live owner state and settle it normally. */
         context.state = SALTS_CONFIGURATOR_CONTEXT_ACTIVE;
         context.activation_count = 1u;
-        context.failure = (salts_configurator_failure){
+        context.failure = TEST_CONFIGURATOR_LITERAL(salts_configurator_failure){
             SALTS_CONFIGURATOR_PHASE_NONE, 0u, 0u, CMETA_OK};
         check_equal(salts_configurator_context_stop(&context), SALTS_CONFIGURATOR_OK);
         check_false(instance.active);
@@ -706,7 +706,7 @@ suite("Salts static Component Configurator") {
         deployments[2] = TEST_DEPLOYMENT(
             &providers[2], &cmeta_data_int, &config);
 
-        selection = (salts_configurator_selection){
+        selection = TEST_CONFIGURATOR_LITERAL(salts_configurator_selection){
             "TestApp", test_log_interface(), "TestLoggerAlt"
         };
 

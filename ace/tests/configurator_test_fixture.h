@@ -3,6 +3,12 @@
 
 #include <cmeta/configurator.h>
 
+#ifdef __cplusplus
+#define TEST_CONFIGURATOR_LITERAL(type_) type_
+#else
+#define TEST_CONFIGURATOR_LITERAL(type_) (type_)
+#endif
+
 #define TEST_LOG_METHODS(X, I) \
     X(I, R0, int, get, _)
 
@@ -125,7 +131,7 @@ static void test_provider_state_init(
     test_provider_state *state,
     int value,
     unsigned *clock) {
-    *state = (test_provider_state){0};
+    *state = TEST_CONFIGURATOR_LITERAL(test_provider_state){0};
     state->value = value;
     state->clock = clock;
     state->lifecycle.size = sizeof(state->lifecycle);
@@ -289,14 +295,14 @@ static void test_reentry_destroy(void *provider_context, void *object) {
 }
 
 #define TEST_PROVIDER_BINDING(component_, state_, create_) \
-    ((salts_configurator_provider_binding){ \
+    (TEST_CONFIGURATOR_LITERAL(salts_configurator_provider_binding){ \
         sizeof(salts_configurator_provider_binding), \
         SALTS_CONFIGURATOR_PROVIDER_BINDING_ABI_VERSION, \
         cmeta_component_meta(component_), (state_), &test_interfaces, \
         (create_), test_activate, test_deactivate })
 
 #define TEST_DEPLOYMENT(provider_, config_data_, config_value_) \
-    ((salts_configurator_deployment){ \
+    (TEST_CONFIGURATOR_LITERAL(salts_configurator_deployment){ \
         (provider_), (config_data_), (config_value_) })
 
 static cmeta_status test_cycle_create(
@@ -380,9 +386,9 @@ static cmeta_status test_lookup_project(
 static salts_configurator_status test_lookup_fixture_start(
     test_lookup_fixture *fixture, int value) {
     salts_configurator_status status;
-    *fixture = (test_lookup_fixture){0};
+    *fixture = TEST_CONFIGURATOR_LITERAL(test_lookup_fixture){0};
     test_provider_state_init(&fixture->provider, value, NULL);
-    fixture->interfaces = (cmeta_object_interface_provider){
+    fixture->interfaces = TEST_CONFIGURATOR_LITERAL(cmeta_object_interface_provider){
         sizeof(cmeta_object_interface_provider), fixture, test_lookup_project
     };
     fixture->binding = TEST_PROVIDER_BINDING(
