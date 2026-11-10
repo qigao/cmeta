@@ -4,9 +4,9 @@
 
 #include <cflow/io_native.h>
 
-#include <clock.h>
-#include <error_codes.h>
-#include <thread.h>
+#include <core/clock.h>
+#include <core/error_codes.h>
+#include <threads/threads.h>
 
 #include "tinytest.h"
 
@@ -267,7 +267,7 @@ static bool native_test_socket_is_nonblocking(
 static int native_test_receive_exact(native_test_socket socket_value,
                                      void *buffer, size_t length) {
     unsigned char *bytes = (unsigned char *)buffer;
-    const uint64_t started = cmeta_hrtime();
+    const uint64_t started = hrtime();
     size_t received = 0u;
     while (received < length) {
         const size_t remaining = length - received;
@@ -295,9 +295,9 @@ static int native_test_receive_exact(native_test_socket socket_value,
                 return -error;
         }
 #endif
-        if (cmeta_hrtime() - started >= NATIVE_TEST_TIMEOUT_NS)
+        if (hrtime() - started >= NATIVE_TEST_TIMEOUT_NS)
             return SALTS_ETIMEDOUT;
-        cmeta_thread_yield();
+        sync_thread_yield();
     }
     return SALTS_OK;
 }
@@ -416,20 +416,20 @@ static int native_file_fixture_init(native_fixture *fixture,
 }
 
 static int native_fixture_wait(native_fixture *fixture, size_t count) {
-    const uint64_t started = cmeta_hrtime();
+    const uint64_t started = hrtime();
     while (fixture->completions.count < count) {
         (void)cflow_io_actor_run_ready(&fixture->actor, 64u);
         (void)cflow_executor_run_ready(&fixture->executor);
-        if (cmeta_hrtime() - started >= NATIVE_TEST_TIMEOUT_NS)
+        if (hrtime() - started >= NATIVE_TEST_TIMEOUT_NS)
             return SALTS_ETIMEDOUT;
-        cmeta_thread_yield();
+        sync_thread_yield();
     }
     return SALTS_OK;
 }
 
 static int native_fixture_wait_native_submitted(native_fixture *fixture,
                                                 uint64_t count) {
-    const uint64_t started = cmeta_hrtime();
+    const uint64_t started = hrtime();
     cflow_io_native_backend_stats stats;
     do {
         (void)cflow_io_actor_run_ready(&fixture->actor, 64u);
@@ -437,36 +437,36 @@ static int native_fixture_wait_native_submitted(native_fixture *fixture,
         if (cflow_io_native_backend_get_stats(&fixture->backend, &stats) &&
             stats.submitted >= count)
             return SALTS_OK;
-        cmeta_thread_yield();
-    } while (cmeta_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
+        sync_thread_yield();
+    } while (hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
     return SALTS_ETIMEDOUT;
 }
 
 static int native_fixture_forget_socket(
     native_fixture *fixture, uintptr_t socket_identity) {
-    const uint64_t started = cmeta_hrtime();
+    const uint64_t started = hrtime();
     int status;
     do {
         status = cflow_io_native_backend_forget_socket(
             &fixture->backend, socket_identity);
         if (status != SALTS_EBUSY)
             return status;
-        cmeta_thread_yield();
-    } while (cmeta_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
+        sync_thread_yield();
+    } while (hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
     return SALTS_ETIMEDOUT;
 }
 
 static int native_fixture_forget_file(
     native_fixture *fixture, uintptr_t file_identity) {
-    const uint64_t started = cmeta_hrtime();
+    const uint64_t started = hrtime();
     int status;
     do {
         status = cflow_io_native_backend_forget_file(
             &fixture->backend, file_identity);
         if (status != SALTS_EBUSY)
             return status;
-        cmeta_thread_yield();
-    } while (cmeta_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
+        sync_thread_yield();
+    } while (hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
     return SALTS_ETIMEDOUT;
 }
 
@@ -836,7 +836,7 @@ static void native_check_file_cancel_race_iocp(void) {
          ++iteration) {
         (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
         (void)cflow_executor_run_ready(&fixture.executor);
-        cmeta_thread_yield();
+        sync_thread_yield();
     }
     check_equal(fixture.completions.count, 1u);
     check_equal(cflow_io_actor_acknowledge(
@@ -1120,7 +1120,7 @@ static void native_check_file_cancel_race_posix(cflow_io_native_backend_kind kin
          ++iteration) {
         (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
         (void)cflow_executor_run_ready(&fixture.executor);
-        cmeta_thread_yield();
+        sync_thread_yield();
     }
     check_equal(fixture.completions.count, 1u);
     check_equal(cflow_io_actor_acknowledge(
@@ -2181,7 +2181,7 @@ static void native_check_cancelled_slot_reuse(
              attempt < NATIVE_TEST_CANCEL_SETTLE_YIELDS; ++attempt) {
             (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
             (void)cflow_executor_run_ready(&fixture.executor);
-            cmeta_thread_yield();
+            sync_thread_yield();
         }
         check_equal(fixture.completions.count, 0u);
         check_equal(send(sockets[0], (const char *)payload,

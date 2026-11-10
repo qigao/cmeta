@@ -4,8 +4,8 @@
 
 #include "io_native_internal.h"
 
-#include <error_codes.h>
-#include <thread.h>
+#include <core/error_codes.h>
+#include <threads/threads.h>
 
 #include <aio.h>
 #include <errno.h>
@@ -31,9 +31,9 @@ typedef struct cflow_darwin_aio_record {
 
 typedef struct cflow_darwin_aio_impl {
     cflow_io_native_impl base;
-    cmeta_mutex_t gate;
-    cmeta_cond_t changed;
-    cmeta_thread_t worker;
+    sync_mutex_t gate;
+    sync_cond_t changed;
+    sync_thread_t worker;
     cflow_darwin_aio_record *records;
     const struct aiocb **waiting;
     size_t request_capacity;
@@ -67,15 +67,15 @@ static void darwin_aio_worker(void *user) {
     for (;;) {
         size_t delivered = 0u;
         size_t waiting_count = 0u;
-        cmeta_mutex_lock(&impl->gate);
+        sync_mutex_lock(&impl->gate);
         while (impl->active_requests == 0u && !impl->stopping)
-            cmeta_cond_wait(&impl->changed, &impl->gate);
+            sync_cond_wait(&impl->changed, &impl->gate);
         if (impl->stopping) {
             impl->worker_running = false;
-            cmeta_mutex_unlock(&impl->gate);
+            sync_mutex_unlock(&impl->gate);
             return;
         }
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
 
         for (size_t scanned = 0u; scanned < impl->request_capacity; ++scanned) {
             cflow_darwin_aio_record *record = &impl->records[cursor];
@@ -85,14 +85,14 @@ static void darwin_aio_worker(void *user) {
             int error;
             ssize_t bytes;
             cursor = (cursor + 1u) % impl->request_capacity;
-            cmeta_mutex_lock(&impl->gate);
+            sync_mutex_lock(&impl->gate);
             if (!record->active) {
-                cmeta_mutex_unlock(&impl->gate);
+                sync_mutex_unlock(&impl->gate);
                 continue;
             }
             error = aio_error(&record->control);
             if (error == EINPROGRESS) {
-                cmeta_mutex_unlock(&impl->gate);
+                sync_mutex_unlock(&impl->gate);
                 continue;
             }
             if (error < 0) error = errno;
@@ -118,31 +118,31 @@ static void darwin_aio_worker(void *user) {
             record->active = false;
             --impl->active_requests;
             darwin_aio_increment(&impl->completed);
-            cmeta_mutex_unlock(&impl->gate);
+            sync_mutex_unlock(&impl->gate);
             /* Actor completion may issue an advisory wake. No external call
              * runs under gate; shutdown joins this entire publication tail. */
             if (cflow_io_actor_complete(actor, request_id, &completion) !=
                 CFLOW_IO_COMPLETE_ACCEPTED) {
-                cmeta_mutex_lock(&impl->gate);
+                sync_mutex_lock(&impl->gate);
                 darwin_aio_increment(&impl->stale_native_completions);
-                cmeta_mutex_unlock(&impl->gate);
+                sync_mutex_unlock(&impl->gate);
             }
             if (++delivered == impl->completion_batch_capacity) break;
         }
         if (delivered != 0u) continue;
 
-        cmeta_mutex_lock(&impl->gate);
+        sync_mutex_lock(&impl->gate);
         for (size_t index = 0u; index < impl->request_capacity; ++index)
             if (impl->records[index].active)
                 impl->waiting[waiting_count++] = &impl->records[index].control;
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         if (waiting_count != 0u &&
             aio_suspend(impl->waiting, (int)waiting_count, &timeout) < 0 &&
             errno != EAGAIN && errno != EINTR) {
             /* Waiting is advisory, never an I/O terminal result. A wait error
              * cannot authorize reclaiming kernel-borrowed buffers. Recheck
              * aio_error after a bounded delay without spinning on wait errors. */
-            cmeta_sleep_ms(DARWIN_AIO_OBSERVE_INTERVAL_MS);
+            sleep_ms(DARWIN_AIO_OBSERVE_INTERVAL_MS);
         }
     }
 }
@@ -161,9 +161,9 @@ static int darwin_aio_submit_file(
     if (status < 0) return -errno;
     if (!S_ISREG(file_status.st_mode)) return SALTS_EINVAL;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (!impl->admission_open) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_ESHUTDOWN;
     }
     for (size_t index = 0u; index < impl->request_capacity; ++index) {
@@ -174,7 +174,7 @@ static int darwin_aio_submit_file(
     }
     if (record == NULL) {
         darwin_aio_increment(&impl->rejected_full);
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_ENOBUFS;
     }
     memset(&record->control, 0, sizeof(record->control));
@@ -192,7 +192,7 @@ static int darwin_aio_submit_file(
     if (status < 0) {
         status = -errno;
         darwin_aio_increment(&impl->native_submit_errors);
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return status;
     }
     record->actor = actor;
@@ -201,8 +201,8 @@ static int darwin_aio_submit_file(
     record->active = true;
     ++impl->active_requests;
     darwin_aio_increment(&impl->submitted);
-    cmeta_cond_signal(&impl->changed);
-    cmeta_mutex_unlock(&impl->gate);
+    sync_cond_signal(&impl->changed);
+    sync_mutex_unlock(&impl->gate);
     return SALTS_OK;
 }
 
@@ -210,7 +210,7 @@ static int darwin_aio_cancel(cflow_io_native_impl *base,
                              cflow_io_request_id request_id) {
     cflow_darwin_aio_impl *impl = (cflow_darwin_aio_impl *)base;
     int status = SALTS_ENOENT;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     for (size_t index = 0u; index < impl->request_capacity; ++index) {
         cflow_darwin_aio_record *record = &impl->records[index];
         if (!record->active || record->request_id != request_id) continue;
@@ -223,28 +223,28 @@ static int darwin_aio_cancel(cflow_io_native_impl *base,
         }
         break;
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return status;
 }
 
 static bool darwin_aio_get_stats(const cflow_io_native_impl *base,
                                  cflow_io_native_backend_stats *out) {
     cflow_darwin_aio_impl *impl = (cflow_darwin_aio_impl *)base;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     *out = (cflow_io_native_backend_stats){
         impl->request_capacity, impl->active_requests, impl->submitted,
         impl->completed, impl->cancelled, impl->rejected_full,
         impl->stale_native_completions, impl->native_submit_errors,
         impl->native_cancel_errors, impl->admission_open,
         impl->worker_running, impl->shutdown_complete};
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return true;
 }
 
 static int darwin_aio_forget_file(cflow_io_native_impl *base, uintptr_t handle) {
     cflow_darwin_aio_impl *impl = (cflow_darwin_aio_impl *)base;
     int status = SALTS_OK;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     for (size_t index = 0u; index < impl->request_capacity; ++index) {
         if (impl->records[index].active &&
             (uintptr_t)impl->records[index].control.aio_fildes == handle) {
@@ -252,46 +252,46 @@ static int darwin_aio_forget_file(cflow_io_native_impl *base, uintptr_t handle) 
             break;
         }
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return status;
 }
 
 static int darwin_aio_shutdown(cflow_io_native_impl *base) {
     cflow_darwin_aio_impl *impl = (cflow_darwin_aio_impl *)base;
     int status;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (impl->shutdown_complete) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EALREADY;
     }
     impl->admission_open = false;
     if (impl->active_requests != 0u || impl->shutdown_inflight) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
     impl->shutdown_inflight = true;
     impl->stopping = true;
-    cmeta_cond_signal(&impl->changed);
-    cmeta_mutex_unlock(&impl->gate);
-    status = cmeta_thread_join(&impl->worker);
-    if (status == SALTS_OK) cmeta_thread_destroy(&impl->worker);
-    cmeta_mutex_lock(&impl->gate);
+    sync_cond_signal(&impl->changed);
+    sync_mutex_unlock(&impl->gate);
+    status = sync_thread_join(&impl->worker);
+    if (status == SALTS_OK) sync_thread_destroy(&impl->worker);
+    sync_mutex_lock(&impl->gate);
     impl->shutdown_inflight = false;
     impl->shutdown_complete = status == SALTS_OK;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return status;
 }
 
 static int darwin_aio_destroy(cflow_io_native_impl *base) {
     cflow_darwin_aio_impl *impl = (cflow_darwin_aio_impl *)base;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (!impl->shutdown_complete) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
-    cmeta_mutex_unlock(&impl->gate);
-    cmeta_cond_destroy(&impl->changed);
-    cmeta_mutex_destroy(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
+    sync_cond_destroy(&impl->changed);
+    sync_mutex_destroy(&impl->gate);
     free(impl->waiting);
     free(impl->records);
     free(impl);
@@ -322,8 +322,8 @@ int cflow_io_native_darwin_aio_init(
         config->request_capacity, sizeof(*impl->records));
     impl->waiting = (const struct aiocb **)calloc(
         config->request_capacity, sizeof(*impl->waiting));
-    cmeta_mutex_init(&impl->gate);
-    cmeta_cond_init(&impl->changed);
+    sync_mutex_init(&impl->gate);
+    sync_cond_init(&impl->changed);
     status = SALTS_ENOMEM;
     if (impl->records == NULL || impl->waiting == NULL ||
         impl->gate == NULL || impl->changed == NULL)
@@ -334,13 +334,13 @@ int cflow_io_native_darwin_aio_init(
     impl->completion_batch_capacity = config->completion_batch_capacity;
     impl->admission_open = true;
     impl->worker_running = true;
-    status = cmeta_thread_create(&impl->worker, darwin_aio_worker, impl);
+    status = sync_thread_create(&impl->worker, darwin_aio_worker, impl);
     if (status != SALTS_OK) goto failed;
     backend->impl = impl;
     return SALTS_OK;
 failed:
-    if (impl->changed != NULL) cmeta_cond_destroy(&impl->changed);
-    if (impl->gate != NULL) cmeta_mutex_destroy(&impl->gate);
+    if (impl->changed != NULL) sync_cond_destroy(&impl->changed);
+    if (impl->gate != NULL) sync_mutex_destroy(&impl->gate);
     free(impl->waiting);
     free(impl->records);
     free(impl);

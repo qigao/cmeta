@@ -2,8 +2,8 @@
 
 #include "io_native_internal.h"
 
-#include <error_codes.h>
-#include <thread.h>
+#include <core/error_codes.h>
+#include <threads/threads.h>
 
 #include <limits.h>
 #include <stdlib.h>
@@ -44,7 +44,7 @@ struct cflow_io_file_runtime_impl {
   cflow_io_actor actor;
   cflow_io_file_slot *slots;
   size_t slot_capacity;
-  cmeta_mutex_t gate;
+  sync_mutex_t gate;
   cflow_io_native_backend_kind backend_kind;
   size_t file_capacity;
   size_t open_files;
@@ -197,14 +197,14 @@ static void file_slot_release(void *operation_user) {
   cflow_io_file_runtime_impl *runtime;
   if (slot == NULL || slot->runtime == NULL) return;
   runtime = slot->runtime;
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   memset(&slot->operation, 0, sizeof(slot->operation));
   slot->file = NULL;
   slot->request_id = 0u;
   slot->in_use = false;
   slot->delivered = false;
   slot->cancel_requested = false;
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
 }
 
 static void file_actor_completion(void *user, cflow_io_request_id request_id,
@@ -214,14 +214,14 @@ static void file_actor_completion(void *user, cflow_io_request_id request_id,
   cflow_io_file_slot *slot = (cflow_io_file_slot *)operation_user;
   cflow_io_file_impl *file;
   if (runtime == NULL || slot == NULL || completion == NULL) return;
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   file = slot->file;
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
   if (file == NULL) return;
   file->completion(file->completion_user, request_id, lease_id, slot->operation.kind, completion);
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   slot->delivered = true;
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
 }
 
 static void file_runtime_init_cleanup(cflow_io_file_runtime_impl *impl, bool backend_initialized,
@@ -240,7 +240,7 @@ static void file_runtime_init_cleanup(cflow_io_file_runtime_impl *impl, bool bac
     (void)cflow_executor_shutdown(&impl->executor);
     cflow_executor_destroy(&impl->executor);
   }
-  cmeta_mutex_destroy(&impl->gate);
+  sync_mutex_destroy(&impl->gate);
   free(impl->slots);
   free(impl);
 }
@@ -274,7 +274,7 @@ int cflow_io_file_runtime_init(cflow_io_file_runtime *runtime,
   impl->slot_capacity = config->request_capacity;
   impl->backend_kind = config->backend_kind;
   impl->file_capacity = config->file_capacity;
-  cmeta_mutex_init(&impl->gate);
+  sync_mutex_init(&impl->gate);
   if (impl->gate == NULL) {
     free(impl->slots);
     free(impl);
@@ -361,25 +361,25 @@ int cflow_io_file_open(cflow_io_file *file, const char *path, const cflow_io_fil
     impl->runtime = config->runtime;
   }
 
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   if (runtime->close_requested) {
-    cmeta_mutex_unlock(&runtime->gate);
+    sync_mutex_unlock(&runtime->gate);
     status = SALTS_ESHUTDOWN;
     goto failed;
   }
   if (runtime->open_files >= runtime->file_capacity) {
-    cmeta_mutex_unlock(&runtime->gate);
+    sync_mutex_unlock(&runtime->gate);
     status = SALTS_ENOBUFS;
     goto failed;
   }
   ++runtime->open_files;
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
 
   status = file_native_open(path, config, &impl->native_handle);
   if (status != SALTS_OK) {
-    cmeta_mutex_lock(&runtime->gate);
+    sync_mutex_lock(&runtime->gate);
     --runtime->open_files;
-    cmeta_mutex_unlock(&runtime->gate);
+    sync_mutex_unlock(&runtime->gate);
     goto failed;
   }
   file->impl = impl;
@@ -469,9 +469,9 @@ file_try_submit(cflow_io_file *file, cflow_io_lease_id lease_id,
   if (!cflow_io_native_file_operation_valid(&operation))
     return file_submit_result(CFLOW_IO_FILE_SUBMIT_INVALID_ARGUMENT, 0u);
 
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   if (impl->close_requested || runtime->close_requested) {
-    cmeta_mutex_unlock(&runtime->gate);
+    sync_mutex_unlock(&runtime->gate);
     return file_submit_result(CFLOW_IO_FILE_SUBMIT_CLOSED, 0u);
   }
   for (index = 0u; index < runtime->slot_capacity; ++index) {
@@ -486,7 +486,7 @@ file_try_submit(cflow_io_file *file, cflow_io_lease_id lease_id,
       break;
     }
   }
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
   if (slot == NULL) return file_submit_result(CFLOW_IO_FILE_SUBMIT_FULL, 0u);
 
   actor_operation = (cflow_io_operation){&slot->operation, file_slot_release};
@@ -495,11 +495,11 @@ file_try_submit(cflow_io_file *file, cflow_io_lease_id lease_id,
     file_slot_release(&slot->operation);
     return file_submit_result(file_map_submit_status(submitted.status), 0u);
   }
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   slot->request_id = submitted.request_id;
   cancel_after_submit = slot->cancel_requested || impl->close_requested || runtime->close_requested;
   if (cancel_after_submit) slot->cancel_requested = true;
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
   if (cancel_after_submit) (void)cflow_io_actor_try_cancel(&runtime->actor, submitted.request_id);
   return file_submit_result(CFLOW_IO_FILE_SUBMIT_ACCEPTED, submitted.request_id);
 }
@@ -534,14 +534,14 @@ cflow_io_cancel_status cflow_io_file_try_cancel(cflow_io_file *file,
 static cflow_io_request_id file_delivered_request(cflow_io_file_runtime_impl *runtime) {
   cflow_io_request_id request_id = 0u;
   size_t index;
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   for (index = 0u; index < runtime->slot_capacity; ++index) {
     if (runtime->slots[index].in_use && runtime->slots[index].delivered) {
       request_id = runtime->slots[index].request_id;
       break;
     }
   }
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
   return request_id;
 }
 
@@ -551,13 +551,13 @@ int cflow_io_file_runtime_run_ready(cflow_io_file_runtime *runtime_handle, size_
   size_t count = 0u;
   int status = SALTS_OK;
   if (runtime == NULL || max_steps == 0u || progressed == NULL) return SALTS_EINVAL;
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   if (runtime->driver_active) {
-    cmeta_mutex_unlock(&runtime->gate);
+    sync_mutex_unlock(&runtime->gate);
     return SALTS_EBUSY;
   }
   runtime->driver_active = true;
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
 
   while (count < max_steps) {
     const cflow_io_request_id request_id = file_delivered_request(runtime);
@@ -593,9 +593,9 @@ int cflow_io_file_runtime_run_ready(cflow_io_file_runtime *runtime_handle, size_
     break;
   }
 
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   runtime->driver_active = false;
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
   *progressed = count;
   return status;
 }
@@ -623,7 +623,7 @@ static int file_cancel_operations(cflow_io_file_impl *file) {
     cflow_io_cancel_status cancel_status;
     size_t index;
 
-    cmeta_mutex_lock(&runtime->gate);
+    sync_mutex_lock(&runtime->gate);
     for (index = 0u; index < runtime->slot_capacity; ++index) {
       if (runtime->slots[index].in_use && runtime->slots[index].file == file &&
           !runtime->slots[index].cancel_requested) {
@@ -633,16 +633,16 @@ static int file_cancel_operations(cflow_io_file_impl *file) {
         break;
       }
     }
-    cmeta_mutex_unlock(&runtime->gate);
+    sync_mutex_unlock(&runtime->gate);
     if (slot == NULL) return SALTS_OK;
     if (request_id == 0u) continue;
 
     cancel_status = cflow_io_actor_try_cancel(&runtime->actor, request_id);
     if (cancel_status == CFLOW_IO_CANCEL_FULL) {
-      cmeta_mutex_lock(&runtime->gate);
+      sync_mutex_lock(&runtime->gate);
       if (slot->in_use && slot->file == file && slot->request_id == request_id)
         slot->cancel_requested = false;
-      cmeta_mutex_unlock(&runtime->gate);
+      sync_mutex_unlock(&runtime->gate);
       return SALTS_ENOBUFS;
     }
     if (cancel_status == CFLOW_IO_CANCEL_INVALID_ARGUMENT) return SALTS_EINVAL;
@@ -655,10 +655,10 @@ int cflow_io_file_close(cflow_io_file *file) {
   bool already_closed;
   int status;
   if (impl == NULL || runtime == NULL) return SALTS_EINVAL;
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   already_closed = impl->close_requested;
   impl->close_requested = true;
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
   if (impl->owns_runtime) {
     status = cflow_io_file_runtime_close(impl->runtime);
     if (status == SALTS_EALREADY && !already_closed) return SALTS_OK;
@@ -674,9 +674,9 @@ bool cflow_io_file_is_quiescent(const cflow_io_file *file) {
   cflow_io_file_runtime_impl *runtime = file_owner_runtime(impl);
   bool result;
   if (impl == NULL || runtime == NULL) return false;
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   result = impl->close_requested && !file_has_operations_locked(runtime, impl);
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
   return result;
 }
 
@@ -690,14 +690,14 @@ bool cflow_io_file_runtime_get_stats(const cflow_io_file_runtime *runtime_handle
       !cflow_io_actor_get_stats(&runtime->actor, &snapshot.actor) ||
       !cflow_io_native_backend_get_stats(&runtime->backend, &snapshot.backend))
     return false;
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   for (index = 0u; index < runtime->slot_capacity; ++index) {
     if (runtime->slots[index].in_use) ++snapshot.operation_slots_in_use;
   }
   snapshot.open_files = runtime->open_files;
   snapshot.file_capacity = runtime->file_capacity;
   snapshot.close_requested = runtime->close_requested;
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
   *out = snapshot;
   return true;
 }
@@ -711,13 +711,13 @@ bool cflow_io_file_get_stats(const cflow_io_file *file, cflow_io_file_stats *out
       !cflow_io_actor_get_stats(&runtime->actor, &snapshot.actor) ||
       !cflow_io_native_backend_get_stats(&runtime->backend, &snapshot.backend))
     return false;
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   for (index = 0u; index < runtime->slot_capacity; ++index) {
     if (runtime->slots[index].in_use && runtime->slots[index].file == impl)
       ++snapshot.operation_slots_in_use;
   }
   snapshot.close_requested = impl->close_requested;
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
   *out = snapshot;
   return true;
 }
@@ -728,9 +728,9 @@ int cflow_io_file_runtime_close(cflow_io_file_runtime *runtime_handle) {
   if (runtime == NULL) return SALTS_EINVAL;
   status = cflow_io_actor_close(&runtime->actor);
   if (status == SALTS_OK || status == SALTS_EALREADY) {
-    cmeta_mutex_lock(&runtime->gate);
+    sync_mutex_lock(&runtime->gate);
     runtime->close_requested = true;
-    cmeta_mutex_unlock(&runtime->gate);
+    sync_mutex_unlock(&runtime->gate);
   }
   return status;
 }
@@ -740,9 +740,9 @@ bool cflow_io_file_runtime_is_quiescent(const cflow_io_file_runtime *runtime_han
       (cflow_io_file_runtime_impl *)file_runtime_const_impl(runtime_handle);
   bool close_requested;
   if (runtime == NULL) return false;
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   close_requested = runtime->close_requested;
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
   return close_requested && cflow_io_actor_is_quiescent(&runtime->actor);
 }
 
@@ -754,13 +754,13 @@ int cflow_io_file_destroy(cflow_io_file *file) {
   int result = SALTS_OK;
   int status;
   if (impl == NULL || runtime == NULL) return SALTS_EINVAL;
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   if (!impl->close_requested || runtime->driver_active ||
       file_has_operations_locked(runtime, impl)) {
-    cmeta_mutex_unlock(&runtime->gate);
+    sync_mutex_unlock(&runtime->gate);
     return SALTS_EBUSY;
   }
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
 
   closed_handle = impl->native_handle;
   impl->native_handle = UINTPTR_MAX;
@@ -768,9 +768,9 @@ int cflow_io_file_destroy(cflow_io_file *file) {
   if (status != SALTS_OK) result = status;
   status = cflow_io_native_backend_forget_file(&runtime->backend, closed_handle);
   if (status != SALTS_OK && status != SALTS_ENOENT && result == SALTS_OK) result = status;
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   --runtime->open_files;
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
 
   owns_runtime = impl->owns_runtime;
   if (owns_runtime) {
@@ -787,12 +787,12 @@ int cflow_io_file_runtime_destroy(cflow_io_file_runtime *runtime_handle) {
   int result = SALTS_OK;
   int status;
   if (runtime == NULL) return SALTS_EINVAL;
-  cmeta_mutex_lock(&runtime->gate);
+  sync_mutex_lock(&runtime->gate);
   if (!runtime->close_requested || runtime->driver_active || runtime->open_files != 0u) {
-    cmeta_mutex_unlock(&runtime->gate);
+    sync_mutex_unlock(&runtime->gate);
     return SALTS_EBUSY;
   }
-  cmeta_mutex_unlock(&runtime->gate);
+  sync_mutex_unlock(&runtime->gate);
   if (!cflow_io_actor_is_quiescent(&runtime->actor)) return SALTS_EBUSY;
 
   status = cflow_io_native_backend_shutdown(&runtime->backend);
@@ -803,7 +803,7 @@ int cflow_io_file_runtime_destroy(cflow_io_file_runtime *runtime_handle) {
   if (status != SALTS_OK) result = status;
   if (!cflow_executor_shutdown(&runtime->executor) && result == SALTS_OK) result = SALTS_EBUSY;
   cflow_executor_destroy(&runtime->executor);
-  cmeta_mutex_destroy(&runtime->gate);
+  sync_mutex_destroy(&runtime->gate);
   free(runtime->slots);
   free(runtime);
   runtime_handle->impl = NULL;

@@ -1,134 +1,64 @@
 {
   "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 27,
+    "patch": 0
+  },
+  "include": [
+    "presets/ConfigurePresets.json",
+    "presets/BuildPresets.json",
+    "presets/TestPresets.json"
+  ],
   "configurePresets": [
     {
-      "name": "native-release",
-      "displayName": "CMeta 0.1 / installed Core / Release",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/release",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
-        "BUILD_TESTING": "ON",
-        "BUILD_EXAMPLES": "OFF",
-        "BUILD_BENCHMARKS": "OFF",
-        "BUILD_SHARED_LIBS": "OFF"
+      "name": "native-runtime",
+      "hidden": true,
+      "environment": {
+        "PATH": "${sourceDir}/build/${presetName}/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/$env{VCPKG_CONFIGURATION_SUBDIR}bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/bin${pathListSep}$env{SALTS_BASE_ROOT}/bin${pathListSep}$env{SALTSCORE_ROOT}/bin${pathListSep}$penv{PATH}",
+        "LD_LIBRARY_PATH": "${sourceDir}/build/${presetName}/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/$env{VCPKG_CONFIGURATION_SUBDIR}lib${pathListSep}$env{VCPKG_INSTALLED_DIR}/$env{VCPKG_TARGET_TRIPLET}/lib${pathListSep}$env{SALTS_BASE_ROOT}/lib${pathListSep}$env{SALTSCORE_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
       }
     },
     {
-      "name": "native-debug",
-      "displayName": "CMeta 0.1 / installed Core / Debug",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/debug",
+      "name": "full-native",
+      "hidden": true,
+      "inherits": [
+        "ISNative",
+        "base",
+        "release-mode"
+      ],
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
-        "BUILD_TESTING": "ON",
-        "BUILD_EXAMPLES": "OFF",
-        "BUILD_BENCHMARKS": "OFF",
-        "BUILD_SHARED_LIBS": "OFF"
+        "BUILD_TESTS": "ON"
       }
     },
     {
-      "name": "llvm-release-ci",
-      "displayName": "CMeta 0.1 / LLVM Release CI",
-      "generator": "Ninja",
-      "binaryDir": "$penv{CMETA_BINARY_DIR}",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
-        "CMAKE_INSTALL_PREFIX": "$penv{CMETA_INSTALL_PREFIX}",
-        "CMAKE_TOOLCHAIN_FILE": "$penv{CMETA_TARGET_TOOLCHAIN_FILE}",
-        "BUILD_TESTING": "OFF",
-        "BUILD_EXAMPLES": "OFF",
-        "BUILD_BENCHMARKS": "OFF",
-        "BUILD_SHARED_LIBS": "OFF"
-      }
+      "name": "full-native-asan-ubsan",
+      "hidden": true,
+      "inherits": [
+        "ISLinux",
+        "asan-ubsan-mode",
+        "full-native"
+      ]
     },
     {
-      "name": "llvm-test-ci",
-      "displayName": "CMeta 0.1 / LLVM Debug Test CI",
-      "generator": "Ninja",
-      "binaryDir": "$penv{CMETA_TEST_BINARY_DIR}",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
-        "CMAKE_TOOLCHAIN_FILE": "$penv{CMETA_TARGET_TOOLCHAIN_FILE}",
-        "BUILD_TESTING": "ON",
-        "BUILD_EXAMPLES": "OFF",
-        "BUILD_BENCHMARKS": "OFF",
-        "BUILD_SHARED_LIBS": "OFF"
-      }
+      "name": "full-native-tsan",
+      "hidden": true,
+      "inherits": [
+        "ISLinux",
+        "tsan-mode",
+        "full-native"
+      ]
     },
     {
-      "name": "android-release-ci",
-      "displayName": "CMeta 0.1 / Android NDK LLVM Release CI",
-      "generator": "Ninja",
-      "binaryDir": "$penv{CMETA_BINARY_DIR}",
+      "name": "android-release",
+      "hidden": true,
+      "inherits": [
+        "android-base",
+        "release-mode"
+      ],
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_PREFIX_PATH": "$penv{SALTSCORE_PREFIX}",
-        "CMAKE_FIND_ROOT_PATH": "$penv{SALTSCORE_PREFIX}",
-        "CMAKE_FIND_ROOT_PATH_MODE_PACKAGE": "ONLY",
-        "CMAKE_INSTALL_PREFIX": "$penv{CMETA_INSTALL_PREFIX}",
-        "CMAKE_TOOLCHAIN_FILE": "$penv{CMETA_TARGET_TOOLCHAIN_FILE}",
-        "ANDROID_ABI": "$penv{CMETA_ANDROID_ABI}",
-        "ANDROID_PLATFORM": "24",
-        "ANDROID_STL": "c++_shared",
-        "BUILD_TESTING": "OFF",
-        "BUILD_EXAMPLES": "OFF",
-        "BUILD_BENCHMARKS": "OFF",
-        "BUILD_SHARED_LIBS": "OFF"
+        "CMAKE_ANDROID_ARCH_ABI": "$env{ANDROID_ABI}"
       }
     }
-  ],
-  "buildPresets": [
-    {
-      "name": "debug",
-      "configurePreset": "native-debug"
-    },
-    {
-      "name": "llvm-release-ci",
-      "configurePreset": "llvm-release-ci"
-    },
-    {
-      "name": "llvm-test-ci",
-      "configurePreset": "llvm-test-ci"
-    },
-    {
-      "name": "android-release-ci",
-      "configurePreset": "android-release-ci"
-    },
-    {
-      "name": "install-llvm-release-ci",
-      "configurePreset": "llvm-release-ci",
-      "targets": ["install"]
-    },
-    {
-      "name": "install-android-release-ci",
-      "configurePreset": "android-release-ci",
-      "targets": ["install"]
-    }
-  ],
-  "testPresets": [
-    {
-      "name": "llvm-test-ci",
-      "configurePreset": "llvm-test-ci",
-      "output": {
-        "outputOnFailure": true
-      },
-      "execution": {
-        "noTestsAction": "error",
-        "timeout": 120
-      }
-    }
-  ],
-  "packagePresets": [],
-  "workflowPresets": [],
-  "vendor": {
-    "qigao/cmeta": {
-      "release-tag": "v0.1.003",
-      "package-version": "0.1.3"
-    }
-  }
+  ]
 }

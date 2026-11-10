@@ -31,7 +31,7 @@ static const cmeta_type_identity peer_uuid_identity =
     CMETA_TYPE_ID_ATOM_INIT("salts.uuid");
 
 static const cmeta_type_desc peer_uuid_type = {
-    "cmeta_uuid_t", sizeof(cmeta_uuid_t), CMETA_ALIGNOF(cmeta_uuid_t),
+    "uuid_t", sizeof(uuid_t), CMETA_ALIGNOF(uuid_t),
     CMETA_T_OBJECT, NULL, NULL, &peer_uuid_identity
 };
 
@@ -48,7 +48,7 @@ static const cmeta_data_buffer_ops peer_uuid_buffer_ops = {
 
 static const cmeta_data_fixed_ops peer_uuid_fixed_ops = {
     sizeof(cmeta_data_fixed_ops), CMETA_DATA_FIXED_OPS_ABI_VERSION,
-    &peer_uuid_type, sizeof(cmeta_uuid_t),
+    &peer_uuid_type, sizeof(uuid_t),
     peer_uuid_is_zero, peer_uuid_copy, peer_uuid_restore_zero
 };
 
@@ -56,7 +56,7 @@ static const cmeta_data_desc peer_uuid_data = {
     .struct_size = sizeof(cmeta_data_desc),
     .abi_version = CMETA_DATA_DESC_ABI_VERSION,
     .stable_id = "salts.uuid.data",
-    .display_name = "cmeta_uuid_t",
+    .display_name = "uuid_t",
     .kind = CMETA_DATA_STRING,
     .storage_type = &peer_uuid_type,
     .shape = &peer_uuid_shape,
@@ -85,7 +85,7 @@ suite("CMeta Core data admission") {
 
         candidate = peer_uuid_data;
         candidate.fixed_ops = &fixed_ops;
-        fixed_ops.extent = sizeof(cmeta_uuid_t) - 1u;
+        fixed_ops.extent = sizeof(uuid_t) - 1u;
         check_false(cmeta_uuid_cmeta_data_valid(&candidate));
     }
 }

@@ -1,0 +1,63 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "default-options",
+      "hidden": true,
+      "cacheVariables": {
+        "BUILD_TESTS": "OFF",
+        "SALTSCORE_ENABLE_ASAN": "OFF",
+        "SALTSCORE_ENABLE_UBSAN": "OFF",
+        "SALTSCORE_ENABLE_TSAN": "OFF"
+      }
+    },
+    {
+      "name": "developer-mode",
+      "hidden": true,
+      "inherits": [
+        "default-options"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BUILD_TESTS": "ON"
+      },
+      "environment": {
+        "VCPKG_CONFIGURATION_SUBDIR": "debug/"
+      }
+    },
+    {
+      "name": "release-mode",
+      "hidden": true,
+      "inherits": [
+        "default-options"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "environment": {
+        "VCPKG_CONFIGURATION_SUBDIR": ""
+      }
+    },
+    {
+      "name": "asan-ubsan-mode",
+      "hidden": true,
+      "inherits": [
+        "developer-mode"
+      ],
+      "cacheVariables": {
+        "SALTSCORE_ENABLE_ASAN": "ON",
+        "SALTSCORE_ENABLE_UBSAN": "ON"
+      }
+    },
+    {
+      "name": "tsan-mode",
+      "hidden": true,
+      "inherits": [
+        "developer-mode"
+      ],
+      "cacheVariables": {
+        "SALTSCORE_ENABLE_TSAN": "ON"
+      }
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 #include "scheduler_internal.h"
 #include "executor_internal.h"
 
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <assert.h>
 #include <stdint.h>
@@ -37,7 +37,7 @@ typedef struct owner_schedule_slot {
 } owner_schedule_slot;
 
 struct owner_schedule_state {
-    cmeta_mutex_t lock;
+    sync_mutex_t lock;
     cflow_executor *executor; /* Borrowed; outlives this Scheduler. */
     owner_schedule_slot *slots;
     size_t *free_indices;
@@ -79,7 +79,7 @@ static void owner_slot_settle(void *user, bool cancelled_by_executor) {
 
     if (!slot || !slot->owner) abort();
     s = slot->owner;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     if (slot->phase == OWNER_SCHEDULE_PENDING) {
         task = slot->task;
         slot->task = (cflow_executor_task){0};
@@ -92,19 +92,19 @@ static void owner_slot_settle(void *user, bool cancelled_by_executor) {
          * Mark the Executor side terminal, but do not recycle the record
          * until that caller finishes its synchronous callbacks. */
         slot->owner_consumed = true;
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return;
     } else if (slot->phase == OWNER_SCHEDULE_CANCELLED) {
         /* Cancel/finalize already returned; this Executor terminal completes
          * the other half of the slot's bounded obligation. */
         slot_return_locked(slot);
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return;
     } else {
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         abort(); /* Duplicate settlement or unexpected slot reuse. */
     }
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
 
     if (have_task) {
         if (cancelled_by_executor) {
@@ -115,13 +115,13 @@ static void owner_slot_settle(void *user, bool cancelled_by_executor) {
         if (task.finalize) task.finalize(task.user);
     }
 
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     if (have_task) {
         if (cancelled_by_executor) --s->settling;
         else --s->dispatching;
     }
     slot_return_locked(slot);
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
 }
 
 static void owner_slot_run(void *user) {
@@ -147,19 +147,19 @@ static cflow_schedule_result owner_try_post_task_after(
     if (!s || !task || !task->run || delay_ticks != 0u)
         return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
 
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     if (s->stopping) {
         ++s->rejected_closed;
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return (cflow_schedule_result){CFLOW_ADMISSION_CLOSED, 0u};
     }
     if (s->next_id == UINT64_MAX) {
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return (cflow_schedule_result){CFLOW_ADMISSION_ALLOCATION_FAILED, 0u};
     }
     if (s->free_count == 0u) {
         ++s->rejected_full;
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return (cflow_schedule_result){CFLOW_ADMISSION_FULL, 0u};
     }
 
@@ -184,14 +184,14 @@ static cflow_schedule_result owner_try_post_task_after(
         s->free_indices[s->free_count++] = index;
         if (admitted == CFLOW_ADMISSION_FULL) ++s->rejected_full;
         if (admitted == CFLOW_ADMISSION_CLOSED) ++s->rejected_closed;
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return (cflow_schedule_result){admitted, 0u};
     }
 
     s->next_id = id;
     ++s->pending;
     if (s->pending > s->peak_pending) s->peak_pending = s->pending;
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     return (cflow_schedule_result){CFLOW_ADMISSION_ACCEPTED, id};
 }
 
@@ -217,7 +217,7 @@ static bool owner_cancel(void *self, cflow_task_id id) {
     owner_schedule_slot *cancelled_slot = NULL;
     if (!s || id == 0u) return false;
 
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     for (size_t i = 0u; i < s->capacity; ++i) {
         owner_schedule_slot *slot = &s->slots[i];
         if (slot->phase != OWNER_SCHEDULE_PENDING || slot->id != id)
@@ -229,16 +229,16 @@ static bool owner_cancel(void *self, cflow_task_id id) {
         cancelled_slot = slot;
         break;
     }
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     if (!cancelled_slot) return false;
 
     if (task.cancel) task.cancel(task.user);
     if (task.finalize) task.finalize(task.user);
 
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     --s->settling;
     if (cancelled_slot->phase != OWNER_SCHEDULE_CANCEL_SETTLING) {
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         abort(); /* No slot recycling while cancel/finalize is in flight. */
     }
     if (cancelled_slot->owner_consumed) {
@@ -246,7 +246,7 @@ static bool owner_cancel(void *self, cflow_task_id id) {
     } else {
         cancelled_slot->phase = OWNER_SCHEDULE_CANCELLED;
     }
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     return true;
 }
 
@@ -280,9 +280,9 @@ static bool owner_wait_idle(void *self) {
     owner_schedule_state *s = (owner_schedule_state *)self;
     bool idle;
     if (!s) return false;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     idle = s->pending == 0u && s->settling == 0u;
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     return idle;
 }
 
@@ -295,18 +295,18 @@ static size_t owner_pending(void *self) {
     owner_schedule_state *s = (owner_schedule_state *)self;
     size_t pending;
     if (!s) return 0u;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     pending = s->pending;
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     return pending;
 }
 
 static bool owner_shutdown(void *self) {
     owner_schedule_state *s = (owner_schedule_state *)self;
     if (!s) return false;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     s->stopping = true;
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     /* The Executor is borrowed/shared with Machine and must remain open.
      * Accepted work is still driven by its owner. */
     return true;
@@ -315,7 +315,7 @@ static bool owner_shutdown(void *self) {
 static bool owner_get_stats(void *self, cflow_scheduler_stats *out) {
     owner_schedule_state *s = (owner_schedule_state *)self;
     if (!s || !out) return false;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     *out = (cflow_scheduler_stats){
         .ready_capacity = s->capacity,
         .ready_pending = s->pending,
@@ -324,7 +324,7 @@ static bool owner_get_stats(void *self, cflow_scheduler_stats *out) {
         .rejected_full = s->rejected_full,
         .rejected_closed = s->rejected_closed
     };
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     return true;
 }
 
@@ -349,7 +349,7 @@ static void owner_destroy(void *self) {
         assert(!"owner Scheduler destroy raced an external cancellation");
         abort();
     }
-    cmeta_mutex_destroy(&s->lock);
+    sync_mutex_destroy(&s->lock);
     free(s->free_indices);
     free(s->slots);
     free(s);
@@ -412,9 +412,9 @@ bool cflow_scheduler_owner_bind(cflow_scheduler *scheduler,
     s->slots = (owner_schedule_slot *)calloc(ready_capacity, sizeof(*s->slots));
     s->free_indices = (size_t *)malloc(ready_capacity *
                                       sizeof(*s->free_indices));
-    cmeta_mutex_init(&s->lock);
+    sync_mutex_init(&s->lock);
     if (!s->slots || !s->free_indices || !s->lock) {
-        cmeta_mutex_destroy(&s->lock);
+        sync_mutex_destroy(&s->lock);
         free(s->free_indices);
         free(s->slots);
         free(s);

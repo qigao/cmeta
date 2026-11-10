@@ -12,23 +12,23 @@ static size_t destroy_calls;
 static int lock_depth;
 static bool adapter_error;
 
-void salts_service_host_test_mutex_init(cmeta_mutex_t *mutex) {
+void salts_service_host_test_mutex_init(sync_mutex_t *mutex) {
     ++init_calls;
     *mutex = fail_mutex ? NULL : &mutex_token;
 }
 
-void salts_service_host_test_mutex_destroy(cmeta_mutex_t *mutex) {
+void salts_service_host_test_mutex_destroy(sync_mutex_t *mutex) {
     if (*mutex != &mutex_token || lock_depth != 0) adapter_error = true;
     ++destroy_calls;
     *mutex = NULL;
 }
 
-void salts_service_host_test_mutex_lock(cmeta_mutex_t *mutex) {
+void salts_service_host_test_mutex_lock(sync_mutex_t *mutex) {
     if (*mutex != &mutex_token || lock_depth != 0) adapter_error = true;
     ++lock_depth;
 }
 
-void salts_service_host_test_mutex_unlock(cmeta_mutex_t *mutex) {
+void salts_service_host_test_mutex_unlock(sync_mutex_t *mutex) {
     if (*mutex != &mutex_token || lock_depth != 1) adapter_error = true;
     --lock_depth;
 }

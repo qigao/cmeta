@@ -1,13 +1,13 @@
 #include "service_host_publication_fixture.h"
 #include "tinytest.h"
-#include <thread.h>
+#include <threads/threads.h>
 
 enum { PUBLICATION_READERS = 4, PUBLICATION_RACE_ROUNDS = 32 };
 static const uint64_t PUBLICATION_WAIT_NS = UINT64_C(5000000000);
 
 typedef struct publication_gate {
-    cmeta_mutex_t mutex;
-    cmeta_cond_t changed;
+    sync_mutex_t mutex;
+    sync_cond_t changed;
     size_t entered;
     size_t advanced;
     unsigned phase;
@@ -36,29 +36,29 @@ typedef struct publication_drainer {
 } publication_drainer;
 
 static void gate_arrive(publication_gate *gate, size_t *count, unsigned phase) {
-    cmeta_mutex_lock(&gate->mutex);
+    sync_mutex_lock(&gate->mutex);
     ++*count;
-    cmeta_cond_broadcast(&gate->changed);
+    sync_cond_broadcast(&gate->changed);
     while (gate->phase < phase)
-        cmeta_cond_wait(&gate->changed, &gate->mutex);
-    cmeta_mutex_unlock(&gate->mutex);
+        sync_cond_wait(&gate->changed, &gate->mutex);
+    sync_mutex_unlock(&gate->mutex);
 }
 
 static int gate_wait(publication_gate *gate, size_t *count) {
     int status = 0;
-    cmeta_mutex_lock(&gate->mutex);
+    sync_mutex_lock(&gate->mutex);
     while (*count != PUBLICATION_READERS && status == 0)
-        status = cmeta_cond_timedwait(&gate->changed, &gate->mutex,
+        status = sync_cond_timedwait(&gate->changed, &gate->mutex,
                                       PUBLICATION_WAIT_NS);
-    cmeta_mutex_unlock(&gate->mutex);
+    sync_mutex_unlock(&gate->mutex);
     return status;
 }
 
 static void gate_advance(publication_gate *gate, unsigned phase) {
-    cmeta_mutex_lock(&gate->mutex);
+    sync_mutex_lock(&gate->mutex);
     gate->phase = phase;
-    cmeta_cond_broadcast(&gate->changed);
-    cmeta_mutex_unlock(&gate->mutex);
+    sync_cond_broadcast(&gate->changed);
+    sync_mutex_unlock(&gate->mutex);
 }
 
 /* Workers record results; TinyTest assertions run only after synchronization on
@@ -184,7 +184,7 @@ suite("ServiceHost concurrent admission and drain") {
     static publication_gate gate;
     static publication_reader readers[PUBLICATION_READERS];
     static publication_drainer drainers[PUBLICATION_READERS];
-    static cmeta_thread_t threads[PUBLICATION_READERS];
+    static sync_thread_t threads[PUBLICATION_READERS];
 
     before_each() {
         registry = (cmeta_plugin_registry){0};
@@ -197,8 +197,8 @@ suite("ServiceHost concurrent admission and drain") {
         }
         for (size_t i = 0; i < 2u; ++i)
             generations[i] = (publication_generation_fixture){0};
-        cmeta_mutex_init(&gate.mutex);
-        cmeta_cond_init(&gate.changed);
+        sync_mutex_init(&gate.mutex);
+        sync_cond_init(&gate.changed);
         check_not_null(gate.mutex);
         check_not_null(gate.changed);
         const cmeta_plugin_registry_config config = {1};
@@ -221,7 +221,7 @@ suite("ServiceHost concurrent admission and drain") {
         if (gate.mutex != NULL && gate.changed != NULL) gate_advance(&gate, 2u);
         for (size_t i = 0; i < PUBLICATION_READERS; ++i)
             if (threads[i] != NULL)
-                check_equal_warn(cmeta_thread_join(&threads[i]), 0);
+                check_equal_warn(sync_thread_join(&threads[i]), 0);
         if (runtime.initialized) {
             salts_service_host_generation *previous = NULL;
             if (runtime.current != NULL)
@@ -254,8 +254,8 @@ suite("ServiceHost concurrent admission and drain") {
             }
             destroy_status = cmeta_plugin_registry_destroy(&registry);
         }
-        cmeta_cond_destroy(&gate.changed);
-        cmeta_mutex_destroy(&gate.mutex);
+        sync_cond_destroy(&gate.changed);
+        sync_mutex_destroy(&gate.mutex);
         /* Cleanup failure is not a warning: it is an ownership-contract
          * violation and must fail even an otherwise successful concurrency
          * test. Do not suppress LeakSanitizer. */
@@ -278,7 +278,7 @@ suite("ServiceHost concurrent admission and drain") {
         for (size_t i = 0; i < PUBLICATION_READERS; ++i) {
             readers[i].gate = &gate;
             readers[i].runtime = &runtime;
-            check_equal(cmeta_thread_create(&threads[i], publication_worker, &readers[i]), 0);
+            check_equal(sync_thread_create(&threads[i], publication_worker, &readers[i]), 0);
         }
         check_equal(gate_wait(&gate, &gate.entered), 0);
         check_equal(salts_service_host_runtime_publish(
@@ -309,7 +309,7 @@ suite("ServiceHost concurrent admission and drain") {
                     SALTS_SERVICE_HOST_BUSY);
         gate_advance(&gate, 2u);
         for (size_t i = 0; i < PUBLICATION_READERS; ++i) {
-            check_equal(cmeta_thread_join(&threads[i]), 0);
+            check_equal(sync_thread_join(&threads[i]), 0);
             check_equal(readers[i].acquire_old, SALTS_SERVICE_HOST_OK);
             check_equal(readers[i].release_old, SALTS_SERVICE_HOST_OK);
             check_equal(readers[i].old_id, UINT64_C(1));
@@ -350,7 +350,7 @@ suite("ServiceHost concurrent admission and drain") {
                 readers[i].gate = &gate;
                 readers[i].runtime = &runtime;
                 readers[i].race_publish = true;
-                check_equal(cmeta_thread_create(&threads[i], publication_worker, &readers[i]), 0);
+                check_equal(sync_thread_create(&threads[i], publication_worker, &readers[i]), 0);
             }
             check_equal(gate_wait(&gate, &gate.entered), 0);
             gate_advance(&gate, 1u);
@@ -361,7 +361,7 @@ suite("ServiceHost concurrent admission and drain") {
                         SALTS_SERVICE_HOST_OK);
             gate_advance(&gate, 2u);
             for (size_t i = 0; i < PUBLICATION_READERS; ++i) {
-                check_equal(cmeta_thread_join(&threads[i]), 0);
+                check_equal(sync_thread_join(&threads[i]), 0);
                 check_equal(readers[i].acquire_old, SALTS_SERVICE_HOST_OK);
                 check_true(readers[i].old_id == old_id || readers[i].old_id == old_id + 1u);
                 check_equal(readers[i].old_value, COMPONENT_PROVIDER_VALUE);
@@ -393,12 +393,12 @@ suite("ServiceHost concurrent admission and drain") {
         for (size_t i = 0; i < PUBLICATION_READERS; ++i) {
             drainers[i] = (publication_drainer){&gate, &runtime, previous,
                                                SALTS_SERVICE_HOST_BUSY};
-            check_equal(cmeta_thread_create(&threads[i], drain_worker, &drainers[i]), 0);
+            check_equal(sync_thread_create(&threads[i], drain_worker, &drainers[i]), 0);
         }
         check_equal(gate_wait(&gate, &gate.entered), 0);
         gate_advance(&gate, 1u);
         for (size_t i = 0; i < PUBLICATION_READERS; ++i) {
-            check_equal(cmeta_thread_join(&threads[i]), 0);
+            check_equal(sync_thread_join(&threads[i]), 0);
             if (drainers[i].status == SALTS_SERVICE_HOST_OK)
                 ++successful_drains;
             else
@@ -447,7 +447,7 @@ suite("ServiceHost concurrent admission and drain") {
             overlap_readers[i] = (lookup_overlap_reader){0};
             overlap_readers[i].runtime = &runtime;
             overlap_readers[i].named = (i % 2u) != 0u;
-            check_equal(cmeta_thread_create(
+            check_equal(sync_thread_create(
                 &threads[i], lookup_overlap_worker, &overlap_readers[i]), 0);
         }
         check_equal(gate_wait(&gate, &gate.entered), 0);
@@ -457,7 +457,7 @@ suite("ServiceHost concurrent admission and drain") {
                     SALTS_SERVICE_HOST_BUSY);
         gate_advance(&gate, 1u);
         for (size_t i = 0u; i < PUBLICATION_READERS; ++i) {
-            check_equal(cmeta_thread_join(&threads[i]), 0);
+            check_equal(sync_thread_join(&threads[i]), 0);
             check_equal(overlap_readers[i].acquire, SALTS_SERVICE_HOST_OK);
             check_equal(overlap_readers[i].lookup, SALTS_SERVICE_HOST_OK);
             check_equal(overlap_readers[i].release, SALTS_SERVICE_HOST_OK);

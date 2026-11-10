@@ -1,7 +1,7 @@
 #include "cmeta_trace_fixture.h"
 #include <cmeta/manifest.h>
 #include "tinytest.h"
-#include <thread.h>
+#include <threads/threads.h>
 
 enum { TRACE_WORKERS = 4, TRACE_ROUNDS = 10000, TRACE_REQUEST = 42, TRACE_STATUS = 200 };
 cmeta_tracepoint(http_request, cmeta_field(uint64_t, request_id) cmeta_field(int, status));
@@ -148,18 +148,18 @@ suite("CMeta typed trace and deterministic fault points") {
     }
     it("publishes backends to concurrent readers and consumes one fault across readers") {
         trace_worker_state state = {0};
-        cmeta_thread_t threads[TRACE_WORKERS] = {NULL};
+        sync_thread_t threads[TRACE_WORKERS] = {NULL};
         int created = 0, joined = 0;
         check_equal(cmeta_trace_bind(http_request, capture_request), CMETA_OK);
         check_equal(cmeta_trace_enable(http_request), CMETA_OK);
         check_equal(cmeta_fast_enable(&alloc_fail), SALTS_OK);
         for (int i = 0; i < TRACE_WORKERS; ++i) {
-            if (cmeta_thread_create(&threads[i], i % 2 == 0 ? trace_writer : trace_reader, &state) != 0) break;
+            if (sync_thread_create(&threads[i], i % 2 == 0 ? trace_writer : trace_reader, &state) != 0) break;
             ++created;
         }
         for (int i = 0; i < created; ++i) {
-            if (cmeta_thread_join(&threads[i]) == 0) ++joined;
-            cmeta_thread_destroy(&threads[i]);
+            if (sync_thread_join(&threads[i]) == 0) ++joined;
+            sync_thread_destroy(&threads[i]);
         }
         check_equal(created, TRACE_WORKERS);
         check_equal(joined, TRACE_WORKERS);

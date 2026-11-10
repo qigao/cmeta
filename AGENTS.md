@@ -1,55 +1,99 @@
-# Salts repository instructions
+# AGENTS.md
 
-Salts focuses on **CMeta / ACE**. The `ace/` module implements
-Configurator/ServiceHost/Plugin composition; CFlow supplies accompanying
-CMeta-based execution integrations. New OS, concurrency, coroutine,
-transport, Unicode/IDNA, native
-FS/Process implementations belong to **qigao/salts-core**;
-cryptographic code and ASN.1 belong to **qigao/crypto**. Source ownership is singular.
+## 职责与优先级
 
-- Repository-owned public CMake targets use `CMeta::XXX`; imported native
-  owners from qigao/salts-core keep their canonical `Salts::XXX` names.
-- `CMeta::ACE` is the sole Configurator/ServiceHost runtime target;
-  `CMeta::Provider` carries their declarations without linking that runtime.
-- CMeta package lookups are unversioned: `find_package(CMeta CONFIG REQUIRED)`
-  and `find_dependency(CMeta CONFIG REQUIRED)`. Package release versions and
-  source provenance remain independently recorded.
-- Repository-owned public headers live under `include/cmeta/`. Imported
-  qigao/salts-core headers use their published flat or functional paths; no
-  `include/salts/` or `include/salts_core/` namespace exists.
-- No legacy interface, compatibility shim, alias, fallback, provider DSO
-  for Crypto, copied native implementation or alternate build profile.
-- No CMeta dependency is permitted inside the Core/Crypto repositories.
-- Preserve bounded owner/lease/cancel/stop/unload behavior and exact-head
-  source, installed SDK and native CI evidence.
-- Never substitute one OS's successful tests for another's native backend.
-- CI must never install or invoke Mono, nuget.exe, or the vcpkg NuGet provider.
-  Download external files, including GitHub Packages and compiler archives,
-  through curl with exact package/version selection and existing digest checks.
-  Use the shared curl-only cache action with the real dependency manifest;
-  do not add a local downloader, fallback transport, or cache-probe project.
-- Run `python3 tools/check_ace_only_sources.py` before changes to the
-  package layout. Verify original typed runtime conformance after changes.
-- Standalone installer/consumer CI, SDK-probe projects, and their source trees
-  are forbidden. Release staging install and package assembly remain part of
-  the single native SDK publication graph, not separate product projects.
-- Use plain CMake to build the project's formal tests and CTest to run them.
-  Do not register tests that invoke `cmake -P`, install an SDK, configure/build
-  another project or run consumer/smoke validation, including platform-only
-  variants. Put behavioral regressions in the existing formal test suites.
-- Resolve dependencies with explicit REQUIRED package declarations and target
-  links. Do not add directory/file probes, package `*_DIR` overrides, fallback
-  searches, configure-time compile probes or diagnostic-log scanning. Missing
-  dependencies and invalid inputs must fail at their normal configure/build step.
+本文件是 salts及关联的工作入口：保留仓库级约束，按任务引导使用专项 skills。API 细节、模块协议、构建步骤与测试写法由对应 skill 及其 references 维护，不在此复制一份。
 
-TinyMock and descriptor-driven SIMD execution belong to qigao/salts-utils;
-do not restore those implementation trees or make Salts depend on Utils.
+- 研究先于编码，证据先于判断，兼容先于重写，验证先于宣告完成。
+- 用户明确要求优先于本文件及 skills 中的一般规范；仓库实际契约优先于通用示例。
+- 默认保持用户可见行为稳定。正确性、数据一致性与可验证性优先于性能和形式上的统一。
+- 遇到规则冲突，说明冲突与影响，选择符合已授权目标且较少破坏现有行为的方案；无法判断真实意图时再询问用户。
 
-This repository owns CMeta, CSTL reflected integrations, CFlow, ACE-style
-Component/Plugin/Configurator, interceptors, scoped resources and
-ServiceHost only. Core's `include/vstr.h` is a pure C11 borrowed view:
-do not reintroduce `CMETA_STRUCT`, a reflected compatibility type or a
-second `vstr` library here.
+## 统一失败策略：fail fast，let it fail
 
-See `ARCHITECTURE.md` and the original module source/tests for functional
-contracts. Never treat obsolete 2.x sample paths as authoritative.
+- 此规则同时适用于生产代码、测试、示例、`CMakeLists.txt`、CMake 模块、`CMakePresets.json`、`CMakeUserPresets.json`、构建脚本和 CI。
+- 无效输入、配置缺失、依赖缺失、不支持的功能或工具链，以及不变量破坏，应在最早能够确定错误的边界失败。代码按现有错误码/Result 契约向上传播；脚本保留非零退出码；配置或构建失败即停止对应流程。fail fast 不等于把可返回的运行时错误一律改成进程终止，也不免除资源清理义务。
+- let it fail：底层 API、CMake 原生命令或构建工具已经能报告错误时，直接依赖其失败语义，不重复堆叠目标存在性、文件存在性或类型检查。只有能更早识别真实契约错误、提供必要上下文或防止未定义行为时才增加检查；不得删除必要的输入、算术、所有权或安全校验。
+- 不能处理错误的中间层直接传播；确认调用成功后再使用仅在成功时有效的输出。日志集中在消费或转换错误的边界，资源清理保持单一明确的归属与路径。
+- 不得在失败后通过返回成功、仅警告后继续、静默跳过模块/测试、自动关闭功能、替换实现、切换工具链或搜索其他依赖来源掩盖错误。修复配置与依赖的事实源，不在消费方通过兼容分支、猜测路径或自动修复逻辑绕过失败。正常的平台选择和既有契约要求的兼容行为不属于此类错误掩盖。
+- 重试、恢复或备用实现仅限用户明确授权或现有协议契约必需的行为；不得仅以防御性编程、兼容旧配置或设计文档中的建议为由自行添加。须保留原始失败信息，明确触发条件、终止条件、语义差异、风险、正式测试及移除条件或长期保留依据；备用路径与主路径共享事实源，不得绕过配置错误、不变量破坏、数据损坏或安全失败。
+
+## 工作流程
+
+1. 明确目标、影响范围与已有授权，检查工作区状态、目标目录内适用的指引及现有的 `HANDOFF.MD`。
+2. 编码前需要明确输入输出、依赖、配置来源和用户可见行为。
+3. 确认模块归属、状态所有者、错误语义与兼容性，优先复用既有能力，实施最小完整改动。
+4. 按“构建与验证”完成相关检查，按“交流与审查”报告结果。
+5. 有新的、可复用的排障经验时，更新 `HANDOFF.MD`，记录触发条件、原因、解决方式与验证结果；不为例行任务创建空记录。
+
+## 检索与结构理解
+
+- 仓库文本和文件检索只使用 ripgrep/fd：Windows 使用 `rg.exe`/`fd.exe`，其他平台使用 `rg`/`fd`；文本优先 rg，文件优先 fd。
+- 每个任务首次需要代码结构、调用关系或影响面分析时维护 CodeGraph：不存在 `.codegraph/` 则运行 `codegraph init -i .`，已存在则运行 `codegraph sync .`。
+- 结构分析可用 `codegraph context -p . "<task>"`、`codegraph callers -p . <symbol>`、`codegraph callees -p . <symbol>`、`codegraph impact -p . <symbol>`、`codegraph affected -p . <files...>`。
+- CodeGraph 仅辅助结构、影响面与测试候选分析，不替代文本检索和实际阅读。工具不可用或索引失败时，明确报告失败，使用 rg/fd 与人工阅读继续；这是分析工具的明确例外，不允许借此替代缺失的构建依赖或忽略配置、构建、测试失败。纯文档任务未涉及代码结构分析时无需维护索引。
+- `.codegraph/` 是本地索引产物，不得提交。
+
+## 修改边界与确认
+
+默认在已有授权范围内推进可逆的阅读、审查、修改和验证。以下事项若尚未获得明确授权，先说明具体影响并询问：
+
+- 删除或迁移用户数据，改变数据格式。
+- 修改公开接口、协议语义、配置格式或部署方式。
+- 高风险且不可逆的操作。
+
+遇到与任务直接冲突、无法安全绕开的未知脏改动，或无法从上下文判断期望行为时，也需询问。已有授权不重复确认；先完成不依赖确认的工作。
+
+不得使用 `git reset --hard`、`git checkout --` 或其他会静默抹除用户改动的命令。递归删除、批量移动或覆盖式写入前核实最终目标路径；只处理当前任务范围内的文件。
+
+## 实现底线
+
+专项设计、算法、生命周期与测试细则按 skills 执行；以下约束适用于实现改动。
+
+- **职责与依赖**：先找既有归属模块，按业务能力、数据所有权或外部边界分层。跨模块走公开 API，依赖单向；不以全局单例或服务定位器隐藏依赖，不为了模式或减少行数制造抽象。
+- **状态与接口一致性**：接口声明、实现及对外可观察行为必须与实际状态及其转换语义一致。同一状态只有一个主事实源，缓存与索引从它派生。分清纯判定、状态迁移和外部副作用；说明核心状态由谁拥有、何时提交、失败如何回滚、补偿或重试。
+- **接口版本**：除非用户明确要求，不新增或实现版本化接口，不自行引入按版本区分的并行 API、接口结构体或版本分发层。
+- **资源与并发**：跨模块/跨线程、有界或零拷贝数据路径先使用 `memory-design-protocols` 明确所有权、借用失效点、容量、背压、线程角色、同步和关闭协议。不得用无界增长、静默丢弃或提前回收掩盖资源不足。
+- **输入与算术**：外部输入按契约校验；长度、容量、偏移等运算必须在溢出时明确失败。饱和运算只用于契约明确规定饱和语义的计数等场景，不能替代错误检查。
+- **安全**：不得无故削弱认证、鉴权、TLS 验证、加密、审计或隔离。密钥不硬编码、不进入日志；加密复用成熟库。安全相关改动必须说明风险和验证方式。
+- **性能与诊断**：优化先取证，使用 `performance-optimization`；保留契约要求的回调、所有权复制和兼容行为，不因“一刀切”的热路径禁令重写架构。日志用 `logging-guide` 控制逐事件成本，保留关键错误报告及必要审计交付，不把路径调用频率当作禁止错误日志的依据。
+- **完整性**：不交付占位 API、伪实现、空函数或仅记录日志的未实现接口。阶段性内部实现标明范围与计划并隐藏，不能向用户暴露部分实现的公开 API。TODO/FIXME/HACK 需有 issue、移除条件或明确计划。
+- **可维护性**：复用稳定概念，消除有意义的重复；命名业务常量，容量/阈值配置归属明确，不散落魔术值。示例放入既有 `examples/` 并可独立构建运行。
+
+涉及 ≥3 个模块、公开 API 语义、新依赖、性能/安全权衡或迁移成本 >2 人日的架构决策，需要在适当的现有文档中说明背景、候选方案、选择理由、取舍、迁移与回滚。分析对架构、算法、接口、状态归属、错误语义和测试范围的影响，不把大重构包装成必要补丁。
+
+引入外部库前说明既有能力为何不足、替代方案和不引入的代价；检查许可证、维护与安全记录、版本、平台、ABI、线程模型、依赖体积、构建和测试。通过既有依赖入口接入并保留来源、版本、许可与本地修改记录，不复制来源不明的实现，不新增重复工具框架。
+
+## 构建与验证
+
+使用 `cmake-presets` 执行构建、测试、安装与打包；使用 `tinytest` 编写或修改 C/C++ 测试、benchmark 和 Mock。现有脚本测试沿用所属模块的正式测试入口。准确的 preset、target、测试名及 helper 签名以当前 checkout 为准。
+
+- 禁止生成、新增或恢复 install/installer、consumer、installed-consumer、smoke 等独立验证工程；不得通过改名、换目录、放入 CI 或临时分支绕过。验证复用本项目的构建目标和正式测试入口。正常的 install/package 命令及发布流程不属于此禁令。
+- 需要仅用于本次验证的临时改动时，可在单独分支中实现，通过本项目 presets 和测试入口验证；完成后记录命令、结果与限制，删除临时验证改动及该分支，不合入交付分支。若创建了临时 worktree，也一并清理；只清理本任务创建的内容，保留用户已有分支、工作树和未提交改动。长期需要的正式回归测试仍归属现有测试套件。
+- CMake 依赖使用必需查找，生成输入按构建依赖关系显式声明，必需的文件使用非可选 include；工具链、SDK 和环境输入以用户配置及既有依赖入口为事实源，失败处理统一遵守“统一失败策略”。
+- 项目功能开关 `CMakeOptions.cmake` ,模块无条件组装，测试由 `BUILD_TESTS` 控制，Benchmark由`BUILD_BENCHMARK`控制,平台实现按目标 OS 选择；除上述四项外，CMake 文件和 presets 不得新增或恢复模块、测试子集或诊断功能开关。
+- 使用preset编译时，`CMakeUserPresets.json` 中的相关变量可通过.env来指定
+- 目标设计复用 `cmake/CmakeUtils.cmake`，源码按所属目录使用 `file(GLOB ... CONFIGURE_DEPENDS)` 或现有 `cmake_add_source` 收集并设置 `source_group`；平台互斥源码和生成源码由调用方明确归属。
+- 测试源码、数据、fixture、Mock、支持文件和 CMake 注册归对应模块的 `tests/`（已有 `test/` 目录沿用）；模块通过 `BUILD_TESTS` 添加自己的测试目录。不得把模块测试搬到根 `tests/`，也不得由根目录或跨模块聚合文件集中注册。跨模块集成测试归被验证能力的 owner 模块，共享 fixture 保持单一归属。
+- 复用正式测试覆盖行为、ownership、ABI、状态和失败路径；先最小相关测试，再相邻回归，按风险决定是否扩大。
+- CI 的 configure 决定完整 build graph；`cmake --build` 构建该 graph，不在 workflow 中用 `--target` 或点名 target 缩减范围。
+- CI 的测试和 benchmark 统一通过 CTest 执行，不直接运行 CMake 生成的 executable；用 CTest 名称、标签和过滤器选择执行范围，Debug/Release 和 sanitizer 由现有 presets 选择，不为此新增功能开关。
+- 不用 CMake 读取源码/workflow 后以 `string(FIND)` 或 marker 证明行为正确；C/C++ 运行时行为由正式可执行测试验证，构建规则通过实际 configure/build 及正式测试入口验证。
+- 纯文档任务核对规则、引用、技能名称、事实源和 diff，不为满足流程而修改代码、运行无关构建或新增验证工程。
+
+## 交流与审查
+
+- 默认使用简体中文；标识符、接口和既有文件语言遵循兼容性要求。
+- 说明结构或边界问题时，同时说明影响哪些模块、接口、数据、测试或用户行为。
+- 风险、发现与修复建议标注 `HIGH`（正确性、数据、安全、崩溃、接口破坏或重大回归）、`MED`（局部偏差、性能、维护或缺测）、`LOW`（命名、文档、可读性或局部一致性）。
+- 区分证据：`事实` 引用文件/行号/测试/日志或一手资料；`计算` 给出输入与公式；`推论` 说明依据及不确定性；`常用做法` 不能替代仓库证据或契约。
+- 审查先列发现，再给总体结论。每项包含触发条件、影响、证据和最小修复方向；无发现也说明已查范围、未查范围与残余风险。
+- 交付说明改了什么、为何修改、可重复的验证步骤、实际结果及未验证范围。不能验证时说明原因、影响与剩余风险；未执行的验证不得写成通过。性能收益不能以推测代替测量。
+
+## 文档与许可证
+
+- 只新增任务需要的文档、日志和报告，不为流程创建 `.codex/` 或空壳产物。
+- 注释解释意图、约束与设计理由；复杂算法说明复杂度和边界。API/行为改动同步文档、示例及废弃说明，不保留失效示例或空章节。
+- API 文档包含参数、返回值、错误、所有权和示例；外部资料附链接。具体 API 用法以公开头文件为准，避免在此维护第二份 API 手册。
+- first-party 源码、测试、构建文件不添加 `SPDX-License-Identifier` 或逐文件许可证模板；许可信息仅维护在根目录 `LICENSE`、`NOTICE`、`THIRD_PARTY_NOTICES.md`。
+- vendored/third-party 文件保留上游版权、许可证与 SPDX 标识，不为统一格式删除或改写。

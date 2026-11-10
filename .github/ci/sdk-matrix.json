@@ -1,0 +1,84 @@
+{
+  "include": [
+    {
+      "sdk": "windows-msvc-x64",
+      "runner": "windows-2025",
+      "preset": "msvc-release-user",
+      "triplet": "x64-windows",
+      "test": true,
+      "android_abi": ""
+    },
+    {
+      "sdk": "windows-llvm-mingw-x64",
+      "runner": "windows-2025",
+      "preset": "native-release-user",
+      "triplet": "qigao-x64-windows-llvm-mingw",
+      "test": true,
+      "android_abi": ""
+    },
+    {
+      "sdk": "linux-clang-x64",
+      "runner": "ubuntu-24.04",
+      "preset": "llvm-native-release-user",
+      "triplet": "x64-linux",
+      "test": true,
+      "android_abi": ""
+    },
+    {
+      "sdk": "linux-clang-x64-tsan",
+      "runner": "ubuntu-24.04",
+      "preset": "llvm-native-tsan-user",
+      "triplet": "x64-linux",
+      "test": true,
+      "android_abi": ""
+    },
+    {
+      "sdk": "linux-gcc-x64",
+      "runner": "ubuntu-24.04",
+      "preset": "gcc-release-user",
+      "triplet": "x64-linux",
+      "test": true,
+      "android_abi": ""
+    },
+    {
+      "sdk": "linux-clang-arm64",
+      "runner": "ubuntu-24.04-arm",
+      "preset": "llvm-native-release-user",
+      "triplet": "arm64-linux",
+      "test": true,
+      "android_abi": ""
+    },
+    {
+      "sdk": "linux-gcc-arm64",
+      "runner": "ubuntu-24.04-arm",
+      "preset": "gcc-arm64-release-user",
+      "triplet": "arm64-linux",
+      "test": true,
+      "android_abi": ""
+    },
+    {
+      "sdk": "macos-clang-arm64",
+      "runner": "macos-15",
+      "preset": "llvm-native-release-user",
+      "triplet": "arm64-osx",
+      "test": true,
+      "android_abi": ""
+    },
+    {
+      "sdk": "android-arm64",
+      "runner": "ubuntu-24.04",
+      "preset": "android-arm64-release-user",
+      "triplet": "arm64-android",
+      "test": false,
+      "android_abi": "arm64-v8a"
+    },
+    {
+      "sdk": "android-x64",
+      "runner": "ubuntu-24.04",
+      "preset": "android-x64-release-user",
+      "triplet": "x64-android",
+      "test": false,
+      "android_abi": "x86_64"
+    }
+  ]
+}

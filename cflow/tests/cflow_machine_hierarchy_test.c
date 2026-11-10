@@ -1,6 +1,6 @@
 #include <cflow/machine_hierarchy.h>
 
-#include <thread.h>
+#include <threads/threads.h>
 
 #include "tinytest.h"
 

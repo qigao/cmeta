@@ -84,6 +84,6 @@ install(
   FILES include/cstl.h
   DESTINATION include)
 
-if(BUILD_TESTING)
+if(BUILD_TESTS)
   add_subdirectory(tests)
 endif()

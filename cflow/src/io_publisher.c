@@ -156,14 +156,14 @@ static cflow_step io_source_set_terminal(
     const char *error) {
     cflow_step step;
 
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     state->submission_in_progress = false;
     if (state->terminal == CFLOW_PUBLISHER_OPEN) {
         state->terminal = terminal;
         state->terminal_error = error;
     }
     step = io_source_terminal_step(state);
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     return step;
 }
 
@@ -194,11 +194,11 @@ static void io_source_wake(
     io_source_wake_stack = &frame;
     waker.wake(waker.user);
     io_source_wake_stack = frame.previous;
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     --state->wake_inflight;
     if (state->wake_waiters != 0u)
-        cmeta_cond_broadcast(&state->changed);
-    cmeta_mutex_unlock(&state->gate);
+        sync_cond_broadcast(&state->changed);
+    sync_mutex_unlock(&state->gate);
 }
 
 static void io_source_wait_wakers_locked(
@@ -214,7 +214,7 @@ static void io_source_wait_wakers_locked(
     /* These frames cannot return their credits until cancel unwinds. */
     while (state->wake_inflight > current_thread_credits) {
         ++state->wake_waiters;
-        cmeta_cond_wait(&state->changed, &state->gate);
+        sync_cond_wait(&state->changed, &state->gate);
         --state->wake_waiters;
     }
 }
@@ -250,9 +250,9 @@ static void io_source_invoke_drive(
     if (drive == NULL)
         return;
     drive(drive_user);
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     --state->drive_inflight;
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
 }
 
 static void io_source_actor_drive(void *user) {
@@ -266,12 +266,12 @@ static void io_source_actor_drive(void *user) {
     if (state->drive == NULL &&
         !atomic_load_explicit(&state->driver_active, memory_order_acquire))
         return;
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     if (io_source_record_drive_locked(state) &&
         !atomic_load_explicit(&state->driver_active, memory_order_relaxed))
         (void)io_source_retain_drive_locked(
             state, &drive, &drive_user);
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     io_source_invoke_drive(state, drive, drive_user);
 }
 
@@ -397,20 +397,20 @@ static cflow_step io_source_window_resume(
         cflow_step step;
         bool close_actor = false;
 
-        cmeta_mutex_lock(&state->gate);
+        sync_mutex_lock(&state->gate);
         if (state->terminal != CFLOW_PUBLISHER_OPEN) {
             step = io_source_terminal_step(state);
-            cmeta_mutex_unlock(&state->gate);
+            sync_mutex_unlock(&state->gate);
             return step;
         }
         if (state->close_requested || !state->publisher_live) {
-            cmeta_mutex_unlock(&state->gate);
+            sync_mutex_unlock(&state->gate);
             return io_source_set_terminal(
                 state, CFLOW_PUBLISHER_ERROR, io_source_cancelled_error);
         }
         if (io_source_window_take_result_locked(
                 state, out_value, &step, &close_actor)) {
-            cmeta_mutex_unlock(&state->gate);
+            sync_mutex_unlock(&state->gate);
             if (close_actor)
                 (void)cflow_io_actor_close(&state->actor);
             return step;
@@ -419,17 +419,17 @@ static cflow_step io_source_window_resume(
             if (state->window_demand_reserved == 0u) {
                 state->terminal = CFLOW_PUBLISHER_DONE;
                 step = io_source_terminal_step(state);
-                cmeta_mutex_unlock(&state->gate);
+                sync_mutex_unlock(&state->gate);
                 return step;
             }
-            cmeta_mutex_unlock(&state->gate);
+            sync_mutex_unlock(&state->gate);
             return (cflow_step){
                 CFLOW_STEP_WAIT,
                 io_source_waitable_as_cflow_waitable(state), NULL};
         }
         if (state->window_demand_reserved >= target ||
             state->window_occupied >= state->window_capacity) {
-            cmeta_mutex_unlock(&state->gate);
+            sync_mutex_unlock(&state->gate);
             return (cflow_step){
                 CFLOW_STEP_WAIT,
                 io_source_waitable_as_cflow_waitable(state), NULL};
@@ -439,7 +439,7 @@ static cflow_step io_source_window_resume(
             state->terminal = CFLOW_PUBLISHER_ERROR;
             state->terminal_error = io_source_result_state_error;
             step = io_source_terminal_step(state);
-            cmeta_mutex_unlock(&state->gate);
+            sync_mutex_unlock(&state->gate);
             (void)cflow_io_actor_close(&state->actor);
             return step;
         }
@@ -449,15 +449,15 @@ static cflow_step io_source_window_resume(
         if (state->window_occupied > state->window_peak_occupied)
             state->window_peak_occupied = state->window_occupied;
         state->submission_in_progress = true;
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
 
         prepared = state->prepare(state->user, &operation, &error);
         if (prepared == CFLOW_IO_PUBLISHER_PREPARE_DONE) {
-            cmeta_mutex_lock(&state->gate);
+            sync_mutex_lock(&state->gate);
             io_source_window_release_entry_locked(state, entry);
             state->submission_in_progress = false;
             state->prepare_done = true;
-            cmeta_mutex_unlock(&state->gate);
+            sync_mutex_unlock(&state->gate);
             continue;
         }
         if (prepared != CFLOW_IO_PUBLISHER_PREPARE_OPERATION ||
@@ -469,40 +469,40 @@ static cflow_step io_source_window_resume(
                 : (prepared == CFLOW_IO_PUBLISHER_PREPARE_OPERATION
                        ? io_source_operation_error
                        : io_source_prepare_status_error);
-            cmeta_mutex_lock(&state->gate);
+            sync_mutex_lock(&state->gate);
             io_source_window_release_entry_locked(state, entry);
             state->submission_in_progress = false;
             state->terminal = CFLOW_PUBLISHER_ERROR;
             state->terminal_error = terminal_error;
             step = io_source_terminal_step(state);
-            cmeta_mutex_unlock(&state->gate);
+            sync_mutex_unlock(&state->gate);
             (void)cflow_io_actor_close(&state->actor);
             return step;
         }
 
-        cmeta_mutex_lock(&state->gate);
+        sync_mutex_lock(&state->gate);
         entry->demand_reserved = true;
         ++state->window_demand_reserved;
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
         submitted = cflow_io_actor_try_submit(
             &state->actor, entry->lease_id, &operation);
         if (submitted.status != CFLOW_IO_SUBMIT_ACCEPTED) {
             const char *submit_error =
                 io_source_submit_error(submitted.status);
             operation.release(operation.user);
-            cmeta_mutex_lock(&state->gate);
+            sync_mutex_lock(&state->gate);
             --state->window_demand_reserved;
             io_source_window_release_entry_locked(state, entry);
             state->submission_in_progress = false;
             state->terminal = CFLOW_PUBLISHER_ERROR;
             state->terminal_error = submit_error;
             step = io_source_terminal_step(state);
-            cmeta_mutex_unlock(&state->gate);
+            sync_mutex_unlock(&state->gate);
             (void)cflow_io_actor_close(&state->actor);
             return step;
         }
 
-        cmeta_mutex_lock(&state->gate);
+        sync_mutex_lock(&state->gate);
         entry->submission_in_progress = false;
         if (entry->request_id == 0u)
             entry->request_id = submitted.request_id;
@@ -511,7 +511,7 @@ static cflow_step io_source_window_resume(
             state->terminal_error = io_source_result_state_error;
         }
         state->submission_in_progress = false;
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
     }
 }
 
@@ -523,9 +523,9 @@ static bool io_source_wait_arm(void *self, cflow_waker waker) {
 
     if (state == NULL || waker.wake == NULL)
         return false;
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     if (!state->publisher_live || state->close_requested) {
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
         return false;
     }
     ready = io_source_windowed(state)
@@ -540,12 +540,12 @@ static bool io_source_wait_arm(void *self, cflow_waker waker) {
         wake_now = waker;
         io_source_retain_waker_locked(state, wake_now);
     } else if (!waitable || state->source_waker.wake != NULL) {
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
         return false;
     } else {
         state->source_waker = waker;
     }
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     io_source_wake(state, wake_now);
     return true;
 }
@@ -557,7 +557,7 @@ static void io_source_wait_cancel(void *self) {
 
     if (state == NULL)
         return;
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     state->source_waker = (cflow_waker){0};
     if (!state->close_requested) {
         state->close_requested = true;
@@ -568,12 +568,12 @@ static void io_source_wait_cancel(void *self) {
             io_source_window_discard_result_locked(
                 state, &state->entries[index]);
     }
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     if (close_actor)
         (void)cflow_io_actor_close(&state->actor);
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     io_source_wait_wakers_locked(state);
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
 }
 
 CMETA_IMPLEMENTS(cflow_waitable, io_source_waitable, 0,
@@ -614,33 +614,33 @@ static cflow_step io_source_resume(
     if (io_source_windowed(state))
         return io_source_window_resume(state, ctx, out_value);
 
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     if (state->terminal != CFLOW_PUBLISHER_OPEN) {
         step = io_source_terminal_step(state);
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
         return step;
     }
     if (state->close_requested || !state->publisher_live) {
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
         return io_source_set_terminal(
             state, CFLOW_PUBLISHER_ERROR, io_source_cancelled_error);
     }
     if (io_source_take_result_locked(state, out_value, &step)) {
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
         return step;
     }
     if (state->acknowledged && state->request_id == 0u)
         state->acknowledged = false;
     if (state->submission_in_progress || state->request_id != 0u ||
         state->result_encoding || state->completion_delivered) {
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
         return (cflow_step){
             CFLOW_STEP_WAIT,
             io_source_waitable_as_cflow_waitable(state), NULL};
     }
     state->submission_in_progress = true;
     state->window_peak_occupied = 1u;
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
 
     prepared = state->prepare(state->user, &operation, &error);
     if (prepared == CFLOW_IO_PUBLISHER_PREPARE_DONE)
@@ -669,7 +669,7 @@ static cflow_step io_source_resume(
             state, CFLOW_PUBLISHER_ERROR, submit_error);
     }
 
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     state->submission_in_progress = false;
     if (state->request_id == 0u && !state->acknowledged)
         state->request_id = submitted.request_id;
@@ -678,7 +678,7 @@ static cflow_step io_source_resume(
         state->terminal = CFLOW_PUBLISHER_ERROR;
         state->terminal_error = io_source_result_state_error;
     }
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     return (cflow_step){
         CFLOW_STEP_WAIT,
         io_source_waitable_as_cflow_waitable(state), NULL};
@@ -694,10 +694,10 @@ static void io_source_destroy(void *self) {
     if (state == NULL)
         return;
     io_source_cancel(state);
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     state->publisher_live = false;
     state->source_waker = (cflow_waker){0};
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
 }
 
 static const char *io_source_name(void *self) {
@@ -724,11 +724,11 @@ static cflow_publisher_terminal io_source_poll_terminal(
 
     if (state == NULL)
         return CFLOW_PUBLISHER_ERROR;
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     terminal = state->terminal;
     if (terminal == CFLOW_PUBLISHER_ERROR && error != NULL)
         *error = state->terminal_error;
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     return terminal;
 }
 
@@ -760,7 +760,7 @@ static void io_source_window_completion(
         index = state->window_capacity;
     else
         index = (size_t)(lease_id - 1u);
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     if (index < state->window_capacity)
         entry = &state->entries[index];
     if (entry == NULL || !entry->occupied ||
@@ -789,7 +789,7 @@ static void io_source_window_completion(
             encode = true;
         }
     }
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     if (!encode) {
         if (close_actor)
             (void)cflow_io_actor_close(&state->actor);
@@ -801,7 +801,7 @@ static void io_source_window_completion(
         state->user, request_id, lease_id, operation_user,
         completion, entry->result.storage, &error);
 
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     entry->result_encoding = false;
     if (state->close_requested ||
         state->terminal != CFLOW_PUBLISHER_OPEN ||
@@ -814,7 +814,7 @@ static void io_source_window_completion(
         if (entry->acknowledged)
             io_source_window_release_entry_locked(state, entry);
         waker = io_source_take_waker_locked(state);
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
         io_source_wake(state, waker);
         return;
     }
@@ -848,7 +848,7 @@ static void io_source_window_completion(
     entry->completion_delivered = true;
     ++state->window_results_ready;
     waker = io_source_take_waker_locked(state);
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     io_source_wake(state, waker);
 }
 
@@ -872,7 +872,7 @@ static void io_source_completion(
             state, request_id, lease_id, operation_user, completion);
         return;
     }
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     if (state->request_id == 0u && state->submission_in_progress)
         state->request_id = request_id;
     if (state->request_id == request_id &&
@@ -892,7 +892,7 @@ static void io_source_completion(
         state->completion_delivered = true;
         waker = io_source_take_waker_locked(state);
     }
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     if (!encode) {
         io_source_wake(state, waker);
         return;
@@ -902,7 +902,7 @@ static void io_source_completion(
         state->user, request_id, lease_id, operation_user,
         completion, state->result.storage, &error);
 
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     state->result_encoding = false;
     if (encoded == CFLOW_READ_VALUE ||
         encoded == CFLOW_READ_VALUE_AND_DONE) {
@@ -925,7 +925,7 @@ static void io_source_completion(
     state->result_ready = true;
     state->completion_delivered = true;
     waker = io_source_take_waker_locked(state);
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     io_source_wake(state, waker);
 }
 
@@ -959,11 +959,11 @@ static int io_source_construct(
         goto cleanup;
     atomic_init(&state->driver_active, false);
     state->window_capacity = window_capacity;
-    cmeta_mutex_init(&state->gate);
+    sync_mutex_init(&state->gate);
     if (state->gate == NULL)
         goto cleanup;
     gate_initialized = true;
-    cmeta_cond_init(&state->changed);
+    sync_cond_init(&state->changed);
     if (state->changed == NULL)
         goto cleanup;
     changed_initialized = true;
@@ -1033,9 +1033,9 @@ cleanup:
         free(state->entries);
     }
     if (changed_initialized)
-        cmeta_cond_destroy(&state->changed);
+        sync_cond_destroy(&state->changed);
     if (gate_initialized)
-        cmeta_mutex_destroy(&state->gate);
+        sync_mutex_destroy(&state->gate);
     free(state);
     return status;
 }
@@ -1068,7 +1068,7 @@ static void io_source_acknowledge_delivered(
         cflow_io_publisher_entry *delivered_entry = NULL;
         cflow_io_ack_status ack_status;
 
-        cmeta_mutex_lock(&state->gate);
+        sync_mutex_lock(&state->gate);
         if (io_source_windowed(state)) {
             delivered_entry = io_source_window_find_delivered_locked(state);
             if (delivered_entry != NULL)
@@ -1076,7 +1076,7 @@ static void io_source_acknowledge_delivered(
         } else if (state->completion_delivered && state->request_id != 0u) {
             delivered_request_id = state->request_id;
         }
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
         if (delivered_request_id == 0u)
             break;
 
@@ -1085,7 +1085,7 @@ static void io_source_acknowledge_delivered(
         if (ack_status == CFLOW_IO_ACK_RELEASED) {
             cflow_waker waker = {0};
 
-            cmeta_mutex_lock(&state->gate);
+            sync_mutex_lock(&state->gate);
             if (io_source_windowed(state) && delivered_entry != NULL &&
                 delivered_entry->occupied &&
                 delivered_entry->request_id == delivered_request_id &&
@@ -1104,7 +1104,7 @@ static void io_source_acknowledge_delivered(
                 state->acknowledged = true;
                 waker = io_source_take_waker_locked(state);
             }
-            cmeta_mutex_unlock(&state->gate);
+            sync_mutex_unlock(&state->gate);
             ++*count;
             *made_progress = true;
             io_source_wake(state, waker);
@@ -1132,21 +1132,21 @@ static int io_source_owner_run_ready_impl(
         progressed == NULL)
         return SALTS_EINVAL;
     state = (cflow_io_publisher_state *)owner->impl;
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     if (serial_batch_phase && state->drive != NULL) {
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
         return SALTS_ENOTSUP;
     }
     if (atomic_load_explicit(&state->driver_active, memory_order_relaxed) ||
         !state->owner_live) {
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
         return SALTS_EBUSY;
     }
     atomic_store_explicit(
         &state->driver_active, true, memory_order_release);
     state->drive_pending = false;
     observed_generation = state->drive_generation;
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
 
     for (;;) {
         while (count < max_steps) {
@@ -1194,7 +1194,7 @@ static int io_source_owner_run_ready_impl(
 
             /* This gate orders the final pending-edge observation against
                driver release; callbacks remain outside the critical section. */
-            cmeta_mutex_lock(&state->gate);
+            sync_mutex_lock(&state->gate);
             pending_drive = state->drive_pending ||
                 state->drive_generation != observed_generation;
             if (!serial_batch_phase && pending_drive && status == SALTS_OK &&
@@ -1211,7 +1211,7 @@ static int io_source_owner_run_ready_impl(
                         state, &drive, &drive_user);
                 }
             }
-            cmeta_mutex_unlock(&state->gate);
+            sync_mutex_unlock(&state->gate);
             if (continue_draining)
                 continue;
             io_source_invoke_drive(state, drive, drive_user);
@@ -1247,13 +1247,13 @@ bool cflow_io_publisher_owner_is_quiescent(
     if (owner == NULL || owner->impl == NULL)
         return false;
     state = (cflow_io_publisher_state *)owner->impl;
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     adapter_quiescent =
         !atomic_load_explicit(&state->driver_active, memory_order_relaxed) &&
         state->wake_inflight == 0u && state->drive_inflight == 0u &&
         (!io_source_windowed(state) ||
          state->window_occupied == 0u);
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     return adapter_quiescent &&
         cflow_io_actor_is_quiescent(&state->actor);
 }
@@ -1267,7 +1267,7 @@ bool cflow_io_publisher_owner_get_stats(
     if (owner == NULL || owner->impl == NULL || out == NULL)
         return false;
     state = (cflow_io_publisher_state *)owner->impl;
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     snapshot.publisher_live = state->publisher_live;
     snapshot.request_active = io_source_windowed(state)
         ? state->submission_in_progress || state->window_occupied != 0u
@@ -1275,7 +1275,7 @@ bool cflow_io_publisher_owner_get_stats(
     snapshot.result_ready = io_source_windowed(state)
         ? state->window_results_ready != 0u : state->result_ready;
     snapshot.close_requested = state->close_requested;
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     if (!cflow_io_actor_get_stats(&state->actor, &snapshot.actor))
         return false;
     snapshot.request_active = snapshot.request_active ||
@@ -1293,7 +1293,7 @@ bool cflow_io_publisher_owner_get_window_stats(
     if (owner == NULL || owner->impl == NULL || out == NULL)
         return false;
     state = (cflow_io_publisher_state *)owner->impl;
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     snapshot.capacity = state->window_capacity;
     if (io_source_windowed(state)) {
         snapshot.occupied = state->window_occupied;
@@ -1309,7 +1309,7 @@ bool cflow_io_publisher_owner_get_window_stats(
         snapshot.results_ready = state->result_ready ? 1u : 0u;
         snapshot.peak_occupied = state->window_peak_occupied;
     }
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     *out = snapshot;
     return true;
 }
@@ -1323,25 +1323,25 @@ int cflow_io_publisher_owner_close(cflow_io_publisher_owner *owner) {
     if (owner->impl == NULL)
         return SALTS_OK;
     state = (cflow_io_publisher_state *)owner->impl;
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     if (!state->owner_live || state->publisher_live ||
         atomic_load_explicit(&state->driver_active, memory_order_relaxed) ||
         state->wake_inflight != 0u || state->drive_inflight != 0u ||
         (io_source_windowed(state) &&
          state->window_occupied != 0u)) {
-        cmeta_mutex_unlock(&state->gate);
+        sync_mutex_unlock(&state->gate);
         return SALTS_EBUSY;
     }
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     if (!cflow_io_actor_is_quiescent(&state->actor))
         return SALTS_EBUSY;
 
     status = cflow_io_actor_destroy(&state->actor);
     if (status != SALTS_OK)
         return status == SALTS_EBUSY ? SALTS_EBUSY : SALTS_EINVAL;
-    cmeta_mutex_lock(&state->gate);
+    sync_mutex_lock(&state->gate);
     state->owner_live = false;
-    cmeta_mutex_unlock(&state->gate);
+    sync_mutex_unlock(&state->gate);
     (void)cflow_executor_shutdown(&state->executor);
     cflow_executor_destroy(&state->executor);
     cflow_value_slot_destroy(&state->result);
@@ -1352,8 +1352,8 @@ int cflow_io_publisher_owner_close(cflow_io_publisher_owner *owner) {
         free(state->entries);
     }
     owner->impl = NULL;
-    cmeta_cond_destroy(&state->changed);
-    cmeta_mutex_destroy(&state->gate);
+    sync_cond_destroy(&state->changed);
+    sync_mutex_destroy(&state->gate);
     free(state);
     return SALTS_OK;
 }

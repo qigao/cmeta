@@ -1,7 +1,7 @@
 #include <cflow/cflow.h>
 
-#include <clock.h>
-#include <thread.h>
+#include <core/clock.h>
+#include <threads/threads.h>
 
 #include "tinytest.h"
 
@@ -59,29 +59,29 @@ static cflow_schedule_result early_terminal_post(
 }
 
 static bool statechart_actor_wait_flag(atomic_bool *value) {
-    const uint64_t started = cmeta_monotonic_ms();
-    while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
+    const uint64_t started = monotonic_ms();
+    while (monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
         if (atomic_load(value)) return true;
-        cmeta_sleep_ms(1u);
+        sleep_ms(1u);
     }
     return atomic_load(value);
 }
 
 static bool statechart_actor_wait_count(atomic_int *value, int expected) {
-    const uint64_t started = cmeta_monotonic_ms();
-    while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
+    const uint64_t started = monotonic_ms();
+    while (monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
         if (atomic_load(value) >= expected) return true;
-        cmeta_sleep_ms(1u);
+        sleep_ms(1u);
     }
     return atomic_load(value) >= expected;
 }
 
 static bool statechart_actor_wait_state(
     const cflow_actor *actor, cflow_actor_state expected) {
-    const uint64_t started = cmeta_monotonic_ms();
-    while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
+    const uint64_t started = monotonic_ms();
+    while (monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
         if (cflow_actor_current_state(actor) == expected) return true;
-        cmeta_sleep_ms(1u);
+        sleep_ms(1u);
     }
     return cflow_actor_current_state(actor) == expected;
 }
@@ -109,12 +109,12 @@ static void statechart_actor_on_done(void *user) {
 static void statechart_actor_block(void *user) {
     statechart_actor_blocker *blocker =
         (statechart_actor_blocker *)user;
-    const uint64_t started = cmeta_monotonic_ms();
+    const uint64_t started = monotonic_ms();
     if (blocker == NULL) return;
     atomic_store(&blocker->entered, true);
-    while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS &&
+    while (monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS &&
            !atomic_load(&blocker->release))
-        cmeta_sleep_ms(1u);
+        sleep_ms(1u);
 }
 
 static void statechart_actor_define(statechart_actor_fixture *fixture) {

@@ -23,7 +23,7 @@ target_include_directories(cmeta_ace PUBLIC
   $<INSTALL_INTERFACE:include>)
 target_link_libraries(cmeta_ace
   PUBLIC CMeta::Provider
-  PRIVATE CMeta::Plugin Salts::Platform)
+  PRIVATE CMeta::Plugin Salts::Core)
 
 install(TARGETS cmeta_provider cmeta_ace
   EXPORT CMetaTargets
@@ -39,6 +39,6 @@ install(FILES
   include/cmeta/native_io_ace_token.h
   DESTINATION include/cmeta)
 
-if(BUILD_TESTING)
+if(BUILD_TESTS)
   add_subdirectory(tests)
 endif()

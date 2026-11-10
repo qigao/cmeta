@@ -1,6 +1,6 @@
 #include "cmeta_fastpath_fixture.h"
 #include "tinytest.h"
-#include <coro.h>
+#include <salts/coro.h>
 
 enum { FASTPATH_YIELDS = 8, FASTPATH_CORO_ARGUMENT = 5 };
 cmeta_static_call(fastpath_coro_slot, fastpath_add);

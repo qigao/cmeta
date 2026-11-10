@@ -2,7 +2,7 @@
 #include <cflow/executor.h>
 #include <cflow/scheduler.h>
 #include <cflow/time.h>
-#include <thread.h>
+#include <threads/threads.h>
 #include "scheduler_internal.h"
 #include "timer_queue.h"
 #include "tinytest.h"
@@ -57,7 +57,7 @@ static void count_task(void *user) {
 static void gated_count_task(void *user) {
   (void)user;
   atomic_store(&worker_gate_started, 1);
-  while (!atomic_load(&worker_gate_open)) cmeta_sleep_ms(1);
+  while (!atomic_load(&worker_gate_open)) sleep_ms(1);
   atomic_fetch_add(&executor_counter, 1);
 }
 
@@ -86,7 +86,7 @@ static void cflow_blocking_lifecycle_finalize(void *user) {
   cflow_task_lifecycle_probe *probe = (cflow_task_lifecycle_probe *)user;
   cflow_lifecycle_finalize(user);
   atomic_store(&probe->finalize_entered, 1);
-  while (!atomic_load(&probe->finalize_gate)) cmeta_sleep_ms(1);
+  while (!atomic_load(&probe->finalize_gate)) sleep_ms(1);
 }
 
 static void cflow_wait_for_executor(void *user) {
@@ -112,7 +112,7 @@ static void serial_probe(void *user) {
   while (active > seen &&
          !atomic_compare_exchange_weak(&max_active_callbacks, &seen, active)) {
   }
-  cmeta_sleep_ms(1);
+  sleep_ms(1);
   atomic_fetch_add(&executor_counter, 1);
   atomic_fetch_sub(&active_callbacks, 1);
 }
@@ -309,7 +309,7 @@ spec("CFlow execution foundation") {
   it("serializes callbacks from concurrent producers") {
     enum { PRODUCERS = 4, TASKS_PER_PRODUCER = 8 };
     cflow_executor executor = {0};
-    cmeta_thread_t producers[PRODUCERS];
+    sync_thread_t producers[PRODUCERS];
     executor_producer_ctx contexts[PRODUCERS];
 
     atomic_store(&executor_counter, 0);
@@ -321,11 +321,11 @@ spec("CFlow execution foundation") {
     for (int i = 0; i < PRODUCERS; ++i) {
       contexts[i].executor = &executor;
       contexts[i].count = TASKS_PER_PRODUCER;
-      check_equal(cmeta_thread_create(&producers[i], executor_producer,
+      check_equal(sync_thread_create(&producers[i], executor_producer,
                                       &contexts[i]), 0);
     }
     for (int i = 0; i < PRODUCERS; ++i)
-      check_equal(cmeta_thread_join(&producers[i]), 0);
+      check_equal(sync_thread_join(&producers[i]), 0);
 
     check_true(cflow_executor_wait_idle(&executor));
     check_equal(atomic_load(&producer_failures), 0);
@@ -401,7 +401,7 @@ spec("CFlow execution foundation") {
     check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 1u));
     check_true(cflow_executor_post(&executor, gated_count_task, NULL));
     while (!atomic_load(&worker_gate_started) && attempts++ < 200)
-      cmeta_sleep_ms(1);
+      sleep_ms(1);
     check_equal(atomic_load(&worker_gate_started), 1);
     check_equal(cflow_executor_try_post(&executor, count_task, NULL),
                 CFLOW_ADMISSION_ACCEPTED);
@@ -640,7 +640,7 @@ spec("CFlow execution foundation") {
                     &control, gated_count_task, NULL),
                 CFLOW_EXECUTOR_POST_ACCEPTED);
     while (!atomic_load(&worker_gate_started) && attempts++ < 200)
-      cmeta_sleep_ms(1);
+      sleep_ms(1);
     check_equal(atomic_load(&worker_gate_started), 1);
     check_equal(cflow_executor_control_post(&control, count_task, NULL),
                 CFLOW_EXECUTOR_POST_ACCEPTED);
@@ -687,7 +687,7 @@ spec("CFlow execution foundation") {
                     &control, gated_count_task, NULL),
                 CFLOW_EXECUTOR_POST_ACCEPTED);
     while (!atomic_load(&worker_gate_started) && attempts++ < 200)
-      cmeta_sleep_ms(1);
+      sleep_ms(1);
     check_equal(atomic_load(&worker_gate_started), 1);
     check_equal(cflow_executor_control_post_task(&control, &task),
                 CFLOW_EXECUTOR_POST_ACCEPTED);
@@ -719,7 +719,7 @@ spec("CFlow execution foundation") {
         .finalize = cflow_blocking_lifecycle_finalize,
         .user = &lifecycle,
     };
-    cmeta_thread_t wait_thread;
+    sync_thread_t wait_thread;
     int attempts = 0;
 
     atomic_store(&worker_gate_open, 0);
@@ -730,7 +730,7 @@ spec("CFlow execution foundation") {
                     &control, gated_count_task, NULL),
                 CFLOW_EXECUTOR_POST_ACCEPTED);
     while (!atomic_load(&worker_gate_started) && ++attempts < 200)
-      cmeta_sleep_ms(1);
+      sleep_ms(1);
     check_equal(atomic_load(&worker_gate_started), 1);
     check_equal(cflow_executor_control_post_task(&control, &task),
                 CFLOW_EXECUTOR_POST_ACCEPTED);
@@ -740,7 +740,7 @@ spec("CFlow execution foundation") {
     atomic_store(&worker_gate_open, 1);
     attempts = 0;
     while (!atomic_load(&lifecycle.finalize_entered) && ++attempts < 200)
-      cmeta_sleep_ms(1);
+      sleep_ms(1);
     check_equal(atomic_load(&lifecycle.finalize_entered), 1);
 
     check_true(cflow_executor_control_get_stats(&control, &stats));
@@ -754,18 +754,18 @@ spec("CFlow execution foundation") {
                 stats.queued + stats.running + stats.completed +
                     stats.cancelled);
 
-    check_equal(cmeta_thread_create(
+    check_equal(sync_thread_create(
                     &wait_thread, cflow_wait_for_executor, &waiter),
                 0);
     attempts = 0;
     while (!atomic_load(&waiter.entered) && ++attempts < 200)
-      cmeta_sleep_ms(1);
+      sleep_ms(1);
     check_equal(atomic_load(&waiter.entered), 1);
-    cmeta_sleep_ms(10);
+    sleep_ms(10);
     check_equal(atomic_load(&waiter.done), 0);
 
     atomic_store(&lifecycle.finalize_gate, 1);
-    cmeta_thread_join(&wait_thread);
+    sync_thread_join(&wait_thread);
     check_equal(waiter.status, CFLOW_EXECUTOR_WAIT_IDLE);
     check_equal(atomic_load(&waiter.done), 1);
     check_true(cflow_executor_control_get_stats(&control, &stats));
@@ -790,7 +790,7 @@ spec("CFlow execution foundation") {
         &scheduler, 1u, 1u, 1u));
     check(cflow_scheduler_post(&scheduler, gated_count_task, NULL) != 0u);
     while (!atomic_load(&worker_gate_started) && attempts++ < 200)
-      cmeta_sleep_ms(1);
+      sleep_ms(1);
     check_equal(atomic_load(&worker_gate_started), 1);
 
     check(cflow_scheduler_post(&scheduler, count_task, NULL) != 0u);
@@ -798,7 +798,7 @@ spec("CFlow execution foundation") {
     do {
       check_true(cflow_scheduler_get_stats(&scheduler, &stats));
       if (stats.ready_pending == 2u && stats.timer_pending == 0u) break;
-      cmeta_sleep_ms(1);
+      sleep_ms(1);
     } while (attempts++ < 200);
     check_equal(stats.ready_pending, (size_t)2u);
 
@@ -807,7 +807,7 @@ spec("CFlow execution foundation") {
     do {
       check_true(cflow_scheduler_get_stats(&scheduler, &stats));
       if (stats.dispatching == 1u) break;
-      cmeta_sleep_ms(1);
+      sleep_ms(1);
     } while (attempts++ < 200);
     check_equal(stats.dispatching, (size_t)1u);
     check_equal(stats.peak_pending, (size_t)3u);
@@ -830,21 +830,21 @@ spec("CFlow execution foundation") {
         &scheduler, 1u, 1u, 1u));
     check(cflow_scheduler_post(&scheduler, gated_count_task, NULL) != 0u);
     while (!atomic_load(&worker_gate_started) && attempts++ < 200)
-      cmeta_sleep_ms(1);
+      sleep_ms(1);
     check_equal(atomic_load(&worker_gate_started), 1);
     check(cflow_scheduler_post(&scheduler, count_task, NULL) != 0u);
     attempts = 0;
     do {
       check_true(cflow_scheduler_get_stats(&scheduler, &stats));
       if (stats.ready_pending == 2u && stats.timer_pending == 0u) break;
-      cmeta_sleep_ms(1);
+      sleep_ms(1);
     } while (attempts++ < 200);
     check(cflow_scheduler_post(&scheduler, count_task, NULL) != 0u);
     attempts = 0;
     do {
       check_true(cflow_scheduler_get_stats(&scheduler, &stats));
       if (stats.dispatching == 1u) break;
-      cmeta_sleep_ms(1);
+      sleep_ms(1);
     } while (attempts++ < 200);
     check_equal(stats.dispatching, (size_t)1u);
 
@@ -923,7 +923,7 @@ spec("CFlow execution foundation") {
     check_true(cflow_scheduler_worker_init_with_capacity(&scheduler, 1u, 1u, 1u));
     check(cflow_scheduler_post(&scheduler, gated_count_task, NULL) != 0u);
     while (!atomic_load(&worker_gate_started) && attempts++ < 200)
-      cmeta_sleep_ms(1);
+      sleep_ms(1);
     check_equal(atomic_load(&worker_gate_started), 1);
 
     check_true(cflow_scheduler_try_post_task_after_internal(

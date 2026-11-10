@@ -1,0 +1,30 @@
+include("$ENV{VCPKG_CACHE_REPOSITORY_ROOT}/cmake/QigaoLemon.cmake")
+# Host generators must match the machine running CMake, including cross builds.
+string(TOLOWER "${CMAKE_HOST_SYSTEM_PROCESSOR}" _host_arch)
+if(_host_arch MATCHES "^(amd64|x86_64|x64)$")
+  set(_host_arch x64)
+elseif(_host_arch MATCHES "^(aarch64|arm64)$")
+  set(_host_arch arm64)
+else()
+  message(FATAL_ERROR "Unsupported generator host architecture: ${_host_arch}")
+endif()
+if(CMAKE_HOST_WIN32)
+  set(_host_os windows)
+  set(_tool_suffix .exe)
+elseif(CMAKE_HOST_APPLE)
+  set(_host_os macos)
+  set(_tool_suffix "")
+elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+  set(_host_os linux)
+  set(_tool_suffix "")
+else()
+  message(FATAL_ERROR "Unsupported generator host: ${CMAKE_HOST_SYSTEM_NAME}")
+endif()
+set(_host_rid "${_host_os}-${_host_arch}")
+qigao_restore_native_dependency(
+  LOCK_FILE "${PROJECT_SOURCE_DIR}/cmake/re2c.lock.json"
+  PAYLOAD "tools/${_host_rid}"
+  REQUIRED_FILES share/re2c/stdlib/unicode_properties.re share/re2c/stdlib/unicode_categories.re
+  EXECUTABLES "bin/re2c${_tool_suffix}" OUT_ROOT RE2C_ROOT)
+set(RE2C_EXECUTABLE "${RE2C_ROOT}/bin/re2c${_tool_suffix}")
+qigao_setup_lemon(LOCK_FILE "${PROJECT_SOURCE_DIR}/cmake/lemon.lock.json" HOST_RID "${_host_rid}")

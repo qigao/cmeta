@@ -1,5 +1,5 @@
 #include <cflow/executor.h>
-#include <thread.h>
+#include <threads/threads.h>
 #include <tinytest.h>
 
 #include <stdatomic.h>
@@ -40,7 +40,7 @@ static void owner_wake(void *user) {
 
 static void owner_count(void *user) {
     owner_test_probe *probe = (owner_test_probe *)user;
-    if (probe->owner_token != cmeta_thread_current_token())
+    if (probe->owner_token != sync_thread_current_token())
         atomic_fetch_add(&probe->wrong_owner, 1);
     if (cflow_executor_is_current_internal(probe->executor))
         atomic_fetch_add(&probe->saw_current, 1);
@@ -49,14 +49,14 @@ static void owner_count(void *user) {
 
 static void owner_cancel(void *user) {
     owner_test_probe *probe = (owner_test_probe *)user;
-    if (probe->owner_token != cmeta_thread_current_token())
+    if (probe->owner_token != sync_thread_current_token())
         atomic_fetch_add(&probe->wrong_owner, 1);
     atomic_fetch_add(&probe->cancelled, 1);
 }
 
 static void owner_finalize(void *user) {
     owner_test_probe *probe = (owner_test_probe *)user;
-    if (probe->owner_token != cmeta_thread_current_token())
+    if (probe->owner_token != sync_thread_current_token())
         atomic_fetch_add(&probe->wrong_owner, 1);
     atomic_fetch_add(&probe->finalized, 1);
 }
@@ -90,7 +90,7 @@ suite("CFlow owner-affine SerialExecutor") {
         cflow_executor_stats stats = {0};
         owner_test_probe probe = {0};
         owner_producer producers[OWNER_TEST_PRODUCERS] = {0};
-        cmeta_thread_t threads[OWNER_TEST_PRODUCERS] = {0};
+        sync_thread_t threads[OWNER_TEST_PRODUCERS] = {0};
         int i;
 
         check_false(cflow_executor_owner_init_with_capacity(
@@ -100,7 +100,7 @@ suite("CFlow owner-affine SerialExecutor") {
             &executor, OWNER_TEST_PRODUCERS * OWNER_TEST_TASKS,
             owner_wake, &probe));
         probe.executor = &executor;
-        probe.owner_token = cmeta_thread_current_token();
+        probe.owner_token = sync_thread_current_token();
         check_true(cflow_executor_has(&executor, CMETA_EXEC_CAP_SERIAL));
         check_true(cflow_executor_has(&executor, CMETA_EXEC_CAP_MANUAL));
         check_true(cflow_executor_has(&executor, CMETA_EXEC_CAP_OWNER_AFFINE));
@@ -113,11 +113,11 @@ suite("CFlow owner-affine SerialExecutor") {
             producers[i].executor = &executor;
             producers[i].probe = &probe;
             producers[i].count = OWNER_TEST_TASKS;
-            check_equal(cmeta_thread_create(
+            check_equal(sync_thread_create(
                 &threads[i], owner_producer_main, &producers[i]), 0);
         }
         for (i = 0; i < OWNER_TEST_PRODUCERS; ++i)
-            check_equal(cmeta_thread_join(&threads[i]), 0);
+            check_equal(sync_thread_join(&threads[i]), 0);
         for (i = 0; i < OWNER_TEST_PRODUCERS; ++i) {
             check_equal(atomic_load(&producers[i].rejected), 0);
             check_equal(atomic_load(&producers[i].incorrectly_ran), 0);
@@ -158,7 +158,7 @@ suite("CFlow owner-affine SerialExecutor") {
         owner_test_probe probe = {0};
         probe.executor = &executor;
         probe.control = &control;
-        probe.owner_token = cmeta_thread_current_token();
+        probe.owner_token = sync_thread_current_token();
 
         check_true(cflow_executor_owner_init_with_capacity(
             &executor, 1u, owner_wake, &probe));
@@ -189,7 +189,7 @@ suite("CFlow owner-affine SerialExecutor") {
             .finalize = owner_finalize, .user = &probe
         };
         probe.executor = &executor;
-        probe.owner_token = cmeta_thread_current_token();
+        probe.owner_token = sync_thread_current_token();
 
         check_true(cflow_executor_owner_init_with_capacity(
             &executor, 2u, NULL, NULL));
@@ -227,7 +227,7 @@ suite("CFlow owner-affine SerialExecutor") {
         cflow_executor_control control = {0};
         owner_test_probe probe = {0};
         probe.executor = &executor;
-        probe.owner_token = cmeta_thread_current_token();
+        probe.owner_token = sync_thread_current_token();
 
         check_true(cflow_executor_owner_init_with_capacity(
             &executor, 2u, NULL, NULL));

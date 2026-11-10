@@ -43,7 +43,7 @@ cmake_add_test(cmeta_native_service_host_publication_test
   FOLDER "ace/tests")
 cmake_add_test(cmeta_native_service_host_concurrency_test
   SOURCES service_host_concurrency_test.c
-  LIBS CMeta::ACE Salts::Platform Salts::TinyTest
+  LIBS CMeta::ACE Salts::Core Salts::TinyTest
   DEFS "COMPONENT_PROVIDER_PLUGIN_PATH=\"$<TARGET_FILE:salts_service_host_provider_fixture>\""
   FOLDER "ace/tests")
 cmake_add_test(cmeta_native_service_host_exclusive_fence_test
@@ -59,7 +59,7 @@ cmake_add_test(cmeta_native_service_host_scope_cpp_test
 cmake_add_test(cmeta_native_service_host_runtime_failure_test
   SOURCES service_host_runtime_failure_test.c
           service_host_runtime_failure_adapter.c
-  LIBS CMeta::Provider Salts::Platform Salts::TinyTest
+  LIBS CMeta::Provider Salts::Core Salts::TinyTest
   FOLDER "ace/tests")
 
 foreach(host_test IN ITEMS
@@ -121,3 +121,13 @@ foreach(language IN ITEMS c cpp)
     salts_service_host_abi_provider_1 salts_service_host_abi_provider_2)
 endforeach()
 
+
+cmake_add_test(salts_owner_c11 SOURCES runtime_owner_test.c
+  LIBS CMeta::ACE CMeta::Plugin CMeta::CFlow Salts::Core
+  FOLDER "ace/tests")
+target_compile_definitions(salts_owner_c11 PRIVATE
+  "SALTS_TEST_PROVIDER=\"$<TARGET_FILE:salts_service_host_provider_fixture>\"")
+add_dependencies(salts_owner_c11 salts_service_host_provider_fixture)
+cmake_add_test(salts_owner_cpp17 SOURCES runtime_owner_cpp_test.cpp
+  LIBS CMeta::ACE CMeta::Plugin CMeta::CFlow Salts::CNet Salts::Core
+  FOLDER "ace/tests")

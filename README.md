@@ -1,57 +1,113 @@
 # CMeta 0.1 — CMeta, ACE and CFlow
 
-This repository owns the CMeta reflection/type system, ACE-style component and
-service composition, Plugin lifecycle integration, and CFlow actor/reactive/
-graph execution. Native platform and I/O implementations belong to
-[`qigao/salts-core`](https://github.com/qigao/salts-core); cryptography and
-ASN.1 belong to the Crypto repository.
+## Upstream dependency versions
 
-## Canonical targets
+Select the upstream SDK release through `VCPKG_CACHE_VERSION` in the parent
+environment (for example, by loading the local `.env`). Use the same version
+for the `VCPKG_CACHE_REPOSITORY_ROOT` checkout. Values contain the version
+without the `v` prefix; missing variables fail rather than choosing `latest`.
+The shared `resolve-release` entry point is required (not present in v0.1.2).
 
-The installed package exports:
-
-- `CMeta::CMeta`
-- `CMeta::Provider` and `CMeta::ACE`
-- `CMeta::PluginABI` and `CMeta::Plugin`
-- `CMeta::CFlow`
-- `CMeta::CSTL` and `CMeta::CSTLStream`
-
-`CMeta::ACE` is one static library containing Configurator and ServiceHost.
-`CMeta::Provider` carries both Provider declaration contracts without linking
-ACE; Plugin remains the independent loader and Registry library.
-
-SaltsCore supplies the imported shared owners `Salts::Core`,
-`Salts::Platform`, `Salts::Concurrency`, `Salts::Coroutine` and
-`Salts::NativeIO`. Each native function has one source and binary owner; this
-repository does not retain compatibility copies or fallback implementations.
-
-## Build
-
-Install the matching SaltsCore 0.1 SDK, set `SALTSCORE_PREFIX`, then use the
-versioned presets:
-
-For the local LLVM build, set `CMETA_TARGET_TOOLCHAIN_FILE` to the product
-compiler toolchain used for that Core SDK. CMeta requires only the installed
-Core SDK; it does not find or link Crypto/GmSSL and needs no provider dependency
-prefix. Core's private transport implementation is owned by its shared runtime.
-
-Tests are ordinary executables in the project build graph, registered with
-CTest. No test installs the SDK, configures another project, or invokes CMake
-scripts to build/run a consumer. SDK installation and release assembly remain
-normal build operations, separate from test execution.
+The per-triplet files in `cmake/dependencies/` are release descriptors. Their
+historical `.lock.json` suffix is retained; `source.kind=github-release`
+distinguishes them from generated literal URL/hash locks. Resolve the selected
+release into the build directory before restoring it:
 
 ```sh
-cmake --preset user-release
-cmake --build --preset release
-ctest --preset release
+python "$VCPKG_CACHE_REPOSITORY_ROOT/scripts/restore-native-dependency.py" resolve-release \
+  "cmake/dependencies/$VCPKG_TARGET_TRIPLET.lock.json" \
+  --output-lock "build/dependencies/$VCPKG_TARGET_TRIPLET.lock.json"
+python "$VCPKG_CACHE_REPOSITORY_ROOT/scripts/restore-native-dependency.py" locked \
+  "build/dependencies/$VCPKG_TARGET_TRIPLET.lock.json" \
+  --destination "build/dependencies/$VCPKG_TARGET_TRIPLET-$VCPKG_CACHE_VERSION" \
+  --payload vcpkg_installed
 ```
 
-The CI presets additionally take `CMETA_BINARY_DIR`, `CMETA_INSTALL_PREFIX`
-and `CMETA_TARGET_TOOLCHAIN_FILE`. Android also takes `CMETA_ANDROID_ABI`.
-The Android preset declares `SALTSCORE_PREFIX` as both the installed package
-prefix and a target search root. Package lookup stays `ONLY` within the target
-roots, so the NDK can resolve this ABI's Core SDK without searching host packages.
-Consumers select the combined installed prefix and link the canonical targets:
+Set `VCPKG_INSTALLED_DIR` to the reported root for the selected preset. The
+resolver requires the published asset's SHA-256 digest; the existing restore
+checks downloaded bytes and preserves immutable installations. Changing a
+version never overwrites an old SDK. CMake does not load `.env` or download
+the dependency SDK implicitly. Existing host-tool package locks remain exact.
+
+CI uses the same named repository Actions variables and selects local shared
+actions from the chosen infrastructure checkout. SaltsBase and SaltsCore
+prepare jobs resolve once, then distribute generated locks and verified blobs
+to all matrix workers. Set the CI variables before enabling these changes;
+the selected infrastructure release must contain `resolve-release`.
+
+This keeps consumer version policy in the environment, asset digests in the
+upstream release, and generated restore locks in build inputs. Updating a
+release no longer requires editing a digest table for every platform. SDK
+manifests, compiler/ABI selection and product tests remain mandatory. To roll
+back, choose the previous exact release and restore into its own directory.
+
+
+This repository owns CMeta reflection and metadata, ACE component/service
+composition, Plugin lifecycle, CFlow execution and CSTL containers. The local
+checkout is `cmeta/` (formerly `salts/`). Native primitives, parsers, coroutines
+and I/O belong to [SaltsBase](https://github.com/qigao/salts-base); networking
+and TLS belong to [SaltsCore](https://github.com/qigao/salts-core).
+
+## Targets and dependency ownership
+
+The package exports `CMeta::CMeta`, `CMeta::Provider`, `CMeta::ACE`,
+`CMeta::PluginABI`, `CMeta::Plugin`, `CMeta::CFlow`, `CMeta::CSTL`,
+`CMeta::CSTLStream` and `CMeta::TinyMock`. TinyMock uses Base's TinyTest runtime;
+TinyTest itself is unchanged.
+
+Production imports `Salts::Core`, `Salts::NativeIO` and `Salts::Coroutine`
+from the exact installed Base SDK. Former Platform/Concurrency targets are
+consolidated into Core. CFlow uses the public `threadpool_is_current()` to
+check callback identity before joining a pool. Base retains the sole authority;
+there is no private declaration or duplicate thread-local state in CFlow.
+Base 0.1.4 or newer is required.
+
+CMeta owns its existing fast-key implementation used by tracing and fault
+controls. Native UUID storage follows Base's `uuid_t` byte array; CMeta retains
+its stable `salts.uuid` metadata identity and 16-byte value layout.
+
+## Build and tests
+
+Copy `.env.example` to the ignored local `.env`, set machine paths, and import
+those entries into the invoking shell. CMake does not read dotenv files.
+`SALTS_BASE_VERSION` selects the exact installed SDK at `SALTS_BASE_ROOT`.
+Its compiler, architecture and runtime must match the user preset. Missing
+inputs and incompatible SDKs stop configuration.
+
+The full test graph additionally uses `SALTS_CORE_VERSION` and `SALTSCORE_ROOT`
+for existing CNet composition cases. These cases require a current split Core
+SDK; the historical monorepo SDK with the same CMake version is insufficient.
+The CMeta product package does not export this test dependency.
+
+CFlow readiness fault injection requires `SALTS_BASE_SOURCE_ROOT` at the
+selected Base release. Configuration compares the source and release Git trees
+and rejects modified readiness headers. This explicitly approved test-only
+exception supplies private declarations; installed NativeIO owns all runtime
+state. Fake backends and contract fixtures belong to `cflow/tests/`.
+
+With the environment loaded, Windows LLVM-MinGW full verification is:
+
+```sh
+cmake --fresh --preset native-release-user
+cmake --build --preset native-release-user
+ctest --preset native-release-user --output-on-failure --no-tests=error
+```
+
+Other native presets include `llvm-native-release-user`, `gcc-release-user`
+and `msvc-release-user`. Sanitizer presets require matching SDKs. Each module
+owns its tests and registration; there is no root test aggregator or nested
+consumer verification project.
+
+A product build needs only the Base SDK:
+
+```sh
+cmake --fresh --preset llvm-mingw-x64-release-user
+cmake --build --preset llvm-mingw-x64-release-user
+cmake --build --preset install-llvm-mingw-x64-release-user
+```
+
+The install prefix defaults to `build/<preset>/stage`. This normal installation
+is the CMeta SDK consumed by salts-utils. Use `--fresh` after SDK version changes.
 
 ```cmake
 find_package(CMeta CONFIG REQUIRED)
@@ -59,56 +115,39 @@ target_link_libraries(my_host PRIVATE CMeta::ACE)
 target_link_libraries(my_provider PRIVATE CMeta::Provider)
 ```
 
-The former separate lifecycle and Provider ABI targets have been removed.
 Configurator and ServiceHost retain native ABI epoch 2.0, Provider contract v2
-and Configurator binding v2. All hosts, generated bindings and Provider DSOs
-must be rebuilt against one matching SDK. See
-[ace/README.md](ace/README.md) for lifecycle and
-ABI admission rules.
+and Configurator binding v2. Rebuild hosts, generated bindings and provider
+DSOs against one matching SDK. See [ACE lifecycle rules](ace/README.md).
 
-## Release 0.1.003
+The historical immutable `v0.1.003` tag denotes the earlier monorepo SDK. This
+migration does not move or republish it; the split SDK requires its own release
+qualification.
 
-The immutable external tag is `v0.1.003`; CMake and NuGet use version `0.1.3`.
-`CMeta.Native` contains CMeta, ACE and CFlow install trees for Linux, Windows,
-macOS and Android, each on x64 and arm64. SaltsCore is published and restored
-separately as `SaltsCore.Native`. This release consumes the flattened public
-headers from SaltsCore 0.1.2 and exposes no compatibility `salts/` tree.
+## CI qualification
 
-Desktop targets use the pinned `qigao/vcpkg-cache` LLVM setup in toolchain-only
-mode. All targets build the Release profile with compiler obfuscation disabled;
-the workflow rejects an action output or CMake cache that enables it. Android
-uses NDK Clang for target compilation. CI uses the shared `v0.1.1` cache
-Actions, restores its local Actions cache first, then downloads published exact
-ABI archives. Missing ABIs compile through the normal Core dependency build and
-are saved for later runs. Authentication, TLS and artifact-integrity failures
-stop restoration. The six desktop targets execute the
-repository CTest suite on native runners; Android x64/arm64 are cross-build and
-install checks and do not claim device execution.
+CI downloads and verifies the selected Base/cache releases once, then passes
+the same locked blobs and infrastructure snapshot to all ten published Base
+profiles: Windows x64 MSVC/LLVM-MinGW, Linux x64 and ARM64 Clang/GCC, Linux x64
+Clang TSan, macOS ARM64 Clang, and Android x64/ARM64. The former Windows ARM64
+and macOS x64 lanes require Base SDKs that are not published in 0.1.4 and are
+outside this matrix. ASan/UBSan presets remain available for explicit runs.
 
-Each SDK artifact records both the CMeta source commit and the exact SaltsCore
-commit. The NuGet publisher combines those qualified artifacts without
-rebuilding them, rejects an existing package version, then publishes the same
-bytes to the GitHub Release.
-
-Native SDK and sanitizer CI persist vcpkg binary archives/downloads and use
-the shared curl-installed ccache 4.14.2 for both Core and CMeta compilation.
-Caches are isolated by OS/architecture, SDK RID or sanitizer profile, shared
-dependency revision, runner image and configuration. Compiler caches are
-bounded to 256 MiB per lane and reuse earlier commits with matching configuration;
-ccache still checks compiler contents, source/header inputs and compile flags.
-Dependency caches are saved after configure and compiler caches after build,
-before formal tests. Every run still resolves dependencies, builds and tests;
-installed SDKs, CMake build trees and credentials are never cache payloads.
-PR caches remain scoped to that PR; master populates caches for subsequent PRs.
-
-Static source ownership policy: `python3 tools/check_ace_only_sources.py`.
+`SALTS_CORE_REF` is a required immutable source commit for the test-only CNet
+SDK, whose normal product preset builds and installs the full configured
+graph before CMeta's native tests. This declared source-SDK input is not a
+fallback after a release restore failure. Production uses the released Base
+SDK exclusively; Base source supplies only the approved white-box test headers.
+All native jobs execute the complete CTest suite; Android jobs cross-build and
+install without claiming device tests. SDK TAR artifacts retain manifests and
+formal test diagnostics. This CI does not republish the historical NuGet tag;
+a new release requires a new immutable version and qualified artifacts.
 
 ## Optional CNet policy adapter
 
 `<cmeta/cnet_policy.h>` composes the new CNet resource/policy contracts without
 introducing a CMeta dependency into SaltsCore. This adapter requires the
-matching SaltsCore `61d42472583e9923ca22ea2929c651b6a4c12450` SDK; the released 0.1.2
-SDK does not contain these declarations. Build and test against that SDK's
+current split SaltsCore SDK; the historical 0.1.002 release
+does not contain these declarations. Build and test against that SDK's
 installed prefix before qualifying a combined release.
 
 The adapter provides read-only descriptors for `cnet_send_limits`,

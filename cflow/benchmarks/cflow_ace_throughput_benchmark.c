@@ -1,8 +1,8 @@
 #include <cflow/actor.h>
-#include <clock.h>
-#include <thread.h>
-#include <fmt.h>
-#include <tlog.h>
+#include <core/clock.h>
+#include <threads/threads.h>
+#include <core/fmt.h>
+#include <core/tlog.h>
 #include "tinytest.h"
 
 #include <stdlib.h>
@@ -46,23 +46,23 @@ static const cmeta_type_desc completion_type = {
 typedef struct bench_context bench_context;
 typedef struct producer {
     bench_context *context;
-    cmeta_thread_t thread;
+    sync_thread_t thread;
     cflow_actor_ref ref;
     size_t id;
     uint64_t full_retries;
 } producer;
 typedef struct worker {
     bench_context *context;
-    cmeta_thread_t thread;
-    cmeta_cond_t wake;
+    sync_thread_t thread;
+    sync_cond_t wake;
     size_t id;
     bool eligible, waiting;
     unsigned char *payloads;
     completion results[MAX_BATCH];
 } worker;
 struct bench_context {
-    cmeta_mutex_t lock;
-    cmeta_cond_t changed;
+    sync_mutex_t lock;
+    sync_cond_t changed;
     producer producers[MAX_THREADS];
     worker workers[MAX_THREADS];
     cflow_mailbox mailbox;
@@ -109,7 +109,7 @@ static completion process_payload(const void *data, size_t bytes) {
 
 static void signal_worker_locked(bench_context *context, size_t index) {
     ++context->wake_signals;
-    cmeta_cond_signal(&context->workers[index].wake);
+    sync_cond_signal(&context->workers[index].wake);
 }
 
 /* With the monitor held, waiting is published before atomic unlock-and-wait.
@@ -123,7 +123,7 @@ static void notify_leader_locked(bench_context *context) {
 }
 
 static void wake_all_locked(bench_context *context) {
-    cmeta_cond_broadcast(&context->changed);
+    sync_cond_broadcast(&context->changed);
     for (size_t index = 0u; index < context->worker_count; ++index)
         if (context->workers[index].wake != NULL)
             signal_worker_locked(context, index);
@@ -135,11 +135,11 @@ static void fail_locked(bench_context *context) {
 }
 
 static bool wait_locked(bench_context *context) {
-    if (cmeta_monotonic_ms() >= context->deadline) {
+    if (monotonic_ms() >= context->deadline) {
         fail_locked(context);
         return false;
     }
-    (void)cmeta_cond_timedwait(&context->changed, &context->lock, UINT64_C(10000000));
+    (void)sync_cond_timedwait(&context->changed, &context->lock, UINT64_C(10000000));
     return !context->failed;
 }
 
@@ -166,7 +166,7 @@ static void settle_locked(bench_context *context, completion result) {
     ++context->observations[result.id];
     ++context->completed;
     if (context->completed % message_count == 0u)
-        cmeta_cond_broadcast(&context->changed);
+        sync_cond_broadcast(&context->changed);
 }
 
 static bool actor_action(void *user, const void *state, const void *event,
@@ -178,46 +178,46 @@ static bool actor_action(void *user, const void *state, const void *event,
     if (context->mode == ACTOR_VALUE) {
         *(completion *)observation = result;
     } else {
-        cmeta_mutex_lock(&context->lock);
+        sync_mutex_lock(&context->lock);
         settle_locked(context, result);
-        cmeta_mutex_unlock(&context->lock);
+        sync_mutex_unlock(&context->lock);
     }
     return true;
 }
 
 static bool actor_value(void *user, const cmeta_type_desc *type, const void *value) {
     bench_context *context = (bench_context *)user;
-    cmeta_mutex_lock(&context->lock);
+    sync_mutex_lock(&context->lock);
     if (type != &completion_type) fail_locked(context);
     else settle_locked(context, *(const completion *)value);
-    cmeta_mutex_unlock(&context->lock);
+    sync_mutex_unlock(&context->lock);
     return true;
 }
 
 static void actor_error(void *user, const char *message) {
     bench_context *context = (bench_context *)user;
     (void)message;
-    cmeta_mutex_lock(&context->lock);
+    sync_mutex_lock(&context->lock);
     fail_locked(context);
-    cmeta_mutex_unlock(&context->lock);
+    sync_mutex_unlock(&context->lock);
 }
 
 static void run_worker(void *user) {
     worker *self = (worker *)user;
     bench_context *context = self->context;
     size_t held = 0u;
-    cmeta_mutex_lock(&context->lock);
+    sync_mutex_lock(&context->lock);
     self->eligible = true;
     ++context->ready;
     elect_locked(context);
-    cmeta_cond_broadcast(&context->changed);
+    sync_cond_broadcast(&context->changed);
     while (!context->closing && !context->failed) {
         size_t count = 0u;
         const size_t first_ticket = context->dequeued;
         if (context->leader != self->id || context->queued == 0u || context->dispatch_paused) {
             self->waiting = true;
             ++context->worker_waits;
-            cmeta_cond_wait(&self->wake, &context->lock);
+            sync_cond_wait(&self->wake, &context->lock);
             self->waiting = false;
             if (context->queued == 0u) ++context->empty_wakes;
             continue;
@@ -252,19 +252,19 @@ static void run_worker(void *user) {
             context->leader = SIZE_MAX;
             elect_locked(context);
         }
-        cmeta_mutex_unlock(&context->lock);
+        sync_mutex_unlock(&context->lock);
         if (context->hold_first && first_ticket == 0u) {
-            cmeta_mutex_lock(&context->lock);
+            sync_mutex_lock(&context->lock);
             context->held = true;
-            cmeta_cond_broadcast(&context->changed);
+            sync_cond_broadcast(&context->changed);
             while (!context->release && !context->closing && !context->failed)
                 (void)wait_locked(context);
-            cmeta_mutex_unlock(&context->lock);
+            sync_mutex_unlock(&context->lock);
         }
         for (size_t index = 0u; index < count; ++index)
             self->results[index] = process_payload(self->payloads + index * context->payload_type->size,
                                                     context->payload_type->size);
-        cmeta_mutex_lock(&context->lock);
+        sync_mutex_lock(&context->lock);
         if (context->mode == SERIAL_TOKEN && first_ticket != context->next_settlement++)
             fail_locked(context);
         for (size_t index = 0u; index < count; ++index)
@@ -281,7 +281,7 @@ static void run_worker(void *user) {
             }
         } else elect_locked(context);
     }
-    cmeta_mutex_unlock(&context->lock);
+    sync_mutex_unlock(&context->lock);
 }
 
 /* Only one logical dequeue owner is active even when LF handlers overlap.
@@ -294,7 +294,7 @@ static int send_payload(producer *self, const cflow_event_view *event) {
         if (result == CFLOW_ACTOR_SEND_FULL) return 0;
         return -1;
     }
-    cmeta_mutex_lock(&context->lock);
+    sync_mutex_lock(&context->lock);
     int result = -1;
     if (!context->failed && !context->closing) {
         const cflow_mailbox_status status = cflow_mailbox_try_send(&context->mailbox, event);
@@ -306,7 +306,7 @@ static int send_payload(producer *self, const cflow_event_view *event) {
             result = 1;
         } else if (status == CFLOW_MAILBOX_FULL) result = 0;
     }
-    cmeta_mutex_unlock(&context->lock);
+    sync_mutex_unlock(&context->lock);
     return result;
 }
 
@@ -314,16 +314,16 @@ static void run_producer(void *user) {
     producer *self = (producer *)user;
     bench_context *context = self->context;
     size_t last_epoch = 0u;
-    cmeta_mutex_lock(&context->lock);
+    sync_mutex_lock(&context->lock);
     ++context->ready;
-    cmeta_cond_broadcast(&context->changed);
+    sync_cond_broadcast(&context->changed);
     while (!context->closing && !context->failed) {
         while (context->epoch == last_epoch && !context->closing && !context->failed)
-            cmeta_cond_wait(&context->changed, &context->lock);
+            sync_cond_wait(&context->changed, &context->lock);
         if (context->closing || context->failed) break;
         last_epoch = context->epoch;
         const uint64_t deadline = context->deadline;
-        cmeta_mutex_unlock(&context->lock);
+        sync_mutex_unlock(&context->lock);
         bool valid = true;
         for (size_t id = self->id; id < message_count && valid; id += context->producer_count) {
             const cflow_event_view event = {
@@ -331,20 +331,20 @@ static void run_producer(void *user) {
             for (;;) {
                 const int result = send_payload(self, &event);
                 if (result == 1) break;
-                if (result < 0 || cmeta_monotonic_ms() >= deadline) {
+                if (result < 0 || monotonic_ms() >= deadline) {
                     valid = false;
                     break;
                 }
                 ++self->full_retries;
-                cmeta_thread_yield();
+                sync_thread_yield();
             }
         }
-        cmeta_mutex_lock(&context->lock);
+        sync_mutex_lock(&context->lock);
         if (!valid) fail_locked(context);
         ++context->producers_done;
-        cmeta_cond_broadcast(&context->changed);
+        sync_cond_broadcast(&context->changed);
     }
-    cmeta_mutex_unlock(&context->lock);
+    sync_mutex_unlock(&context->lock);
 }
 
 static bool init_actor(bench_context *context) {
@@ -392,9 +392,9 @@ static bool init_case(enum dispatch_mode mode, size_t producers, size_t workers,
     context->payload_type = type;
     context->leader = SIZE_MAX;
     context->last_leader = workers == 0u ? 0u : workers - 1u;
-    context->deadline = cmeta_monotonic_ms() + 10000u;
-    cmeta_mutex_init(&context->lock);
-    cmeta_cond_init(&context->changed);
+    context->deadline = monotonic_ms() + 10000u;
+    sync_mutex_init(&context->lock);
+    sync_cond_init(&context->changed);
     if (context->lock == NULL || context->changed == NULL) return false;
     /* Packed, size-specific pools reserve at most 64 MiB in quick mode,
      * 128 MiB in full mode. Profile constants bound the multiplication. */
@@ -422,9 +422,9 @@ static bool init_case(enum dispatch_mode mode, size_t producers, size_t workers,
             const size_t slots = mode == LEADER_FOLLOWERS ? batch : 1u;
             self->payloads = (unsigned char *)calloc(slots, type->size);
             if (self->payloads == NULL) return false;
-            cmeta_cond_init(&self->wake);
+            sync_cond_init(&self->wake);
             if (self->wake == NULL ||
-                cmeta_thread_create(&self->thread, run_worker, self) != 0) return false;
+                sync_thread_create(&self->thread, run_worker, self) != 0) return false;
         }
     }
     for (size_t index = 0u; index < producers; ++index) {
@@ -433,26 +433,26 @@ static bool init_case(enum dispatch_mode mode, size_t producers, size_t workers,
         self->id = index;
         if (context->actor.impl != NULL && !cflow_actor_ref_acquire(&context->actor, &self->ref))
             return false;
-        if (cmeta_thread_create(&self->thread, run_producer, self) != 0) return false;
+        if (sync_thread_create(&self->thread, run_producer, self) != 0) return false;
     }
-    cmeta_mutex_lock(&context->lock);
+    sync_mutex_lock(&context->lock);
     while (context->ready < producers + workers && !context->failed) (void)wait_locked(context);
     const bool valid = !context->failed;
-    cmeta_mutex_unlock(&context->lock);
+    sync_mutex_unlock(&context->lock);
     return valid;
 }
 
 static void run_sample(void) {
     bench_context *context = current;
-    cmeta_mutex_lock(&context->lock);
-    context->deadline = cmeta_monotonic_ms() + 10000u;
+    sync_mutex_lock(&context->lock);
+    context->deadline = monotonic_ms() + 10000u;
     context->producers_done = 0u;
     ++context->epoch;
-    cmeta_cond_broadcast(&context->changed);
+    sync_cond_broadcast(&context->changed);
     while (!context->failed &&
            (context->producers_done < context->producer_count ||
             context->completed < context->epoch * message_count)) (void)wait_locked(context);
-    cmeta_mutex_unlock(&context->lock);
+    sync_mutex_unlock(&context->lock);
     /* Do not report a partial batch as a full throughput sample. */
     check_false(context->failed);
 }
@@ -461,20 +461,20 @@ static void destroy_case(void) {
     bench_context *context = current;
     if (context == NULL) return;
     if (context->lock != NULL) {
-        cmeta_mutex_lock(&context->lock);
+        sync_mutex_lock(&context->lock);
         context->closing = true;
         if (context->changed != NULL) wake_all_locked(context);
-        cmeta_mutex_unlock(&context->lock);
+        sync_mutex_unlock(&context->lock);
     }
     for (size_t index = 0u; index < context->producer_count; ++index) {
         producer *self = &context->producers[index];
-        if (self->thread != NULL && cmeta_thread_join(&self->thread) != 0) abort();
+        if (self->thread != NULL && sync_thread_join(&self->thread) != 0) abort();
         cflow_actor_ref_release(&self->ref);
     }
     for (size_t index = 0u; index < context->worker_count; ++index) {
         worker *self = &context->workers[index];
-        if (self->thread != NULL && cmeta_thread_join(&self->thread) != 0) abort();
-        cmeta_cond_destroy(&self->wake);
+        if (self->thread != NULL && sync_thread_join(&self->thread) != 0) abort();
+        sync_cond_destroy(&self->wake);
         free(self->payloads);
     }
     if (context->actor.impl != NULL) {
@@ -486,8 +486,8 @@ static void destroy_case(void) {
     cflow_executor_destroy(&context->executor);
     cflow_machine_destroy(&context->machine);
     cflow_mailbox_destroy(&context->mailbox);
-    cmeta_cond_destroy(&context->changed);
-    cmeta_mutex_destroy(&context->lock);
+    sync_cond_destroy(&context->changed);
+    sync_mutex_destroy(&context->lock);
     free(context->payloads);
     free(context);
     current = NULL;
@@ -549,13 +549,13 @@ static void report_case(void) {
     if (context->mode != LEADER_FOLLOWERS) return;
     cflow_mailbox_stats stats = {0};
     size_t wakes, waits, empty, handoffs, peak_in_flight;
-    cmeta_mutex_lock(&context->lock);
+    sync_mutex_lock(&context->lock);
     wakes = context->wake_signals;
     waits = context->worker_waits;
     empty = context->empty_wakes;
     handoffs = context->handoffs;
     peak_in_flight = context->peak_in_flight_items;
-    cmeta_mutex_unlock(&context->lock);
+    sync_mutex_unlock(&context->lock);
     check_true(cflow_mailbox_get_stats(&context->mailbox, &stats));
     metrics_logger = tlog_create(NULL);
     check_not_null(metrics_logger);
@@ -599,11 +599,11 @@ suite("ACE CPU payload throughput, bounded admission to verified completion") {
             check_true(init_case(serial ? SERIAL_TOKEN : LEADER_FOLLOWERS,
                                   1u, 2u, batch, mode == 1u || mode == 2u, &type64));
             bench_context *context = current;
-            cmeta_mutex_lock(&context->lock);
+            sync_mutex_lock(&context->lock);
             context->hold_first = true;
             context->dispatch_paused = true;
             ++context->epoch;
-            cmeta_cond_broadcast(&context->changed);
+            sync_cond_broadcast(&context->changed);
             while (context->queued < CAPACITY && !context->failed) (void)wait_locked(context);
             context->dispatch_paused = false;
             wake_all_locked(context);
@@ -617,11 +617,11 @@ suite("ACE CPU payload throughput, bounded admission to verified completion") {
                 observed_contract = context->completed > 0u && context->peak_active == 2u;
             }
             context->release = true;
-            cmeta_cond_broadcast(&context->changed);
+            sync_cond_broadcast(&context->changed);
             while (!context->failed &&
                    (context->producers_done != 1u || context->completed != message_count))
                 (void)wait_locked(context);
-            cmeta_mutex_unlock(&context->lock);
+            sync_mutex_unlock(&context->lock);
             check_false(context->failed);
             check_true(observed_contract);
             verify_case(1u);
@@ -640,13 +640,13 @@ suite("ACE CPU payload throughput, bounded admission to verified completion") {
         bench_context *context = current;
         producer sender = {0};
         sender.context = context;
-        cmeta_mutex_lock(&context->lock);
+        sync_mutex_lock(&context->lock);
         ++context->epoch;
-        cmeta_mutex_unlock(&context->lock);
+        sync_mutex_unlock(&context->lock);
         size_t submitted = 0u;
         while (submitted < message_count) {
-            cmeta_mutex_lock(&context->lock);
-            context->deadline = cmeta_monotonic_ms() + 10000u;
+            sync_mutex_lock(&context->lock);
+            context->deadline = monotonic_ms() + 10000u;
             for (;;) {
                 size_t sleeping = 0u;
                 for (size_t index = 0u; index < context->worker_count; ++index)
@@ -655,7 +655,7 @@ suite("ACE CPU payload throughput, bounded admission to verified completion") {
             }
             const bool idle = !context->failed && context->queued == 0u &&
                               context->in_flight_items == 0u;
-            cmeta_mutex_unlock(&context->lock);
+            sync_mutex_unlock(&context->lock);
             check_true(idle);
             /* Singles force empty-to-nonempty wakeups; later waves contain at
              * most one batch, including a final 31-message partial batch. */
@@ -667,11 +667,11 @@ suite("ACE CPU payload throughput, bounded admission to verified completion") {
                 check_equal(send_payload(&sender, &event), 1);
             }
             submitted += count;
-            cmeta_mutex_lock(&context->lock);
+            sync_mutex_lock(&context->lock);
             while (context->completed < submitted && !context->failed)
                 (void)wait_locked(context);
             const bool valid = !context->failed;
-            cmeta_mutex_unlock(&context->lock);
+            sync_mutex_unlock(&context->lock);
             check_true(valid);
         }
         verify_case(1u);

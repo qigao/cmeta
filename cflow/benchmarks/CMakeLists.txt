@@ -16,7 +16,7 @@ cmake_add_benchmark(cflow_parallel_reduce_benchmark
 
 cmake_add_benchmark(cflow_machine_hierarchy_benchmark
   SOURCES cflow_machine_hierarchy_benchmark.c
-  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Core Salts::TinyTest
   FOLDER "cflow/benchmarks")
 
 cmake_add_benchmark(cflow_reactive_benchmark
@@ -26,7 +26,7 @@ cmake_add_benchmark(cflow_reactive_benchmark
 
 cmake_add_benchmark(cflow_actor_mailbox_benchmark
   SOURCES cflow_actor_mailbox_benchmark.c
-  LIBS CMeta::CFlow Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Core Salts::TinyTest
   FOLDER "cflow/benchmarks")
 add_test(NAME cflow_actor_mailbox_benchmark COMMAND cflow_actor_mailbox_benchmark)
 set_tests_properties(cflow_actor_mailbox_benchmark PROPERTIES LABELS benchmark TIMEOUT 60)
@@ -37,7 +37,7 @@ set_target_properties(cflow_actor_mailbox_benchmark PROPERTIES
 
 cmake_add_benchmark(cflow_ace_throughput_benchmark
   SOURCES cflow_ace_throughput_benchmark.c
-  LIBS CMeta::CFlow Salts::Core Salts::Platform Salts::TinyTest
+  LIBS CMeta::CFlow Salts::Core Salts::TinyTest
   FOLDER "cflow/benchmarks")
 add_test(NAME cflow_ace_throughput_benchmark COMMAND cflow_ace_throughput_benchmark)
 set_tests_properties(cflow_ace_throughput_benchmark PROPERTIES LABELS benchmark TIMEOUT 600)
@@ -72,7 +72,7 @@ set_target_properties(cflow_reactive_benchmark PROPERTIES
 
 cmake_add_benchmark(cflow_control_path_benchmark
   SOURCES cflow_control_path_benchmark.c
-  LIBS CMeta::CFlow Salts::NativeIO Salts::Platform
+  LIBS CMeta::CFlow Salts::NativeIO Salts::Core
   FOLDER "cflow/benchmarks")
 
 set_target_properties(cflow_control_path_benchmark PROPERTIES

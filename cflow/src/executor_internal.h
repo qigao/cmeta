@@ -2,9 +2,7 @@
 #define CFLOW_EXECUTOR_INTERNAL_H
 
 #include <cflow/executor.h>
-#include <thread_pool.h>
-
-int cmeta_threadpool_is_current_internal(const cmeta_threadpool_t *pool);
+#include <threads/thread_pool.h>
 
 /* True only while this thread is executing a callback owned by the same
  * repository-provided Executor. Foreign implementations return false. */

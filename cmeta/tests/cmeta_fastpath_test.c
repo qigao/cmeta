@@ -1,6 +1,6 @@
 #include "cmeta_fastpath_fixture.h"
 #include "tinytest.h"
-#include <thread.h>
+#include <threads/threads.h>
 
 enum {
     FASTPATH_INPUT = 5,
@@ -36,7 +36,7 @@ static void publication_reader(void *arg) {
             state->observed = state->payload;
             return;
         }
-        cmeta_sleep_ms(FASTPATH_POLL_MS);
+        sleep_ms(FASTPATH_POLL_MS);
     }
 }
 
@@ -49,7 +49,7 @@ static void target_publication_reader(void *arg) {
             state->observed = target();
             return;
         }
-        cmeta_sleep_ms(FASTPATH_POLL_MS);
+        sleep_ms(FASTPATH_POLL_MS);
     }
 }
 
@@ -66,7 +66,7 @@ static void replacement_writer(void *arg) {
             : cmeta_static_update(fastpath_test_slot, fastpath_other);
         if (status != CMETA_OK) atomic_fetch_add(&state->errors, 1);
         else atomic_fetch_add(&state->updates, 1);
-        cmeta_thread_yield();
+        sync_thread_yield();
     }
 }
 
@@ -76,7 +76,7 @@ static void replacement_reader(void *arg) {
         int value = cmeta_static_invoke(fastpath_test_slot, FASTPATH_INPUT);
         if (value != FASTPATH_OLD_RESULT && value != FASTPATH_NEW_RESULT)
             atomic_fetch_add(&state->errors, 1);
-        cmeta_thread_yield();
+        sync_thread_yield();
     }
 }
 
@@ -97,12 +97,12 @@ suite("CMeta static fastpath") {
 
     it("acquire readers observe data published before enabling") {
         publication_state state = {{false}, 0, 0};
-        cmeta_thread_t thread = NULL;
-        check_equal(cmeta_thread_create(&thread, publication_reader, &state), 0);
+        sync_thread_t thread = NULL;
+        check_equal(sync_thread_create(&thread, publication_reader, &state), 0);
         state.payload = FASTPATH_PUBLISHED;
         check_equal(cmeta_fast_enable(&state.key), CMETA_OK);
-        check_equal(cmeta_thread_join(&thread), 0);
-        cmeta_thread_destroy(&thread);
+        check_equal(sync_thread_join(&thread), 0);
+        sync_thread_destroy(&thread);
         check_equal(state.observed, FASTPATH_PUBLISHED);
     }
 
@@ -120,14 +120,14 @@ suite("CMeta static fastpath") {
 
     it("target acquire loads observe data published before replacement") {
         publication_state state = {{false}, 0, 0};
-        cmeta_thread_t thread = NULL;
+        sync_thread_t thread = NULL;
         check_equal(cmeta_static_update(fastpath_publication_slot, fastpath_unpublished), CMETA_OK);
         fastpath_target_payload = 0;
-        check_equal(cmeta_thread_create(&thread, target_publication_reader, &state), 0);
+        check_equal(sync_thread_create(&thread, target_publication_reader, &state), 0);
         fastpath_target_payload = FASTPATH_PUBLISHED;
         check_equal(cmeta_static_update(fastpath_publication_slot, fastpath_published), CMETA_OK);
-        check_equal(cmeta_thread_join(&thread), 0);
-        cmeta_thread_destroy(&thread);
+        check_equal(sync_thread_join(&thread), 0);
+        sync_thread_destroy(&thread);
         check_equal(state.observed, FASTPATH_PUBLISHED);
     }
 
@@ -223,17 +223,17 @@ suite("CMeta static fastpath") {
 
     it("supports two control writers and two readers without torn targets") {
         replacement_state state = {0};
-        cmeta_thread_t threads[FASTPATH_WORKERS] = {NULL};
+        sync_thread_t threads[FASTPATH_WORKERS] = {NULL};
         int created = 0;
         int joined = 0;
         for (int index = 0; index < FASTPATH_WORKERS; ++index) {
-            cmeta_thread_cb worker = index % 2 == 0 ? replacement_writer : replacement_reader;
-            if (cmeta_thread_create(&threads[index], worker, &state) != 0) break;
+            sync_thread_cb worker = index % 2 == 0 ? replacement_writer : replacement_reader;
+            if (sync_thread_create(&threads[index], worker, &state) != 0) break;
             ++created;
         }
         for (int index = 0; index < created; ++index) {
-            if (cmeta_thread_join(&threads[index]) == 0) ++joined;
-            cmeta_thread_destroy(&threads[index]);
+            if (sync_thread_join(&threads[index]) == 0) ++joined;
+            sync_thread_destroy(&threads[index]);
         }
         check_equal(created, FASTPATH_WORKERS);
         check_equal(joined, FASTPATH_WORKERS);

@@ -39,8 +39,8 @@ typedef struct cflow_readiness_publisher_owner {
 int cflow_publisher_from_readiness_registration(
     cflow_publisher *out,
     cflow_readiness_publisher_owner *owner,
-    cmeta_readiness_registration *registration,
-    cmeta_readiness_events events,
+    readiness_registration *registration,
+    readiness_events events,
     const char *name,
     const cmeta_type_desc *type,
     cflow_read_fn read,

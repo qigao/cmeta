@@ -1,6 +1,6 @@
 #include <cflow/executor.h>
 #include <cflow/event.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <assert.h>
 #include <stdint.h>
@@ -16,7 +16,7 @@
  */
 typedef struct cflow_owner_executor_state {
     cflow_mailbox mailbox;
-    cmeta_mutex_t gate;
+    sync_mutex_t gate;
     const void *owner_thread;
     cflow_task_fn wake;
     void *wake_user;
@@ -38,7 +38,7 @@ typedef struct cflow_owner_executor_state {
 static _Thread_local cflow_owner_executor_state *owner_current;
 
 static bool owner_on_thread(const cflow_owner_executor_state *s) {
-    return s && s->owner_thread == cmeta_thread_current_token();
+    return s && s->owner_thread == sync_thread_current_token();
 }
 
 static void owner_maybe_close(cflow_owner_executor_state *s) {
@@ -58,10 +58,10 @@ static cflow_admission_status owner_task_admit_state(
     if (!s || !task || !task->run) return CFLOW_ADMISSION_INVALID_ARGUMENT;
     event = (cflow_event_view){1u, &cflow_type_executor_task, task};
 
-    cmeta_mutex_lock(&s->gate);
+    sync_mutex_lock(&s->gate);
     if (s->lifecycle != CFLOW_EXECUTOR_OPEN) {
         ++s->rejected_closed;
-        cmeta_mutex_unlock(&s->gate);
+        sync_mutex_unlock(&s->gate);
         return CFLOW_ADMISSION_CLOSED;
     }
 
@@ -79,7 +79,7 @@ static cflow_admission_status owner_task_admit_state(
     } else if (status == CFLOW_MAILBOX_FULL) {
         ++s->rejected_full;
     }
-    cmeta_mutex_unlock(&s->gate);
+    sync_mutex_unlock(&s->gate);
 
     /* A committed post stays accepted even if host wake delivery is delayed.
      * The host must quiesce posting threads (including wake tails) on destroy. */
@@ -112,9 +112,9 @@ static cflow_executor_post_status owner_control_task_post(
     case CFLOW_ADMISSION_CLOSED: return CFLOW_EXECUTOR_POST_CLOSED;
     case CFLOW_ADMISSION_FULL:
         if (owner_current == s) {
-            cmeta_mutex_lock(&s->gate);
+            sync_mutex_lock(&s->gate);
             ++s->rejected_would_block;
-            cmeta_mutex_unlock(&s->gate);
+            sync_mutex_unlock(&s->gate);
             return CFLOW_EXECUTOR_POST_WOULD_BLOCK;
         }
         return CFLOW_EXECUTOR_POST_FULL;
@@ -142,9 +142,9 @@ static bool owner_run_one(void *self) {
     bool cancel;
 
     if (!owner_on_thread(s)) return false;
-    cmeta_mutex_lock(&s->gate);
+    sync_mutex_lock(&s->gate);
     if (s->running || s->queued == 0u) {
-        cmeta_mutex_unlock(&s->gate);
+        sync_mutex_unlock(&s->gate);
         return false;
     }
     received = cflow_mailbox_try_receive(&s->mailbox, &event_id, &type,
@@ -153,14 +153,14 @@ static bool owner_run_one(void *self) {
     assert(received == CFLOW_MAILBOX_OK && event_id == 1u &&
            type == &cflow_type_executor_task);
     if (received != CFLOW_MAILBOX_OK) {
-        cmeta_mutex_unlock(&s->gate);
+        sync_mutex_unlock(&s->gate);
         return false;
     }
     --s->queued;
     s->running = true;
     cancel = s->policy_selected &&
              s->policy == CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING;
-    cmeta_mutex_unlock(&s->gate);
+    sync_mutex_unlock(&s->gate);
 
     previous = owner_current;
     owner_current = s;
@@ -172,12 +172,12 @@ static bool owner_run_one(void *self) {
     if (task.finalize) task.finalize(task.user);
     owner_current = previous;
 
-    cmeta_mutex_lock(&s->gate);
+    sync_mutex_lock(&s->gate);
     s->running = false;
     if (cancel) ++s->cancelled;
     else ++s->completed;
     owner_maybe_close(s);
-    cmeta_mutex_unlock(&s->gate);
+    sync_mutex_unlock(&s->gate);
     return true;
 }
 
@@ -191,7 +191,7 @@ static cflow_executor_wait_status owner_control_wait_idle(void *self) {
     cflow_owner_executor_state *s = (cflow_owner_executor_state *)self;
     cflow_executor_wait_status result;
     if (!s) return CFLOW_EXECUTOR_WAIT_INVALID_ARGUMENT;
-    cmeta_mutex_lock(&s->gate);
+    sync_mutex_lock(&s->gate);
     if (owner_current == s) {
         ++s->rejected_would_block;
         result = CFLOW_EXECUTOR_WAIT_WOULD_BLOCK;
@@ -200,7 +200,7 @@ static cflow_executor_wait_status owner_control_wait_idle(void *self) {
         result = s->queued == 0u && !s->running
             ? CFLOW_EXECUTOR_WAIT_IDLE : CFLOW_EXECUTOR_WAIT_PENDING;
     }
-    cmeta_mutex_unlock(&s->gate);
+    sync_mutex_unlock(&s->gate);
     return result;
 }
 
@@ -212,9 +212,9 @@ static size_t owner_pending(void *self) {
     cflow_owner_executor_state *s = (cflow_owner_executor_state *)self;
     size_t pending;
     if (!s) return 0u;
-    cmeta_mutex_lock(&s->gate);
+    sync_mutex_lock(&s->gate);
     pending = s->queued + (s->running ? 1u : 0u);
-    cmeta_mutex_unlock(&s->gate);
+    sync_mutex_unlock(&s->gate);
     return pending;
 }
 
@@ -226,9 +226,9 @@ static bool owner_control_shutdown(
     if (!s || (policy != CFLOW_EXECUTOR_SHUTDOWN_DRAIN &&
                policy != CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING))
         return false;
-    cmeta_mutex_lock(&s->gate);
+    sync_mutex_lock(&s->gate);
     if (s->policy_selected && s->policy != policy) {
-        cmeta_mutex_unlock(&s->gate);
+        sync_mutex_unlock(&s->gate);
         return false;
     }
     if (!s->policy_selected) {
@@ -241,7 +241,7 @@ static bool owner_control_shutdown(
         }
     }
     owner_maybe_close(s);
-    cmeta_mutex_unlock(&s->gate);
+    sync_mutex_unlock(&s->gate);
     if (wake) wake(wake_user);
     return true;
 }
@@ -254,7 +254,7 @@ static bool owner_control_get_stats(
     void *self, cflow_executor_protocol_stats *out) {
     cflow_owner_executor_state *s = (cflow_owner_executor_state *)self;
     if (!s || !out) return false;
-    cmeta_mutex_lock(&s->gate);
+    sync_mutex_lock(&s->gate);
     owner_maybe_close(s);
     *out = (cflow_executor_protocol_stats){
         .capacity = s->capacity,
@@ -268,14 +268,14 @@ static bool owner_control_get_stats(
         .rejected_would_block = s->rejected_would_block,
         .lifecycle = s->lifecycle
     };
-    cmeta_mutex_unlock(&s->gate);
+    sync_mutex_unlock(&s->gate);
     return true;
 }
 
 static bool owner_get_stats(void *self, cflow_executor_stats *out) {
     cflow_owner_executor_state *s = (cflow_owner_executor_state *)self;
     if (!s || !out) return false;
-    cmeta_mutex_lock(&s->gate);
+    sync_mutex_lock(&s->gate);
     *out = (cflow_executor_stats){
         .capacity = s->capacity,
         .pending = s->queued + (s->running ? 1u : 0u),
@@ -283,7 +283,7 @@ static bool owner_get_stats(void *self, cflow_executor_stats *out) {
         .rejected_full = s->rejected_full,
         .rejected_closed = s->rejected_closed
     };
-    cmeta_mutex_unlock(&s->gate);
+    sync_mutex_unlock(&s->gate);
     return true;
 }
 
@@ -309,7 +309,7 @@ static void owner_destroy(void *self) {
     assert(owner_control_wait_idle(s) == CFLOW_EXECUTOR_WAIT_IDLE);
 
     cflow_mailbox_destroy(&s->mailbox);
-    cmeta_mutex_destroy(&s->gate);
+    sync_mutex_destroy(&s->gate);
     free(s);
 }
 
@@ -361,15 +361,15 @@ bool cflow_executor_owner_init_with_capacity(
         return false;
     s = (cflow_owner_executor_state *)calloc(1u, sizeof(*s));
     if (!s) return false;
-    cmeta_mutex_init(&s->gate);
+    sync_mutex_init(&s->gate);
     if (!s->gate || cflow_mailbox_init(&s->mailbox, &schema, 1u, capacity) !=
                         CFLOW_MAILBOX_OK) {
         cflow_mailbox_destroy(&s->mailbox);
-        cmeta_mutex_destroy(&s->gate);
+        sync_mutex_destroy(&s->gate);
         free(s);
         return false;
     }
-    s->owner_thread = cmeta_thread_current_token();
+    s->owner_thread = sync_thread_current_token();
     s->wake = wake;
     s->wake_user = wake_user;
     s->capacity = capacity;

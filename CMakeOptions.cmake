@@ -1,0 +1,6 @@
+option(BUILD_TESTS "Enable TESTS" OFF)
+option(BUILD_BENCHMARK "Build benchmarks" OFF)
+option(BUILD_EXAMPLES "Build examples" OFF)
+option(SALTSCORE_ENABLE_ASAN "Enable AddressSanitizer" OFF)
+option(SALTSCORE_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+option(SALTSCORE_ENABLE_TSAN "Enable ThreadSanitizer" OFF)

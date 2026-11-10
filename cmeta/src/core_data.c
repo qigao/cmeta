@@ -13,21 +13,21 @@ static int cmeta_uuid_cmeta_hex_value(unsigned char value) {
 }
 
 static bool cmeta_uuid_cmeta_is_zero(const void *object) {
-  static const cmeta_uuid_t zero = {{0}};
+  static const uuid_t zero = {0};
   return object != NULL &&
-         memcmp(((const cmeta_uuid_t *)object)->bytes, zero.bytes, SALTS_UUID_SIZE) == 0;
+         memcmp(object, zero, SALTS_UUID_SIZE) == 0;
 }
 
 static cmeta_status cmeta_uuid_cmeta_init_zero(void *object) {
   if (object == NULL) return CMETA_INVALID_ARGUMENT;
-  memset(object, 0, sizeof(cmeta_uuid_t));
+  memset(object, 0, sizeof(uuid_t));
   return CMETA_OK;
 }
 
 static cmeta_status cmeta_uuid_cmeta_assign(void *object, const unsigned char *data, size_t size,
                                             size_t max_bytes) {
   static const size_t group_ends[] = {4u, 6u, 8u, 10u};
-  cmeta_uuid_t parsed = {{0}};
+  uuid_t parsed = {0};
   size_t text_index = 0u;
   size_t group_index = 0u;
   size_t byte_index;
@@ -51,7 +51,7 @@ static cmeta_status cmeta_uuid_cmeta_assign(void *object, const unsigned char *d
     high = cmeta_uuid_cmeta_hex_value(data[text_index++]);
     low = cmeta_uuid_cmeta_hex_value(data[text_index++]);
     if (high < 0 || low < 0) return CMETA_INVALID_ARGUMENT;
-    parsed.bytes[byte_index] = (uint8_t)((high << 4) | low);
+    parsed[byte_index] = (uint8_t)((high << 4) | low);
   }
 
   memcpy(object, &parsed, sizeof(parsed));
@@ -59,25 +59,25 @@ static cmeta_status cmeta_uuid_cmeta_assign(void *object, const unsigned char *d
 }
 
 static void cmeta_uuid_cmeta_restore_zero(void *object) {
-  if (object != NULL) memset(object, 0, sizeof(cmeta_uuid_t));
+  if (object != NULL) memset(object, 0, sizeof(uuid_t));
 }
 
 static void cmeta_uuid_cmeta_move(void *destination, void *source) {
   if (destination == NULL || source == NULL) return;
-  memcpy(destination, source, sizeof(cmeta_uuid_t));
-  memset(source, 0, sizeof(cmeta_uuid_t));
+  memcpy(destination, source, sizeof(uuid_t));
+  memset(source, 0, sizeof(uuid_t));
 }
 
 static cmeta_status cmeta_uuid_cmeta_copy(void *destination, const void *source) {
   if (destination == NULL || source == NULL) return CMETA_INVALID_ARGUMENT;
-  memcpy(destination, source, sizeof(cmeta_uuid_t));
+  memcpy(destination, source, sizeof(uuid_t));
   return CMETA_OK;
 }
 
 static const cmeta_type_identity cmeta_uuid_cmeta_identity = CMETA_TYPE_ID_ATOM_INIT("salts.uuid");
 
 const cmeta_type_desc cmeta_uuid_cmeta_type = {
-    "cmeta_uuid_t", sizeof(cmeta_uuid_t),      CMETA_ALIGNOF(cmeta_uuid_t), CMETA_T_OBJECT, NULL,
+    "uuid_t", sizeof(uuid_t),      CMETA_ALIGNOF(uuid_t), CMETA_T_OBJECT, NULL,
     NULL,           &cmeta_uuid_cmeta_identity};
 
 const cmeta_data_buffer_shape cmeta_uuid_cmeta_shape = {CMETA_DATA_BUFFER_OWNED};
@@ -89,13 +89,13 @@ const cmeta_data_buffer_ops cmeta_uuid_cmeta_buffer_ops = {
 
 const cmeta_data_fixed_ops cmeta_uuid_cmeta_fixed_ops = {
     sizeof(cmeta_data_fixed_ops), CMETA_DATA_FIXED_OPS_ABI_VERSION, &cmeta_uuid_cmeta_type,
-    sizeof(cmeta_uuid_t), cmeta_uuid_cmeta_is_zero, cmeta_uuid_cmeta_copy,
+    sizeof(uuid_t), cmeta_uuid_cmeta_is_zero, cmeta_uuid_cmeta_copy,
     cmeta_uuid_cmeta_restore_zero};
 
 const cmeta_data_desc cmeta_uuid_cmeta_data = {sizeof(cmeta_data_desc),
                                                          CMETA_DATA_DESC_ABI_VERSION,
                                                          "salts.uuid.data",
-                                                         "cmeta_uuid_t",
+                                                         "uuid_t",
                                                          CMETA_DATA_STRING,
                                                          &cmeta_uuid_cmeta_type,
                                                          &cmeta_uuid_cmeta_shape,
@@ -113,13 +113,13 @@ bool cmeta_uuid_cmeta_data_valid(const cmeta_data_desc *candidate) {
 
   return cmeta_data_desc_equal(candidate, &cmeta_uuid_cmeta_data) &&
          candidate->storage_type->kind == cmeta_uuid_cmeta_type.kind &&
-         candidate->storage_type->size == sizeof(cmeta_uuid_t) &&
-         candidate->storage_type->align == CMETA_ALIGNOF(cmeta_uuid_t) &&
+         candidate->storage_type->size == sizeof(uuid_t) &&
+         candidate->storage_type->align == CMETA_ALIGNOF(uuid_t) &&
          ((const cmeta_data_buffer_shape *)candidate->shape)->ownership ==
              CMETA_DATA_BUFFER_OWNED &&
          ops->abi_version == CMETA_DATA_BUFFER_OPS_ABI_VERSION &&
          ops->ownership == CMETA_DATA_BUFFER_OWNED &&
-         fixed_ops->extent == sizeof(cmeta_uuid_t);
+         fixed_ops->extent == sizeof(uuid_t);
 }
 
 static bool cmeta_tstr_cmeta_is_zero(const void *object) {

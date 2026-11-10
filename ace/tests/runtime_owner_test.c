@@ -2,10 +2,10 @@
 #include <cmeta/service_host.h>
 #include <cmeta/plugin.h>
 #include <cmeta/service_host_abi.h>
-#include <runtime_abi.h>
-#include <utf8.h>
-#include <cmeta_buffer.h>
-#include <thread.h>
+#include <core/api.h>
+#include <core/vstr.h>
+#include <memory/buffer.h>
+#include <threads/threads.h>
 #include <stdio.h>
 #include <string.h>
 #ifndef SALTS_TEST_PROVIDER
@@ -24,11 +24,11 @@ int main(void) {
   cmeta_plugin_lease lease = {0};
   const cmeta_plugin_manifest *manifest = NULL;
   bool quiet = false;
-  salts_core_runtime_abi_0_1_required();
-  CHECK(salts_core_runtime_abi_version() == SALTS_CORE_RUNTIME_ABI_VERSION);
-  CHECK(salts_core_runtime_mem_pool_size() == sizeof(mem_pool_t));
-  CHECK(salts_core_runtime_mem_slice_size() == sizeof(mem_slice_t));
-  CHECK(salts_core_utf8_valid("\xe6\x97\xa5",3u));
+  core_runtime_abi_0_1_required();
+  CHECK(core_runtime_abi_version() == SALTS_CORE_RUNTIME_ABI_VERSION);
+  CHECK(core_runtime_mem_pool_size() == sizeof(mem_pool_t));
+  CHECK(core_runtime_mem_slice_size() == sizeof(mem_slice_t));
+  CHECK(vstr_utf8_valid(vstr_from_buf("\xe6\x97\xa5", 3u)));
   CHECK(salts_configurator_abi_version() == SALTS_SERVICE_HOST_ABI_VERSION);
   CHECK(salts_service_host_abi_version() == SALTS_SERVICE_HOST_ABI_VERSION);
   CHECK(cmeta_plugin_registry_init(&registry,&cfg) == CMETA_PLUGIN_OK);
@@ -54,6 +54,6 @@ int main(void) {
   CHECK(cmeta_plugin_registry_destroy(&registry) == CMETA_PLUGIN_OK);
   CHECK(salts_service_host_runtime_init(&runtime) == SALTS_SERVICE_HOST_OK);
   CHECK(salts_service_host_runtime_destroy(&runtime) == SALTS_SERVICE_HOST_OK);
-  CHECK(mem_global() != NULL && cmeta_thread_current_token() != NULL);
+  CHECK(mem_global() != NULL && sync_thread_current_token() != NULL);
   return 0;
 }

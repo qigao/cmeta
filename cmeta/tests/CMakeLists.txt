@@ -40,11 +40,11 @@ cmake_add_test(cmeta_fastpath_pattern_cpp_test
 # public Interface and real Monitor Object with bounded wait/close semantics.
 cmake_add_test(cmeta_ace_sync_test
   SOURCES cmeta_ace_sync_test.c
-  LIBS CMeta::CMeta Salts::Platform Salts::TinyTest
+  LIBS CMeta::CMeta Salts::Core Salts::TinyTest
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_ace_sync_cpp_test
   SOURCES cmeta_ace_sync_cpp_test.cpp
-  LIBS CMeta::CMeta Salts::Platform Salts::TinyTest
+  LIBS CMeta::CMeta Salts::Core Salts::TinyTest
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_ace_sync_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -99,11 +99,11 @@ endif()
 
 cmake_add_test(cmeta_trace_test
   SOURCES cmeta_trace_test.c
-  LIBS CMeta::CMeta Salts::TinyTest Salts::Platform
+  LIBS CMeta::CMeta Salts::TinyTest Salts::Core
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_trace_cpp_test
   SOURCES cmeta_trace_cpp_test.cpp cmeta_trace_peer.c
-  LIBS CMeta::CMeta Salts::TinyTest Salts::Platform
+  LIBS CMeta::CMeta Salts::TinyTest Salts::Core
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_trace_test cmeta_trace_cpp_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -117,15 +117,15 @@ endif()
 
 cmake_add_test(cmeta_fastpath_test
   SOURCES cmeta_fastpath_test.c cmeta_fastpath_peer.c
-  LIBS CMeta::CMeta Salts::TinyTest Salts::Platform
+  LIBS CMeta::CMeta Salts::TinyTest Salts::Core
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_cpp_test
   SOURCES cmeta_fastpath_cpp_test.cpp cmeta_fastpath_peer.c
-  LIBS CMeta::CMeta Salts::TinyTest Salts::Platform
+  LIBS CMeta::CMeta Salts::TinyTest Salts::Core
   FOLDER "cmeta/tests")
 cmake_add_test(cmeta_fastpath_coroutine_test
   SOURCES cmeta_fastpath_coroutine_test.c cmeta_fastpath_peer.c
-  LIBS CMeta::CMeta Salts::TinyTest Salts::Coroutine Salts::Platform
+  LIBS CMeta::CMeta Salts::TinyTest Salts::Coroutine Salts::Core
   FOLDER "cmeta/tests")
 set_target_properties(cmeta_fastpath_test cmeta_fastpath_cpp_test cmeta_fastpath_coroutine_test
   PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
@@ -192,3 +192,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 add_test(NAME cmeta_enum_tu_contract_test
   COMMAND cmeta_enum_tu_contract_test)
+
+cmake_add_test(salts_native_cmeta_data_temp
+  SOURCES cmeta_data_temp_test.c LIBS CMeta::CMeta Salts::CNet Salts::Core Salts::TinyTest
+  FOLDER "cmeta/tests")

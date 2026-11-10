@@ -1,7 +1,7 @@
 #include <cflow/machine_instance.h>
 
-#include <clock.h>
-#include <thread.h>
+#include <core/clock.h>
+#include <threads/threads.h>
 
 #include "../src/machine_instance_internal.h"
 #include "tinytest.h"
@@ -23,8 +23,8 @@ typedef struct runtime_control_probe {
 } runtime_control_probe;
 
 typedef struct runtime_commit_barrier {
-    cmeta_mutex_t lock;
-    cmeta_cond_t changed;
+    sync_mutex_t lock;
+    sync_cond_t changed;
     bool entered;
     bool released;
     bool committed;
@@ -55,11 +55,11 @@ static void runtime_producer(void *user) {
 static bool runtime_commit_barrier_init(runtime_commit_barrier *barrier) {
     if (barrier == NULL) return false;
     memset(barrier, 0, sizeof(*barrier));
-    cmeta_mutex_init(&barrier->lock);
-    cmeta_cond_init(&barrier->changed);
+    sync_mutex_init(&barrier->lock);
+    sync_cond_init(&barrier->changed);
     if (barrier->lock == NULL || barrier->changed == NULL) {
-        if (barrier->changed != NULL) cmeta_cond_destroy(&barrier->changed);
-        if (barrier->lock != NULL) cmeta_mutex_destroy(&barrier->lock);
+        if (barrier->changed != NULL) sync_cond_destroy(&barrier->changed);
+        if (barrier->lock != NULL) sync_mutex_destroy(&barrier->lock);
         *barrier = (runtime_commit_barrier){0};
         return false;
     }
@@ -68,52 +68,52 @@ static bool runtime_commit_barrier_init(runtime_commit_barrier *barrier) {
 
 static void runtime_commit_barrier_destroy(runtime_commit_barrier *barrier) {
     if (barrier == NULL) return;
-    if (barrier->changed != NULL) cmeta_cond_destroy(&barrier->changed);
-    if (barrier->lock != NULL) cmeta_mutex_destroy(&barrier->lock);
+    if (barrier->changed != NULL) sync_cond_destroy(&barrier->changed);
+    if (barrier->lock != NULL) sync_mutex_destroy(&barrier->lock);
     *barrier = (runtime_commit_barrier){0};
 }
 
 static void runtime_commit_boundary(void *user) {
     runtime_commit_barrier *barrier = (runtime_commit_barrier *)user;
     if (barrier == NULL) return;
-    cmeta_mutex_lock(&barrier->lock);
+    sync_mutex_lock(&barrier->lock);
     barrier->entered = true;
-    cmeta_cond_broadcast(&barrier->changed);
+    sync_cond_broadcast(&barrier->changed);
     while (!barrier->released)
-        cmeta_cond_wait(&barrier->changed, &barrier->lock);
-    cmeta_mutex_unlock(&barrier->lock);
+        sync_cond_wait(&barrier->changed, &barrier->lock);
+    sync_mutex_unlock(&barrier->lock);
 }
 
 static void runtime_commit_barrier_wait(runtime_commit_barrier *barrier) {
-    cmeta_mutex_lock(&barrier->lock);
+    sync_mutex_lock(&barrier->lock);
     while (!barrier->entered)
-        cmeta_cond_wait(&barrier->changed, &barrier->lock);
-    cmeta_mutex_unlock(&barrier->lock);
+        sync_cond_wait(&barrier->changed, &barrier->lock);
+    sync_mutex_unlock(&barrier->lock);
 }
 
 static void runtime_commit_barrier_release(runtime_commit_barrier *barrier) {
-    cmeta_mutex_lock(&barrier->lock);
+    sync_mutex_lock(&barrier->lock);
     barrier->released = true;
-    cmeta_cond_broadcast(&barrier->changed);
-    cmeta_mutex_unlock(&barrier->lock);
+    sync_cond_broadcast(&barrier->changed);
+    sync_mutex_unlock(&barrier->lock);
 }
 
 static void runtime_transition_commit_probe(
     void *user, size_t transition_index, bool begin) {
     runtime_commit_barrier *barrier = (runtime_commit_barrier *)user;
     if (barrier == NULL || begin || transition_index == SIZE_MAX) return;
-    cmeta_mutex_lock(&barrier->lock);
+    sync_mutex_lock(&barrier->lock);
     barrier->committed = true;
-    cmeta_cond_broadcast(&barrier->changed);
-    cmeta_mutex_unlock(&barrier->lock);
+    sync_cond_broadcast(&barrier->changed);
+    sync_mutex_unlock(&barrier->lock);
 }
 
 static void runtime_commit_barrier_wait_committed(
     runtime_commit_barrier *barrier) {
-    cmeta_mutex_lock(&barrier->lock);
+    sync_mutex_lock(&barrier->lock);
     while (!barrier->committed)
-        cmeta_cond_wait(&barrier->changed, &barrier->lock);
-    cmeta_mutex_unlock(&barrier->lock);
+        sync_cond_wait(&barrier->changed, &barrier->lock);
+    sync_mutex_unlock(&barrier->lock);
 }
 
 static bool guard_enabled(void *user,
@@ -1236,7 +1236,7 @@ suite("CFlow Machine Resumable runtime") {
         runtime_producer_context producer = {
             &instance, EVENTS_PER_PRODUCER
         };
-        cmeta_thread_t threads[PRODUCER_COUNT];
+        sync_thread_t threads[PRODUCER_COUNT];
         const int initial = 7;
         const cflow_machine_instance_config config = {
             &machine, &initial, &cmeta_type_long,
@@ -1257,22 +1257,22 @@ suite("CFlow Machine Resumable runtime") {
         check_true(cflow_machine_instance_as_resumable(
             &instance, &resumable));
         for (index = 0u; index < PRODUCER_COUNT; ++index)
-            check_equal(cmeta_thread_create(
+            check_equal(sync_thread_create(
                 &threads[index], runtime_producer, &producer), 0);
         for (index = 0u; index < PRODUCER_COUNT; ++index)
-            check_equal(cmeta_thread_join(&threads[index]), 0);
+            check_equal(sync_thread_join(&threads[index]), 0);
         check_equal(atomic_load(&producer.failures), 0);
 
         step = resumable.ops->resume(
             resumable.state, &resume_context, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
-        const uint64_t stats_started = cmeta_monotonic_ms();
+        const uint64_t stats_started = monotonic_ms();
         do {
             check_true(cflow_machine_instance_get_stats(&instance, &stats));
             check_equal(stats.accepted, stats.completed + stats.failed +
                 stats.cancelled_events + stats.pending + stats.in_flight);
         } while (stats.completed != TOTAL_EVENTS &&
-                 cmeta_monotonic_ms() - stats_started < MACHINE_STATS_TIMEOUT_MS);
+                 monotonic_ms() - stats_started < MACHINE_STATS_TIMEOUT_MS);
         check_equal(stats.completed, (uint64_t)TOTAL_EVENTS);
         check_true(cflow_executor_wait_idle(&executor));
         cflow_machine_instance_close(&instance);

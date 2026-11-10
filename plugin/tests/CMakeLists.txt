@@ -31,7 +31,7 @@ set_target_properties(cmeta_plugin_registry_duplicate_fixture PROPERTIES
 # retirement. Platform/Core and the native loader remain their original owners.
 cmake_add_test(cmeta_plugin_registry_lifetime_test
   SOURCES registry_lifetime_test.c registry_lifetime_adapter.c ../src/plugin.c
-  LIBS CMeta::PluginABI Salts::Core Salts::Platform Salts::TinyTest ${CMAKE_DL_LIBS}
+  LIBS CMeta::PluginABI Salts::Core Salts::TinyTest ${CMAKE_DL_LIBS}
   DEFS
     "PLUGIN_REGISTRY_LIFETIME_PATH=\"$<TARGET_FILE:cmeta_plugin_registry_lifetime_fixture>\""
     "PLUGIN_REGISTRY_OTHER_PATH=\"$<TARGET_FILE:cmeta_plugin_registry_other_fixture>\""
@@ -81,3 +81,6 @@ if(WIN32)
   set_tests_properties(cmeta_plugin_windows_search_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 endif()
+
+cmake_add_test(salts_native_plugin_utf8_path SOURCES utf8_plugin_path_test.c
+  LIBS CMeta::Plugin Salts::Core FOLDER "plugin/tests")

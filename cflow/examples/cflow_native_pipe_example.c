@@ -61,7 +61,7 @@ static int cflow_pipe_example_pair(cflow_example_pipe pipes[2]) {
     pipes[1] = INVALID_HANDLE_VALUE;
     if (_snwprintf_s(name, sizeof(name) / sizeof(name[0]), _TRUNCATE,
                      L"\\\\.\\pipe\\cflow-native-example-%lu-%llu", GetCurrentProcessId(),
-                     (unsigned long long)cmeta_hrtime()) < 0)
+                     (unsigned long long)hrtime()) < 0)
         return SALTS_ERANGE;
     pipes[0] = CreateNamedPipeW(name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u,

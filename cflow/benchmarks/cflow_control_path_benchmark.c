@@ -5,8 +5,8 @@
 #include <cflow/cflow.h>
 #include <cflow/io_native_adapter.h>
 
-#include <clock.h>
-#include <error_codes.h>
+#include <core/clock.h>
+#include <core/error_codes.h>
 #include <native_io.h>
 
 #include <inttypes.h>
@@ -196,7 +196,7 @@ static int control_make_pipe_pair(control_pipe pipes[2]) {
   if (_snwprintf_s(name, sizeof(name) / sizeof(name[0]), _TRUNCATE,
                    L"\\\\.\\pipe\\cflow-control-baseline-%lu-%llu",
                    GetCurrentProcessId(),
-                   (unsigned long long)cmeta_hrtime()) < 0)
+                   (unsigned long long)hrtime()) < 0)
     return SALTS_ERANGE;
   pipes[0] = CreateNamedPipeW(
       name, PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
@@ -316,7 +316,7 @@ static int control_direct_read(native_io_backend *backend,
   int status;
 
   *byte = 0u;
-  started = cmeta_hrtime();
+  started = hrtime();
   status = native_io_backend_submit(backend, &operation, &request);
   if (status != SALTS_OK) return status;
   status = native_io_backend_observe(
@@ -325,7 +325,7 @@ static int control_direct_read(native_io_backend *backend,
   if (count != 1u || completion.kind != NATIVE_IO_COMPLETION_OK ||
       completion.bytes != 1u || *byte != 0x5au)
     return SALTS_EPROTO;
-  *latency_out = cmeta_hrtime() - started;
+  *latency_out = hrtime() - started;
   return SALTS_OK;
 }
 
@@ -383,7 +383,7 @@ static int control_direct_replicate(native_io_backend_kind kind,
     uint64_t cpu_started;
     status = control_prefill(pipes[1], chunk);
     if (status != SALTS_OK) goto cleanup;
-    wall_started = cmeta_hrtime();
+    wall_started = hrtime();
     cpu_started = control_process_cpu_ns();
     for (size_t index = 0u; index < chunk; ++index) {
       status = control_direct_read(
@@ -391,7 +391,7 @@ static int control_direct_replicate(native_io_backend_kind kind,
       if (status != SALTS_OK) goto cleanup;
       ++measured;
     }
-    wall_ns += cmeta_hrtime() - wall_started;
+    wall_ns += hrtime() - wall_started;
     cpu_ns += control_process_cpu_ns() - cpu_started;
   }
 
@@ -453,7 +453,7 @@ static void control_actor_complete(
           ? SALTS_OK
           : SALTS_EPROTO;
   if (operation->latency_out != NULL)
-    *operation->latency_out = cmeta_hrtime() - operation->started_ns;
+    *operation->latency_out = hrtime() - operation->started_ns;
   operation->completed = true;
 }
 
@@ -498,7 +498,7 @@ static int control_actor_submit_one(
   operation.released = released;
   operation.status = SALTS_EIO;
   token = (cflow_io_operation){&operation, control_actor_release};
-  operation.started_ns = cmeta_hrtime();
+  operation.started_ns = hrtime();
   submitted = cflow_io_actor_try_submit(
       actor, CONTROL_ACTOR_LEASE_ID, &token);
   if (submitted.status != CFLOW_IO_SUBMIT_ACCEPTED)
@@ -577,7 +577,7 @@ static int control_actor_replicate(
 
     status = control_prefill(pipes[1], chunk);
     if (status != SALTS_OK) goto cleanup;
-    wall_started = cmeta_hrtime();
+    wall_started = hrtime();
     cpu_started = control_process_cpu_ns();
     for (size_t index = 0u; index < chunk; ++index) {
       status = control_actor_submit_one(
@@ -586,7 +586,7 @@ static int control_actor_replicate(
       if (status != SALTS_OK) goto cleanup;
       ++measured;
     }
-    wall_ns += cmeta_hrtime() - wall_started;
+    wall_ns += hrtime() - wall_started;
     cpu_ns += control_process_cpu_ns() - cpu_started;
   }
 
@@ -666,7 +666,7 @@ static cflow_io_publisher_prepare_status control_publisher_prepare(
   if (fixture->prepared >= fixture->operation_count)
     return CFLOW_IO_PUBLISHER_PREPARE_DONE;
   entry = &fixture->operations[fixture->prepared++];
-  entry->started_ns = cmeta_hrtime();
+  entry->started_ns = hrtime();
   operation->user = entry;
   operation->release = control_publisher_release;
   return CFLOW_IO_PUBLISHER_PREPARE_OPERATION;
@@ -710,7 +710,7 @@ static bool control_publisher_value(
     return false;
   if (fixture->operations[index].latency_out != NULL)
     *fixture->operations[index].latency_out =
-        cmeta_hrtime() - fixture->operations[index].started_ns;
+        hrtime() - fixture->operations[index].started_ns;
   ++fixture->values;
   return true;
 }
@@ -878,7 +878,7 @@ static int control_publisher_replicate(
 
     status = control_prefill(pipes[1], chunk);
     if (status != SALTS_OK) goto cleanup;
-    wall_started = cmeta_hrtime();
+    wall_started = hrtime();
     cpu_started = control_process_cpu_ns();
     if (!cflow_subscription_request(&subscription, chunk)) {
       status = SALTS_EPROTO;
@@ -887,7 +887,7 @@ static int control_publisher_replicate(
     status = control_publisher_drive_until(
         &adapter, &owner, &scheduler, &fixture, target);
     if (status != SALTS_OK) goto cleanup;
-    wall_ns += cmeta_hrtime() - wall_started;
+    wall_ns += hrtime() - wall_started;
     cpu_ns += control_process_cpu_ns() - cpu_started;
   }
 

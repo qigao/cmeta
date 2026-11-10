@@ -1,0 +1,18 @@
+{
+  "version": 6,
+  "buildPresets": [
+    {
+      "name": "base-build",
+      "hidden": true,
+      "jobs": 2
+    },
+    {
+      "name": "base-install",
+      "hidden": true,
+      "inherits": "base-build",
+      "targets": [
+        "install"
+      ]
+    }
+  ]
+}

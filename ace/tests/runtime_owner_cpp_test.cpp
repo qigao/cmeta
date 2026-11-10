@@ -1,8 +1,8 @@
 #include <cmeta/service_host.h>
 #include <cmeta/plugin.h>
 #include <cmeta/service_host_abi.h>
-#include <runtime_abi.h>
-#include <cmeta_buffer.h>
+#include <core/api.h>
+#include <memory/buffer.h>
 #include <type_traits>
 #include <cmeta/cnet_policy.h>
 static_assert(std::is_standard_layout<salts_service_host_scope>::value,
@@ -26,9 +26,9 @@ int main() {
   if (!cmeta_data_desc_valid(cmeta_reflected_data(cnet_send_usage)) ||
       cmeta_data_struct_constructible(cmeta_reflected_data(cnet_send_usage))) return 6;
   salts_service_host_runtime runtime = SALTS_SERVICE_HOST_RUNTIME_INIT;
-  salts_core_runtime_abi_0_1_required();
-  if (salts_core_runtime_abi_version() != SALTS_CORE_RUNTIME_ABI_VERSION ||
-      salts_core_runtime_mem_slice_size() != sizeof(mem_slice_t) ||
+  core_runtime_abi_0_1_required();
+  if (core_runtime_abi_version() != SALTS_CORE_RUNTIME_ABI_VERSION ||
+      core_runtime_mem_slice_size() != sizeof(mem_slice_t) ||
       salts_service_host_abi_version() != SALTS_SERVICE_HOST_ABI_VERSION ||
       salts_service_host_runtime_init(&runtime) != SALTS_SERVICE_HOST_OK)
     return 1;

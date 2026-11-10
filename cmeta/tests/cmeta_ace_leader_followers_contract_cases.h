@@ -4,7 +4,7 @@
  * reflects an exact, borrowed CPU-event callback. No runtime or Plugin lease
  * is synthesized here; the external owner must outlive joined callbacks. */
 #include <cmeta/function.h>
-#include "../../platform/tests/platform_ace_leader_followers_types.h"
+#include "platform_ace_leader_followers_types.h"
 
 static const cmeta_type_desc lf_role_meta_type = {
     "lf_role", sizeof(enum lf_role), CMETA_ALIGNOF(enum lf_role),

@@ -1,0 +1,19 @@
+{
+  "version": 6,
+  "include": [
+    "Platforms.json",
+    "Options.json",
+    "Compilers.json"
+  ],
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ]
+}

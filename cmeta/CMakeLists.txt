@@ -9,6 +9,7 @@ add_library(${TARGET_NAME}
   src/data.c
   src/declared_type.c
   src/enum.c
+  src/fast_key.c
   src/fingerprint.c
   src/manifest_view.c
   src/entry.c
@@ -68,6 +69,6 @@ endif()
 if(BUILD_TESTS)
   add_subdirectory(tests)
 endif()
-if(BUILD_BENCHMARKS OR CMETA_BUILD_BENCHMARKS)
+if(BUILD_BENCHMARK)
   add_subdirectory(benchmarks)
 endif()

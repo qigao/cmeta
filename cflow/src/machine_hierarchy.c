@@ -3,7 +3,7 @@
 #include "machine_instance_internal.h"
 #include "timer_event_internal.h"
 
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -41,7 +41,7 @@ typedef struct cflow_machine_hierarchy_instance_impl {
     cflow_machine_instance machine;
     cflow_timer_event_queue timers;
     cflow_executor *executor;
-    cmeta_mutex_t gate;
+    sync_mutex_t gate;
     bool closed;
     bool cancelled;
 } cflow_machine_hierarchy_instance_impl;
@@ -562,7 +562,7 @@ static void hierarchy_transition_committed(
     cflow_machine_hierarchy_route route = {0};
     if (instance == NULL) return;
     if (begin) {
-        cmeta_mutex_lock(&instance->gate);
+        sync_mutex_lock(&instance->gate);
         return;
     }
     if (normalized_transition_index != SIZE_MAX &&
@@ -588,7 +588,7 @@ static void hierarchy_transition_committed(
     }
     if (instance->closed)
         (void)cflow_timer_event_queue_close(&instance->timers);
-    cmeta_mutex_unlock(&instance->gate);
+    sync_mutex_unlock(&instance->gate);
 }
 
 static void hierarchy_instance_impl_destroy(
@@ -598,7 +598,7 @@ static void hierarchy_instance_impl_destroy(
         (void)cflow_executor_wait_idle(impl->executor);
     cflow_timer_event_queue_destroy(&impl->timers);
     cflow_machine_instance_destroy(&impl->machine);
-    if (impl->gate != NULL) cmeta_mutex_destroy(&impl->gate);
+    if (impl->gate != NULL) sync_mutex_destroy(&impl->gate);
     free(impl);
 }
 
@@ -628,7 +628,7 @@ cflow_machine_hierarchy_instance_init(
     }
     impl->hierarchy = config->hierarchy;
     impl->executor = config->executor;
-    cmeta_mutex_init(&impl->gate);
+    sync_mutex_init(&impl->gate);
     if (impl->gate == NULL) {
         hierarchy_instance_impl_destroy(impl);
         result.status = CFLOW_MACHINE_HIERARCHY_INSTANCE_ALLOCATION_FAILED;
@@ -727,14 +727,14 @@ cflow_machine_hierarchy_instance_try_schedule_at(
         CFLOW_TIMER_EVENT_INVALID_ARGUMENT, 0u
     };
     if (impl == NULL || scope == 0u) return result;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (impl->closed) {
         result.status = CFLOW_TIMER_EVENT_CLOSED;
     } else if (hierarchy_instance_scope_active_locked(impl, scope)) {
         result = cflow_timer_event_queue_try_schedule_scoped_at(
             &impl->timers, deadline, event, scope);
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return result;
 }
 
@@ -750,14 +750,14 @@ cflow_machine_hierarchy_instance_try_schedule_after(
         CFLOW_TIMER_EVENT_INVALID_ARGUMENT, 0u
     };
     if (impl == NULL || scope == 0u) return result;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (impl->closed) {
         result.status = CFLOW_TIMER_EVENT_CLOSED;
     } else if (hierarchy_instance_scope_active_locked(impl, scope)) {
         result = cflow_timer_event_queue_try_schedule_scoped_after(
             &impl->timers, delay, event, scope);
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return result;
 }
 
@@ -768,11 +768,11 @@ cflow_timer_event_status cflow_machine_hierarchy_instance_cancel_timer(
         ? (cflow_machine_hierarchy_instance_impl *)instance->impl : NULL;
     cflow_timer_event_status result;
     if (impl == NULL) return CFLOW_TIMER_EVENT_INVALID_ARGUMENT;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     result = impl->closed
         ? CFLOW_TIMER_EVENT_CLOSED
         : cflow_timer_event_queue_cancel(&impl->timers, timer_id);
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return result;
 }
 
@@ -786,13 +786,13 @@ cflow_machine_hierarchy_instance_run_one_ready(
         CFLOW_MAILBOX_INVALID_ARGUMENT
     };
     if (impl == NULL) return result;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (impl->closed) {
         result.status = CFLOW_TIMER_EVENT_FIRE_CLOSED;
     } else {
         result = cflow_timer_event_queue_run_one_ready(&impl->timers);
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return result;
 }
 
@@ -802,10 +802,10 @@ void cflow_machine_hierarchy_instance_close(
         ? (cflow_machine_hierarchy_instance_impl *)instance->impl : NULL;
     bool first_close;
     if (impl == NULL) return;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     first_close = !impl->closed;
     impl->closed = true;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     if (!first_close) return;
     (void)cflow_timer_event_queue_close(&impl->timers);
     cflow_machine_instance_close(&impl->machine);
@@ -817,11 +817,11 @@ void cflow_machine_hierarchy_instance_cancel(
         ? (cflow_machine_hierarchy_instance_impl *)instance->impl : NULL;
     bool first_cancel;
     if (impl == NULL) return;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     first_cancel = !impl->cancelled;
     impl->closed = true;
     impl->cancelled = true;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     if (!first_cancel) return;
     (void)cflow_timer_event_queue_close(&impl->timers);
     cflow_machine_instance_cancel(&impl->machine);
@@ -853,10 +853,10 @@ bool cflow_machine_hierarchy_instance_get_stats(
         ? (cflow_machine_hierarchy_instance_impl *)instance->impl : NULL;
     bool valid;
     if (impl == NULL || out == NULL) return false;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     valid = cflow_machine_instance_get_stats(&impl->machine, &out->machine) &&
             cflow_timer_event_queue_get_stats(&impl->timers, &out->timers);
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return valid;
 }
 

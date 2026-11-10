@@ -1,7 +1,7 @@
 #include <cflow/io_actor.h>
 
-#include <error_codes.h>
-#include <thread.h>
+#include <core/error_codes.h>
+#include <threads/threads.h>
 
 #include "tinytest.h"
 
@@ -70,7 +70,7 @@ static void io_wake_block(void *user) {
             &probe->started, &expected, true))
         return;
     while (!atomic_load(&probe->release))
-        cmeta_thread_yield();
+        sync_thread_yield();
 }
 
 static void io_run_executor(void *user) {
@@ -139,7 +139,7 @@ static void io_submitter(void *user) {
     io_submitter_context *context = (io_submitter_context *)user;
     size_t offset;
     while (!atomic_load(context->go))
-        cmeta_thread_yield();
+        sync_thread_yield();
     for (offset = 0u; offset < context->count; ++offset) {
         const size_t index = context->first + offset;
         cflow_io_operation operation = {
@@ -772,7 +772,7 @@ spec("CFlow IO Actor protocol") {
         cflow_io_actor_config config = {0};
         io_blocking_wake_probe wake;
         io_executor_runner runner;
-        cmeta_thread_t thread = {0};
+        sync_thread_t thread = {0};
         int released = 0;
         int attempts = 0;
         cflow_io_operation operation = {&released, io_operation_release};
@@ -807,9 +807,9 @@ spec("CFlow IO Actor protocol") {
                     CFLOW_IO_COMPLETE_ACCEPTED);
         (void)cflow_io_actor_run_ready(&fixture.actor, 16u);
         atomic_store(&wake.block, true);
-        check_equal(cmeta_thread_create(&thread, io_run_executor, &runner), 0);
+        check_equal(sync_thread_create(&thread, io_run_executor, &runner), 0);
         while (!atomic_load(&wake.started) && attempts++ < 1000)
-            cmeta_sleep_ms(1);
+            sleep_ms(1);
         check_true(atomic_load(&wake.started));
 
         check_equal(cflow_io_actor_acknowledge(
@@ -820,7 +820,7 @@ spec("CFlow IO Actor protocol") {
         check_equal(cflow_io_actor_destroy(&fixture.actor), SALTS_EBUSY);
 
         atomic_store(&wake.release, true);
-        check_equal(cmeta_thread_join(&thread), 0);
+        check_equal(sync_thread_join(&thread), 0);
         check_equal(runner.ran, (size_t)1u);
         check_true(cflow_io_actor_is_quiescent(&fixture.actor));
         check_equal(cflow_io_actor_destroy(&fixture.actor), SALTS_OK);
@@ -832,7 +832,7 @@ spec("CFlow IO Actor protocol") {
     it("admits concurrent publishers with unique request ownership") {
         enum { PRODUCERS = 4, PER_PRODUCER = 8, TOTAL = 32 };
         io_fixture fixture;
-        cmeta_thread_t threads[PRODUCERS] = {0};
+        sync_thread_t threads[PRODUCERS] = {0};
         io_submitter_context contexts[PRODUCERS] = {0};
         cflow_io_submit_result results[TOTAL] = {0};
         int released[TOTAL] = {0};
@@ -848,14 +848,14 @@ spec("CFlow IO Actor protocol") {
             contexts[producer] = (io_submitter_context){
                 &fixture.actor, &go, producer * PER_PRODUCER,
                 PER_PRODUCER, results, released};
-            check_equal(cmeta_thread_create(
+            check_equal(sync_thread_create(
                             &threads[producer], io_submitter,
                             &contexts[producer]),
                         0);
         }
         atomic_store(&go, true);
         for (producer = 0u; producer < PRODUCERS; ++producer)
-            check_equal(cmeta_thread_join(&threads[producer]), 0);
+            check_equal(sync_thread_join(&threads[producer]), 0);
 
         for (index = 0u; index < TOTAL; ++index) {
             check_equal(results[index].status, CFLOW_IO_SUBMIT_ACCEPTED);

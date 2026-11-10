@@ -1,5 +1,5 @@
 #include <cflow/actor.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 #include "tinytest.h"
 
@@ -8,19 +8,19 @@
 enum { BURST = 4096, ACTOR_SAMPLES = 128, MAILBOX_SAMPLES = 512 };
 
 typedef struct actor_bench_probe {
-    cmeta_mutex_t lock;
-    cmeta_cond_t changed;
+    sync_mutex_t lock;
+    sync_cond_t changed;
     size_t completed;
     bool emit;
     bool failed;
 } actor_bench_probe;
 
 static void bench_complete(actor_bench_probe *probe) {
-    cmeta_mutex_lock(&probe->lock);
+    sync_mutex_lock(&probe->lock);
     ++probe->completed;
     if (probe->completed % BURST == 0u)
-        cmeta_cond_broadcast(&probe->changed);
-    cmeta_mutex_unlock(&probe->lock);
+        sync_cond_broadcast(&probe->changed);
+    sync_mutex_unlock(&probe->lock);
 }
 
 static bool bench_action(void *user, const void *state, const void *event,
@@ -47,10 +47,10 @@ static bool bench_value(void *user, const cmeta_type_desc *type,
 static void bench_error(void *user, const char *message) {
     actor_bench_probe *probe = (actor_bench_probe *)user;
     (void)message;
-    cmeta_mutex_lock(&probe->lock);
+    sync_mutex_lock(&probe->lock);
     probe->failed = true;
-    cmeta_cond_broadcast(&probe->changed);
-    cmeta_mutex_unlock(&probe->lock);
+    sync_cond_broadcast(&probe->changed);
+    sync_mutex_unlock(&probe->lock);
 }
 
 suite("Actor and mailbox steady-state benchmarks") {
@@ -124,8 +124,8 @@ suite("Actor and mailbox steady-state benchmarks") {
             size_t index;
             bool valid = true;
             probe.emit = emit;
-            cmeta_mutex_init(&probe.lock);
-            cmeta_cond_init(&probe.changed);
+            sync_mutex_init(&probe.lock);
+            sync_cond_init(&probe.changed);
             check_not_null(probe.lock);
             check_not_null(probe.changed);
             check_equal(cflow_machine_build(&machine, &definition), CFLOW_MACHINE_OK);
@@ -150,11 +150,11 @@ suite("Actor and mailbox steady-state benchmarks") {
                     if (cflow_actor_ref_try_send(&ref, &event) != CFLOW_ACTOR_SEND_ACCEPTED)
                         valid = false;
                 if (!valid) abort();
-                cmeta_mutex_lock(&probe.lock);
+                sync_mutex_lock(&probe.lock);
                 while (probe.completed < expected && !probe.failed)
-                    cmeta_cond_wait(&probe.changed, &probe.lock);
+                    sync_cond_wait(&probe.changed, &probe.lock);
                 valid = valid && !probe.failed;
-                cmeta_mutex_unlock(&probe.lock);
+                sync_mutex_unlock(&probe.lock);
             }
             check_true(valid);
             check_equal(cflow_actor_request_stop(&actor), CFLOW_ACTOR_OK);
@@ -167,8 +167,8 @@ suite("Actor and mailbox steady-state benchmarks") {
             cflow_scheduler_destroy(&scheduler);
             cflow_executor_destroy(&executor);
             cflow_machine_destroy(&machine);
-            cmeta_cond_destroy(&probe.changed);
-            cmeta_mutex_destroy(&probe.lock);
+            sync_cond_destroy(&probe.changed);
+            sync_mutex_destroy(&probe.lock);
             if (emit) break;
         }
     }
