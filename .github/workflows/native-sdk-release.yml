@@ -85,7 +85,7 @@ jobs:
       - uses: actions/checkout@v4
         if: matrix.test
         with:
-          repository: qigao/salts-core
+          repository: qigao/salts-cnet
           ref: ${{ env.SALTS_CORE_REF }}
           path: build/upstream/core
           persist-credentials: false

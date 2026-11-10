@@ -1,4 +1,39 @@
-# CMeta 0.1 — CMeta, ACE and CFlow
+# CMeta
+
+[![CI](https://github.com/qigao/cmeta/actions/workflows/native-sdk-release.yml/badge.svg?branch=master)](https://github.com/qigao/cmeta/actions/workflows/native-sdk-release.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+**Reflection, component composition and structured execution in C11 and C++17.**
+
+## Features and modules
+
+| Module | Responsibility |
+| --- | --- |
+| [CMeta](cmeta/) | Type identity, reflection, callable ABI and object/data contracts |
+| [ACE](ace/README.md) | Component configuration and service lifecycle |
+| [Plugin](plugin/) | Loading, ABI admission, registries and leases |
+| [CFlow](cflow/) | Typed graphs, streams, actors and reactive execution |
+| [CSTL](cstl/) | Typed containers and stream integration |
+| [TinyMock](tinymock/README.md) | Reflected mocks using Base TinyTest |
+
+## Quick start
+
+```sh
+git clone https://github.com/qigao/cmeta.git
+cd cmeta
+```
+
+Start with [.env.example](.env.example), restore matching upstream SDKs and
+load your local `.env` into the parent shell. Follow the
+[build instructions](#build-and-tests) for your compiler's CMake user preset.
+CMake does not load dotenv files or restore SDKs implicitly.
+
+## Salts ecosystem
+
+- [SaltsBase](https://github.com/qigao/salts-base): native primitives, NativeIO, parsers and foundational utilities.
+- [CMeta](https://github.com/qigao/cmeta): reflection, components, CFlow and containers.
+- [Salts CNet](https://github.com/qigao/salts-cnet): networking, TLS/DTLS and cryptography.
+- [SaltsUtils](https://github.com/qigao/salts-utils): templates, IDL/Schema, DataBind and language bindings.
 
 ## Upstream dependency versions
 
@@ -46,7 +81,7 @@ This repository owns CMeta reflection and metadata, ACE component/service
 composition, Plugin lifecycle, CFlow execution and CSTL containers. The local
 checkout is `cmeta/` (formerly `salts/`). Native primitives, parsers, coroutines
 and I/O belong to [SaltsBase](https://github.com/qigao/salts-base); networking
-and TLS belong to [SaltsCore](https://github.com/qigao/salts-core).
+and TLS belong to [Salts CNet](https://github.com/qigao/salts-cnet).
 
 ## Targets and dependency ownership
 
@@ -178,3 +213,15 @@ operations are not hidden in lexical cleanup.
 
 The original `salts.native.cmeta_data_temp` and `salts.native.owner_cpp17`
 tests cover descriptor inspection, error-return cleanup and exception unwind.
+
+## Contributing
+
+Open an issue for bugs or design proposals. Keep pull requests focused and
+include reproduction steps and relevant CTest results. Follow
+[AGENTS.md](AGENTS.md), keep tests with their owning module, and update API
+documentation when behavior changes.
+
+## License
+
+First-party code is licensed under [Apache 2.0](LICENSE). Third-party code
+retains its upstream licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
