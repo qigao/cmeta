@@ -149,13 +149,13 @@ static_assert(std::is_standard_layout<cflow_timer_event_queue>::value,
               "timer Event queue must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_machine_transition>::value,
               "cflow_machine_transition must remain a C-compatible row");
-static_assert(std::is_standard_layout<cmeta_readiness_registration>::value,
+static_assert(std::is_standard_layout<readiness_registration>::value,
               "reactor registration must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_readiness_publisher_owner>::value,
               "reactor Source owner must remain a C-compatible handle");
 
 using cflow_reactor_factory = int (*)(cflow_publisher *, cflow_readiness_publisher_owner *,
-                                      cmeta_readiness_registration *, cmeta_readiness_events,
+                                      readiness_registration *, readiness_events,
                                       const char *, const cmeta_type_desc *, cflow_read_fn,
                                       cflow_resource_close_fn, void *);
 static_assert(std::is_same<decltype(&cflow_publisher_from_readiness_registration),

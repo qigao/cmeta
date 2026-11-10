@@ -1,6 +1,6 @@
 #include <cflow/subflow.h>
 #include <cflow/publishers.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 #include "value_storage.h"
 
@@ -16,7 +16,7 @@ typedef struct subflow_state {
     cflow_scheduler *scheduler;
     cflow_eval_options eval_options;
 
-    cmeta_mutex_t lock;
+    sync_mutex_t lock;
     cflow_waker waiter;
     bool started;
     bool requested;
@@ -39,9 +39,9 @@ static bool subflow_on_value(void *user,
         cflow_value_slot_destroy(&incoming);
         return false;
     }
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     if (s->cancelled || s->value_ready) {
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         cflow_value_slot_destroy(&incoming);
         return false;
     }
@@ -52,7 +52,7 @@ static bool subflow_on_value(void *user,
     s->requested = false;
     cflow_waker w = s->waiter;
     s->waiter = (cflow_waker){0};
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     cflow_value_slot_destroy(&empty);
     if (w.wake) w.wake(w.user);
     return true;
@@ -61,24 +61,24 @@ static bool subflow_on_value(void *user,
 static void subflow_on_error(void *user, const char *message) {
     subflow_state *s = (subflow_state *)user;
     if (!s) return;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     if (!s->cancelled) s->error = message ? message : "subgraph error";
     s->requested = false;
     cflow_waker w = s->waiter;
     s->waiter = (cflow_waker){0};
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     if (w.wake) w.wake(w.user);
 }
 
 static void subflow_on_done(void *user) {
     subflow_state *s = (subflow_state *)user;
     if (!s) return;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     s->done = true;
     s->requested = false;
     cflow_waker w = s->waiter;
     s->waiter = (cflow_waker){0};
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     if (w.wake) w.wake(w.user);
 }
 
@@ -113,10 +113,10 @@ static bool subflow_start(subflow_state *s, cflow_publish_context *ctx) {
 static bool subflow_wait_arm(void *state, cflow_waker w) {
     subflow_state *s = (subflow_state *)state;
     if (!s) return false;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     bool ready = s->value_ready || s->done || s->error || s->cancelled;
     if (!ready) s->waiter = w;
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     if (ready && w.wake) w.wake(w.user);
     return true;
 }
@@ -125,10 +125,10 @@ static void subflow_wait_cancel(void *state) {
     subflow_state *s = (subflow_state *)state;
     if (!s) return;
     bool started = false;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     s->waiter = (cflow_waker){0};
     started = s->started;
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     if (started) cflow_subscription_cancel(&s->run);
 }
 
@@ -146,15 +146,15 @@ static cflow_step subflow_resume(void *state,
         return (cflow_step){ CFLOW_STEP_ERROR, {0}, "subgraph could not start" };
 
     bool need_request = false;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
 
     if (s->cancelled) {
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
     }
     if (s->error) {
         const char *err = s->error;
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return (cflow_step){ CFLOW_STEP_ERROR, {0}, err };
     }
     if (s->value_ready) {
@@ -163,7 +163,7 @@ static cflow_step subflow_resume(void *state,
         memset(&s->value, 0, sizeof(s->value));
         s->value_ready = false;
         bool done = s->done;
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         if (!cflow_value_construct(type, out_value, value.storage)) {
             cflow_value_slot_destroy(&value);
             return (cflow_step){ CFLOW_STEP_ERROR, {0},
@@ -173,26 +173,26 @@ static cflow_step subflow_resume(void *state,
         return (cflow_step){ done ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE, {0}, NULL };
     }
     if (s->done) {
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
     }
     if (!s->requested) {
         s->requested = true;
         need_request = true;
     }
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
 
     if (need_request && !cflow_subscription_request(&s->run, 1)) {
-        cmeta_mutex_lock(&s->lock);
+        sync_mutex_lock(&s->lock);
         s->requested = false;
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return (cflow_step){ CFLOW_STEP_ERROR, {0}, "subgraph request failed" };
     }
 
     /* A concurrent scheduler may have completed between request() and here. */
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     bool ready = s->value_ready || s->done || s->error || s->cancelled;
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     if (ready) return subflow_resume(state, ctx, out_value);
     return (cflow_step){ CFLOW_STEP_WAIT, subflow_waitable_as_cflow_waitable(s), NULL };
 }
@@ -200,10 +200,10 @@ static cflow_step subflow_resume(void *state,
 static void subflow_cancel(void *state) {
     subflow_state *s = (subflow_state *)state;
     if (!s) return;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     s->cancelled = true;
     s->waiter = (cflow_waker){0};
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     if (s->started) cflow_subscription_cancel(&s->run);
 }
 
@@ -212,7 +212,7 @@ static void subflow_destroy(void *state) {
     if (!s) return;
     subflow_cancel(s);
     if (s->started) cflow_subscription_close(&s->run);
-    cmeta_mutex_destroy(&s->lock);
+    sync_mutex_destroy(&s->lock);
     cflow_value_slot_destroy(&s->value);
     cflow_value_slot_destroy(&s->input);
     free(s);
@@ -243,7 +243,7 @@ bool cflow_resumable_from_subgraph_with_options(
         return false;
     subflow_state *s = calloc(1, sizeof(*s));
     if (!s) return false;
-    cmeta_mutex_init(&s->lock);
+    sync_mutex_init(&s->lock);
     if (!s->lock) {
         free(s);
         return false;
@@ -255,7 +255,7 @@ bool cflow_resumable_from_subgraph_with_options(
         !cflow_value_slot_init(&s->value, out_type)) {
         cflow_value_slot_destroy(&s->value);
         cflow_value_slot_destroy(&s->input);
-        cmeta_mutex_destroy(&s->lock);
+        sync_mutex_destroy(&s->lock);
         free(s);
         return false;
     }

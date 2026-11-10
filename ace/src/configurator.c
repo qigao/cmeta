@@ -2,7 +2,7 @@
 #include "configurator_internal.h"
 
 #include <string.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 /* Lookup is read-only and may run concurrently under independent ServiceHost
  * scopes. Keep callback reentry admission on the calling thread, not in the

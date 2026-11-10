@@ -1,0 +1,14 @@
+{
+  "registries": [
+    {
+      "kind": "git",
+      "repository": "https://github.com/qigao/vcpkg-cache",
+      "reference": "v0.1.2",
+      "baseline": "540f476e9ac7a2418092323bb890370c0b1381fe",
+      "packages": [
+        "zstd",
+        "miniaudio"
+      ]
+    }
+  ]
+}

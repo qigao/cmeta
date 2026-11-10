@@ -1,0 +1,10 @@
+{
+  "version": 6,
+  "include": [
+    "toolkits/Msvc.json",
+    "toolkits/LlvmNative.json",
+    "toolkits/LlvmMinGW.json",
+    "toolkits/Gcc.json",
+    "toolkits/AndroidNdk.json"
+  ]
+}

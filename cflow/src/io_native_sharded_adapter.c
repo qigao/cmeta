@@ -1,7 +1,7 @@
 #include <cflow/io_native_sharded_adapter.h>
 
-#include <error_codes.h>
-#include <thread.h>
+#include <core/error_codes.h>
+#include <threads/threads.h>
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -34,7 +34,7 @@ struct cflow_io_native_sharded_adapter_impl {
     native_io_sharded *runtime;
     cflow_io_native_sharded_bridge *bridges;
     cflow_io_actor *bound_actor;
-    cmeta_mutex_t lock;
+    sync_mutex_t lock;
     size_t bridge_capacity;
     size_t active_bridges;
     uint32_t free_head;
@@ -167,9 +167,9 @@ static void sharded_adapter_record_complete(
         cflow_io_actor_complete(actor, request_id, completion);
 
     if (completed != CFLOW_IO_COMPLETE_ACCEPTED) {
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         ++impl->stale_actor_completions;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
     }
 }
 
@@ -185,9 +185,9 @@ static void sharded_adapter_admission(
     cflow_io_request_id actor_request = 0u;
     bool request_cancel = false;
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (bridge->phase != CFLOW_IO_NATIVE_SHARDED_BRIDGE_ROUTED) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return;
     }
     bridge->admission_done = true;
@@ -200,7 +200,7 @@ static void sharded_adapter_admission(
     } else {
         ++impl->raw_admission_failures;
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 
     if (status != SALTS_OK) {
         const cflow_io_completion completion = {
@@ -216,9 +216,9 @@ static void sharded_adapter_admission(
         if (cancel_status != SALTS_OK &&
             cancel_status != SALTS_EALREADY &&
             cancel_status != SALTS_ENOENT) {
-            cmeta_mutex_lock(&impl->lock);
+            sync_mutex_lock(&impl->lock);
             ++impl->native_cancel_errors;
-            cmeta_mutex_unlock(&impl->lock);
+            sync_mutex_unlock(&impl->lock);
         }
     }
 }
@@ -236,16 +236,16 @@ static void sharded_adapter_terminal(
     cflow_io_completion completion;
 
     (void)context;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (bridge->phase != CFLOW_IO_NATIVE_SHARDED_BRIDGE_ROUTED) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return;
     }
     actor = bridge->actor;
     actor_request = bridge->actor_request;
     operation = bridge->operation;
     ++impl->terminal_completions;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 
     if (operation != NULL &&
         operation->kind == NATIVE_IO_OPERATION_UDP_RECV_FROM)
@@ -260,12 +260,12 @@ static void sharded_adapter_finalize(void *arg) {
         (cflow_io_native_sharded_bridge *)arg;
     cflow_io_native_sharded_adapter_impl *impl = bridge->owner;
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (bridge->phase == CFLOW_IO_NATIVE_SHARDED_BRIDGE_ROUTED) {
         bridge->io_finalized = true;
         sharded_adapter_maybe_release_locked(impl, bridge);
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 }
 
 static void sharded_adapter_cancel_run(
@@ -276,7 +276,7 @@ static void sharded_adapter_cancel_run(
     native_io_sharded_request request = {0};
     bool valid = false;
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (bridge->phase == CFLOW_IO_NATIVE_SHARDED_BRIDGE_ROUTED &&
         bridge->cancel_route_active &&
         native_io_sharded_request_valid(bridge->native_request) &&
@@ -284,7 +284,7 @@ static void sharded_adapter_cancel_run(
         request = bridge->native_request;
         valid = true;
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 
     if (valid) {
         const int status =
@@ -292,9 +292,9 @@ static void sharded_adapter_cancel_run(
         if (status != SALTS_OK &&
             status != SALTS_EALREADY &&
             status != SALTS_ENOENT) {
-            cmeta_mutex_lock(&impl->lock);
+            sync_mutex_lock(&impl->lock);
             ++impl->native_cancel_errors;
-            cmeta_mutex_unlock(&impl->lock);
+            sync_mutex_unlock(&impl->lock);
         }
     }
 }
@@ -305,9 +305,9 @@ static void sharded_adapter_cancel_task_cancel(void *arg, int status) {
     cflow_io_native_sharded_adapter_impl *impl = bridge->owner;
 
     (void)status;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     ++impl->cancel_route_rejections;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 }
 
 static void sharded_adapter_cancel_task_finalize(void *arg) {
@@ -315,12 +315,12 @@ static void sharded_adapter_cancel_task_finalize(void *arg) {
         (cflow_io_native_sharded_bridge *)arg;
     cflow_io_native_sharded_adapter_impl *impl = bridge->owner;
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (bridge->phase == CFLOW_IO_NATIVE_SHARDED_BRIDGE_ROUTED) {
         bridge->cancel_route_active = false;
         sharded_adapter_maybe_release_locked(impl, bridge);
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 }
 
 static int sharded_adapter_actor_submit(
@@ -345,26 +345,26 @@ static int sharded_adapter_actor_submit(
         !native_io_sharded_operation_valid(operation))
         return SALTS_EINVAL;
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->closed) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return SALTS_ESHUTDOWN;
     }
     if (impl->bound_actor != NULL && impl->bound_actor != actor) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return SALTS_EINVAL;
     }
     if (impl->bound_actor == NULL)
         impl->bound_actor = actor;
     bridge = sharded_adapter_reserve_locked(impl);
     if (bridge == NULL) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return SALTS_ENOBUFS;
     }
     bridge->actor = actor;
     bridge->actor_request = request_id;
     bridge->operation = operation;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 
     ownership = (native_io_sharded_ownership){
         sharded_adapter_terminal, sharded_adapter_finalize, bridge};
@@ -372,18 +372,18 @@ static int sharded_adapter_actor_submit(
         impl->runtime, operation, &ownership,
         sharded_adapter_admission, bridge);
     if (status != SALTS_OK) {
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         if (bridge->phase == CFLOW_IO_NATIVE_SHARDED_BRIDGE_ROUTED &&
             bridge->actor == actor &&
             bridge->actor_request == request_id)
             sharded_adapter_release_locked(impl, bridge);
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return status;
     }
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     ++impl->accepted_routes;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_OK;
 }
 
@@ -402,10 +402,10 @@ static int sharded_adapter_actor_cancel(
     if (impl == NULL || request_id == 0u)
         return SALTS_EINVAL;
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     bridge = sharded_adapter_find_request_locked(impl, request_id);
     if (bridge == NULL) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return SALTS_ENOENT;
     }
     bridge->cancel_requested = true;
@@ -418,7 +418,7 @@ static int sharded_adapter_actor_cancel(
             native_io_sharded_request_owner_shard(bridge->native_request);
         route = owner_shard != SIZE_MAX;
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 
     if (!route)
         return SALTS_OK;
@@ -431,20 +431,20 @@ static int sharded_adapter_actor_cancel(
     status = native_io_sharded_try_submit_to(
         impl->runtime, owner_shard, &task);
     if (status != SALTS_OK) {
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         if (bridge->phase == CFLOW_IO_NATIVE_SHARDED_BRIDGE_ROUTED &&
             bridge->actor_request == request_id) {
             bridge->cancel_route_active = false;
             ++impl->cancel_route_rejections;
             sharded_adapter_maybe_release_locked(impl, bridge);
         }
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return status;
     }
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     ++impl->cancel_routes;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_OK;
 }
 
@@ -470,7 +470,7 @@ int cflow_io_native_sharded_adapter_init(
         free(impl);
         return SALTS_ENOMEM;
     }
-    cmeta_mutex_init(&impl->lock);
+    sync_mutex_init(&impl->lock);
     if (impl->lock == NULL) {
         free(impl->bridges);
         free(impl);
@@ -508,13 +508,13 @@ int cflow_io_native_sharded_adapter_close(
 
     if (impl == NULL)
         return SALTS_EINVAL;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->closed) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return SALTS_EALREADY;
     }
     impl->closed = true;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return SALTS_OK;
 }
 
@@ -532,7 +532,7 @@ bool cflow_io_native_sharded_adapter_get_stats(
         !native_io_sharded_get_stats(impl->runtime, &native))
         return false;
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     *out_stats = (cflow_io_native_sharded_adapter_stats){
         .native = native,
         .bridge_capacity = impl->bridge_capacity,
@@ -546,7 +546,7 @@ bool cflow_io_native_sharded_adapter_get_stats(
         .cancel_route_rejections = impl->cancel_route_rejections,
         .native_cancel_errors = impl->native_cancel_errors,
         .closed = impl->closed};
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return true;
 }
 
@@ -558,15 +558,15 @@ int cflow_io_native_sharded_adapter_destroy(
         return SALTS_EINVAL;
     impl = (cflow_io_native_sharded_adapter_impl *)adapter->impl;
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (!impl->closed || impl->active_bridges != 0u) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return SALTS_EBUSY;
     }
     adapter->impl = NULL;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 
-    cmeta_mutex_destroy(&impl->lock);
+    sync_mutex_destroy(&impl->lock);
     free(impl->bridges);
     free(impl);
     return SALTS_OK;

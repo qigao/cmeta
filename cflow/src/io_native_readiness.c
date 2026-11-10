@@ -7,9 +7,9 @@
 
 #include "io_native_internal.h"
 
-#include <error_codes.h>
+#include <core/error_codes.h>
 #include <readiness.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -71,7 +71,7 @@ typedef struct cflow_readiness_record {
 struct cflow_readiness_lane {
     cflow_readiness_impl *owner;
     cflow_readiness_socket_record *socket_record;
-    cmeta_readiness_registration registration;
+    readiness_registration registration;
     size_t head;
     size_t tail;
     int duplicated_fd;
@@ -94,9 +94,9 @@ struct cflow_readiness_socket_record {
 
 struct cflow_readiness_impl {
     cflow_io_native_impl base;
-    cmeta_mutex_t gate;
-    cmeta_cond_t changed;
-    cmeta_readiness_reactor reactor;
+    sync_mutex_t gate;
+    sync_cond_t changed;
+    readiness_reactor reactor;
     cflow_readiness_record *records;
     cflow_readiness_socket_record *sockets;
     size_t request_capacity;
@@ -137,7 +137,7 @@ static unsigned readiness_lane_kind(
                : CFLOW_READINESS_LANE_WRITE;
 }
 
-static cmeta_readiness_events readiness_lane_interest(
+static readiness_events readiness_lane_interest(
     const cflow_readiness_lane *lane) {
     return lane->kind == CFLOW_READINESS_LANE_READ
                ? SALTS_READINESS_EVENT_READ
@@ -480,22 +480,22 @@ static void readiness_deliver(cflow_readiness_delivery delivery) {
     }
 }
 
-static cmeta_readiness_callback_result readiness_drive_lane(
+static readiness_callback_result readiness_drive_lane(
     cflow_readiness_lane *lane, bool from_callback, int status);
 
-static cmeta_readiness_callback_result readiness_native_continuation(
-    void *user, cmeta_readiness_events events, int status) {
+static readiness_callback_result readiness_native_continuation(
+    void *user, readiness_events events, int status) {
     cflow_readiness_lane *lane = (cflow_readiness_lane *)user;
     cflow_readiness_impl *impl;
     (void)events;
     if (lane == NULL || lane->owner == NULL)
-        return (cmeta_readiness_callback_result){
+        return (readiness_callback_result){
             SALTS_READINESS_COMPLETE, 0u};
     impl = lane->owner;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (!lane->active || lane->socket_record->closing) {
-        cmeta_mutex_unlock(&impl->gate);
-        return (cmeta_readiness_callback_result){
+        sync_mutex_unlock(&impl->gate);
+        return (readiness_callback_result){
             SALTS_READINESS_COMPLETE, 0u};
     }
     lane->armed = false;
@@ -505,56 +505,56 @@ static cmeta_readiness_callback_result readiness_native_continuation(
             lane->terminal_status = status;
         else
             readiness_counter_increment(&impl->stale_native_completions);
-        cmeta_mutex_unlock(&impl->gate);
-        return (cmeta_readiness_callback_result){
+        sync_mutex_unlock(&impl->gate);
+        return (readiness_callback_result){
             SALTS_READINESS_COMPLETE, 0u};
     }
     lane->driving = true;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return readiness_drive_lane(lane, true, status);
 }
 
-static cmeta_readiness_callback_result readiness_arm_lane(
+static readiness_callback_result readiness_arm_lane(
     cflow_readiness_lane *lane) {
     cflow_readiness_impl *impl = lane->owner;
     int status;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (!lane->active || lane->head == CFLOW_READINESS_INDEX_NONE ||
         lane->socket_record->closing) {
         lane->driving = false;
-        cmeta_mutex_unlock(&impl->gate);
-        return (cmeta_readiness_callback_result){
+        sync_mutex_unlock(&impl->gate);
+        return (readiness_callback_result){
             SALTS_READINESS_COMPLETE, 0u};
     }
     lane->driving = false;
     lane->arm_pending = true;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
 
-    status = cmeta_readiness_arm_continuation(
+    status = readiness_arm_continuation(
         &lane->registration, readiness_lane_interest(lane),
         readiness_native_continuation, lane);
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (!lane->arm_pending) {
-        cmeta_mutex_unlock(&impl->gate);
-        return (cmeta_readiness_callback_result){
+        sync_mutex_unlock(&impl->gate);
+        return (readiness_callback_result){
             SALTS_READINESS_COMPLETE, 0u};
     }
     lane->arm_pending = false;
     if (status == SALTS_OK || status == SALTS_EALREADY) {
         lane->armed = true;
-        cmeta_mutex_unlock(&impl->gate);
-        return (cmeta_readiness_callback_result){
+        sync_mutex_unlock(&impl->gate);
+        return (readiness_callback_result){
             SALTS_READINESS_COMPLETE, 0u};
     }
     lane->driving = true;
     readiness_counter_increment(&impl->native_submit_errors);
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return readiness_drive_lane(lane, false, status);
 }
 
-static cmeta_readiness_callback_result readiness_drive_lane(
+static readiness_callback_result readiness_drive_lane(
     cflow_readiness_lane *lane, bool from_callback, int status) {
     cflow_readiness_impl *impl = lane->owner;
     size_t processed = 0u;
@@ -568,22 +568,22 @@ static cmeta_readiness_callback_result readiness_drive_lane(
         int accepted_fd = -1;
         int attempt_status;
 
-        cmeta_mutex_lock(&impl->gate);
+        sync_mutex_lock(&impl->gate);
         if (lane->terminal_status != SALTS_OK) {
             terminal_status = lane->terminal_status;
             lane->terminal_status = SALTS_OK;
         }
         if (!lane->active || lane->socket_record->closing) {
             lane->driving = false;
-            cmeta_mutex_unlock(&impl->gate);
-            return (cmeta_readiness_callback_result){
+            sync_mutex_unlock(&impl->gate);
+            return (readiness_callback_result){
                 SALTS_READINESS_COMPLETE, 0u};
         }
         if (lane->head == CFLOW_READINESS_INDEX_NONE) {
             lane->driving = false;
             lane->armed = false;
-            cmeta_mutex_unlock(&impl->gate);
-            return (cmeta_readiness_callback_result){
+            sync_mutex_unlock(&impl->gate);
+            return (readiness_callback_result){
                 SALTS_READINESS_COMPLETE, 0u};
         }
 
@@ -591,7 +591,7 @@ static cmeta_readiness_callback_result readiness_drive_lane(
             record = &impl->records[lane->head];
             delivery = readiness_finish_record_locked(
                 impl, record, terminal_status, 0u, -1);
-            cmeta_mutex_unlock(&impl->gate);
+            sync_mutex_unlock(&impl->gate);
             readiness_deliver(delivery);
             continue;
         }
@@ -601,7 +601,7 @@ static cmeta_readiness_callback_result readiness_drive_lane(
             delivery = readiness_finish_record_locked(
                 impl, record, SALTS_OK, 0u, -1);
             ++processed;
-            cmeta_mutex_unlock(&impl->gate);
+            sync_mutex_unlock(&impl->gate);
             readiness_deliver(delivery);
             continue;
         }
@@ -610,28 +610,28 @@ static cmeta_readiness_callback_result readiness_drive_lane(
             if (from_callback) {
                 lane->driving = false;
                 lane->armed = true;
-                cmeta_mutex_unlock(&impl->gate);
-                return (cmeta_readiness_callback_result){
+                sync_mutex_unlock(&impl->gate);
+                return (readiness_callback_result){
                     SALTS_READINESS_REARM,
                     readiness_lane_interest(lane)};
             }
-            cmeta_mutex_unlock(&impl->gate);
+            sync_mutex_unlock(&impl->gate);
             return readiness_arm_lane(lane);
         }
 
         record = &impl->records[lane->head];
         record->phase = CFLOW_READINESS_RECORD_PROCESSING;
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
 
         attempt_status = readiness_attempt(record, &bytes, &accepted_fd);
 
-        cmeta_mutex_lock(&impl->gate);
+        sync_mutex_lock(&impl->gate);
         if (record->cancel_requested || attempt_status == SALTS_OK ||
             !readiness_would_block(attempt_status)) {
             delivery = readiness_finish_record_locked(
                 impl, record, attempt_status, bytes, accepted_fd);
             ++processed;
-            cmeta_mutex_unlock(&impl->gate);
+            sync_mutex_unlock(&impl->gate);
             readiness_deliver(delivery);
             continue;
         }
@@ -639,12 +639,12 @@ static cmeta_readiness_callback_result readiness_drive_lane(
         if (from_callback) {
             lane->driving = false;
             lane->armed = true;
-            cmeta_mutex_unlock(&impl->gate);
-            return (cmeta_readiness_callback_result){
+            sync_mutex_unlock(&impl->gate);
+            return (readiness_callback_result){
                 SALTS_READINESS_REARM,
                 readiness_lane_interest(lane)};
         }
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return readiness_arm_lane(lane);
     }
 }
@@ -655,36 +655,36 @@ static int readiness_ensure_lane(cflow_readiness_lane *lane,
     int duplicate;
     int status;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     while (lane->creating)
-        cmeta_cond_wait(&impl->changed, &impl->gate);
+        sync_cond_wait(&impl->changed, &impl->gate);
     if (lane->active) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_OK;
     }
     if (lane->socket_record->closing) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
     lane->creating = true;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
 
     duplicate = readiness_duplicate_socket(original_fd);
     status = duplicate < 0 ? duplicate : SALTS_OK;
     if (status == SALTS_OK)
-        status = cmeta_readiness_register(
+        status = readiness_register(
             &impl->reactor, duplicate, &lane->registration);
     if (status != SALTS_OK && duplicate >= 0)
         (void)close(duplicate);
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     lane->creating = false;
     if (status == SALTS_OK) {
         lane->duplicated_fd = duplicate;
         lane->active = true;
     }
-    cmeta_cond_broadcast(&impl->changed);
-    cmeta_mutex_unlock(&impl->gate);
+    sync_cond_broadcast(&impl->changed);
+    sync_mutex_unlock(&impl->gate);
     return status;
 }
 
@@ -699,15 +699,15 @@ static int readiness_submit_record(
     bool start_drive = false;
     int status;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (!impl->admission_open) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_ESHUTDOWN;
     }
     record = readiness_find_free_locked(impl);
     if (record == NULL) {
         readiness_counter_increment(&impl->rejected_full);
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
     socket_record = readiness_find_socket_locked(impl, identity);
@@ -715,14 +715,14 @@ static int readiness_submit_record(
         socket_record = readiness_find_free_socket_locked(impl);
         if (socket_record == NULL) {
             readiness_counter_increment(&impl->rejected_full);
-            cmeta_mutex_unlock(&impl->gate);
+            sync_mutex_unlock(&impl->gate);
             return SALTS_EBUSY;
         }
         socket_record->socket_identity = identity;
         socket_record->active = true;
     }
     if (socket_record->closing) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
     lane = &socket_record->lanes[lane_kind];
@@ -746,11 +746,11 @@ static int readiness_submit_record(
     record->connect_started = false;
     ++impl->active_requests;
     ++socket_record->active_requests;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
 
     status = readiness_ensure_lane(lane, (int)identity);
     if (status != SALTS_OK) {
-        cmeta_mutex_lock(&impl->gate);
+        sync_mutex_lock(&impl->gate);
         --impl->active_requests;
         --socket_record->active_requests;
         readiness_record_reset(record);
@@ -759,18 +759,18 @@ static int readiness_submit_record(
             !socket_record->lanes[CFLOW_READINESS_LANE_WRITE].active)
             readiness_socket_reset(impl, socket_record);
         readiness_counter_increment(&impl->native_submit_errors);
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return status;
     }
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     readiness_lane_append_locked(impl, lane, record);
     readiness_counter_increment(&impl->submitted);
     if (!lane->armed && !lane->arm_pending && !lane->driving) {
         lane->driving = true;
         start_drive = true;
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
 
     if (start_drive)
         (void)readiness_drive_lane(lane, false, SALTS_OK);
@@ -824,10 +824,10 @@ static int readiness_cancel(cflow_io_native_impl *base,
     bool unarm = false;
     int status = SALTS_OK;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     record = readiness_find_request_locked(impl, request_id);
     if (record == NULL) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_ENOENT;
     }
     record->cancel_requested = true;
@@ -840,14 +840,14 @@ static int readiness_cancel(cflow_io_native_impl *base,
         lane->driving = true;
         start_drive = true;
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
 
     if (unarm) {
-        status = cmeta_readiness_unarm(&lane->registration);
+        status = readiness_unarm(&lane->registration);
         if (status != SALTS_OK && status != SALTS_EALREADY) {
-            cmeta_mutex_lock(&impl->gate);
+            sync_mutex_lock(&impl->gate);
             readiness_counter_increment(&impl->native_cancel_errors);
-            cmeta_mutex_unlock(&impl->gate);
+            sync_mutex_unlock(&impl->gate);
         }
     }
     if (start_drive)
@@ -858,7 +858,7 @@ static int readiness_cancel(cflow_io_native_impl *base,
 static bool readiness_get_stats(const cflow_io_native_impl *base,
                                 cflow_io_native_backend_stats *out) {
     cflow_readiness_impl *impl = (cflow_readiness_impl *)base;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     *out = (cflow_io_native_backend_stats){
         impl->request_capacity,
         impl->active_requests,
@@ -872,7 +872,7 @@ static bool readiness_get_stats(const cflow_io_native_impl *base,
         impl->admission_open,
         false,
         impl->shutdown_complete};
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return true;
 }
 
@@ -880,22 +880,22 @@ static int readiness_close_lane(cflow_readiness_impl *impl,
                                 cflow_readiness_lane *lane) {
     int fd;
     int status;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (!lane->active) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_OK;
     }
     fd = lane->duplicated_fd;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
 
-    status = cmeta_readiness_close(&lane->registration);
+    status = readiness_close(&lane->registration);
     if (status != SALTS_OK)
         return status;
     (void)close(fd);
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     readiness_lane_reset(lane);
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return SALTS_OK;
 }
 
@@ -905,25 +905,25 @@ static int readiness_forget_socket(cflow_io_native_impl *base,
     cflow_readiness_socket_record *socket_record;
     int status = SALTS_OK;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     socket_record = readiness_find_socket_locked(impl, closed_socket);
     if (socket_record == NULL) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_ENOENT;
     }
     if (socket_record->closing || socket_record->active_requests != 0u) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
     for (unsigned kind = 0u; kind < CFLOW_READINESS_LANE_COUNT; ++kind) {
         cflow_readiness_lane *lane = &socket_record->lanes[kind];
         if (lane->creating || lane->driving || lane->arm_pending) {
-            cmeta_mutex_unlock(&impl->gate);
+            sync_mutex_unlock(&impl->gate);
             return SALTS_EBUSY;
         }
     }
     socket_record->closing = true;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
 
     for (unsigned kind = 0u; kind < CFLOW_READINESS_LANE_COUNT; ++kind) {
         status = readiness_close_lane(impl, &socket_record->lanes[kind]);
@@ -931,12 +931,12 @@ static int readiness_forget_socket(cflow_io_native_impl *base,
             break;
     }
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (status == SALTS_OK)
         readiness_socket_reset(impl, socket_record);
     else
         socket_record->closing = false;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return status;
 }
 
@@ -944,18 +944,18 @@ static int readiness_shutdown(cflow_io_native_impl *base) {
     cflow_readiness_impl *impl = (cflow_readiness_impl *)base;
     int status;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (impl->shutdown_complete) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EALREADY;
     }
     impl->admission_open = false;
     if (impl->active_requests != 0u) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
     if (impl->shutdown_inflight) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
     impl->shutdown_inflight = true;
@@ -965,7 +965,7 @@ static int readiness_shutdown(cflow_io_native_impl *base) {
             continue;
         socket_record->closing = true;
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
 
     for (size_t index = 0u; index < impl->request_capacity; ++index) {
         cflow_readiness_socket_record *socket_record = &impl->sockets[index];
@@ -974,45 +974,45 @@ static int readiness_shutdown(cflow_io_native_impl *base) {
         for (unsigned kind = 0u; kind < CFLOW_READINESS_LANE_COUNT; ++kind) {
             status = readiness_close_lane(impl, &socket_record->lanes[kind]);
             if (status != SALTS_OK) {
-                cmeta_mutex_lock(&impl->gate);
+                sync_mutex_lock(&impl->gate);
                 impl->shutdown_inflight = false;
-                cmeta_mutex_unlock(&impl->gate);
+                sync_mutex_unlock(&impl->gate);
                 return status;
             }
         }
     }
 
-    status = cmeta_readiness_reactor_shutdown(&impl->reactor);
+    status = readiness_reactor_shutdown(&impl->reactor);
     if (status != SALTS_OK && status != SALTS_EALREADY) {
-        cmeta_mutex_lock(&impl->gate);
+        sync_mutex_lock(&impl->gate);
         impl->shutdown_inflight = false;
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return status;
     }
-    status = cmeta_readiness_reactor_destroy(&impl->reactor);
+    status = readiness_reactor_destroy(&impl->reactor);
     if (status != SALTS_OK) {
-        cmeta_mutex_lock(&impl->gate);
+        sync_mutex_lock(&impl->gate);
         impl->shutdown_inflight = false;
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return status;
     }
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     impl->shutdown_inflight = false;
     impl->shutdown_complete = true;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return SALTS_OK;
 }
 
 static int readiness_destroy(cflow_io_native_impl *base) {
     cflow_readiness_impl *impl = (cflow_readiness_impl *)base;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (!impl->shutdown_complete) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
-    cmeta_mutex_unlock(&impl->gate);
-    cmeta_cond_destroy(&impl->changed);
-    cmeta_mutex_destroy(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
+    sync_cond_destroy(&impl->changed);
+    sync_mutex_destroy(&impl->gate);
     free(impl->sockets);
     free(impl->records);
     free(impl);
@@ -1032,8 +1032,8 @@ int cflow_io_native_readiness_init(
     cflow_io_native_backend *backend,
     const cflow_io_native_backend_config *config) {
     cflow_readiness_impl *impl;
-    cmeta_readiness_config reactor_config;
-    cmeta_readiness_backend_kind reactor_kind;
+    readiness_config reactor_config;
+    readiness_backend_kind reactor_kind;
     size_t reactor_capacity;
     int status;
 
@@ -1064,7 +1064,7 @@ int cflow_io_native_readiness_init(
         return SALTS_ERANGE;
     reactor_capacity = config->request_capacity *
                        CFLOW_READINESS_LANE_COUNT;
-    reactor_config = (cmeta_readiness_config){
+    reactor_config = (readiness_config){
         reactor_capacity, config->completion_batch_capacity};
 
     impl = (cflow_readiness_impl *)calloc(1u, sizeof(*impl));
@@ -1091,21 +1091,21 @@ int cflow_io_native_readiness_init(
         readiness_socket_reset(impl, &impl->sockets[index]);
     }
 
-    cmeta_mutex_init(&impl->gate);
-    cmeta_cond_init(&impl->changed);
+    sync_mutex_init(&impl->gate);
+    sync_cond_init(&impl->changed);
     if (impl->gate == NULL || impl->changed == NULL) {
-        cmeta_cond_destroy(&impl->changed);
-        cmeta_mutex_destroy(&impl->gate);
+        sync_cond_destroy(&impl->changed);
+        sync_mutex_destroy(&impl->gate);
         free(impl->sockets);
         free(impl->records);
         free(impl);
         return SALTS_ENOMEM;
     }
-    status = cmeta_readiness_reactor_init_kind(
+    status = readiness_reactor_init_kind(
         &impl->reactor, &reactor_config, reactor_kind);
     if (status != SALTS_OK) {
-        cmeta_cond_destroy(&impl->changed);
-        cmeta_mutex_destroy(&impl->gate);
+        sync_cond_destroy(&impl->changed);
+        sync_mutex_destroy(&impl->gate);
         free(impl->sockets);
         free(impl->records);
         free(impl);

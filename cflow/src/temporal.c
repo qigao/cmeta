@@ -2,7 +2,7 @@
 
 #include "value_storage.h"
 
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -34,8 +34,8 @@ typedef struct temporal_state {
     cflow_waitable inner_waitable;
     cflow_waker waiter;
     cflow_waker terminal_waker;
-    cmeta_mutex_t lock;
-    cmeta_cond_t timer_changed;
+    sync_mutex_t lock;
+    sync_cond_t timer_changed;
     temporal_ready_cause ready_cause;
     bool timer_arming;
     bool timer_outstanding;
@@ -82,13 +82,13 @@ static void temporal_timer_fire(void *user) {
     temporal_state *state = (temporal_state *)user;
     cflow_waker waker = {0};
     if (state == NULL) return;
-    cmeta_mutex_lock(&state->lock);
+    sync_mutex_lock(&state->lock);
     {
         const bool stale = state->timer_stale;
         state->timer_stale = false;
         state->timer_outstanding = false;
         state->timer_task = 0u;
-        cmeta_cond_broadcast(&state->timer_changed);
+        sync_cond_broadcast(&state->timer_changed);
         if (!state->cancelled && !state->done && state->error == NULL &&
             (state->timer_arming || state->need_timer) &&
             state->ready_cause == TEMPORAL_READY_NONE) {
@@ -99,7 +99,7 @@ static void temporal_timer_fire(void *user) {
             state->waiter = (cflow_waker){0};
         }
     }
-    cmeta_mutex_unlock(&state->lock);
+    sync_mutex_unlock(&state->lock);
     invoke_waker(waker);
 }
 
@@ -108,10 +108,10 @@ static bool temporal_cancel_scheduled(temporal_state *state,
                                       cflow_task_id timer_task) {
     if (timer_task != 0u && scheduler != NULL &&
         cflow_scheduler_cancel(scheduler, timer_task)) {
-        cmeta_mutex_lock(&state->lock);
+        sync_mutex_lock(&state->lock);
         state->timer_outstanding = false;
-        cmeta_cond_broadcast(&state->timer_changed);
-        cmeta_mutex_unlock(&state->lock);
+        sync_cond_broadcast(&state->timer_changed);
+        sync_mutex_unlock(&state->lock);
         return true;
     }
     return timer_task == 0u;
@@ -122,20 +122,20 @@ static void temporal_cancel_active_wait(temporal_state *state) {
     cflow_task_id timer_task;
     cflow_waitable inner_waitable = {0};
     bool inner_armed;
-    cmeta_mutex_lock(&state->lock);
+    sync_mutex_lock(&state->lock);
     scheduler = state->scheduler;
     timer_task = state->timer_task;
     state->timer_task = 0u;
     if (timer_task == 0u && state->timer_arming) {
         state->timer_outstanding = false;
-        cmeta_cond_broadcast(&state->timer_changed);
+        sync_cond_broadcast(&state->timer_changed);
     }
     state->timer_arming = false;
     inner_armed = state->inner_armed;
     state->inner_armed = false;
     if (inner_armed) inner_waitable = state->inner_waitable;
     state->waiter = (cflow_waker){0};
-    cmeta_mutex_unlock(&state->lock);
+    sync_mutex_unlock(&state->lock);
     (void)temporal_cancel_scheduled(state, scheduler, timer_task);
     if (inner_armed && cflow_waitable_valid(&inner_waitable))
         cflow_waitable_cancel(&inner_waitable);
@@ -144,15 +144,15 @@ static void temporal_cancel_active_wait(temporal_state *state) {
 static void temporal_restart_timer(temporal_state *state) {
     cflow_scheduler *scheduler;
     cflow_task_id timer_task;
-    cmeta_mutex_lock(&state->lock);
+    sync_mutex_lock(&state->lock);
     scheduler = state->scheduler;
     timer_task = state->timer_task;
     state->timer_task = 0u;
-    cmeta_mutex_unlock(&state->lock);
+    sync_mutex_unlock(&state->lock);
     if (!temporal_cancel_scheduled(state, scheduler, timer_task)) {
-        cmeta_mutex_lock(&state->lock);
+        sync_mutex_lock(&state->lock);
         if (state->timer_outstanding) state->timer_stale = true;
-        cmeta_mutex_unlock(&state->lock);
+        sync_mutex_unlock(&state->lock);
     }
 }
 
@@ -169,14 +169,14 @@ static bool temporal_wait_arm(void *user, cflow_waker waker) {
     bool cancel_scheduled = false;
 
     if (state == NULL || waker.wake == NULL) return false;
-    cmeta_mutex_lock(&state->lock);
+    sync_mutex_lock(&state->lock);
     if (state->waiter.wake != NULL) {
-        cmeta_mutex_unlock(&state->lock);
+        sync_mutex_unlock(&state->lock);
         return false;
     }
     if (state->cancelled || state->done || state->error != NULL ||
         state->ready_cause != TEMPORAL_READY_NONE) {
-        cmeta_mutex_unlock(&state->lock);
+        sync_mutex_unlock(&state->lock);
         invoke_waker(waker);
         return true;
     }
@@ -189,12 +189,12 @@ static bool temporal_wait_arm(void *user, cflow_waker waker) {
     if (need_inner) inner_waitable = state->inner_waitable;
     state->timer_arming = need_timer;
     state->timer_outstanding = need_timer;
-    cmeta_mutex_unlock(&state->lock);
+    sync_mutex_unlock(&state->lock);
 
     if (need_inner) {
-        cmeta_mutex_lock(&state->lock);
+        sync_mutex_lock(&state->lock);
         state->inner_armed = true;
-        cmeta_mutex_unlock(&state->lock);
+        sync_mutex_unlock(&state->lock);
         if (!cflow_waitable_valid(&inner_waitable) ||
             !cflow_waitable_arm(&inner_waitable, waker)) {
             temporal_cancel_active_wait(state);
@@ -209,15 +209,15 @@ static bool temporal_wait_arm(void *user, cflow_waker waker) {
         scheduled = cflow_scheduler_try_post_after(
             scheduler, ticks, temporal_timer_fire, state);
         if (scheduled.status != CFLOW_ADMISSION_ACCEPTED) {
-            cmeta_mutex_lock(&state->lock);
+            sync_mutex_lock(&state->lock);
             state->timer_outstanding = false;
             state->timer_arming = false;
-            cmeta_cond_broadcast(&state->timer_changed);
-            cmeta_mutex_unlock(&state->lock);
+            sync_cond_broadcast(&state->timer_changed);
+            sync_mutex_unlock(&state->lock);
             temporal_cancel_active_wait(state);
             return false;
         }
-        cmeta_mutex_lock(&state->lock);
+        sync_mutex_lock(&state->lock);
         if (state->ready_cause != TEMPORAL_READY_NONE ||
             state->cancelled || state->done || state->error != NULL) {
             cancel_scheduled = true;
@@ -225,8 +225,8 @@ static bool temporal_wait_arm(void *user, cflow_waker waker) {
             state->timer_task = scheduled.task_id;
         }
         state->timer_arming = false;
-        cmeta_cond_broadcast(&state->timer_changed);
-        cmeta_mutex_unlock(&state->lock);
+        sync_cond_broadcast(&state->timer_changed);
+        sync_mutex_unlock(&state->lock);
         if (cancel_scheduled)
             (void)temporal_cancel_scheduled(
                 state, scheduler, scheduled.task_id);
@@ -248,7 +248,7 @@ static temporal_ready_cause temporal_take_ready(temporal_state *state) {
     temporal_ready_cause cause;
     cflow_waitable inner_waitable = {0};
     bool inner_armed;
-    cmeta_mutex_lock(&state->lock);
+    sync_mutex_lock(&state->lock);
     cause = state->ready_cause;
     state->ready_cause = TEMPORAL_READY_NONE;
     inner_armed = state->inner_armed;
@@ -257,7 +257,7 @@ static temporal_ready_cause temporal_take_ready(temporal_state *state) {
     state->waiter = (cflow_waker){0};
     state->need_inner = false;
     state->need_timer = false;
-    cmeta_mutex_unlock(&state->lock);
+    sync_mutex_unlock(&state->lock);
     if (inner_armed && cflow_waitable_valid(&inner_waitable))
         cflow_waitable_cancel(&inner_waitable);
     return cause;
@@ -266,10 +266,10 @@ static temporal_ready_cause temporal_take_ready(temporal_state *state) {
 static cflow_step temporal_wait(temporal_state *state,
                                 bool need_inner,
                                 bool need_timer) {
-    cmeta_mutex_lock(&state->lock);
+    sync_mutex_lock(&state->lock);
     state->need_inner = need_inner;
     state->need_timer = need_timer;
-    cmeta_mutex_unlock(&state->lock);
+    sync_mutex_unlock(&state->lock);
     return (cflow_step){
         CFLOW_STEP_WAIT,
         temporal_waitable_as_cflow_waitable(state),
@@ -279,21 +279,21 @@ static cflow_step temporal_wait(temporal_state *state,
 
 static void temporal_mark_done(temporal_state *state) {
     cflow_waker waker;
-    cmeta_mutex_lock(&state->lock);
+    sync_mutex_lock(&state->lock);
     state->done = true;
     waker = state->terminal_waker;
     state->terminal_waker = (cflow_waker){0};
-    cmeta_mutex_unlock(&state->lock);
+    sync_mutex_unlock(&state->lock);
     invoke_waker(waker);
 }
 
 static void temporal_mark_error(temporal_state *state, const char *error) {
     cflow_waker waker;
-    cmeta_mutex_lock(&state->lock);
+    sync_mutex_lock(&state->lock);
     state->error = error != NULL ? error : "temporal source error";
     waker = state->terminal_waker;
     state->terminal_waker = (cflow_waker){0};
-    cmeta_mutex_unlock(&state->lock);
+    sync_mutex_unlock(&state->lock);
     invoke_waker(waker);
 }
 
@@ -422,22 +422,22 @@ static cflow_step temporal_resume(void *user,
     if (state == NULL || context == NULL || context->scheduler == NULL ||
         out_value == NULL)
         return temporal_error_step("temporal source has no scheduler");
-    cmeta_mutex_lock(&state->lock);
+    sync_mutex_lock(&state->lock);
     if (state->scheduler != NULL && state->scheduler != context->scheduler) {
-        cmeta_mutex_unlock(&state->lock);
+        sync_mutex_unlock(&state->lock);
         return temporal_error_step("temporal source scheduler changed");
     }
     state->scheduler = context->scheduler;
     if (state->error != NULL) {
         const char *error = state->error;
-        cmeta_mutex_unlock(&state->lock);
+        sync_mutex_unlock(&state->lock);
         return temporal_error_step(error);
     }
     if (state->done || state->cancelled) {
-        cmeta_mutex_unlock(&state->lock);
+        sync_mutex_unlock(&state->lock);
         return (cflow_step){CFLOW_STEP_DONE, {0}, NULL};
     }
-    cmeta_mutex_unlock(&state->lock);
+    sync_mutex_unlock(&state->lock);
     cause = temporal_take_ready(state);
     if (state->kind == TEMPORAL_DELAY)
         return delay_resume(state, context, out_value, cause);
@@ -449,9 +449,9 @@ static cflow_step temporal_resume(void *user,
 static void temporal_cancel(void *user) {
     temporal_state *state = (temporal_state *)user;
     if (state == NULL) return;
-    cmeta_mutex_lock(&state->lock);
+    sync_mutex_lock(&state->lock);
     state->cancelled = true;
-    cmeta_mutex_unlock(&state->lock);
+    sync_mutex_unlock(&state->lock);
     temporal_cancel_active_wait(state);
     cflow_publisher_cancel(&state->inner);
 }
@@ -460,18 +460,18 @@ static void temporal_destroy(void *user) {
     temporal_state *state = (temporal_state *)user;
     if (state == NULL) return;
     temporal_cancel(state);
-    cmeta_mutex_lock(&state->lock);
+    sync_mutex_lock(&state->lock);
     while (state->timer_outstanding || state->timer_arming)
-        cmeta_cond_wait(&state->timer_changed, &state->lock);
-    cmeta_mutex_unlock(&state->lock);
+        sync_cond_wait(&state->timer_changed, &state->lock);
+    sync_mutex_unlock(&state->lock);
     if (cflow_publisher_valid(&state->inner)) {
         cflow_publisher_bind_terminal_waker(&state->inner, (cflow_waker){0});
         cflow_publisher_destroy(&state->inner);
     }
     cflow_value_slot_destroy(&state->scratch);
     cflow_value_slot_destroy(&state->pending);
-    cmeta_cond_destroy(&state->timer_changed);
-    cmeta_mutex_destroy(&state->lock);
+    sync_cond_destroy(&state->timer_changed);
+    sync_mutex_destroy(&state->lock);
     free(state);
 }
 
@@ -492,10 +492,10 @@ static void temporal_bind_terminal(void *user, cflow_waker waker) {
     temporal_state *state = (temporal_state *)user;
     bool terminal;
     if (state == NULL) return;
-    cmeta_mutex_lock(&state->lock);
+    sync_mutex_lock(&state->lock);
     state->terminal_waker = waker;
     terminal = state->done || state->error != NULL;
-    cmeta_mutex_unlock(&state->lock);
+    sync_mutex_unlock(&state->lock);
     cflow_publisher_bind_terminal_waker(&state->inner, waker);
     if (terminal) invoke_waker(waker);
 }
@@ -509,12 +509,12 @@ static cflow_publisher_terminal temporal_poll_terminal(
     temporal_ready_cause cause;
     if (out_error != NULL) *out_error = NULL;
     if (state == NULL) return CFLOW_PUBLISHER_ERROR;
-    cmeta_mutex_lock(&state->lock);
+    sync_mutex_lock(&state->lock);
     error = state->error;
     done = state->done;
     pending = state->pending.live;
     cause = state->ready_cause;
-    cmeta_mutex_unlock(&state->lock);
+    sync_mutex_unlock(&state->lock);
     if (error != NULL) {
         if (out_error != NULL) *out_error = error;
         return CFLOW_PUBLISHER_ERROR;
@@ -558,8 +558,8 @@ static bool temporal_source_init(cflow_publisher *out,
     state->kind = kind;
     state->type = type;
     state->duration_ticks = duration_to_scheduler_ticks(duration);
-    cmeta_mutex_init(&state->lock);
-    cmeta_cond_init(&state->timer_changed);
+    sync_mutex_init(&state->lock);
+    sync_cond_init(&state->timer_changed);
     if (state->lock == NULL || state->timer_changed == NULL ||
         (kind != TEMPORAL_TIMEOUT &&
          !cflow_value_slot_init(&state->pending, type)) ||
@@ -568,8 +568,8 @@ static bool temporal_source_init(cflow_publisher *out,
         cflow_value_slot_destroy(&state->scratch);
         cflow_value_slot_destroy(&state->pending);
         if (state->timer_changed != NULL)
-            cmeta_cond_destroy(&state->timer_changed);
-        if (state->lock != NULL) cmeta_mutex_destroy(&state->lock);
+            sync_cond_destroy(&state->timer_changed);
+        if (state->lock != NULL) sync_mutex_destroy(&state->lock);
         free(state);
         return false;
     }

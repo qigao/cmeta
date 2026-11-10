@@ -1,5 +1,5 @@
 #include <cflow/publishers.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 #include "publishers_internal.h"
 #include "value_storage.h"
@@ -176,8 +176,8 @@ typedef struct timer_state {
     cflow_scheduler *scheduler;
     cflow_task_id task;
     cflow_waker waker;
-    cmeta_mutex_t lock;
-    cmeta_cond_t changed;
+    sync_mutex_t lock;
+    sync_cond_t changed;
     size_t references;
     size_t wake_inflight;
 } timer_state;
@@ -187,15 +187,15 @@ static SALTS_THREAD_LOCAL timer_state *timer_active_callback;
 static void timer_state_release(timer_state *s) {
     bool destroy = false;
     if (!s) return;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     if (s->references != 0u) {
         --s->references;
         destroy = s->references == 0u;
     }
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     if (!destroy) return;
-    cmeta_cond_destroy(&s->changed);
-    cmeta_mutex_destroy(&s->lock);
+    sync_cond_destroy(&s->changed);
+    sync_mutex_destroy(&s->lock);
     free(s);
 }
 
@@ -204,7 +204,7 @@ static void timer_fire(void *user) {
     timer_state *previous;
     cflow_waker w = {0};
     if (!s) return;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     if (s->scheduled) {
         s->scheduled = false;
         s->task = 0u;
@@ -216,17 +216,17 @@ static void timer_fire(void *user) {
         s->waker = (cflow_waker){0};
     }
     s->callback_outstanding = false;
-    cmeta_cond_broadcast(&s->changed);
-    cmeta_mutex_unlock(&s->lock);
+    sync_cond_broadcast(&s->changed);
+    sync_mutex_unlock(&s->lock);
     if (w.wake) {
         previous = timer_active_callback;
         timer_active_callback = s;
         w.wake(w.user);
         timer_active_callback = previous;
-        cmeta_mutex_lock(&s->lock);
+        sync_mutex_lock(&s->lock);
         --s->wake_inflight;
-        cmeta_cond_broadcast(&s->changed);
-        cmeta_mutex_unlock(&s->lock);
+        sync_cond_broadcast(&s->changed);
+        sync_mutex_unlock(&s->lock);
     }
     timer_state_release(s);
 }
@@ -236,10 +236,10 @@ static bool timer_arm(void *state, cflow_waker w) {
     cflow_task_id task;
     uint64_t interval;
     if (!s || !w.wake) return false;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     if (!s->publisher_live || !s->scheduler || s->scheduled ||
         s->callback_outstanding || s->ready) {
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return false;
     }
     scheduler = s->scheduler;
@@ -248,19 +248,19 @@ static bool timer_arm(void *state, cflow_waker w) {
     s->callback_outstanding = true;
     s->waker = w;
     s->references += 2u; /* posting call and accepted callback */
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
 
     task = cflow_scheduler_post_after(scheduler, interval, timer_fire, s);
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     if (task != 0u && s->scheduled)
         s->task = task;
     else if (task == 0u) {
         s->scheduled = false;
         s->callback_outstanding = false;
         s->waker = (cflow_waker){0};
-        cmeta_cond_broadcast(&s->changed);
+        sync_cond_broadcast(&s->changed);
     }
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     if (task == 0u)
         timer_state_release(s); /* rejected callback reference */
     timer_state_release(s); /* posting reference */
@@ -272,7 +272,7 @@ static void timer_wait_cancel(void *state) {
     cflow_task_id task = 0u;
     bool cancelled = false;
     if (!s) return;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     if (s->scheduled) {
         scheduler = s->scheduler;
         task = s->task;
@@ -281,20 +281,20 @@ static void timer_wait_cancel(void *state) {
     }
     s->ready = false;
     s->waker = (cflow_waker){0};
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     if (scheduler && task != 0u)
         cancelled = cflow_scheduler_cancel(scheduler, task);
     if (cancelled) {
-        cmeta_mutex_lock(&s->lock);
+        sync_mutex_lock(&s->lock);
         s->callback_outstanding = false;
-        cmeta_cond_broadcast(&s->changed);
-        cmeta_mutex_unlock(&s->lock);
+        sync_cond_broadcast(&s->changed);
+        sync_mutex_unlock(&s->lock);
         timer_state_release(s);
     }
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     while (s->wake_inflight != 0u && timer_active_callback != s)
-        cmeta_cond_wait(&s->changed, &s->lock);
-    cmeta_mutex_unlock(&s->lock);
+        sync_cond_wait(&s->changed, &s->lock);
+    sync_mutex_unlock(&s->lock);
 }
 CMETA_IMPLEMENTS(cflow_waitable, timer_waitable, 0,
     .arm = timer_arm,
@@ -305,25 +305,25 @@ static cflow_step timer_resume(void *state, cflow_publish_context *ctx, void *ou
     cflow_step_kind kind;
     size_t value;
     if (!s || !ctx || !ctx->scheduler) return (cflow_step){ CFLOW_STEP_ERROR, {0}, "timer has no scheduler" };
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     if (!s->publisher_live) {
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return (cflow_step){ CFLOW_STEP_ERROR, {0}, "timer source unavailable" };
     }
     s->scheduler = ctx->scheduler;
     if (s->emitted >= s->count) {
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
     }
     if (!s->ready) {
-        cmeta_mutex_unlock(&s->lock);
+        sync_mutex_unlock(&s->lock);
         return (cflow_step){ CFLOW_STEP_WAIT, timer_waitable_as_cflow_waitable(s), NULL };
     }
     s->ready = false;
     value = s->emitted++;
     kind = s->emitted == s->count
         ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE;
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     memcpy(out, &value, sizeof value);
     return (cflow_step){ kind, {0}, NULL };
 }
@@ -331,9 +331,9 @@ static void timer_cancel(void *state) { timer_wait_cancel(state); }
 static void timer_destroy(void *state) {
     timer_state *s = (timer_state *)state;
     if (!s) return;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     s->publisher_live = false;
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     timer_wait_cancel(s);
     timer_state_release(s);
 }
@@ -355,11 +355,11 @@ bool cflow_publisher_from_timer(cflow_publisher *out,
     if (!out || cflow_publisher_valid(out)) return false;
     timer_state *s = calloc(1, sizeof(*s));
     if (!s) return false;
-    cmeta_mutex_init(&s->lock);
-    cmeta_cond_init(&s->changed);
+    sync_mutex_init(&s->lock);
+    sync_cond_init(&s->changed);
     if (!s->lock || !s->changed) {
-        cmeta_cond_destroy(&s->changed);
-        cmeta_mutex_destroy(&s->lock);
+        sync_cond_destroy(&s->changed);
+        sync_mutex_destroy(&s->lock);
         free(s);
         return false;
     }
@@ -377,7 +377,7 @@ typedef struct channel_impl {
     size_t capacity;
     size_t head, count;
     bool closed;
-    cmeta_mutex_t lock;
+    sync_mutex_t lock;
     cflow_waker waiter;
     cflow_waker terminal_waker;
     size_t peak_pending;
@@ -404,9 +404,9 @@ bool cflow_channel_init(cflow_channel *ch,
     channel_impl *c = calloc(1, sizeof(*c));
     if (!c) return false;
     c->data = malloc(type->size * capacity);
-    cmeta_mutex_init(&c->lock);
+    sync_mutex_init(&c->lock);
     if (!c->data || !c->lock) {
-        cmeta_mutex_destroy(&c->lock);
+        sync_mutex_destroy(&c->lock);
         free(c->data);
         free(c);
         return false;
@@ -418,15 +418,15 @@ cflow_channel_status cflow_channel_try_push(cflow_channel *ch,
                                             const void *value) {
     channel_impl *c = channel_of(ch);
     if (!c || !value) return CFLOW_CHANNEL_INVALID_ARGUMENT;
-    cmeta_mutex_lock(&c->lock);
+    sync_mutex_lock(&c->lock);
     if (c->closed) {
         ++c->rejected_closed;
-        cmeta_mutex_unlock(&c->lock);
+        sync_mutex_unlock(&c->lock);
         return CFLOW_CHANNEL_CLOSED;
     }
     if (c->count == c->capacity) {
         ++c->rejected_full;
-        cmeta_mutex_unlock(&c->lock);
+        sync_mutex_unlock(&c->lock);
         return CFLOW_CHANNEL_FULL;
     }
     size_t tail = (c->head + c->count) % c->capacity;
@@ -434,7 +434,7 @@ cflow_channel_status cflow_channel_try_push(cflow_channel *ch,
     ++c->accepted;
     if (c->count > c->peak_pending) c->peak_pending = c->count;
     cflow_waker w = c->waiter; c->waiter = (cflow_waker){0};
-    cmeta_mutex_unlock(&c->lock);
+    sync_mutex_unlock(&c->lock);
     if (w.wake) w.wake(w.user);
     return CFLOW_CHANNEL_OK;
 }
@@ -447,7 +447,7 @@ bool cflow_channel_get_stats(const cflow_channel *ch,
                              cflow_channel_stats *out) {
     channel_impl *c = (channel_impl *)channel_of_const(ch);
     if (!c || !out) return false;
-    cmeta_mutex_lock(&c->lock);
+    sync_mutex_lock(&c->lock);
     *out = (cflow_channel_stats){
         c->capacity,
         c->count,
@@ -457,42 +457,42 @@ bool cflow_channel_get_stats(const cflow_channel *ch,
         c->rejected_full,
         c->rejected_closed
     };
-    cmeta_mutex_unlock(&c->lock);
+    sync_mutex_unlock(&c->lock);
     return true;
 }
 
 void cflow_channel_close(cflow_channel *ch) {
     channel_impl *c = channel_of(ch); if (!c) return;
-    cmeta_mutex_lock(&c->lock);
+    sync_mutex_lock(&c->lock);
     c->closed = true;
     cflow_waker w = c->waiter; c->waiter = (cflow_waker){0};
     cflow_waker tw = c->terminal_waker;
-    cmeta_mutex_unlock(&c->lock);
+    sync_mutex_unlock(&c->lock);
     if (w.wake) w.wake(w.user);
     if (tw.wake) tw.wake(tw.user);
 }
 
 void cflow_channel_destroy(cflow_channel *ch) {
     channel_impl *c = channel_of(ch); if (!c) return;
-    cflow_channel_close(ch); cmeta_mutex_destroy(&c->lock); free(c->data); free(c); ch->impl = NULL;
+    cflow_channel_close(ch); sync_mutex_destroy(&c->lock); free(c->data); free(c); ch->impl = NULL;
 }
 
 static bool channel_arm(void *state, cflow_waker w) {
     channel_source_state *ss = (channel_source_state *)state;
     channel_impl *c = ss ? ss->ch : NULL; if (!c) return false;
-    cmeta_mutex_lock(&c->lock);
+    sync_mutex_lock(&c->lock);
     bool ready = c->count || c->closed;
     if (!ready) c->waiter = w;
-    cmeta_mutex_unlock(&c->lock);
+    sync_mutex_unlock(&c->lock);
     if (ready && w.wake) w.wake(w.user);
     return true;
 }
 static void channel_unarm(void *state) {
     channel_source_state *ss = (channel_source_state *)state;
     channel_impl *c = ss ? ss->ch : NULL; if (!c) return;
-    cmeta_mutex_lock(&c->lock);
+    sync_mutex_lock(&c->lock);
     c->waiter = (cflow_waker){0};
-    cmeta_mutex_unlock(&c->lock);
+    sync_mutex_unlock(&c->lock);
 }
 CMETA_IMPLEMENTS(cflow_waitable, channel_waitable, 0,
     .arm = channel_arm,
@@ -503,17 +503,17 @@ static cflow_step channel_resume(void *state, cflow_publish_context *ctx, void *
     channel_source_state *ss = (channel_source_state *)state;
     channel_impl *c = ss ? ss->ch : NULL;
     if (!c) return (cflow_step){ CFLOW_STEP_ERROR, {0}, "channel unavailable" };
-    cmeta_mutex_lock(&c->lock);
+    sync_mutex_lock(&c->lock);
     if (c->count) {
         memcpy(out, c->data + c->head * c->type->size, c->type->size);
         c->head = (c->head + 1) % c->capacity; --c->count;
         ++c->received;
         bool final = c->closed && c->count == 0;
-        cmeta_mutex_unlock(&c->lock);
+        sync_mutex_unlock(&c->lock);
         return (cflow_step){ final ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE, {0}, NULL };
     }
-    if (c->closed) { cmeta_mutex_unlock(&c->lock); return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL }; }
-    cmeta_mutex_unlock(&c->lock);
+    if (c->closed) { sync_mutex_unlock(&c->lock); return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL }; }
+    sync_mutex_unlock(&c->lock);
     return (cflow_step){ CFLOW_STEP_WAIT, channel_waitable_as_cflow_waitable(ss), NULL };
 }
 static void channel_source_cancel(void *state) { channel_unarm(state); }
@@ -526,17 +526,17 @@ static const cmeta_type_desc *channel_source_type(void *state) {
 static void channel_bind_terminal(void *state, cflow_waker w) {
     channel_source_state *ss = (channel_source_state *)state;
     channel_impl *c = ss ? ss->ch : NULL; if (!c) return;
-    cmeta_mutex_lock(&c->lock);
+    sync_mutex_lock(&c->lock);
     c->terminal_waker = w;
-    cmeta_mutex_unlock(&c->lock);
+    sync_mutex_unlock(&c->lock);
 }
 static cflow_publisher_terminal channel_poll_terminal(void *state, const char **error) {
     (void)error;
     channel_source_state *ss = (channel_source_state *)state;
     channel_impl *c = ss ? ss->ch : NULL; if (!c) return CFLOW_PUBLISHER_ERROR;
-    cmeta_mutex_lock(&c->lock);
+    sync_mutex_lock(&c->lock);
     bool done = c->closed && c->count == 0;
-    cmeta_mutex_unlock(&c->lock);
+    sync_mutex_unlock(&c->lock);
     return done ? CFLOW_PUBLISHER_DONE : CFLOW_PUBLISHER_OPEN;
 }
 CMETA_IMPLEMENTS(cflow_publisher, channel_source, 0,

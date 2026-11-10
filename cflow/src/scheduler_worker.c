@@ -3,15 +3,15 @@
 #include <cflow/scheduler.h>
 #include "scheduler_internal.h"
 #include "timer_queue.h"
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <stdlib.h>
 #include <string.h>
 
 typedef struct worker_state {
-    cmeta_mutex_t mutex;
-    cmeta_cond_t changed;
-    cmeta_thread_t timer_thread;
+    sync_mutex_t mutex;
+    sync_cond_t changed;
+    sync_thread_t timer_thread;
     cflow_clock clock;
     cflow_executor executor;
     cflow_executor_control executor_control;
@@ -52,7 +52,7 @@ static void worker_timer_main(void *user) {
     worker_state *state = (worker_state *)user;
 
     if (!state) return;
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     for (;;) {
         cflow_deadline deadline;
         cflow_instant now;
@@ -62,14 +62,14 @@ static void worker_timer_main(void *user) {
 
         if (state->stopping) break;
         if (!cflow_timer_queue_next_deadline(&state->timers, &deadline)) {
-            cmeta_cond_wait(&state->changed, &state->mutex);
+            sync_cond_wait(&state->changed, &state->mutex);
             continue;
         }
 
         now = cflow_clock_now(&state->clock);
         if (deadline.ns > now.ns) {
             cflow_duration remaining = cflow_deadline_remaining(deadline, now);
-            (void)cmeta_cond_timedwait(&state->changed, &state->mutex,
+            (void)sync_cond_timedwait(&state->changed, &state->mutex,
                                        remaining.ns);
             continue;
         }
@@ -78,8 +78,8 @@ static void worker_timer_main(void *user) {
             continue;
 
         ++state->dispatching;
-        cmeta_cond_broadcast(&state->changed);
-        cmeta_mutex_unlock(&state->mutex);
+        sync_cond_broadcast(&state->changed);
+        sync_mutex_unlock(&state->mutex);
 
         descriptor = cflow_timer_task_descriptor(&task);
         admitted = cflow_executor_control_post_task(
@@ -87,17 +87,17 @@ static void worker_timer_main(void *user) {
         if (admitted != CFLOW_EXECUTOR_POST_ACCEPTED)
             cflow_scheduler_settle_cancelled_task_internal(&descriptor);
 
-        cmeta_mutex_lock(&state->mutex);
+        sync_mutex_lock(&state->mutex);
         --state->dispatching;
         if (admitted != CFLOW_EXECUTOR_POST_ACCEPTED) {
             ++state->settled_before_executor;
             ++state->cancelled_on_shutdown;
             ++state->rejected_closed;
         }
-        cmeta_cond_broadcast(&state->changed);
+        sync_cond_broadcast(&state->changed);
     }
-    cmeta_cond_broadcast(&state->changed);
-    cmeta_mutex_unlock(&state->mutex);
+    sync_cond_broadcast(&state->changed);
+    sync_mutex_unlock(&state->mutex);
 }
 
 static cflow_schedule_result worker_try_post_task_after(
@@ -110,10 +110,10 @@ static cflow_schedule_result worker_try_post_task_after(
 
     if (!state || !task || !task->run)
         return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     if (state->stopping) {
         ++state->rejected_closed;
-        cmeta_mutex_unlock(&state->mutex);
+        sync_mutex_unlock(&state->mutex);
         return (cflow_schedule_result){CFLOW_ADMISSION_CLOSED, 0u};
     }
 
@@ -136,11 +136,11 @@ static cflow_schedule_result worker_try_post_task_after(
         }
         ++state->accepted;
         worker_update_peak_locked(state);
-        cmeta_cond_broadcast(&state->changed);
+        sync_cond_broadcast(&state->changed);
     } else if (result.status == CFLOW_ADMISSION_FULL) {
         ++state->rejected_full;
     }
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     return result;
 }
 
@@ -172,14 +172,14 @@ static bool worker_cancel(void *self, cflow_task_id id) {
     bool cancelled;
 
     if (!state || id == 0u) return false;
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     cancelled = !state->stopping &&
                 cflow_timer_queue_take(&state->timers, id, &timer_task);
     if (cancelled) {
         ++state->settled_before_executor;
-        cmeta_cond_broadcast(&state->changed);
+        sync_cond_broadcast(&state->changed);
     }
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     if (cancelled) {
         task = cflow_timer_task_descriptor(&timer_task);
         cflow_scheduler_settle_cancelled_task_internal(&task);
@@ -217,26 +217,26 @@ static bool worker_wait_idle(void *self) {
         bool stopping;
         bool delayed_idle;
 
-        cmeta_mutex_lock(&state->mutex);
+        sync_mutex_lock(&state->mutex);
         while (!state->stopping &&
                (cflow_timer_queue_pending(&state->timers) != 0u ||
                 state->dispatching != 0u)) {
-            cmeta_cond_wait(&state->changed, &state->mutex);
+            sync_cond_wait(&state->changed, &state->mutex);
         }
         stopping = state->stopping;
         delayed_idle = cflow_timer_queue_pending(&state->timers) == 0u &&
                        state->dispatching == 0u;
-        cmeta_mutex_unlock(&state->mutex);
+        sync_mutex_unlock(&state->mutex);
 
         if (stopping) return false;
         if (!delayed_idle || !cflow_executor_wait_idle(&state->executor))
             return false;
 
-        cmeta_mutex_lock(&state->mutex);
+        sync_mutex_lock(&state->mutex);
         delayed_idle = !state->stopping &&
                        cflow_timer_queue_pending(&state->timers) == 0u &&
                        state->dispatching == 0u;
-        cmeta_mutex_unlock(&state->mutex);
+        sync_mutex_unlock(&state->mutex);
         if (delayed_idle && cflow_executor_pending(&state->executor) == 0u)
             return true;
     }
@@ -252,9 +252,9 @@ static size_t worker_pending(void *self) {
     size_t pending;
 
     if (!state) return 0u;
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     pending = worker_logical_pending_locked(state);
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     return pending;
 }
 
@@ -264,26 +264,26 @@ static bool worker_shutdown(void *self) {
     bool join_timer;
 
     if (!state) return false;
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     if (!state->stopping) {
         state->stopping = true;
-        cmeta_cond_broadcast(&state->changed);
+        sync_cond_broadcast(&state->changed);
     }
     while (cflow_timer_queue_take_any(&state->timers, &timer_task)) {
         const cflow_executor_task task =
             cflow_timer_task_descriptor(&timer_task);
         ++state->settled_before_executor;
         ++state->cancelled_on_shutdown;
-        cmeta_mutex_unlock(&state->mutex);
+        sync_mutex_unlock(&state->mutex);
         cflow_scheduler_settle_cancelled_task_internal(&task);
-        cmeta_mutex_lock(&state->mutex);
+        sync_mutex_lock(&state->mutex);
     }
     join_timer = state->timer_thread != 0;
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
 
     if (!cflow_executor_shutdown(&state->executor)) return false;
     if (join_timer) {
-        (void)cmeta_thread_join(&state->timer_thread);
+        (void)sync_thread_join(&state->timer_thread);
         state->timer_thread = 0;
     }
     return true;
@@ -294,9 +294,9 @@ static bool worker_get_stats(void *self, cflow_scheduler_stats *out) {
     cflow_executor_stats executor_stats;
 
     if (!state || !out) return false;
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     if (!cflow_executor_get_stats(&state->executor, &executor_stats)) {
-        cmeta_mutex_unlock(&state->mutex);
+        sync_mutex_unlock(&state->mutex);
         return false;
     }
     *out = (cflow_scheduler_stats){
@@ -310,7 +310,7 @@ static bool worker_get_stats(void *self, cflow_scheduler_stats *out) {
         .rejected_closed = state->rejected_closed,
         .cancelled_on_shutdown = state->cancelled_on_shutdown
     };
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     return true;
 }
 
@@ -322,8 +322,8 @@ static void worker_destroy(void *self) {
     cflow_timer_queue_destroy(&state->timers);
     cflow_executor_destroy(&state->executor);
     cflow_clock_destroy(&state->clock);
-    cmeta_cond_destroy(&state->changed);
-    cmeta_mutex_destroy(&state->mutex);
+    sync_cond_destroy(&state->changed);
+    sync_mutex_destroy(&state->mutex);
     free(state);
 }
 
@@ -362,8 +362,8 @@ bool cflow_scheduler_worker_init_with_capacity(cflow_scheduler *scheduler,
     state = (worker_state *)calloc(1, sizeof(*state));
     if (!state) return false;
 
-    cmeta_mutex_init(&state->mutex);
-    cmeta_cond_init(&state->changed);
+    sync_mutex_init(&state->mutex);
+    sync_cond_init(&state->changed);
     if (!state->mutex || !state->changed ||
         !cflow_clock_system_init(&state->clock) ||
         !cflow_executor_worker_init_with_capacity(&state->executor, workers,
@@ -372,14 +372,14 @@ bool cflow_scheduler_worker_init_with_capacity(cflow_scheduler *scheduler,
                                    &state->executor_control) ||
         !cflow_timer_queue_init_with_capacity(&state->timers,
                                               timer_capacity) ||
-        cmeta_thread_create(&state->timer_thread, worker_timer_main, state) != 0) {
-        if (state->timer_thread) (void)cmeta_thread_join(&state->timer_thread);
+        sync_thread_create(&state->timer_thread, worker_timer_main, state) != 0) {
+        if (state->timer_thread) (void)sync_thread_join(&state->timer_thread);
         cflow_timer_queue_destroy(&state->timers);
         if (cflow_executor_valid(&state->executor))
             cflow_executor_destroy(&state->executor);
         if (cflow_clock_valid(&state->clock)) cflow_clock_destroy(&state->clock);
-        cmeta_cond_destroy(&state->changed);
-        cmeta_mutex_destroy(&state->mutex);
+        sync_cond_destroy(&state->changed);
+        sync_mutex_destroy(&state->mutex);
         free(state);
         return false;
     }

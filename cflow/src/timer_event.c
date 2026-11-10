@@ -4,7 +4,7 @@
 #include "timer_event_internal.h"
 #include "timer_queue.h"
 
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -24,8 +24,8 @@ typedef struct timer_event_slot {
 } timer_event_slot;
 
 typedef struct cflow_timer_event_queue_impl {
-    cmeta_mutex_t mutex;
-    cmeta_cond_t changed;
+    sync_mutex_t mutex;
+    sync_cond_t changed;
     cflow_clock *clock;
     cflow_timer_event_target_internal target;
     cflow_timer_queue timers;
@@ -154,18 +154,18 @@ static cflow_timer_event_schedule_result schedule_at(
         return result;
     }
 
-    cmeta_mutex_lock(&impl->mutex);
+    sync_mutex_lock(&impl->mutex);
     if (impl->closed) {
         ++impl->rejected_closed;
         result.status = CFLOW_TIMER_EVENT_CLOSED;
-        cmeta_mutex_unlock(&impl->mutex);
+        sync_mutex_unlock(&impl->mutex);
         return result;
     }
     slot = find_free_slot(impl);
     if (slot == NULL) {
         ++impl->rejected_full;
         result.status = CFLOW_TIMER_EVENT_FULL;
-        cmeta_mutex_unlock(&impl->mutex);
+        sync_mutex_unlock(&impl->mutex);
         return result;
     }
 
@@ -180,7 +180,7 @@ static cflow_timer_event_schedule_result schedule_at(
         release_slot(slot);
         ++impl->rejected_full;
         result.status = CFLOW_TIMER_EVENT_FULL;
-        cmeta_mutex_unlock(&impl->mutex);
+        sync_mutex_unlock(&impl->mutex);
         return result;
     }
 
@@ -190,7 +190,7 @@ static cflow_timer_event_schedule_result schedule_at(
         impl->peak_pending = cflow_timer_queue_pending(&impl->timers);
     result.status = CFLOW_TIMER_EVENT_OK;
     result.timer_id = slot->timer_id;
-    cmeta_mutex_unlock(&impl->mutex);
+    sync_mutex_unlock(&impl->mutex);
     return result;
 }
 
@@ -228,15 +228,15 @@ cflow_timer_event_status cflow_timer_event_queue_init_target_internal(
                                                sizeof(*impl->slots));
     impl->payloads = (unsigned char *)calloc(
         1u, impl->reserved_payload_bytes);
-    cmeta_mutex_init(&impl->mutex);
-    cmeta_cond_init(&impl->changed);
+    sync_mutex_init(&impl->mutex);
+    sync_cond_init(&impl->changed);
     if (impl->slots == NULL || impl->payloads == NULL || impl->mutex == NULL ||
         impl->changed == NULL ||
         !cflow_timer_queue_init_with_capacity(&impl->timers,
                                               capacity)) {
         cflow_timer_queue_destroy(&impl->timers);
-        cmeta_cond_destroy(&impl->changed);
-        cmeta_mutex_destroy(&impl->mutex);
+        sync_cond_destroy(&impl->changed);
+        sync_mutex_destroy(&impl->mutex);
         free(impl->payloads);
         free(impl->slots);
         free(impl);
@@ -351,7 +351,7 @@ size_t cflow_timer_event_queue_cancel_scopes(
     size_t index;
     if (impl == NULL || (scope_count != 0u && scopes == NULL)) return 0u;
     if (scope_count == 0u) return 0u;
-    cmeta_mutex_lock(&impl->mutex);
+    sync_mutex_lock(&impl->mutex);
     if (!impl->closed) {
         for (index = 0u; index < impl->capacity; ++index) {
             timer_event_slot *slot = &impl->slots[index];
@@ -365,7 +365,7 @@ size_t cflow_timer_event_queue_cancel_scopes(
             }
         }
     }
-    cmeta_mutex_unlock(&impl->mutex);
+    sync_mutex_unlock(&impl->mutex);
     return cancelled;
 }
 
@@ -378,27 +378,27 @@ cflow_timer_event_status cflow_timer_event_queue_cancel(
     if (impl == NULL || timer_id == 0u)
         return CFLOW_TIMER_EVENT_INVALID_ARGUMENT;
 
-    cmeta_mutex_lock(&impl->mutex);
+    sync_mutex_lock(&impl->mutex);
     if (impl->closed) {
-        cmeta_mutex_unlock(&impl->mutex);
+        sync_mutex_unlock(&impl->mutex);
         return CFLOW_TIMER_EVENT_CLOSED;
     }
     slot = find_timer_slot(impl, timer_id);
     if (slot == NULL) {
-        cmeta_mutex_unlock(&impl->mutex);
+        sync_mutex_unlock(&impl->mutex);
         return CFLOW_TIMER_EVENT_NOT_FOUND;
     }
     if (slot->state == TIMER_EVENT_SLOT_FIRING) {
-        cmeta_mutex_unlock(&impl->mutex);
+        sync_mutex_unlock(&impl->mutex);
         return CFLOW_TIMER_EVENT_FIRE_WON;
     }
     if (!cflow_timer_queue_cancel(&impl->timers, timer_id)) {
-        cmeta_mutex_unlock(&impl->mutex);
+        sync_mutex_unlock(&impl->mutex);
         return CFLOW_TIMER_EVENT_NOT_FOUND;
     }
     release_slot(slot);
     ++impl->cancelled;
-    cmeta_mutex_unlock(&impl->mutex);
+    sync_mutex_unlock(&impl->mutex);
     return CFLOW_TIMER_EVENT_OK;
 }
 
@@ -421,22 +421,22 @@ bool cflow_timer_event_queue_claim_one_ready(
         claim->queue_impl != NULL || claim->slot != NULL)
         return false;
     now = cflow_clock_now(impl->clock);
-    cmeta_mutex_lock(&impl->mutex);
+    sync_mutex_lock(&impl->mutex);
     if (impl->closed) {
         result.status = CFLOW_TIMER_EVENT_FIRE_CLOSED;
-        cmeta_mutex_unlock(&impl->mutex);
+        sync_mutex_unlock(&impl->mutex);
         *out_result = result;
         return false;
     }
     if (impl->consumer_active) {
         result.status = CFLOW_TIMER_EVENT_FIRE_BUSY;
-        cmeta_mutex_unlock(&impl->mutex);
+        sync_mutex_unlock(&impl->mutex);
         *out_result = result;
         return false;
     }
     if (!cflow_timer_queue_take_ready(&impl->timers, now, &task)) {
         result.status = CFLOW_TIMER_EVENT_FIRE_NOT_READY;
-        cmeta_mutex_unlock(&impl->mutex);
+        sync_mutex_unlock(&impl->mutex);
         *out_result = result;
         return false;
     }
@@ -444,7 +444,7 @@ bool cflow_timer_event_queue_claim_one_ready(
     slot = (timer_event_slot *)task.user;
     if (slot == NULL || slot->state != TIMER_EVENT_SLOT_PENDING ||
         slot->timer_id != task.id) {
-        cmeta_mutex_unlock(&impl->mutex);
+        sync_mutex_unlock(&impl->mutex);
         *out_result = result;
         return false;
     }
@@ -454,7 +454,7 @@ bool cflow_timer_event_queue_claim_one_ready(
     result.timer_id = slot->timer_id;
     claim->queue_impl = impl;
     claim->slot = slot;
-    cmeta_mutex_unlock(&impl->mutex);
+    sync_mutex_unlock(&impl->mutex);
     *out_result = result;
     return true;
 }
@@ -483,7 +483,7 @@ cflow_timer_event_fire_result cflow_timer_event_queue_commit_claim(
     result.mailbox_status = impl->target.send(
         impl->target.user, &event);
 
-    cmeta_mutex_lock(&impl->mutex);
+    sync_mutex_lock(&impl->mutex);
     if (result.mailbox_status == CFLOW_MAILBOX_OK) {
         result.status = CFLOW_TIMER_EVENT_FIRE_DELIVERED;
         ++impl->delivered;
@@ -502,8 +502,8 @@ cflow_timer_event_fire_result cflow_timer_event_queue_commit_claim(
     release_slot(slot);
     impl->in_flight = 0u;
     impl->consumer_active = false;
-    cmeta_cond_broadcast(&impl->changed);
-    cmeta_mutex_unlock(&impl->mutex);
+    sync_cond_broadcast(&impl->changed);
+    sync_mutex_unlock(&impl->mutex);
     return result;
 }
 
@@ -522,7 +522,7 @@ bool cflow_timer_event_queue_get_stats(
     cflow_timer_event_queue_impl *impl = queue != NULL
         ? (cflow_timer_event_queue_impl *)queue->impl : NULL;
     if (impl == NULL || out == NULL) return false;
-    cmeta_mutex_lock(&impl->mutex);
+    sync_mutex_lock(&impl->mutex);
     *out = (cflow_timer_event_stats){
         .capacity = impl->capacity,
         .pending = cflow_timer_queue_pending(&impl->timers),
@@ -544,7 +544,7 @@ bool cflow_timer_event_queue_get_stats(
         .rejected_closed = impl->rejected_closed,
         .closed = impl->closed
     };
-    cmeta_mutex_unlock(&impl->mutex);
+    sync_mutex_unlock(&impl->mutex);
     return true;
 }
 
@@ -556,7 +556,7 @@ cflow_timer_event_status cflow_timer_event_queue_close_begin_internal(
     size_t index;
     if (impl == NULL) return CFLOW_TIMER_EVENT_INVALID_ARGUMENT;
 
-    cmeta_mutex_lock(&impl->mutex);
+    sync_mutex_lock(&impl->mutex);
     if (impl->closed) {
         status = CFLOW_TIMER_EVENT_CLOSED;
     } else {
@@ -571,7 +571,7 @@ cflow_timer_event_status cflow_timer_event_queue_close_begin_internal(
         }
         impl->timers.count = 0u;
     }
-    cmeta_mutex_unlock(&impl->mutex);
+    sync_mutex_unlock(&impl->mutex);
     return status;
 }
 
@@ -582,10 +582,10 @@ cflow_timer_event_status cflow_timer_event_queue_close(
     cflow_timer_event_status status;
     if (impl == NULL) return CFLOW_TIMER_EVENT_INVALID_ARGUMENT;
     status = cflow_timer_event_queue_close_begin_internal(queue);
-    cmeta_mutex_lock(&impl->mutex);
+    sync_mutex_lock(&impl->mutex);
     while (impl->in_flight != 0u)
-        cmeta_cond_wait(&impl->changed, &impl->mutex);
-    cmeta_mutex_unlock(&impl->mutex);
+        sync_cond_wait(&impl->changed, &impl->mutex);
+    sync_mutex_unlock(&impl->mutex);
     return status;
 }
 
@@ -595,8 +595,8 @@ void cflow_timer_event_queue_destroy(cflow_timer_event_queue *queue) {
     impl = (cflow_timer_event_queue_impl *)queue->impl;
     (void)cflow_timer_event_queue_close(queue);
     cflow_timer_queue_destroy(&impl->timers);
-    cmeta_cond_destroy(&impl->changed);
-    cmeta_mutex_destroy(&impl->mutex);
+    sync_cond_destroy(&impl->changed);
+    sync_mutex_destroy(&impl->mutex);
     free(impl->payloads);
     free(impl->slots);
     free(impl);

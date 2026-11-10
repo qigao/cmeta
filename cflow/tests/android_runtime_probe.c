@@ -4,10 +4,10 @@
 #include <cflow/scheduler.h>
 #include <cflow/stream.h>
 #include <cmeta/cmeta.h>
-#include <clock.h>
-#include <deadline_queue.h>
-#include <error_codes.h>
-#include <thread.h>
+#include <core/clock.h>
+#include <queue/deadline_queue.h>
+#include <core/error_codes.h>
+#include <threads/threads.h>
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -15,8 +15,8 @@
 #include <string.h>
 
 typedef struct android_thread_probe {
-  cmeta_mutex_t mutex;
-  cmeta_cond_t changed;
+  sync_mutex_t mutex;
+  sync_cond_t changed;
   int ready;
 } android_thread_probe;
 
@@ -39,11 +39,11 @@ static int android_fail(const char *stage, int code) {
 
 static void android_signal_thread(void *user) {
   android_thread_probe *probe = (android_thread_probe *)user;
-  cmeta_sleep_ms(5u);
-  cmeta_mutex_lock(&probe->mutex);
+  sleep_ms(5u);
+  sync_mutex_lock(&probe->mutex);
   probe->ready = 1;
-  cmeta_cond_broadcast(&probe->changed);
-  cmeta_mutex_unlock(&probe->mutex);
+  sync_cond_broadcast(&probe->changed);
+  sync_mutex_unlock(&probe->mutex);
 }
 
 static void android_count_executor(void *user) {
@@ -89,14 +89,14 @@ static int android_check_cmeta(void) {
 }
 
 static int android_check_clock(void) {
-  const uint64_t before_ns = cmeta_hrtime();
-  const uint64_t before_ms = cmeta_monotonic_ms();
+  const uint64_t before_ns = hrtime();
+  const uint64_t before_ms = monotonic_ms();
   uint64_t after_ns;
   uint64_t after_ms;
 
-  cmeta_sleep_ms(5u);
-  after_ns = cmeta_hrtime();
-  after_ms = cmeta_monotonic_ms();
+  sleep_ms(5u);
+  after_ns = hrtime();
+  after_ms = monotonic_ms();
   if (after_ns <= before_ns || after_ms < before_ms)
     return SALTS_EPROTO;
   return SALTS_OK;
@@ -104,33 +104,33 @@ static int android_check_clock(void) {
 
 static int android_check_thread_condition(void) {
   android_thread_probe probe = {0};
-  cmeta_thread_t thread = NULL;
+  sync_thread_t thread = NULL;
   int status = SALTS_OK;
   int wait_status = 0;
 
-  cmeta_mutex_init(&probe.mutex);
-  cmeta_cond_init(&probe.changed);
+  sync_mutex_init(&probe.mutex);
+  sync_cond_init(&probe.changed);
   if (probe.mutex == NULL || probe.changed == NULL) {
     status = SALTS_ENOMEM;
     goto cleanup;
   }
 
-  status = cmeta_thread_create(&thread, android_signal_thread, &probe);
+  status = sync_thread_create(&thread, android_signal_thread, &probe);
   if (status != SALTS_OK)
     goto cleanup;
 
-  cmeta_mutex_lock(&probe.mutex);
+  sync_mutex_lock(&probe.mutex);
   while (!probe.ready && wait_status == 0)
-    wait_status = cmeta_cond_timedwait(
+    wait_status = sync_cond_timedwait(
         &probe.changed, &probe.mutex,
         UINT64_C(5000000000));
-  cmeta_mutex_unlock(&probe.mutex);
+  sync_mutex_unlock(&probe.mutex);
   if (!probe.ready || wait_status != 0) {
     status = wait_status != 0 ? wait_status : SALTS_ETIMEDOUT;
     goto cleanup;
   }
 
-  status = cmeta_thread_join(&thread);
+  status = sync_thread_join(&thread);
   if (status != SALTS_OK)
     goto cleanup;
   if (probe.ready != 1)
@@ -138,12 +138,12 @@ static int android_check_thread_condition(void) {
 
 cleanup:
   if (thread != NULL) {
-    cmeta_thread_destroy(&thread);
+    sync_thread_destroy(&thread);
   }
   if (probe.changed != NULL)
-    cmeta_cond_destroy(&probe.changed);
+    sync_cond_destroy(&probe.changed);
   if (probe.mutex != NULL)
-    cmeta_mutex_destroy(&probe.mutex);
+    sync_mutex_destroy(&probe.mutex);
   return status;
 }
 

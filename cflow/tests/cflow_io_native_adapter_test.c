@@ -4,10 +4,10 @@
 
 #include <cflow/cflow.h>
 
-#include <clock.h>
-#include <error_codes.h>
-#include <thread.h>
-#include <thread_pool.h>
+#include <core/clock.h>
+#include <core/error_codes.h>
+#include <threads/threads.h>
+#include <threads/thread_pool.h>
 
 #include "tinytest.h"
 
@@ -66,8 +66,8 @@ typedef struct native_adapter_test_completions {
 typedef struct native_adapter_test_source_operation {
     native_io_operation native;
     atomic_size_t *release_count;
-    cmeta_mutex_t *release_gate;
-    cmeta_cond_t *release_changed;
+    sync_mutex_t *release_gate;
+    sync_cond_t *release_changed;
 } native_adapter_test_source_operation;
 
 typedef struct native_adapter_test_source_fixture {
@@ -93,8 +93,8 @@ typedef struct native_adapter_test_sink_probe {
 } native_adapter_test_sink_probe;
 
 typedef struct native_adapter_test_threaded_sink_probe {
-    cmeta_mutex_t gate;
-    cmeta_cond_t changed;
+    sync_mutex_t gate;
+    sync_cond_t changed;
     int values[NATIVE_ADAPTER_TEST_CAPACITY];
     size_t value_count;
     size_t error_count;
@@ -107,8 +107,8 @@ typedef struct native_adapter_test_threaded_sink_probe {
 typedef struct native_adapter_test_threaded_driver {
     cflow_io_native_adapter *adapter;
     cflow_io_publisher_owner *owner;
-    cmeta_mutex_t gate;
-    cmeta_cond_t changed;
+    sync_mutex_t gate;
+    sync_cond_t changed;
     bool drive_pending;
     bool stop_requested;
     atomic_int wake_status;
@@ -207,7 +207,7 @@ static int native_adapter_test_make_pipe_pair(native_adapter_test_pipe pipes[2])
     pipes[1] = INVALID_HANDLE_VALUE;
     if (_snwprintf_s(name, sizeof(name) / sizeof(name[0]), _TRUNCATE,
                      L"\\\\.\\pipe\\cflow-native-adapter-test-%lu-%llu",
-                     GetCurrentProcessId(), (unsigned long long)cmeta_hrtime()) < 0)
+                     GetCurrentProcessId(), (unsigned long long)hrtime()) < 0)
         return SALTS_ERANGE;
     pipes[0] = CreateNamedPipeW(
         name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
@@ -323,12 +323,12 @@ static void native_adapter_test_source_release(void *operation_user) {
         (native_adapter_test_source_operation *)operation_user;
 
     if (operation->release_gate != NULL)
-        cmeta_mutex_lock(operation->release_gate);
+        sync_mutex_lock(operation->release_gate);
     atomic_fetch_add(operation->release_count, 1u);
     if (operation->release_changed != NULL)
-        cmeta_cond_broadcast(operation->release_changed);
+        sync_cond_broadcast(operation->release_changed);
     if (operation->release_gate != NULL)
-        cmeta_mutex_unlock(operation->release_gate);
+        sync_mutex_unlock(operation->release_gate);
 }
 
 static cflow_io_publisher_prepare_status native_adapter_test_source_prepare(
@@ -430,12 +430,12 @@ static bool native_adapter_test_threaded_sink_value(
     native_adapter_test_record_thread_role(
         NATIVE_ADAPTER_TEST_THREAD_ROLE_SUBSCRIBER,
         &probe->subscriber_callbacks, &probe->role_collisions);
-    cmeta_mutex_lock(&probe->gate);
+    sync_mutex_lock(&probe->gate);
     if (probe->value_count < NATIVE_ADAPTER_TEST_CAPACITY)
         probe->values[probe->value_count] = *(const int *)value;
     ++probe->value_count;
-    cmeta_cond_broadcast(&probe->changed);
-    cmeta_mutex_unlock(&probe->gate);
+    sync_cond_broadcast(&probe->changed);
+    sync_mutex_unlock(&probe->gate);
     return true;
 }
 
@@ -447,11 +447,11 @@ static void native_adapter_test_threaded_sink_error(
     native_adapter_test_record_thread_role(
         NATIVE_ADAPTER_TEST_THREAD_ROLE_SUBSCRIBER,
         &probe->subscriber_callbacks, &probe->role_collisions);
-    cmeta_mutex_lock(&probe->gate);
+    sync_mutex_lock(&probe->gate);
     ++probe->error_count;
     probe->error = message;
-    cmeta_cond_broadcast(&probe->changed);
-    cmeta_mutex_unlock(&probe->gate);
+    sync_cond_broadcast(&probe->changed);
+    sync_mutex_unlock(&probe->gate);
 }
 
 static void native_adapter_test_threaded_sink_done(void *user) {
@@ -461,10 +461,10 @@ static void native_adapter_test_threaded_sink_done(void *user) {
     native_adapter_test_record_thread_role(
         NATIVE_ADAPTER_TEST_THREAD_ROLE_SUBSCRIBER,
         &probe->subscriber_callbacks, &probe->role_collisions);
-    cmeta_mutex_lock(&probe->gate);
+    sync_mutex_lock(&probe->gate);
     ++probe->done_count;
-    cmeta_cond_broadcast(&probe->changed);
-    cmeta_mutex_unlock(&probe->gate);
+    sync_cond_broadcast(&probe->changed);
+    sync_mutex_unlock(&probe->gate);
 }
 
 static bool native_adapter_test_threaded_sink_wait(
@@ -474,18 +474,18 @@ static bool native_adapter_test_threaded_sink_wait(
     size_t waits = 0u;
     bool ready;
 
-    cmeta_mutex_lock(&probe->gate);
+    sync_mutex_lock(&probe->gate);
     while ((probe->value_count < values || probe->done_count < dones) &&
            probe->error_count == 0u &&
            waits < NATIVE_ADAPTER_TEST_THREAD_WAIT_LIMIT) {
-        (void)cmeta_cond_timedwait(
+        (void)sync_cond_timedwait(
             &probe->changed, &probe->gate,
             NATIVE_ADAPTER_TEST_THREAD_WAIT_SLICE_NS);
         ++waits;
     }
     ready = probe->value_count >= values && probe->done_count >= dones &&
             probe->error_count == 0u;
-    cmeta_mutex_unlock(&probe->gate);
+    sync_mutex_unlock(&probe->gate);
     return ready;
 }
 
@@ -496,16 +496,16 @@ static bool native_adapter_test_threaded_release_wait(
     size_t waits = 0u;
     bool ready;
 
-    cmeta_mutex_lock(&probe->gate);
+    sync_mutex_lock(&probe->gate);
     while (atomic_load(release_count) < expected &&
            waits < NATIVE_ADAPTER_TEST_THREAD_WAIT_LIMIT) {
-        (void)cmeta_cond_timedwait(
+        (void)sync_cond_timedwait(
             &probe->changed, &probe->gate,
             NATIVE_ADAPTER_TEST_THREAD_WAIT_SLICE_NS);
         ++waits;
     }
     ready = atomic_load(release_count) >= expected;
-    cmeta_mutex_unlock(&probe->gate);
+    sync_mutex_unlock(&probe->gate);
     return ready;
 }
 
@@ -545,15 +545,15 @@ static void native_adapter_test_threaded_drive_task(void *user) {
         size_t observed = 0u;
         int status;
 
-        cmeta_mutex_lock(&driver->gate);
+        sync_mutex_lock(&driver->gate);
         while (!driver->drive_pending && !driver->stop_requested)
-            cmeta_cond_wait(&driver->changed, &driver->gate);
+            sync_cond_wait(&driver->changed, &driver->gate);
         if (driver->stop_requested) {
-            cmeta_mutex_unlock(&driver->gate);
+            sync_mutex_unlock(&driver->gate);
             break;
         }
         driver->drive_pending = false;
-        cmeta_mutex_unlock(&driver->gate);
+        sync_mutex_unlock(&driver->gate);
 
         status = cflow_io_native_adapter_drive_publisher(
             driver->adapter, driver->owner, UINT32_MAX,
@@ -574,25 +574,25 @@ static void native_adapter_test_threaded_drive(void *user) {
         (native_adapter_test_threaded_driver *)user;
     const int status = cflow_io_native_adapter_wake(driver->adapter);
 
-    cmeta_mutex_lock(&driver->gate);
+    sync_mutex_lock(&driver->gate);
     driver->drive_pending = true;
     if (status != SALTS_OK) {
         int expected = SALTS_OK;
         (void)atomic_compare_exchange_strong(
             &driver->wake_status, &expected, status);
     }
-    cmeta_cond_signal(&driver->changed);
-    cmeta_mutex_unlock(&driver->gate);
+    sync_cond_signal(&driver->changed);
+    sync_mutex_unlock(&driver->gate);
 }
 
 static void native_adapter_test_threaded_stop(
     native_adapter_test_threaded_driver *driver) {
     const int status = cflow_io_native_adapter_wake(driver->adapter);
 
-    cmeta_mutex_lock(&driver->gate);
+    sync_mutex_lock(&driver->gate);
     driver->stop_requested = true;
-    cmeta_cond_broadcast(&driver->changed);
-    cmeta_mutex_unlock(&driver->gate);
+    sync_cond_broadcast(&driver->changed);
+    sync_mutex_unlock(&driver->gate);
     if (status != SALTS_OK) {
         int expected = SALTS_OK;
         (void)atomic_compare_exchange_strong(
@@ -603,7 +603,7 @@ static void native_adapter_test_threaded_stop(
 static void native_adapter_test_threaded_cleanup_task(void *user) {
     native_adapter_test_threaded_cleanup *cleanup =
         (native_adapter_test_threaded_cleanup *)user;
-    const uint64_t started = cmeta_hrtime();
+    const uint64_t started = hrtime();
 
     native_adapter_test_thread_role = NATIVE_ADAPTER_TEST_THREAD_ROLE_PUBLISHER;
     cleanup->drain_status = SALTS_OK;
@@ -619,7 +619,7 @@ static void native_adapter_test_threaded_cleanup_task(void *user) {
             cleanup->drain_status = status;
             break;
         }
-        if (cmeta_hrtime() - started >= NATIVE_ADAPTER_TEST_TIMEOUT_NS) {
+        if (hrtime() - started >= NATIVE_ADAPTER_TEST_TIMEOUT_NS) {
             cleanup->drain_status = SALTS_ETIMEDOUT;
             break;
         }
@@ -672,7 +672,7 @@ static int native_adapter_test_drive_until(
     cflow_executor *executor,
     native_adapter_test_completions *completions,
     size_t expected) {
-    const uint64_t started = cmeta_hrtime();
+    const uint64_t started = hrtime();
 
     while (completions->count < expected) {
         cflow_io_run_result run_result =
@@ -694,7 +694,7 @@ static int native_adapter_test_drive_until(
         if (run_result.status == CFLOW_IO_RUN_BUSY)
             return SALTS_EBUSY;
         (void)cflow_executor_run_ready(executor);
-        if (cmeta_hrtime() - started >= NATIVE_ADAPTER_TEST_TIMEOUT_NS)
+        if (hrtime() - started >= NATIVE_ADAPTER_TEST_TIMEOUT_NS)
             return SALTS_ETIMEDOUT;
     }
     return SALTS_OK;
@@ -721,8 +721,8 @@ native_adapter_test_run_threaded_pipe_publisher(void) {
     native_adapter_test_threaded_setup setup = {0};
     native_adapter_test_threaded_cleanup cleanup = {0};
     native_adapter_test_publisher_result result = {.status = SALTS_OK};
-    cmeta_threadpool_t *publisher_pool = NULL;
-    const cmeta_threadpool_config_t pool_config = {
+    threadpool_t *publisher_pool = NULL;
+    const threadpool_config_t pool_config = {
         1, NATIVE_ADAPTER_TEST_PUBLISHER_QUEUE_CAPACITY};
     const cflow_io_native_adapter_config adapter_config = {
         {native_adapter_test_backend(), 2u, 2u, 2u}};
@@ -764,25 +764,25 @@ native_adapter_test_run_threaded_pipe_publisher(void) {
     atomic_init(&driver.publisher_callbacks, 0);
     atomic_init(&driver.role_collisions, 0);
 
-    cmeta_mutex_init(&sink_probe.gate);
+    sync_mutex_init(&sink_probe.gate);
     sink_gate_initialized = sink_probe.gate != NULL;
     if (!sink_gate_initialized) {
         result.status = SALTS_ENOMEM;
         goto cleanup;
     }
-    cmeta_cond_init(&sink_probe.changed);
+    sync_cond_init(&sink_probe.changed);
     sink_changed_initialized = sink_probe.changed != NULL;
     if (!sink_changed_initialized) {
         result.status = SALTS_ENOMEM;
         goto cleanup;
     }
-    cmeta_mutex_init(&driver.gate);
+    sync_mutex_init(&driver.gate);
     driver_gate_initialized = driver.gate != NULL;
     if (!driver_gate_initialized) {
         result.status = SALTS_ENOMEM;
         goto cleanup;
     }
-    cmeta_cond_init(&driver.changed);
+    sync_cond_init(&driver.changed);
     driver_changed_initialized = driver.changed != NULL;
     if (!driver_changed_initialized) {
         result.status = SALTS_ENOMEM;
@@ -793,7 +793,7 @@ native_adapter_test_run_threaded_pipe_publisher(void) {
         result.status = status;
         goto cleanup;
     }
-    publisher_pool = cmeta_threadpool_create_with_config(&pool_config);
+    publisher_pool = threadpool_create_with_config(&pool_config);
     if (publisher_pool == NULL) {
         result.status = SALTS_ENOMEM;
         goto cleanup;
@@ -804,12 +804,12 @@ native_adapter_test_run_threaded_pipe_publisher(void) {
     setup.pipes = pipes;
     setup.endpoints = endpoints;
     setup.status = SALTS_EINVAL;
-    status = cmeta_threadpool_submit(
+    status = threadpool_submit(
         publisher_pool, native_adapter_test_threaded_setup_task, &setup);
     native_adapter_test_keep_first_status(&result.status, status);
     if (status != SALTS_OK)
         goto cleanup;
-    status = cmeta_threadpool_wait_status(publisher_pool);
+    status = threadpool_wait_status(publisher_pool);
     native_adapter_test_keep_first_status(&result.status, status);
     native_adapter_test_keep_first_status(&result.status, setup.status);
     if (status != SALTS_OK || setup.status != SALTS_OK)
@@ -867,7 +867,7 @@ native_adapter_test_run_threaded_pipe_publisher(void) {
         goto cleanup;
     }
     subscription_open = true;
-    status = cmeta_threadpool_submit(
+    status = threadpool_submit(
         publisher_pool, native_adapter_test_threaded_drive_task, &driver);
     if (status != SALTS_OK) {
         result.status = status;
@@ -924,7 +924,7 @@ cleanup:
     }
     if (driver_started) {
         native_adapter_test_threaded_stop(&driver);
-        status = cmeta_threadpool_wait_status(publisher_pool);
+        status = threadpool_wait_status(publisher_pool);
         native_adapter_test_keep_first_status(&result.status, status);
         driver_started = false;
     }
@@ -940,12 +940,12 @@ cleanup:
         cleanup.release_status[0] = SALTS_EINVAL;
         cleanup.release_status[1] = SALTS_EINVAL;
         cleanup.destroy_status = SALTS_EINVAL;
-        status = cmeta_threadpool_submit(
+        status = threadpool_submit(
             publisher_pool, native_adapter_test_threaded_cleanup_task,
             &cleanup);
         native_adapter_test_keep_first_status(&result.status, status);
         if (status == SALTS_OK) {
-            status = cmeta_threadpool_wait_status(publisher_pool);
+            status = threadpool_wait_status(publisher_pool);
             native_adapter_test_keep_first_status(&result.status, status);
             native_adapter_test_keep_first_status(
                 &result.status, cleanup.drain_status);
@@ -960,8 +960,8 @@ cleanup:
             native_adapter_test_keep_first_status(
                 &result.status, cleanup.destroy_status);
         }
-        cmeta_threadpool_shutdown(publisher_pool);
-        cmeta_threadpool_destroy(publisher_pool);
+        threadpool_shutdown(publisher_pool);
+        threadpool_destroy(publisher_pool);
     }
     native_adapter_test_close_pipe(pipes[0]);
     native_adapter_test_close_pipe(pipes[1]);
@@ -1005,13 +1005,13 @@ cleanup:
         : UINT64_MAX;
 
     if (driver_changed_initialized)
-        cmeta_cond_destroy(&driver.changed);
+        sync_cond_destroy(&driver.changed);
     if (driver_gate_initialized)
-        cmeta_mutex_destroy(&driver.gate);
+        sync_mutex_destroy(&driver.gate);
     if (sink_changed_initialized)
-        cmeta_cond_destroy(&sink_probe.changed);
+        sync_cond_destroy(&sink_probe.changed);
     if (sink_gate_initialized)
-        cmeta_mutex_destroy(&sink_probe.gate);
+        sync_mutex_destroy(&sink_probe.gate);
     native_adapter_test_thread_role = NATIVE_ADAPTER_TEST_THREAD_ROLE_NONE;
     return result;
 }
@@ -1155,7 +1155,7 @@ cleanup:
         cflow_publisher_destroy(&source);
     }
     if (owner.impl != NULL && adapter_initialized) {
-        started = cmeta_hrtime();
+        started = hrtime();
         while (!cflow_io_publisher_owner_is_quiescent(&owner)) {
             size_t completed = 0u;
             const int drive_status = cflow_io_native_adapter_drive_publisher(
@@ -1168,7 +1168,7 @@ cleanup:
                     &result.status, drive_status);
                 break;
             }
-            if (cmeta_hrtime() - started >= NATIVE_ADAPTER_TEST_TIMEOUT_NS) {
+            if (hrtime() - started >= NATIVE_ADAPTER_TEST_TIMEOUT_NS) {
                 native_adapter_test_keep_first_status(
                     &result.status, SALTS_ETIMEDOUT);
                 break;

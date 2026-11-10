@@ -3,7 +3,7 @@
 #include <cflow/cflow.h>
 #include <cflow/function_projection.h>
 #include <cflow/plan_internal.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <stdint.h>
 #include <stdatomic.h>
@@ -242,7 +242,7 @@ static bool cflow_parallel_injected_invoke(
     if (atomic_load(&cflow_parallel_delay_failure)) {
       size_t attempts = 0u;
       while (atomic_load(&cflow_parallel_successes) < 2u && attempts++ < 500u)
-        cmeta_sleep_ms(1u);
+        sleep_ms(1u);
     }
     atomic_store(&cflow_parallel_successes_at_failure,
                  atomic_load(&cflow_parallel_successes));
@@ -252,7 +252,7 @@ static bool cflow_parallel_injected_invoke(
   if (!atomic_load(&cflow_parallel_delay_failure)) {
     size_t attempts = 0u;
     while (atomic_load(&cflow_parallel_failures) == 0u && attempts++ < 500u)
-      cmeta_sleep_ms(1u);
+      sleep_ms(1u);
   }
   memcpy(out, &left, sizeof(left));
   atomic_fetch_add(&cflow_parallel_successes, 1u);
@@ -268,7 +268,7 @@ static cflow_reduce_callable cflow_parallel_injected_reducer(void) {
 static void cflow_parallel_gate_task(void *user) {
   (void)user;
   atomic_store(&cflow_parallel_gate_started, true);
-  while (!atomic_load(&cflow_parallel_gate_open)) cmeta_sleep_ms(1u);
+  while (!atomic_load(&cflow_parallel_gate_open)) sleep_ms(1u);
 }
 
 typedef struct cflow_parallel_eval_thread {
@@ -304,8 +304,8 @@ static void cflow_parallel_callback_eval_run(void *user) {
 }
 
 typedef struct cflow_closing_executor_state {
-  cmeta_mutex_t mutex;
-  cmeta_cond_t condition;
+  sync_mutex_t mutex;
+  sync_cond_t condition;
   cflow_task_fn accepted_fn;
   void *accepted_user;
   bool second_waiting;
@@ -317,25 +317,25 @@ static cflow_admission_status cflow_closing_try_post(
     void *self, cflow_task_fn fn, void *user) {
   cflow_closing_executor_state *state = (cflow_closing_executor_state *)self;
   if (!state || !fn) return CFLOW_ADMISSION_INVALID_ARGUMENT;
-  cmeta_mutex_lock(&state->mutex);
+  sync_mutex_lock(&state->mutex);
   if (state->closed) {
     ++state->rejected_closed;
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     return CFLOW_ADMISSION_CLOSED;
   }
   if (!state->accepted_fn) {
     state->accepted_fn = fn;
     state->accepted_user = user;
-    cmeta_cond_broadcast(&state->condition);
-    cmeta_mutex_unlock(&state->mutex);
+    sync_cond_broadcast(&state->condition);
+    sync_mutex_unlock(&state->mutex);
     return CFLOW_ADMISSION_ACCEPTED;
   }
   state->second_waiting = true;
-  cmeta_cond_broadcast(&state->condition);
+  sync_cond_broadcast(&state->condition);
   while (!state->closed)
-    cmeta_cond_wait(&state->condition, &state->mutex);
+    sync_cond_wait(&state->condition, &state->mutex);
   ++state->rejected_closed;
-  cmeta_mutex_unlock(&state->mutex);
+  sync_mutex_unlock(&state->mutex);
   return CFLOW_ADMISSION_CLOSED;
 }
 
@@ -357,9 +357,9 @@ static bool cflow_closing_wait_idle(void *self) {
   cflow_closing_executor_state *state = (cflow_closing_executor_state *)self;
   bool idle;
   if (!state) return false;
-  cmeta_mutex_lock(&state->mutex);
+  sync_mutex_lock(&state->mutex);
   idle = state->accepted_fn == NULL;
-  cmeta_mutex_unlock(&state->mutex);
+  sync_mutex_unlock(&state->mutex);
   return idle;
 }
 
@@ -367,9 +367,9 @@ static size_t cflow_closing_pending(void *self) {
   cflow_closing_executor_state *state = (cflow_closing_executor_state *)self;
   size_t pending;
   if (!state) return 0u;
-  cmeta_mutex_lock(&state->mutex);
+  sync_mutex_lock(&state->mutex);
   pending = state->accepted_fn ? 1u : 0u;
-  cmeta_mutex_unlock(&state->mutex);
+  sync_mutex_unlock(&state->mutex);
   return pending;
 }
 
@@ -378,14 +378,14 @@ static bool cflow_closing_shutdown(void *self) {
   cflow_task_fn fn;
   void *user;
   if (!state) return false;
-  cmeta_mutex_lock(&state->mutex);
+  sync_mutex_lock(&state->mutex);
   state->closed = true;
   fn = state->accepted_fn;
   user = state->accepted_user;
   state->accepted_fn = NULL;
   state->accepted_user = NULL;
-  cmeta_cond_broadcast(&state->condition);
-  cmeta_mutex_unlock(&state->mutex);
+  sync_cond_broadcast(&state->condition);
+  sync_mutex_unlock(&state->mutex);
   if (fn) fn(user);
   return true;
 }
@@ -393,21 +393,21 @@ static bool cflow_closing_shutdown(void *self) {
 static bool cflow_closing_get_stats(void *self, cflow_executor_stats *out) {
   cflow_closing_executor_state *state = (cflow_closing_executor_state *)self;
   if (!state || !out) return false;
-  cmeta_mutex_lock(&state->mutex);
+  sync_mutex_lock(&state->mutex);
   *out = (cflow_executor_stats){
       .capacity = 1u,
       .pending = state->accepted_fn ? 1u : 0u,
       .peak_pending = 1u,
       .rejected_closed = state->rejected_closed};
-  cmeta_mutex_unlock(&state->mutex);
+  sync_mutex_unlock(&state->mutex);
   return true;
 }
 
 static void cflow_closing_destroy(void *self) {
   cflow_closing_executor_state *state = (cflow_closing_executor_state *)self;
   if (!state) return;
-  cmeta_cond_destroy(&state->condition);
-  cmeta_mutex_destroy(&state->mutex);
+  sync_cond_destroy(&state->condition);
+  sync_mutex_destroy(&state->mutex);
 }
 
 static cflow_admission_status cflow_closing_task_admit(
@@ -449,8 +449,8 @@ static bool cflow_closing_executor_init(cflow_executor *executor,
                                         cflow_closing_executor_state *state) {
   if (!executor || !state) return false;
   memset(state, 0, sizeof(*state));
-  cmeta_mutex_init(&state->mutex);
-  cmeta_cond_init(&state->condition);
+  sync_mutex_init(&state->mutex);
+  sync_cond_init(&state->condition);
   if (!state->mutex || !state->condition) {
     cflow_closing_destroy(state);
     return false;
@@ -627,7 +627,7 @@ suite("CFlow ordered parallel reduce") {
     cflow_executor executor = {0};
     cflow_executor_stats stats = {0};
     cflow_parallel_eval_thread eval = {0};
-    cmeta_thread_t thread = NULL;
+    sync_thread_t thread = NULL;
     size_t attempts = 0u;
 
     atomic_store(&cflow_parallel_managed_live, 8u);
@@ -639,7 +639,7 @@ suite("CFlow ordered parallel reduce") {
     check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 1u));
     check_true(cflow_executor_post(&executor, cflow_parallel_gate_task, NULL));
     while (!atomic_load(&cflow_parallel_gate_started) && attempts++ < 500u)
-      cmeta_sleep_ms(1u);
+      sleep_ms(1u);
     check_true(atomic_load(&cflow_parallel_gate_started));
 
     eval.plan = &plan;
@@ -650,19 +650,19 @@ suite("CFlow ordered parallel reduce") {
         .executor = &executor,
         .max_tasks = 4u,
         .min_items_per_task = 2u};
-    check_equal(cmeta_thread_create(
+    check_equal(sync_thread_create(
         &thread, cflow_parallel_eval_thread_run, &eval), 0);
 
     attempts = 0u;
     do {
       check_true(cflow_executor_get_stats(&executor, &stats));
       if (stats.rejected_full) break;
-      cmeta_sleep_ms(1u);
+      sleep_ms(1u);
     } while (attempts++ < 500u);
     check_equal(stats.rejected_full, (size_t)1u);
 
     atomic_store(&cflow_parallel_gate_open, true);
-    check_equal(cmeta_thread_join(&thread), 0);
+    check_equal(sync_thread_join(&thread), 0);
     check_false(eval.ok);
     check_null(eval.result.data);
     check_equal(atomic_load(&cflow_parallel_managed_live), (size_t)8u);
@@ -687,7 +687,7 @@ suite("CFlow ordered parallel reduce") {
     cflow_executor_control control = {0};
     cflow_executor_protocol_stats stats = {0};
     cflow_parallel_eval_thread eval = {0};
-    cmeta_thread_t thread = NULL;
+    sync_thread_t thread = NULL;
     size_t attempts = 0u;
 
     atomic_store(&cflow_parallel_managed_live, 8u);
@@ -700,7 +700,7 @@ suite("CFlow ordered parallel reduce") {
     check_true(cflow_executor_as_control(&executor, &control));
     check_true(cflow_executor_post(&executor, cflow_parallel_gate_task, NULL));
     while (!atomic_load(&cflow_parallel_gate_started) && attempts++ < 500u)
-      cmeta_sleep_ms(1u);
+      sleep_ms(1u);
     check_true(atomic_load(&cflow_parallel_gate_started));
 
     eval.plan = &plan;
@@ -711,21 +711,21 @@ suite("CFlow ordered parallel reduce") {
         .executor = &executor,
         .max_tasks = 4u,
         .min_items_per_task = 2u};
-    check_equal(cmeta_thread_create(
+    check_equal(sync_thread_create(
         &thread, cflow_parallel_eval_thread_run, &eval), 0);
 
     attempts = 0u;
     do {
       check_true(cflow_executor_control_get_stats(&control, &stats));
       if (stats.accepted == 5u) break;
-      cmeta_sleep_ms(1u);
+      sleep_ms(1u);
     } while (attempts++ < 500u);
     check_equal(stats.accepted, (size_t)5u);
 
     check_true(cflow_executor_control_shutdown(
         &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
     atomic_store(&cflow_parallel_gate_open, true);
-    check_equal(cmeta_thread_join(&thread), 0);
+    check_equal(sync_thread_join(&thread), 0);
     check_false(eval.ok);
     check_null(eval.result.data);
     check_equal(cflow_executor_control_wait_idle(&control),
@@ -889,7 +889,7 @@ suite("CFlow ordered parallel reduce") {
         .input_count = 8u,
         .options = state->options
     };
-    cmeta_thread_t thread = NULL;
+    sync_thread_t thread = NULL;
     size_t attempts = 0u;
 
     atomic_store(&cflow_parallel_gate_open, false);
@@ -897,22 +897,22 @@ suite("CFlow ordered parallel reduce") {
     check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 1u));
     check_true(cflow_executor_post(&executor, cflow_parallel_gate_task, NULL));
     while (!atomic_load(&cflow_parallel_gate_started) && attempts++ < 500u)
-      cmeta_sleep_ms(1u);
+      sleep_ms(1u);
     check_true(atomic_load(&cflow_parallel_gate_started));
 
     eval.options.executor = &executor;
-    check_equal(cmeta_thread_create(
+    check_equal(sync_thread_create(
         &thread, cflow_parallel_eval_thread_run, &eval), 0);
     attempts = 0u;
     do {
       check_true(cflow_executor_get_stats(&executor, &stats));
       if (stats.rejected_full) break;
-      cmeta_sleep_ms(1u);
+      sleep_ms(1u);
     } while (attempts++ < 500u);
     check_equal(stats.rejected_full, (size_t)1u);
 
     atomic_store(&cflow_parallel_gate_open, true);
-    check_equal(cmeta_thread_join(&thread), 0);
+    check_equal(sync_thread_join(&thread), 0);
     check_false(eval.ok);
     check_null(eval.result.data);
     check_true(cflow_executor_wait_idle(&executor));
@@ -935,24 +935,24 @@ suite("CFlow ordered parallel reduce") {
         .input_count = 8u,
         .options = state->options
     };
-    cmeta_thread_t thread = NULL;
+    sync_thread_t thread = NULL;
     size_t attempts = 0u;
     bool second_waiting = false;
 
     check_true(cflow_closing_executor_init(&executor, &closing));
     eval.options.executor = &executor;
-    check_equal(cmeta_thread_create(
+    check_equal(sync_thread_create(
         &thread, cflow_parallel_eval_thread_run, &eval), 0);
     do {
-      cmeta_mutex_lock(&closing.mutex);
+      sync_mutex_lock(&closing.mutex);
       second_waiting = closing.second_waiting;
-      cmeta_mutex_unlock(&closing.mutex);
+      sync_mutex_unlock(&closing.mutex);
       if (second_waiting) break;
-      cmeta_sleep_ms(1u);
+      sleep_ms(1u);
     } while (attempts++ < 500u);
 
     check_true(cflow_executor_shutdown(&executor));
-    check_equal(cmeta_thread_join(&thread), 0);
+    check_equal(sync_thread_join(&thread), 0);
     check_true(second_waiting);
     check_false(eval.ok);
     check_null(eval.result.data);
@@ -977,7 +977,7 @@ suite("CFlow ordered parallel reduce") {
         .input_count = 8u,
         .options = state->options
     };
-    cmeta_thread_t thread = NULL;
+    sync_thread_t thread = NULL;
     size_t attempts = 0u;
 
     atomic_store(&cflow_parallel_gate_open, false);
@@ -986,24 +986,24 @@ suite("CFlow ordered parallel reduce") {
     check_true(cflow_executor_as_control(&executor, &control));
     check_true(cflow_executor_post(&executor, cflow_parallel_gate_task, NULL));
     while (!atomic_load(&cflow_parallel_gate_started) && attempts++ < 500u)
-      cmeta_sleep_ms(1u);
+      sleep_ms(1u);
     check_true(atomic_load(&cflow_parallel_gate_started));
 
     eval.options.executor = &executor;
-    check_equal(cmeta_thread_create(
+    check_equal(sync_thread_create(
         &thread, cflow_parallel_eval_thread_run, &eval), 0);
     attempts = 0u;
     do {
       check_true(cflow_executor_control_get_stats(&control, &stats));
       if (stats.accepted == 5u) break;
-      cmeta_sleep_ms(1u);
+      sleep_ms(1u);
     } while (attempts++ < 500u);
     check_equal(stats.accepted, (size_t)5u);
 
     check_true(cflow_executor_control_shutdown(
         &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
     atomic_store(&cflow_parallel_gate_open, true);
-    check_equal(cmeta_thread_join(&thread), 0);
+    check_equal(sync_thread_join(&thread), 0);
 
     check_false(eval.ok);
     check_null(eval.result.data);

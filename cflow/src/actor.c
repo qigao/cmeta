@@ -5,7 +5,7 @@
 #include "machine_instance_internal.h"
 #include "statechart_instance_internal.h"
 
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -32,8 +32,8 @@ typedef struct cflow_actor_runtime_ops {
 
 struct cflow_actor_impl {
     atomic_size_t refs;
-    cmeta_mutex_t gate;
-    cmeta_cond_t changed;
+    sync_mutex_t gate;
+    sync_cond_t changed;
     cflow_actor_state state;
     /* FAILED stays externally visible while waiters remain behind settlement. */
     bool terminal_settled;
@@ -144,8 +144,8 @@ static char *actor_copy_error(const char *message) {
 static void actor_shell_destroy(cflow_actor_impl *impl) {
     if (impl == NULL) return;
     free(impl->error);
-    cmeta_cond_destroy(&impl->changed);
-    cmeta_mutex_destroy(&impl->gate);
+    sync_cond_destroy(&impl->changed);
+    sync_mutex_destroy(&impl->gate);
     free(impl);
 }
 
@@ -174,28 +174,28 @@ static bool actor_mark_failed(cflow_actor_impl *impl, const char *message,
     bool first = false;
     if (impl == NULL) return false;
     copy = actor_copy_error(message);
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     impl->starting = false;
     if (impl->state != CFLOW_ACTOR_STATE_STOPPED &&
         impl->state != CFLOW_ACTOR_STATE_FAILED) {
         impl->terminal_settled = false;
         impl->state = CFLOW_ACTOR_STATE_FAILED;
         first = true;
-        cmeta_cond_broadcast(&impl->changed);
+        sync_cond_broadcast(&impl->changed);
     }
     if (impl->error == NULL && copy != NULL) {
         impl->error = copy;
         copy = NULL;
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     free(copy);
     if (first) {
         impl->runtime_ops->cancel(impl);
         if (!defer_callback_settlement) {
-            cmeta_mutex_lock(&impl->gate);
+            sync_mutex_lock(&impl->gate);
             impl->terminal_settled = true;
-            cmeta_cond_broadcast(&impl->changed);
-            cmeta_mutex_unlock(&impl->gate);
+            sync_cond_broadcast(&impl->changed);
+            sync_mutex_unlock(&impl->gate);
         }
     }
     return first;
@@ -220,10 +220,10 @@ static void actor_sink_error(void *user, const char *message) {
     callback_user = impl->callbacks.user;
     if (callback != NULL) callback(callback_user, message);
     if (settle) {
-        cmeta_mutex_lock(&impl->gate);
+        sync_mutex_lock(&impl->gate);
         impl->terminal_settled = true;
-        cmeta_cond_broadcast(&impl->changed);
-        cmeta_mutex_unlock(&impl->gate);
+        sync_cond_broadcast(&impl->changed);
+        sync_mutex_unlock(&impl->gate);
     }
 }
 
@@ -240,15 +240,15 @@ static void actor_sink_done(void *user) {
     bool settle = false;
     if (impl == NULL) return;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     running = impl->state == CFLOW_ACTOR_STATE_RUNNING;
     natural_done_is_success =
         impl->runtime_ops->natural_done_is_success;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     if (running && !natural_done_is_success)
         copy = actor_copy_error(actor_unexpected_done);
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (impl->state == CFLOW_ACTOR_STATE_STOPPING) {
         impl->terminal_settled = false;
         impl->state = CFLOW_ACTOR_STATE_STOPPED;
@@ -268,13 +268,13 @@ static void actor_sink_done(void *user) {
         error = impl->error != NULL ? impl->error : actor_generic_failure;
         impl->terminal_settled = false;
         impl->state = CFLOW_ACTOR_STATE_FAILED;
-        cmeta_cond_broadcast(&impl->changed);
+        sync_cond_broadcast(&impl->changed);
         error_callback = impl->callbacks.on_error;
         failed = true;
         settle = true;
     }
     callback_user = impl->callbacks.user;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     free(copy);
 
     if (failed) impl->runtime_ops->cancel(impl);
@@ -284,10 +284,10 @@ static void actor_sink_done(void *user) {
      * cflow_actor_wait cannot release borrowed Scope/DSO callback storage
      * while the worker is still executing on_done/on_error. */
     if (settle) {
-        cmeta_mutex_lock(&impl->gate);
+        sync_mutex_lock(&impl->gate);
         impl->terminal_settled = true;
-        cmeta_cond_broadcast(&impl->changed);
-        cmeta_mutex_unlock(&impl->gate);
+        sync_cond_broadcast(&impl->changed);
+        sync_mutex_unlock(&impl->gate);
     }
 }
 
@@ -323,8 +323,8 @@ static cflow_actor_impl *actor_shell_create(
     impl->scheduler = scheduler;
     impl->callbacks = callbacks;
     impl->state = CFLOW_ACTOR_STATE_START;
-    cmeta_mutex_init(&impl->gate);
-    cmeta_cond_init(&impl->changed);
+    sync_mutex_init(&impl->gate);
+    sync_cond_init(&impl->changed);
     if (impl->gate == NULL || impl->changed == NULL) {
         actor_shell_destroy(impl);
         return NULL;
@@ -433,7 +433,7 @@ cflow_actor_status cflow_actor_start(cflow_actor *actor) {
     bool opened = false;
 
     if (impl == NULL) return CFLOW_ACTOR_INVALID_ARGUMENT;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     status = actor_state_status(impl->state);
     if (status == CFLOW_ACTOR_OK) {
         /* subscribe may deliver a terminal signal before it returns. Publish
@@ -441,7 +441,7 @@ cflow_actor_status cflow_actor_start(cflow_actor *actor) {
         impl->starting = true;
         impl->state = CFLOW_ACTOR_STATE_RUNNING;
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     if (status != CFLOW_ACTOR_OK) return status;
 
     if (!impl->runtime_ops->as_source(impl, &source)) {
@@ -457,25 +457,25 @@ cflow_actor_status cflow_actor_start(cflow_actor *actor) {
         return CFLOW_ACTOR_FAILED;
     }
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     impl->starting = false;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     if (!cflow_subscription_request(&impl->run, SIZE_MAX)) {
         bool terminal;
-        cmeta_mutex_lock(&impl->gate);
+        sync_mutex_lock(&impl->gate);
         terminal = impl->state == CFLOW_ACTOR_STATE_STOPPED;
         status = impl->state == CFLOW_ACTOR_STATE_FAILED
             ? CFLOW_ACTOR_FAILED : CFLOW_ACTOR_OK;
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         if (!terminal) {
             (void)actor_mark_failed(impl, "actor could not request Run demand", false);
             status = CFLOW_ACTOR_FAILED;
         }
         cflow_subscription_close(&impl->run);
-        cmeta_mutex_lock(&impl->gate);
+        sync_mutex_lock(&impl->gate);
         impl->terminal_settled = true;
-        cmeta_cond_broadcast(&impl->changed);
-        cmeta_mutex_unlock(&impl->gate);
+        sync_cond_broadcast(&impl->changed);
+        sync_mutex_unlock(&impl->gate);
     } else {
         status = CFLOW_ACTOR_OK;
     }
@@ -489,12 +489,12 @@ cflow_actor_status cflow_actor_request_stop(cflow_actor *actor) {
     cflow_actor_status result;
     if (impl == NULL) return CFLOW_ACTOR_INVALID_ARGUMENT;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     switch (impl->state) {
         case CFLOW_ACTOR_STATE_START:
             impl->state = CFLOW_ACTOR_STATE_STOPPED;
             impl->terminal_settled = true;
-            cmeta_cond_broadcast(&impl->changed);
+            sync_cond_broadcast(&impl->changed);
             close_runtime = true;
             result = CFLOW_ACTOR_OK;
             break;
@@ -516,7 +516,7 @@ cflow_actor_status cflow_actor_request_stop(cflow_actor *actor) {
             result = CFLOW_ACTOR_FAILED;
             break;
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     if (close_runtime) impl->runtime_ops->close(impl);
     return result;
 }
@@ -526,13 +526,13 @@ cflow_actor_state cflow_actor_wait(cflow_actor *actor) {
         ? (cflow_actor_impl *)actor->impl : NULL;
     cflow_actor_state state;
     if (impl == NULL) return CFLOW_ACTOR_STATE_FAILED;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     while ((impl->state != CFLOW_ACTOR_STATE_STOPPED &&
             impl->state != CFLOW_ACTOR_STATE_FAILED) ||
            !impl->terminal_settled)
-        cmeta_cond_wait(&impl->changed, &impl->gate);
+        sync_cond_wait(&impl->changed, &impl->gate);
     state = impl->state;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return state;
 }
 
@@ -541,9 +541,9 @@ cflow_actor_state cflow_actor_current_state(const cflow_actor *actor) {
         ? (cflow_actor_impl *)actor->impl : NULL;
     cflow_actor_state state = CFLOW_ACTOR_STATE_START;
     if (impl == NULL) return state;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     state = impl->state;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return state;
 }
 
@@ -552,9 +552,9 @@ bool cflow_actor_get_stats(const cflow_actor *actor, cflow_actor_stats *out) {
         ? (cflow_actor_impl *)actor->impl : NULL;
     cflow_actor_stats snapshot = {0};
     if (impl == NULL || out == NULL) return false;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (impl->runtime_kind != CFLOW_ACTOR_RUNTIME_MACHINE) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return false;
     }
     snapshot.state = impl->state;
@@ -565,10 +565,10 @@ bool cflow_actor_get_stats(const cflow_actor *actor, cflow_actor_stats *out) {
     snapshot.rejected_stale = impl->rejected_stale;
     if (!cflow_machine_instance_get_stats(&impl->machine,
                                           &snapshot.machine)) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return false;
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     *out = snapshot;
     return true;
 }
@@ -579,9 +579,9 @@ bool cflow_statechart_actor_get_stats(
         ? (cflow_actor_impl *)actor->impl : NULL;
     cflow_statechart_actor_stats snapshot = {0};
     if (impl == NULL || out == NULL) return false;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (impl->runtime_kind != CFLOW_ACTOR_RUNTIME_STATECHART) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return false;
     }
     snapshot.state = impl->state;
@@ -592,10 +592,10 @@ bool cflow_statechart_actor_get_stats(
     snapshot.rejected_stale = impl->rejected_stale;
     if (!cflow_statechart_instance_get_stats(
             &impl->statechart, &snapshot.statechart)) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return false;
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     *out = snapshot;
     return true;
 }
@@ -605,11 +605,11 @@ const char *cflow_actor_error(const cflow_actor *actor) {
         ? (cflow_actor_impl *)actor->impl : NULL;
     const char *error;
     if (impl == NULL) return NULL;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     error = impl->error;
     if (error == NULL && impl->state == CFLOW_ACTOR_STATE_FAILED)
         error = actor_generic_failure;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return error;
 }
 
@@ -618,9 +618,9 @@ bool cflow_actor_ref_acquire(const cflow_actor *actor, cflow_actor_ref *out) {
         ? (cflow_actor_impl *)actor->impl : NULL;
     bool retained = false;
     if (impl == NULL || out == NULL || out->impl != NULL) return false;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (!impl->stale) retained = actor_retain(impl);
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     if (retained) out->impl = impl;
     return retained;
 }
@@ -652,7 +652,7 @@ cflow_actor_send_status cflow_actor_ref_try_send(
     cflow_waker wake = {0};
     if (impl == NULL) return CFLOW_ACTOR_SEND_INVALID_ARGUMENT;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (impl->stale) {
         ++impl->rejected_stale;
         result = CFLOW_ACTOR_SEND_STALE;
@@ -676,7 +676,7 @@ cflow_actor_send_status cflow_actor_ref_try_send(
          * size_t represents. Reject before committing in that impossible-full
          * case rather than wrapping the destruction barrier. */
         if (impl->pending_wakes == SIZE_MAX) {
-            cmeta_mutex_unlock(&impl->gate);
+            sync_mutex_unlock(&impl->gate);
             return CFLOW_ACTOR_SEND_FULL;
         }
         mailbox_status = impl->runtime_ops->try_send(impl, event, &wake);
@@ -705,14 +705,14 @@ cflow_actor_send_status cflow_actor_ref_try_send(
                 break;
         }
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     if (wake.wake != NULL) {
         wake.wake(wake.user);
-        cmeta_mutex_lock(&impl->gate);
+        sync_mutex_lock(&impl->gate);
         --impl->pending_wakes;
         if (impl->stale && impl->pending_wakes == 0u)
-            cmeta_cond_broadcast(&impl->changed);
-        cmeta_mutex_unlock(&impl->gate);
+            sync_cond_broadcast(&impl->changed);
+        sync_mutex_unlock(&impl->gate);
     }
     return result;
 }
@@ -722,27 +722,27 @@ void cflow_actor_destroy(cflow_actor *actor) {
     if (actor == NULL || actor->impl == NULL) return;
     impl = (cflow_actor_impl *)actor->impl;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     impl->stale = true;
     if (impl->state == CFLOW_ACTOR_STATE_START)
         impl->state = CFLOW_ACTOR_STATE_STOPPED;
     else if (impl->state == CFLOW_ACTOR_STATE_RUNNING)
         impl->state = CFLOW_ACTOR_STATE_STOPPING;
     while (impl->pending_wakes != 0u)
-        cmeta_cond_wait(&impl->changed, &impl->gate);
-    cmeta_mutex_unlock(&impl->gate);
+        sync_cond_wait(&impl->changed, &impl->gate);
+    sync_mutex_unlock(&impl->gate);
 
     impl->runtime_ops->close(impl);
     cflow_subscription_close(&impl->run);
     impl->runtime_ops->destroy(impl);
     cflow_graph_destroy(&impl->graph);
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (impl->state != CFLOW_ACTOR_STATE_FAILED)
         impl->state = CFLOW_ACTOR_STATE_STOPPED;
     impl->terminal_settled = true;
-    cmeta_cond_broadcast(&impl->changed);
-    cmeta_mutex_unlock(&impl->gate);
+    sync_cond_broadcast(&impl->changed);
+    sync_mutex_unlock(&impl->gate);
     actor->impl = NULL;
     actor_release(impl);
 }

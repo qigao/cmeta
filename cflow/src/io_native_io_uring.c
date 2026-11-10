@@ -4,8 +4,8 @@
 
 #include "io_native_internal.h"
 
-#include <error_codes.h>
-#include <thread.h>
+#include <core/error_codes.h>
+#include <threads/threads.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -62,8 +62,8 @@ typedef struct cflow_uring_record {
 
 typedef struct cflow_uring_impl {
     cflow_io_native_impl base;
-    cmeta_mutex_t gate;
-    cmeta_thread_t worker;
+    sync_mutex_t gate;
+    sync_thread_t worker;
     cflow_uring_record *records;
     size_t request_capacity;
     size_t completion_batch_capacity;
@@ -300,12 +300,12 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     int effective_result = result;
     bool cancelled;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     record = uring_record_for_token(impl, native_token);
     if (record == NULL || record->phase != CFLOW_URING_RECORD_PENDING ||
         record->native_token != native_token) {
         uring_counter_increment(&impl->stale_native_completions);
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return;
     }
     actor = record->actor;
@@ -338,7 +338,7 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     --impl->active_requests;
     uring_counter_increment(&impl->completed);
     if (cancelled) uring_counter_increment(&impl->cancelled);
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
 
     if (resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
         vector_buffer_count == 0u &&
@@ -402,13 +402,13 @@ static void uring_fail_all(cflow_uring_impl *impl, int status) {
     for (size_t index = 0u; index < impl->request_capacity; ++index) {
         cflow_uring_record *record = &impl->records[index];
         uint64_t native_token;
-        cmeta_mutex_lock(&impl->gate);
+        sync_mutex_lock(&impl->gate);
         if (record->phase != CFLOW_URING_RECORD_PENDING) {
-            cmeta_mutex_unlock(&impl->gate);
+            sync_mutex_unlock(&impl->gate);
             continue;
         }
         native_token = record->native_token;
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         uring_finish(impl, native_token, status);
     }
 }
@@ -452,24 +452,24 @@ static void uring_worker(void *user) {
             if (token == CFLOW_URING_STOP_TOKEN)
                 goto stopped;
             if (uring_record_for_token(impl, token) == NULL) {
-                cmeta_mutex_lock(&impl->gate);
+                sync_mutex_lock(&impl->gate);
                 uring_counter_increment(&impl->stale_native_completions);
-                cmeta_mutex_unlock(&impl->gate);
+                sync_mutex_unlock(&impl->gate);
                 continue;
             }
             uring_finish(impl, token, result);
         }
     }
 failed:
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     impl->admission_open = false;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     uring_fail_all(impl, terminal_status);
 
 stopped:
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     impl->worker_running = false;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
 }
 
 static int uring_submit_record(
@@ -481,9 +481,9 @@ static int uring_submit_record(
     cflow_uring_record *record;
     struct io_uring_sqe sqe;
     int status;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (!impl->admission_open) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_ESHUTDOWN;
     }
     record = uring_find_free_locked(impl);
@@ -491,7 +491,7 @@ static int uring_submit_record(
         const int capacity_status = impl->active_requests == 0u
                                         ? -EOVERFLOW : SALTS_EBUSY;
         uring_counter_increment(&impl->rejected_full);
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return capacity_status;
     }
     record->phase = CFLOW_URING_RECORD_PENDING;
@@ -533,7 +533,7 @@ static int uring_submit_record(
         record->cancel_requested = false;
         uring_counter_increment(&impl->native_submit_errors);
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return status;
 }
 
@@ -599,10 +599,10 @@ static int uring_cancel(cflow_io_native_impl *base,
     cflow_uring_record *record;
     struct io_uring_sqe sqe;
     int status;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     record = uring_find_request_locked(impl, request_id);
     if (record == NULL) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_ENOENT;
     }
     memset(&sqe, 0, sizeof(sqe));
@@ -615,21 +615,21 @@ static int uring_cancel(cflow_io_native_impl *base,
         record->cancel_requested = true;
     else
         uring_counter_increment(&impl->native_cancel_errors);
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return status;
 }
 
 static bool uring_get_stats(const cflow_io_native_impl *base,
                             cflow_io_native_backend_stats *out) {
     cflow_uring_impl *impl = (cflow_uring_impl *)base;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     *out = (cflow_io_native_backend_stats){
         impl->request_capacity, impl->active_requests, impl->submitted,
         impl->completed, impl->cancelled, impl->rejected_full,
         impl->stale_native_completions, impl->native_submit_errors,
         impl->native_cancel_errors, impl->admission_open,
         impl->worker_running, impl->shutdown_complete};
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return true;
 }
 
@@ -637,12 +637,12 @@ static int uring_forget_socket(cflow_io_native_impl *base,
                                uintptr_t closed_socket) {
     cflow_uring_impl *impl = (cflow_uring_impl *)base;
     (void)closed_socket;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (impl->active_requests != 0u) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return SALTS_OK;
 }
 
@@ -656,14 +656,14 @@ static int uring_shutdown(cflow_io_native_impl *base) {
     struct io_uring_sqe sqe;
     bool wake_worker;
     int status;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (impl->shutdown_complete) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EALREADY;
     }
     impl->admission_open = false;
     if (impl->active_requests != 0u) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
     wake_worker = impl->worker_running;
@@ -675,16 +675,16 @@ static int uring_shutdown(cflow_io_native_impl *base) {
         sqe.user_data = CFLOW_URING_STOP_TOKEN;
         status = uring_publish_sqe_locked(impl, &sqe);
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     if (status != SALTS_OK)
         return status;
-    status = cmeta_thread_join(&impl->worker);
+    status = sync_thread_join(&impl->worker);
     if (status != SALTS_OK)
         return status;
-    cmeta_thread_destroy(&impl->worker);
-    cmeta_mutex_lock(&impl->gate);
+    sync_thread_destroy(&impl->worker);
+    sync_mutex_lock(&impl->gate);
     impl->shutdown_complete = true;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return SALTS_OK;
 }
 
@@ -700,15 +700,15 @@ static void uring_unmap(cflow_uring_impl *impl) {
 
 static int uring_destroy(cflow_io_native_impl *base) {
     cflow_uring_impl *impl = (cflow_uring_impl *)base;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (!impl->shutdown_complete) {
-        cmeta_mutex_unlock(&impl->gate);
+        sync_mutex_unlock(&impl->gate);
         return SALTS_EBUSY;
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     uring_unmap(impl);
     (void)close(impl->ring_fd);
-    cmeta_mutex_destroy(&impl->gate);
+    sync_mutex_destroy(&impl->gate);
     free(impl->records);
     free(impl);
     return SALTS_OK;
@@ -842,7 +842,7 @@ int cflow_io_native_io_uring_init(
     impl->admission_open = true;
     for (size_t index = 0u; index < impl->request_capacity; ++index)
         impl->records[index].index = (uint32_t)index;
-    cmeta_mutex_init(&impl->gate);
+    sync_mutex_init(&impl->gate);
     if (impl->gate == NULL) {
         free(impl->records);
         free(impl);
@@ -852,7 +852,7 @@ int cflow_io_native_io_uring_init(
     impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
     if (impl->ring_fd < 0) {
         status = -errno;
-        cmeta_mutex_destroy(&impl->gate);
+        sync_mutex_destroy(&impl->gate);
         free(impl->records);
         free(impl);
         return status;
@@ -861,16 +861,16 @@ int cflow_io_native_io_uring_init(
     if (status != SALTS_OK) {
         uring_unmap(impl);
         (void)close(impl->ring_fd);
-        cmeta_mutex_destroy(&impl->gate);
+        sync_mutex_destroy(&impl->gate);
         free(impl->records);
         free(impl);
         return status;
     }
-    status = cmeta_thread_create(&impl->worker, uring_worker, impl);
+    status = sync_thread_create(&impl->worker, uring_worker, impl);
     if (status != SALTS_OK) {
         uring_unmap(impl);
         (void)close(impl->ring_fd);
-        cmeta_mutex_destroy(&impl->gate);
+        sync_mutex_destroy(&impl->gate);
         free(impl->records);
         free(impl);
         return status;

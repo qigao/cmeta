@@ -3,7 +3,7 @@
 #include <cflow/lower.h>
 #include <cflow/reactive.h>
 #include <cflow/publishers.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 #include "publishers_internal.h"
 #include "subscription_internal.h"
@@ -13,8 +13,8 @@
 #include <string.h>
 
 typedef struct cflow_stream_execution_impl {
-    cmeta_mutex_t gate;
-    cmeta_cond_t changed;
+    sync_mutex_t gate;
+    sync_cond_t changed;
     cflow_stream_execution_state state;
     cmeta_status collector_status;
     size_t count;
@@ -71,9 +71,9 @@ static void stream_execution_shell_destroy(
     free(impl->error);
     cflow_graph_destroy(&impl->graph);
     if (impl->changed != NULL)
-        cmeta_cond_destroy(&impl->changed);
+        sync_cond_destroy(&impl->changed);
     if (impl->gate != NULL)
-        cmeta_mutex_destroy(&impl->gate);
+        sync_mutex_destroy(&impl->gate);
     free(impl);
 }
 
@@ -84,7 +84,7 @@ static void stream_execution_publish_failure(
     if (impl == NULL)
         return;
     copy = stream_execution_copy_error(message);
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     if (impl->error == NULL && copy != NULL) {
         impl->error = copy;
         copy = NULL;
@@ -93,9 +93,9 @@ static void stream_execution_publish_failure(
     impl->count = impl->collector.count;
     if (impl->state == CFLOW_STREAM_EXECUTION_RUNNING) {
         impl->state = CFLOW_STREAM_EXECUTION_FAILED;
-        cmeta_cond_broadcast(&impl->changed);
+        sync_cond_broadcast(&impl->changed);
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     free(copy);
 }
 
@@ -114,10 +114,10 @@ static bool stream_execution_sink_value(void *user,
     status = cmeta_collector_accept(&impl->collector, type, value);
     active_stream_execution = previous;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     impl->collector_status = impl->collector.status;
     impl->count = impl->collector.count;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return status == CMETA_OK;
 }
 
@@ -152,7 +152,7 @@ static void stream_execution_sink_done(void *user) {
     if (status != CMETA_OK)
         copy = stream_execution_copy_error("collector finish failed");
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     impl->collector_status = impl->collector.status;
     impl->count = impl->collector.count;
     if (impl->state == CFLOW_STREAM_EXECUTION_RUNNING) {
@@ -165,9 +165,9 @@ static void stream_execution_sink_done(void *user) {
             }
             impl->state = CFLOW_STREAM_EXECUTION_FAILED;
         }
-        cmeta_cond_broadcast(&impl->changed);
+        sync_cond_broadcast(&impl->changed);
     }
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     free(copy);
 }
 
@@ -225,8 +225,8 @@ cflow_stream_execution_status cflow_stream_execution_start(
     impl->collector_status = CMETA_OK;
     impl->scheduler = scheduler;
     impl->collector = collector;
-    cmeta_mutex_init(&impl->gate);
-    cmeta_cond_init(&impl->changed);
+    sync_mutex_init(&impl->gate);
+    sync_cond_init(&impl->changed);
     if (impl->gate == NULL || impl->changed == NULL) {
         stream_execution_shell_destroy(impl);
         return CFLOW_STREAM_EXECUTION_ALLOCATION_FAILED;
@@ -286,9 +286,9 @@ cflow_stream_execution_status cflow_stream_execution_cancel(
         cflow_subscription_active_on_current_thread(&impl->run))
         return CFLOW_STREAM_EXECUTION_WOULD_BLOCK;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     state = impl->state;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     if (stream_execution_terminal(state)) {
         /* Terminal publication happens inside the pump callback. Close remains
          * the barrier that waits for the pump and releases the moved Source. */
@@ -299,15 +299,15 @@ cflow_stream_execution_status cflow_stream_execution_cancel(
     cflow_subscription_close(&impl->run);
     stream_execution_collector_abort(impl);
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     impl->collector_status = impl->collector.status;
     impl->count = impl->collector.count;
     if (impl->state == CFLOW_STREAM_EXECUTION_RUNNING) {
         impl->state = CFLOW_STREAM_EXECUTION_CANCELLED;
-        cmeta_cond_broadcast(&impl->changed);
+        sync_cond_broadcast(&impl->changed);
     }
     state = impl->state;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return state == CFLOW_STREAM_EXECUTION_CANCELLED
         ? CFLOW_STREAM_EXECUTION_OK : CFLOW_STREAM_EXECUTION_TERMINATED;
 }
@@ -322,10 +322,10 @@ cflow_stream_execution_status cflow_stream_execution_wait(
     if (active_stream_execution == impl ||
         cflow_subscription_active_on_current_thread(&impl->run))
         return CFLOW_STREAM_EXECUTION_WOULD_BLOCK;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     while (!stream_execution_terminal(impl->state))
-        cmeta_cond_wait(&impl->changed, &impl->gate);
-    cmeta_mutex_unlock(&impl->gate);
+        sync_cond_wait(&impl->changed, &impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return CFLOW_STREAM_EXECUTION_OK;
 }
 
@@ -337,14 +337,14 @@ bool cflow_stream_execution_get_snapshot(
 
     if (impl == NULL || out == NULL)
         return false;
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     out->state = impl->state;
     out->collector_status = impl->collector_status;
     out->count = impl->count;
     out->error = impl->error != NULL ? impl->error
         : (impl->state == CFLOW_STREAM_EXECUTION_FAILED
             ? stream_execution_generic_error : NULL);
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     return true;
 }
 
@@ -362,9 +362,9 @@ cflow_stream_execution_status cflow_stream_execution_destroy(
         cflow_subscription_active_on_current_thread(&impl->run))
         return CFLOW_STREAM_EXECUTION_WOULD_BLOCK;
 
-    cmeta_mutex_lock(&impl->gate);
+    sync_mutex_lock(&impl->gate);
     state = impl->state;
-    cmeta_mutex_unlock(&impl->gate);
+    sync_mutex_unlock(&impl->gate);
     if (state == CFLOW_STREAM_EXECUTION_RUNNING)
         (void)cflow_stream_execution_cancel(execution);
     /* cancel may observe a natural terminal transition after the state sample.

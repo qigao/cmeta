@@ -1,8 +1,8 @@
 #include <cflow/actor.h>
 #include "cflow_ace_active_object_pattern.h"
 
-#include <clock.h>
-#include <thread.h>
+#include <core/clock.h>
+#include <threads/threads.h>
 
 #include "tinytest.h"
 
@@ -119,41 +119,41 @@ typedef struct actor_destroy_context {
 } actor_destroy_context;
 
 static bool wait_until_true(atomic_bool *value) {
-    const uint64_t started = cmeta_monotonic_ms();
-    while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
+    const uint64_t started = monotonic_ms();
+    while (monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
         if (atomic_load(value)) return true;
-        cmeta_sleep_ms(1u);
+        sleep_ms(1u);
     }
     return atomic_load(value);
 }
 
 static bool wait_until_at_least(atomic_int *value, int expected) {
-    const uint64_t started = cmeta_monotonic_ms();
-    while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
+    const uint64_t started = monotonic_ms();
+    while (monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
         if (atomic_load(value) >= expected) return true;
-        cmeta_sleep_ms(1u);
+        sleep_ms(1u);
     }
     return atomic_load(value) >= expected;
 }
 
 static bool wait_actor_state(const cflow_actor *actor,
                              cflow_actor_state expected) {
-    const uint64_t started = cmeta_monotonic_ms();
-    while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
+    const uint64_t started = monotonic_ms();
+    while (monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
         if (cflow_actor_current_state(actor) == expected) return true;
-        cmeta_sleep_ms(1u);
+        sleep_ms(1u);
     }
     return cflow_actor_current_state(actor) == expected;
 }
 
 static bool wait_actor_terminal(const cflow_actor *actor) {
-    const uint64_t started = cmeta_monotonic_ms();
-    while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
+    const uint64_t started = monotonic_ms();
+    while (monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS) {
         const cflow_actor_state state = cflow_actor_current_state(actor);
         if (state == CFLOW_ACTOR_STATE_STOPPED ||
             state == CFLOW_ACTOR_STATE_FAILED)
             return true;
-        cmeta_sleep_ms(1u);
+        sleep_ms(1u);
     }
     return cflow_actor_current_state(actor) == CFLOW_ACTOR_STATE_STOPPED ||
            cflow_actor_current_state(actor) == CFLOW_ACTOR_STATE_FAILED;
@@ -161,11 +161,11 @@ static bool wait_actor_terminal(const cflow_actor *actor) {
 
 static void block_scheduler(void *user) {
     actor_blocker *blocker = (actor_blocker *)user;
-    const uint64_t started = cmeta_monotonic_ms();
+    const uint64_t started = monotonic_ms();
     atomic_store(&blocker->entered, true);
-    while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS &&
+    while (monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS &&
            !atomic_load(&blocker->release))
-        cmeta_sleep_ms(1u);
+        sleep_ms(1u);
 }
 
 static void actor_scheduler_slot(void *user) {
@@ -205,15 +205,15 @@ static bool actor_edge_action(void *user,
         out_error == NULL)
         return false;
     if (probe->expected_owner_thread != NULL &&
-        probe->expected_owner_thread != cmeta_thread_current_token())
+        probe->expected_owner_thread != sync_thread_current_token())
         atomic_store(&probe->wrong_owner_thread, true);
     atomic_fetch_add(&probe->action_calls, 1);
     if (atomic_load(&probe->block_action) && probe->blocker != NULL) {
-        const uint64_t started = cmeta_monotonic_ms();
+        const uint64_t started = monotonic_ms();
         atomic_store(&probe->blocker->entered, true);
-        while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS &&
+        while (monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS &&
                !atomic_load(&probe->blocker->release))
-            cmeta_sleep_ms(1u);
+            sleep_ms(1u);
         if (!atomic_load(&probe->blocker->release)) {
             *out_error = "actor edge action timed out";
             return false;
@@ -256,7 +256,7 @@ static bool actor_edge_on_value(void *user,
         return false;
     payload = *(const int *)value;
     if (probe->expected_owner_thread != NULL &&
-        probe->expected_owner_thread != cmeta_thread_current_token())
+        probe->expected_owner_thread != sync_thread_current_token())
         atomic_store(&probe->wrong_sink_owner_thread, true);
     index = atomic_load(&probe->values);
     if (index >= 0 && index < ACTOR_EDGE_OBSERVATIONS)
@@ -282,11 +282,11 @@ static void actor_edge_on_done(void *user) {
     actor_edge_probe *probe = (actor_edge_probe *)user;
     if (probe == NULL) return;
     if (atomic_load(&probe->block_done) && probe->done_blocker != NULL) {
-        const uint64_t started = cmeta_monotonic_ms();
+        const uint64_t started = monotonic_ms();
         atomic_store(&probe->done_blocker->entered, true);
-        while (cmeta_monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS &&
+        while (monotonic_ms() - started < ACTOR_TEST_TIMEOUT_MS &&
                !atomic_load(&probe->done_blocker->release))
-            cmeta_sleep_ms(1u);
+            sleep_ms(1u);
     }
     atomic_fetch_add(&probe->dones, 1);
 }
@@ -483,11 +483,11 @@ static void actor_destroy_owner(void *user) {
 }
 
 static bool actor_sender_wait_and_join(actor_sender_context *context,
-                                       cmeta_thread_t *thread) {
+                                       sync_thread_t *thread) {
     const bool completed = wait_until_true(&context->completed);
     check_true(completed);
     if (!completed) abort();
-    return cmeta_thread_join(thread) == 0;
+    return sync_thread_join(thread) == 0;
 }
 
 static bool actor_action(void *user,
@@ -616,10 +616,10 @@ suite("CFlow Actor lifecycle") {
         const int second = 14;
         const cflow_event_view ev1 = {100u, &cmeta_type_int, &first};
         const cflow_event_view ev2 = {101u, &cmeta_type_int, &second};
-        const uint64_t deadline = cmeta_monotonic_ms() + ACTOR_TEST_TIMEOUT_MS;
+        const uint64_t deadline = monotonic_ms() + ACTOR_TEST_TIMEOUT_MS;
 
         check_true(actor_edge_fixture_init_owner(&fixture, 4u));
-        fixture.probe.expected_owner_thread = cmeta_thread_current_token();
+        fixture.probe.expected_owner_thread = sync_thread_current_token();
         check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
         check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
         check_equal(cflow_actor_ref_try_send(&ref, &ev1),
@@ -628,10 +628,10 @@ suite("CFlow Actor lifecycle") {
                     CFLOW_ACTOR_SEND_ACCEPTED);
 
         while (atomic_load(&fixture.probe.values) < 2 &&
-               cmeta_monotonic_ms() < deadline) {
+               monotonic_ms() < deadline) {
             /* Host drives only a bounded quantum, then returns to I/O. */
             if (!cflow_executor_run_one(&fixture.executor))
-                cmeta_sleep_ms(1u);
+                sleep_ms(1u);
         }
         check_equal(atomic_load(&fixture.probe.values), 2);
         check_equal(atomic_load(&fixture.probe.action_calls), 2);
@@ -643,9 +643,9 @@ suite("CFlow Actor lifecycle") {
         while ((cflow_actor_current_state(&fixture.actor) !=
                     CFLOW_ACTOR_STATE_STOPPED ||
                 cflow_executor_pending(&fixture.executor) != 0u) &&
-               cmeta_monotonic_ms() < deadline) {
+               monotonic_ms() < deadline) {
             if (!cflow_executor_run_one(&fixture.executor))
-                cmeta_sleep_ms(1u);
+                sleep_ms(1u);
         }
         check_equal(cflow_actor_current_state(&fixture.actor),
                     CFLOW_ACTOR_STATE_STOPPED);
@@ -661,10 +661,10 @@ suite("CFlow Actor lifecycle") {
         const int second = 32;
         const cflow_event_view ev1 = {100u, &cmeta_type_int, &first};
         const cflow_event_view ev2 = {101u, &cmeta_type_int, &second};
-        const uint64_t deadline = cmeta_monotonic_ms() + ACTOR_TEST_TIMEOUT_MS;
+        const uint64_t deadline = monotonic_ms() + ACTOR_TEST_TIMEOUT_MS;
 
         check_true(actor_edge_fixture_init_full_owner(&fixture, 4u));
-        fixture.probe.expected_owner_thread = cmeta_thread_current_token();
+        fixture.probe.expected_owner_thread = sync_thread_current_token();
         check_true(cflow_actor_ref_acquire(&fixture.actor, &ref));
         check_equal(cflow_actor_start(&fixture.actor), CFLOW_ACTOR_OK);
         check_equal(cflow_actor_ref_try_send(&ref, &ev1),
@@ -673,9 +673,9 @@ suite("CFlow Actor lifecycle") {
                     CFLOW_ACTOR_SEND_ACCEPTED);
 
         while (atomic_load(&fixture.probe.values) < 2 &&
-               cmeta_monotonic_ms() < deadline) {
+               monotonic_ms() < deadline) {
             if (!cflow_executor_run_one(&fixture.executor))
-                cmeta_sleep_ms(1u);
+                sleep_ms(1u);
         }
         check_equal(atomic_load(&fixture.probe.values), 2);
         check_equal(atomic_load(&fixture.probe.action_calls), 2);
@@ -687,9 +687,9 @@ suite("CFlow Actor lifecycle") {
         check_equal(cflow_actor_request_stop(&fixture.actor), CFLOW_ACTOR_OK);
         while (cflow_actor_current_state(&fixture.actor) !=
                     CFLOW_ACTOR_STATE_STOPPED &&
-               cmeta_monotonic_ms() < deadline) {
+               monotonic_ms() < deadline) {
             if (!cflow_executor_run_one(&fixture.executor))
-                cmeta_sleep_ms(1u);
+                sleep_ms(1u);
         }
         check_equal(cflow_actor_current_state(&fixture.actor),
                     CFLOW_ACTOR_STATE_STOPPED);
@@ -973,7 +973,7 @@ suite("CFlow Actor lifecycle") {
         actor_edge_fixture fixture;
         cflow_actor_ref refs[PRODUCERS] = {0};
         actor_sender_context contexts[PRODUCERS] = {0};
-        cmeta_thread_t threads[PRODUCERS] = {0};
+        sync_thread_t threads[PRODUCERS] = {0};
         atomic_bool go = false;
         cflow_actor_stats stats = {0};
         int created = 0;
@@ -994,7 +994,7 @@ suite("CFlow Actor lifecycle") {
             contexts[producer].count = EVENTS_PER_PRODUCER;
             contexts[producer].go = &go;
             {
-                const int create_status = cmeta_thread_create(
+                const int create_status = sync_thread_create(
                     &threads[producer], actor_sender, &contexts[producer]);
                 check_equal(create_status, 0);
                 if (create_status != 0) break;
@@ -1300,7 +1300,7 @@ suite("CFlow Actor lifecycle") {
         actor_blocker blocker = {0};
         cflow_actor_ref ref = {0};
         actor_wait_stats_context waiters[WAITERS] = {0};
-        cmeta_thread_t threads[WAITERS] = {0};
+        sync_thread_t threads[WAITERS] = {0};
         int payloads[] = {41, 42, 43};
         cflow_event_view events[] = {
             {100u, &cmeta_type_int, &payloads[0]},
@@ -1325,7 +1325,7 @@ suite("CFlow Actor lifecycle") {
                     CFLOW_ACTOR_SEND_ACCEPTED);
         for (index = 0; index < WAITERS; ++index) {
             waiters[index].actor = &fixture.actor;
-            if (cmeta_thread_create(
+            if (sync_thread_create(
                     &threads[index], actor_wait_and_snapshot,
                     &waiters[index]) != 0)
                 break;
@@ -1340,7 +1340,7 @@ suite("CFlow Actor lifecycle") {
             const bool completed = wait_until_true(&waiters[index].completed);
             check_true(completed);
             if (!completed) abort();
-            check_equal(cmeta_thread_join(&threads[index]), 0);
+            check_equal(sync_thread_join(&threads[index]), 0);
             check_equal(waiters[index].state, CFLOW_ACTOR_STATE_FAILED);
             check_true(waiters[index].stats_valid);
             check_equal(waiters[index].stats.machine.accepted, (uint64_t)3u);
@@ -1403,7 +1403,7 @@ suite("CFlow Actor lifecycle") {
         actor_edge_fixture fixture;
         cflow_actor_ref ref = {0};
         actor_sender_context sender = {0};
-        cmeta_thread_t thread = {0};
+        sync_thread_t thread = {0};
         cflow_schedule_result occupied;
         check_true(actor_edge_fixture_init_with_scheduler_capacity(
             &fixture, 2u, 1u, 1u));
@@ -1419,10 +1419,10 @@ suite("CFlow Actor lifecycle") {
         sender.event_id = 100u;
         sender.first_payload = 9;
         sender.count = 1;
-        check_equal(cmeta_thread_create(&thread, actor_sender, &sender), 0);
+        check_equal(sync_thread_create(&thread, actor_sender, &sender), 0);
         /* A deadlock must fail the test process instead of hanging teardown. */
         if (!wait_until_true(&sender.completed)) abort();
-        check_equal(cmeta_thread_join(&thread), 0);
+        check_equal(sync_thread_join(&thread), 0);
         check_equal(atomic_load(&sender.accepted), 1);
         check_equal(cflow_actor_wait(&fixture.actor), CFLOW_ACTOR_STATE_FAILED);
         check_equal(atomic_load(&fixture.probe.errors), 1);
@@ -1471,7 +1471,7 @@ suite("CFlow Actor lifecycle") {
         actor_blocker blocker = {0};
         const int payload = 37;
         const cflow_event_view event = {100u, &cmeta_type_int, &payload};
-        cmeta_thread_t destroy_thread = {0};
+        sync_thread_t destroy_thread = {0};
         atomic_bool destroy_started = false;
         atomic_bool destroy_returned = false;
         actor_destroy_context destroy_context = {
@@ -1492,7 +1492,7 @@ suite("CFlow Actor lifecycle") {
             if (!entered) abort();
         }
         {
-            const int create_status = cmeta_thread_create(
+            const int create_status = sync_thread_create(
                 &destroy_thread, actor_destroy_owner, &destroy_context);
             check_equal(create_status, 0);
             if (create_status != 0) abort();
@@ -1508,7 +1508,7 @@ suite("CFlow Actor lifecycle") {
             if (cflow_actor_ref_try_send(&ref, &event) ==
                 CFLOW_ACTOR_SEND_STALE)
                 break;
-            cmeta_sleep_ms(1u);
+            sleep_ms(1u);
         }
         check_less(index, DESTROY_OVERLAP_MAX_SENDS);
         check_greater(overlap_attempts, 0);
@@ -1523,7 +1523,7 @@ suite("CFlow Actor lifecycle") {
             check_true(returned);
             if (!returned) abort();
         }
-        check_equal(cmeta_thread_join(&destroy_thread), 0);
+        check_equal(sync_thread_join(&destroy_thread), 0);
         check_null(fixture.actor.impl);
         for (index = 0; index < DESTROY_POST_SENDS; ++index)
             check_equal(cflow_actor_ref_try_send(&ref, &event),
@@ -1602,7 +1602,7 @@ suite("CFlow Actor lifecycle") {
             actor_blocker blocker = {0};
             cflow_actor_ref refs[STRESS_PRODUCERS] = {0};
             actor_sender_context contexts[STRESS_PRODUCERS] = {0};
-            cmeta_thread_t threads[STRESS_PRODUCERS] = {0};
+            sync_thread_t threads[STRESS_PRODUCERS] = {0};
             atomic_bool go = false;
             atomic_int attempted = 0;
             cflow_actor_stats stats = {0};
@@ -1636,7 +1636,7 @@ suite("CFlow Actor lifecycle") {
                 contexts[producer].go = &go;
                 contexts[producer].attempted = &attempted;
                 {
-                    const int create_status = cmeta_thread_create(
+                    const int create_status = sync_thread_create(
                         &threads[producer], actor_sender,
                         &contexts[producer]);
                     check_equal(create_status, 0);
@@ -1717,7 +1717,7 @@ suite("CFlow worker Actor cross-thread terminal synchronization") {
         actor_edge_fixture fixture;
         actor_blocker terminal = {0};
         actor_wait_stats_context waiter = {0};
-        cmeta_thread_t wait_thread = {0};
+        sync_thread_t wait_thread = {0};
         cflow_actor_ref ref = {0};
         const int payload = 42;
         const cflow_event_view event = {
@@ -1739,15 +1739,15 @@ suite("CFlow worker Actor cross-thread terminal synchronization") {
         check_equal(cflow_actor_current_state(&fixture.actor),
                     CFLOW_ACTOR_STATE_STOPPED);
         waiter.actor = &fixture.actor;
-        check_equal(cmeta_thread_create(
+        check_equal(sync_thread_create(
                         &wait_thread, actor_wait_and_snapshot, &waiter), 0);
         check_true(wait_until_true(&waiter.started));
-        cmeta_sleep_ms(10u);
+        sleep_ms(10u);
         check_false(atomic_load(&waiter.completed));
 
         atomic_store(&terminal.release, true);
         check_true(wait_until_true(&waiter.completed));
-        check_equal(cmeta_thread_join(&wait_thread), 0);
+        check_equal(sync_thread_join(&wait_thread), 0);
         check_equal(waiter.state, CFLOW_ACTOR_STATE_STOPPED);
         check_true(waiter.stats_valid);
         check_equal(atomic_load(&fixture.probe.dones), 1);
@@ -1766,7 +1766,7 @@ suite("CFlow worker Actor cross-thread terminal synchronization") {
                 100u, &cmeta_type_int, &payload};
             cflow_actor_stats stats = {0};
             actor_foreign_stop_context stop = {0};
-            cmeta_thread_t stop_thread = {0};
+            sync_thread_t stop_thread = {0};
 
             check_true(actor_edge_fixture_init(&fixture, 1u));
             fixture.probe.blocker = &blocker;
@@ -1780,14 +1780,14 @@ suite("CFlow worker Actor cross-thread terminal synchronization") {
             /* Main/control lane requests stop while worker is inside
              * a real Machine action; callback never holds run lock. */
             stop.actor = &fixture.actor;
-            check_equal(cmeta_thread_create(
+            check_equal(sync_thread_create(
                             &stop_thread, actor_foreign_stop, &stop), 0);
             check_true(wait_until_true(&stop.started));
             /* Release the owner worker while a separate control lane is
              * independently requesting termination. */
             atomic_store(&blocker.release, true);
             check_true(wait_until_true(&stop.finished));
-            check_equal(cmeta_thread_join(&stop_thread), 0);
+            check_equal(sync_thread_join(&stop_thread), 0);
             check_equal(atomic_load(&stop.status), (int)CFLOW_ACTOR_OK);
             check_equal(cflow_actor_wait(&fixture.actor),
                         CFLOW_ACTOR_STATE_STOPPED);

@@ -116,12 +116,10 @@ elseif(UNIX)
       target_sources(${TARGET_NAME} PRIVATE src/io_native_darwin_aio.c)
       target_compile_definitions(${TARGET_NAME} PRIVATE CFLOW_HAS_NATIVE_DARWIN_AIO=1)
     endif()
-  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  elseif(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Android)$")
     target_sources(${TARGET_NAME} PRIVATE src/io_native_io_uring.c)
     target_compile_definitions(${TARGET_NAME} PRIVATE CFLOW_HAS_NATIVE_IO_URING=1)
-    if(SALTS_ENABLE_EPOLL_READINESS)
-      target_compile_definitions(${TARGET_NAME} PRIVATE CFLOW_HAS_NATIVE_EPOLL=1)
-    endif()
+    target_compile_definitions(${TARGET_NAME} PRIVATE CFLOW_HAS_NATIVE_EPOLL=1)
   endif()
 endif()
 
@@ -171,8 +169,7 @@ target_include_directories(
 # CFlow remains independent of CNet; no CNet-to-Actor integration target.
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC CMeta::CMeta Salts::NativeIO Salts::Platform
-  PRIVATE Salts::Concurrency)
+  PUBLIC CMeta::CMeta Salts::NativeIO Salts::Core)
 
 install(
   TARGETS ${TARGET_NAME}
@@ -197,6 +194,6 @@ if(BUILD_EXAMPLES)
   add_subdirectory(examples)
 endif()
 
-if(BUILD_BENCHMARKS OR CFLOW_BUILD_BENCHMARKS)
+if(BUILD_BENCHMARK)
   add_subdirectory(benchmarks)
 endif()

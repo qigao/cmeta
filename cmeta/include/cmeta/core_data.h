@@ -2,9 +2,9 @@
 #define CMETA_CORE_DATA_H
 
 #include <cmeta/core_fixed_width.h>
-#include <tstr.h>
-#include <cmeta_uuid.h>
-#include <vstr.h>
+#include <core/tstr.h>
+#include <core/uuid.h>
+#include <core/vstr.h>
 
 #include <cmeta/data.h>
 
@@ -25,8 +25,8 @@ extern "C" {
     _Static_assert((condition_), message_)
 #endif
 
-CMETA_CORE_STATIC_ASSERT(sizeof(cmeta_uuid_t) == SALTS_UUID_SIZE,
-                          "cmeta_uuid_t must have exactly 16 bytes");
+CMETA_CORE_STATIC_ASSERT(sizeof(uuid_t) == SALTS_UUID_SIZE,
+                          "uuid_t must have exactly 16 bytes");
 
 #undef CMETA_CORE_STATIC_ASSERT
 

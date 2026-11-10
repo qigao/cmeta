@@ -5,9 +5,9 @@
 #include <cflow/lower.h>
 #include <cflow/scheduler.h>
 
-#include <error_codes.h>
+#include <core/error_codes.h>
 #include <native_io_sharded.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 #include "tinytest.h"
 
@@ -261,7 +261,7 @@ static int sharded_adapter_test_peer_send(
     if (sent == SOCKET_ERROR) {
       const int error = WSAGetLastError();
       if (error == WSAEWOULDBLOCK) {
-        cmeta_thread_yield();
+        sync_thread_yield();
         continue;
       }
       return -error;
@@ -277,7 +277,7 @@ static int sharded_adapter_test_peer_send(
     );
     if (sent < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        cmeta_thread_yield();
+        sync_thread_yield();
         continue;
       }
       return -errno;
@@ -553,7 +553,7 @@ static void sharded_adapter_test_gate_run(
   (void)context;
   atomic_store(&gate->entered, true);
   while (!atomic_load(&gate->release))
-    cmeta_thread_yield();
+    sync_thread_yield();
 }
 
 static void sharded_adapter_test_noop(
@@ -735,7 +735,7 @@ static void sharded_adapter_test_run_full_backend(
       native_io_sharded_try_submit_to(runtime, 1u, &gate_task),
       SALTS_OK);
   while (!atomic_load(&gate.entered))
-    cmeta_thread_yield();
+    sync_thread_yield();
   check_equal(
       native_io_sharded_try_submit_to(runtime, 1u, &queued_task),
       SALTS_OK);

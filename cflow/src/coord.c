@@ -1,5 +1,5 @@
 #include <cflow/coord.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 #include "value_storage.h"
 
@@ -48,7 +48,7 @@ struct coord_state {
     bool cancelled;
     const char *error;
 
-    cmeta_mutex_t lock;
+    sync_mutex_t lock;
     cflow_waker waiter;
 };
 
@@ -122,12 +122,12 @@ static void coord_child_wake(void *user) {
     if (!c || !c->owner) return;
     coord_state *s = c->owner;
     cflow_waker parent = {0};
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     atomic_store(&c->waiting, false);
     atomic_store(&c->armed, false);
     parent = s->waiter;
     s->waiter = (cflow_waker){0};
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
     if (parent.wake) parent.wake(parent.user);
 }
 
@@ -140,7 +140,7 @@ static bool coord_wait_arm(void *state, cflow_waker waker) {
     size_t arm_count = 0;
     bool ready = false;
 
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     if (s->cancelled || s->error) ready = true;
     else {
         s->waiter = waker;
@@ -155,7 +155,7 @@ static bool coord_wait_arm(void *state, cflow_waker waker) {
         }
     }
     if (ready) s->waiter = (cflow_waker){0};
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
 
     bool ok = true;
     for (size_t n = 0; n < arm_count; ++n) {
@@ -164,12 +164,12 @@ static bool coord_wait_arm(void *state, cflow_waker waker) {
         if (!cflow_waitable_valid(&c->waitable) ||
             !cflow_waitable_arm(&c->waitable, cw)) {
             ok = false;
-            cmeta_mutex_lock(&s->lock);
+            sync_mutex_lock(&s->lock);
             atomic_store(&c->armed, false);
             atomic_store(&c->waiting, false);
             s->error = "coordination child waitable could not be armed";
             s->waiter = (cflow_waker){0};
-            cmeta_mutex_unlock(&s->lock);
+            sync_mutex_unlock(&s->lock);
             break;
         }
     }
@@ -181,19 +181,19 @@ static bool coord_wait_arm(void *state, cflow_waker waker) {
 static void coord_wait_cancel(void *state) {
     coord_state *s = (coord_state *)state;
     if (!s) return;
-    cmeta_mutex_lock(&s->lock);
+    sync_mutex_lock(&s->lock);
     s->waiter = (cflow_waker){0};
     for (size_t i = 0; i < s->count; ++i) {
         coord_child *c = &s->children[i];
         if (atomic_load(&c->armed) && cflow_waitable_valid(&c->waitable)) {
             cflow_waitable w = c->waitable;
             atomic_store(&c->armed, false);
-            cmeta_mutex_unlock(&s->lock);
+            sync_mutex_unlock(&s->lock);
             cflow_waitable_cancel(&w);
-            cmeta_mutex_lock(&s->lock);
+            sync_mutex_lock(&s->lock);
         }
     }
-    cmeta_mutex_unlock(&s->lock);
+    sync_mutex_unlock(&s->lock);
 }
 
 CMETA_IMPLEMENTS(cflow_waitable, coord_waitable, 0,
@@ -459,7 +459,7 @@ static void coord_destroy(void *state) {
         cflow_value_slot_destroy(&c->pending);
         cflow_value_slot_destroy(&c->value);
     }
-    cmeta_mutex_destroy(&s->lock);
+    sync_mutex_destroy(&s->lock);
     free(s->children);
     free(s);
 }
@@ -478,10 +478,10 @@ bool cflow_resumable_from_coordination(cflow_resumable *out,
     }
     coord_state *s = calloc(1, sizeof(*s));
     if (!s) return false;
-    cmeta_mutex_init(&s->lock);
+    sync_mutex_init(&s->lock);
     if (!s->lock) { free(s); return false; }
     s->children = calloc(count, sizeof(*s->children));
-    if (!s->children) { cmeta_mutex_destroy(&s->lock); free(s); return false; }
+    if (!s->children) { sync_mutex_destroy(&s->lock); free(s); return false; }
     s->mode = mode;
     s->count = count;
     for (size_t i = 0; i < count; ++i) {

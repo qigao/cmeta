@@ -2,7 +2,7 @@
 
 #include <cflow/cflow.h>
 #include <cflow/plan_internal.h>
-#include <clock.h>
+#include <core/clock.h>
 
 #include "../src/result_storage.h"
 
@@ -262,8 +262,8 @@ static uint64_t cflow_parallel_bench_clock_overhead_ns(void) {
   for (size_t sample = 0u;
        sample < (size_t)CFLOW_PARALLEL_BENCH_CLOCK_SAMPLES;
        ++sample) {
-    const uint64_t started = cmeta_hrtime();
-    const uint64_t finished = cmeta_hrtime();
+    const uint64_t started = hrtime();
+    const uint64_t finished = hrtime();
     if (finished >= started) total += finished - started;
   }
   return total / (uint64_t)CFLOW_PARALLEL_BENCH_CLOCK_SAMPLES;
@@ -353,10 +353,10 @@ static double cflow_parallel_managed_merge_probe_ns(
     }
 
     if (ok) {
-      started = cmeta_hrtime();
+      started = hrtime();
       ok = cflow_parallel_managed_merge_probe_once(
           partials, task_count, &result);
-      finished = cmeta_hrtime();
+      finished = hrtime();
       total_ns += cflow_parallel_bench_adjust_elapsed(
           started, finished, clock_overhead_ns);
     }
@@ -399,10 +399,10 @@ static double cflow_parallel_managed_eval_probe_ns(
 
   for (size_t sample = 0u; sample < samples && ok; ++sample) {
     cflow_result result = {0};
-    const uint64_t started = cmeta_hrtime();
+    const uint64_t started = hrtime();
     ok = cflow_plan_eval_array_with_options(
         plan, input, item_count, &options, &result);
-    const uint64_t finished = cmeta_hrtime();
+    const uint64_t finished = hrtime();
 
     total_ns += cflow_parallel_bench_adjust_elapsed(
         started, finished, clock_overhead_ns);

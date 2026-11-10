@@ -2,7 +2,7 @@
 #define CMETA_LOCAL_H
 
 #include <cmeta/lifecycle.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <stdbool.h>
 
@@ -13,13 +13,13 @@
  * DataDesc lifecycle binding for the payload.
  */
 typedef struct cmeta_local_state {
-    cmeta_thread_affine_state affinity;
+    sync_thread_affine_state affinity;
     const cmeta_data_construct_ops *ops;
 } cmeta_local_state;
 
 CMETA_INLINE cmeta_status cmeta_local_check(
     cmeta_local_state *state, const void *owner) {
-    int status = cmeta_thread_affine_check(
+    int status = sync_thread_affine_check(
         state != NULL ? &state->affinity : NULL, owner);
     if (status == SALTS_OK)
         return CMETA_OK;
@@ -40,23 +40,23 @@ CMETA_INLINE cmeta_status cmeta_local_init(
     if (status != CMETA_OK)
         return status;
 
-    if (cmeta_thread_affine_init(&state->affinity, owner) != SALTS_OK)
+    if (sync_thread_affine_init(&state->affinity, owner) != SALTS_OK)
         return CMETA_INVALID_ARGUMENT;
 
     state->ops = ops;
-    if (cmeta_thread_affine_set_busy(&state->affinity, owner, true) != SALTS_OK)
+    if (sync_thread_affine_set_busy(&state->affinity, owner, true) != SALTS_OK)
         return CMETA_INVALID_ARGUMENT;
     status = ops->init_zero(value);
     if (status != CMETA_OK) {
         ops->restore_zero(value);
-        if (cmeta_thread_affine_set_busy(&state->affinity, owner, false) != SALTS_OK ||
-            cmeta_thread_affine_reset(&state->affinity, owner) != SALTS_OK)
+        if (sync_thread_affine_set_busy(&state->affinity, owner, false) != SALTS_OK ||
+            sync_thread_affine_reset(&state->affinity, owner) != SALTS_OK)
             return CMETA_INVALID_ARGUMENT;
         state->ops = NULL;
         return status;
     }
 
-    if (cmeta_thread_affine_set_busy(&state->affinity, owner, false) != SALTS_OK)
+    if (sync_thread_affine_set_busy(&state->affinity, owner, false) != SALTS_OK)
         return CMETA_INVALID_ARGUMENT;
     return CMETA_OK;
 }
@@ -69,11 +69,11 @@ CMETA_INLINE cmeta_status cmeta_local_destroy(
     if (value == NULL || state->ops == NULL)
         return CMETA_INVALID_ARGUMENT;
 
-    if (cmeta_thread_affine_set_busy(&state->affinity, owner, true) != SALTS_OK)
+    if (sync_thread_affine_set_busy(&state->affinity, owner, true) != SALTS_OK)
         return CMETA_INVALID_ARGUMENT;
     state->ops->restore_zero(value);
-    if (cmeta_thread_affine_set_busy(&state->affinity, owner, false) != SALTS_OK ||
-        cmeta_thread_affine_reset(&state->affinity, owner) != SALTS_OK)
+    if (sync_thread_affine_set_busy(&state->affinity, owner, false) != SALTS_OK ||
+        sync_thread_affine_reset(&state->affinity, owner) != SALTS_OK)
         return CMETA_INVALID_ARGUMENT;
     state->ops = NULL;
     return CMETA_OK;

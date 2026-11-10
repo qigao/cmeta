@@ -1,8 +1,8 @@
 #include <cflow/io_file.h>
 
-#include <clock.h>
-#include <error_codes.h>
-#include <thread.h>
+#include <core/clock.h>
+#include <core/error_codes.h>
+#include <threads/threads.h>
 
 #include "tinytest.h"
 
@@ -108,7 +108,7 @@ static void file_test_runtime_wake(void *user) {
 
 static int file_test_runtime_wait(cflow_io_file_runtime *runtime, file_completion_probe *first,
                                   file_completion_probe *second) {
-  const uint64_t started = cmeta_hrtime();
+  const uint64_t started = hrtime();
   for (;;) {
     cflow_io_file_runtime_stats stats = {0};
     size_t progressed = 0u;
@@ -117,14 +117,14 @@ static int file_test_runtime_wait(cflow_io_file_runtime *runtime, file_completio
     if (!cflow_io_file_runtime_get_stats(runtime, &stats)) return SALTS_EINVAL;
     if (first->count == 1u && second->count == 1u && stats.operation_slots_in_use == 0u)
       return SALTS_OK;
-    if (cmeta_hrtime() - started >= FILE_TEST_TIMEOUT_NS) return SALTS_ETIMEDOUT;
-    if (progressed == 0u) cmeta_thread_yield();
+    if (hrtime() - started >= FILE_TEST_TIMEOUT_NS) return SALTS_ETIMEDOUT;
+    if (progressed == 0u) sync_thread_yield();
   }
 }
 
 static int file_test_wait(cflow_io_file *file, file_completion_probe *probe,
                           size_t expected_count) {
-  const uint64_t started = cmeta_hrtime();
+  const uint64_t started = hrtime();
   for (;;) {
     cflow_io_file_stats stats = {0};
     size_t progressed = 0u;
@@ -132,8 +132,8 @@ static int file_test_wait(cflow_io_file *file, file_completion_probe *probe,
     if (status != SALTS_OK) return status;
     if (!cflow_io_file_get_stats(file, &stats)) return SALTS_EINVAL;
     if (probe->count >= expected_count && stats.operation_slots_in_use == 0u) return SALTS_OK;
-    if (cmeta_hrtime() - started >= FILE_TEST_TIMEOUT_NS) return SALTS_ETIMEDOUT;
-    if (progressed == 0u) cmeta_thread_yield();
+    if (hrtime() - started >= FILE_TEST_TIMEOUT_NS) return SALTS_ETIMEDOUT;
+    if (progressed == 0u) sync_thread_yield();
   }
 }
 

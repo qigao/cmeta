@@ -3,7 +3,7 @@
 #include "../src/io_publisher_internal.h"
 #include "tinytest.h"
 
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,8 +97,8 @@ typedef struct io_source_run_fixture {
 } io_source_run_fixture;
 
 typedef struct io_source_blocking_wake_probe {
-    cmeta_mutex_t lock;
-    cmeta_cond_t changed;
+    sync_mutex_t lock;
+    sync_cond_t changed;
     bool entered;
     bool released;
     bool close_returned;
@@ -117,8 +117,8 @@ typedef struct io_source_drive_context {
 } io_source_drive_context;
 
 typedef struct io_source_tail_barrier {
-    cmeta_mutex_t lock;
-    cmeta_cond_t changed;
+    sync_mutex_t lock;
+    sync_cond_t changed;
     bool entered;
     bool released;
 } io_source_tail_barrier;
@@ -129,8 +129,8 @@ typedef struct io_source_reentrant_cancel_probe {
 } io_source_reentrant_cancel_probe;
 
 typedef struct io_source_nested_wake_probe {
-    cmeta_mutex_t lock;
-    cmeta_cond_t changed;
+    sync_mutex_t lock;
+    sync_cond_t changed;
     cflow_publisher *source_a;
     cflow_io_publisher_owner *owner_a;
     cflow_waitable waitable_a;
@@ -261,12 +261,12 @@ static void io_source_blocking_wake(void *user) {
 
     if (probe == NULL)
         return;
-    cmeta_mutex_lock(&probe->lock);
+    sync_mutex_lock(&probe->lock);
     probe->entered = true;
-    cmeta_cond_broadcast(&probe->changed);
+    sync_cond_broadcast(&probe->changed);
     while (!probe->released)
-        cmeta_cond_wait(&probe->changed, &probe->lock);
-    cmeta_mutex_unlock(&probe->lock);
+        sync_cond_wait(&probe->changed, &probe->lock);
+    sync_mutex_unlock(&probe->lock);
 }
 
 static void io_source_close_thread(void *user) {
@@ -274,10 +274,10 @@ static void io_source_close_thread(void *user) {
         (io_source_close_context *)user;
 
     cflow_publisher_destroy(context->source);
-    cmeta_mutex_lock(&context->probe->lock);
+    sync_mutex_lock(&context->probe->lock);
     context->probe->close_returned = true;
-    cmeta_cond_broadcast(&context->probe->changed);
-    cmeta_mutex_unlock(&context->probe->lock);
+    sync_cond_broadcast(&context->probe->changed);
+    sync_mutex_unlock(&context->probe->lock);
 }
 
 static void io_source_drive_thread(void *user) {
@@ -292,12 +292,12 @@ static void io_source_tail_barrier_task(void *user) {
     io_source_tail_barrier *barrier =
         (io_source_tail_barrier *)user;
 
-    cmeta_mutex_lock(&barrier->lock);
+    sync_mutex_lock(&barrier->lock);
     barrier->entered = true;
-    cmeta_cond_broadcast(&barrier->changed);
+    sync_cond_broadcast(&barrier->changed);
     while (!barrier->released)
-        cmeta_cond_wait(&barrier->changed, &barrier->lock);
-    cmeta_mutex_unlock(&barrier->lock);
+        sync_cond_wait(&barrier->changed, &barrier->lock);
+    sync_mutex_unlock(&barrier->lock);
 }
 
 static bool io_source_tail_barrier_wait(
@@ -305,22 +305,22 @@ static bool io_source_tail_barrier_wait(
     size_t waits = 0u;
     bool entered;
 
-    cmeta_mutex_lock(&barrier->lock);
+    sync_mutex_lock(&barrier->lock);
     while (!barrier->entered && waits++ < IO_SOURCE_WAIT_LIMIT)
-        (void)cmeta_cond_timedwait(
+        (void)sync_cond_timedwait(
             &barrier->changed, &barrier->lock,
             IO_SOURCE_WAIT_SLICE_NS);
     entered = barrier->entered;
-    cmeta_mutex_unlock(&barrier->lock);
+    sync_mutex_unlock(&barrier->lock);
     return entered;
 }
 
 static void io_source_tail_barrier_release(
     io_source_tail_barrier *barrier) {
-    cmeta_mutex_lock(&barrier->lock);
+    sync_mutex_lock(&barrier->lock);
     barrier->released = true;
-    cmeta_cond_broadcast(&barrier->changed);
-    cmeta_mutex_unlock(&barrier->lock);
+    sync_cond_broadcast(&barrier->changed);
+    sync_mutex_unlock(&barrier->lock);
 }
 
 static void io_source_reentrant_cancel(void *user) {
@@ -370,10 +370,10 @@ static void io_source_nested_arm_thread(void *user) {
     probe->arm_a_accepted = cflow_waitable_arm(
         &probe->waitable_a,
         (cflow_waker){io_source_nested_wake_a, probe});
-    cmeta_mutex_lock(&probe->lock);
+    sync_mutex_lock(&probe->lock);
     probe->worker_completed = true;
-    cmeta_cond_broadcast(&probe->changed);
-    cmeta_mutex_unlock(&probe->lock);
+    sync_cond_broadcast(&probe->changed);
+    sync_mutex_unlock(&probe->lock);
 }
 
 static void io_source_operation_release(void *user) {
@@ -1450,12 +1450,12 @@ spec("CFlow reactive IO source") {
         const cflow_io_completion completed = {
             CFLOW_IO_COMPLETION_OK, sizeof(int), SALTS_OK};
         cflow_executor *executor;
-        cmeta_thread_t driver = NULL;
+        sync_thread_t driver = NULL;
         size_t progressed = 0u;
         bool entered;
 
-        cmeta_mutex_init(&barrier.lock);
-        cmeta_cond_init(&barrier.changed);
+        sync_mutex_init(&barrier.lock);
+        sync_cond_init(&barrier.changed);
         check_not_null(barrier.lock);
         check_not_null(barrier.changed);
         check_true(io_source_run_fixture_init_with_scheduler(
@@ -1479,7 +1479,7 @@ spec("CFlow reactive IO source") {
                         executor, io_source_tail_barrier_task,
                         &barrier), CFLOW_ADMISSION_ACCEPTED);
         fixture.drive_owner_inline = true;
-        check_equal(cmeta_thread_create(
+        check_equal(sync_thread_create(
                         &driver, io_source_drive_thread,
                         &drive_context), SALTS_OK);
         entered = io_source_tail_barrier_wait(&barrier);
@@ -1493,8 +1493,8 @@ spec("CFlow reactive IO source") {
                         (size_t)0u);
         }
         io_source_tail_barrier_release(&barrier);
-        check_equal(cmeta_thread_join(&driver), SALTS_OK);
-        cmeta_thread_destroy(&driver);
+        check_equal(sync_thread_join(&driver), SALTS_OK);
+        sync_thread_destroy(&driver);
 
         check_equal(drive_context.status, SALTS_OK);
         check_equal(drive_context.progressed, (size_t)1u);
@@ -1517,8 +1517,8 @@ spec("CFlow reactive IO source") {
         cflow_scheduler_destroy(&run_fixture.scheduler);
         cflow_graph_destroy(&run_fixture.normalized);
         cflow_graph_destroy(&run_fixture.surface);
-        cmeta_cond_destroy(&barrier.changed);
-        cmeta_mutex_destroy(&barrier.lock);
+        sync_cond_destroy(&barrier.changed);
+        sync_mutex_destroy(&barrier.lock);
     }
 
     it("drains cancellation across the adapter driver tail window") {
@@ -1536,12 +1536,12 @@ spec("CFlow reactive IO source") {
         const cflow_io_completion cancelled = {
             CFLOW_IO_COMPLETION_CANCELLED, 0u, SALTS_OK};
         cflow_executor *executor;
-        cmeta_thread_t driver = NULL;
+        sync_thread_t driver = NULL;
         size_t progressed = 0u;
         bool entered;
 
-        cmeta_mutex_init(&barrier.lock);
-        cmeta_cond_init(&barrier.changed);
+        sync_mutex_init(&barrier.lock);
+        sync_cond_init(&barrier.changed);
         check_not_null(barrier.lock);
         check_not_null(barrier.changed);
         check_true(io_source_run_fixture_init_with_scheduler(
@@ -1565,7 +1565,7 @@ spec("CFlow reactive IO source") {
         fixture.drive_owner_inline = true;
         fixture.close_owner_after_successful_drive = true;
         fixture.drive_close_status = SALTS_EINVAL;
-        check_equal(cmeta_thread_create(
+        check_equal(sync_thread_create(
                         &driver, io_source_drive_thread,
                         &drive_context), SALTS_OK);
         entered = io_source_tail_barrier_wait(&barrier);
@@ -1580,8 +1580,8 @@ spec("CFlow reactive IO source") {
                         (size_t)0u);
         }
         io_source_tail_barrier_release(&barrier);
-        check_equal(cmeta_thread_join(&driver), SALTS_OK);
-        cmeta_thread_destroy(&driver);
+        check_equal(sync_thread_join(&driver), SALTS_OK);
+        sync_thread_destroy(&driver);
 
         check_equal(drive_context.status, SALTS_OK);
         check_equal(drive_context.progressed, (size_t)1u);
@@ -1602,8 +1602,8 @@ spec("CFlow reactive IO source") {
         cflow_scheduler_destroy(&run_fixture.scheduler);
         cflow_graph_destroy(&run_fixture.normalized);
         cflow_graph_destroy(&run_fixture.surface);
-        cmeta_cond_destroy(&barrier.changed);
-        cmeta_mutex_destroy(&barrier.lock);
+        sync_cond_destroy(&barrier.changed);
+        sync_mutex_destroy(&barrier.lock);
     }
 
     it("serializes two demanded values through ACK under inline scheduling") {
@@ -1673,13 +1673,13 @@ spec("CFlow reactive IO source") {
         io_source_drive_context drive_context = {
             &owner, 32u, 0u, SALTS_EINVAL
         };
-        cmeta_thread_t driver = NULL;
-        cmeta_thread_t closer = NULL;
+        sync_thread_t driver = NULL;
+        sync_thread_t closer = NULL;
         size_t waits = 0u;
         bool stats_valid = true;
 
-        cmeta_mutex_init(&wake.lock);
-        cmeta_cond_init(&wake.changed);
+        sync_mutex_init(&wake.lock);
+        sync_cond_init(&wake.changed);
         check_not_null(wake.lock);
         check_not_null(wake.changed);
         check_equal(cflow_publisher_from_io_actor(
@@ -1689,32 +1689,32 @@ spec("CFlow reactive IO source") {
         check_true(cflow_waitable_arm(
             &step.waitable,
             (cflow_waker){io_source_blocking_wake, &wake}));
-        check_equal(cmeta_thread_create(
+        check_equal(sync_thread_create(
                         &driver, io_source_drive_thread,
                         &drive_context), SALTS_OK);
 
-        cmeta_mutex_lock(&wake.lock);
+        sync_mutex_lock(&wake.lock);
         while (!wake.entered && waits++ < IO_SOURCE_WAIT_LIMIT)
-            (void)cmeta_cond_timedwait(
+            (void)sync_cond_timedwait(
                 &wake.changed, &wake.lock, IO_SOURCE_WAIT_SLICE_NS);
         if (!wake.entered) {
             wake.released = true;
-            cmeta_cond_broadcast(&wake.changed);
+            sync_cond_broadcast(&wake.changed);
         }
         check_true(wake.entered);
-        cmeta_mutex_unlock(&wake.lock);
+        sync_mutex_unlock(&wake.lock);
 
-        check_equal(cmeta_thread_create(
+        check_equal(sync_thread_create(
                         &closer, io_source_close_thread,
                         &close_context), SALTS_OK);
-        cmeta_mutex_lock(&wake.lock);
+        sync_mutex_lock(&wake.lock);
         waits = 0u;
         do {
             stats_valid = cflow_io_publisher_owner_get_stats(
                 &owner, &close_stats);
             if (!stats_valid || close_stats.close_requested)
                 break;
-            (void)cmeta_cond_timedwait(
+            (void)sync_cond_timedwait(
                 &wake.changed, &wake.lock,
                 IO_SOURCE_WAIT_SLICE_NS);
         } while (++waits < IO_SOURCE_WAIT_LIMIT);
@@ -1722,7 +1722,7 @@ spec("CFlow reactive IO source") {
         check_true(close_stats.close_requested);
 
         if (!wake.close_returned)
-            (void)cmeta_cond_timedwait(
+            (void)sync_cond_timedwait(
                 &wake.changed, &wake.lock,
                 IO_SOURCE_CANCEL_OBSERVATION_NS);
         check_false(wake.close_returned);
@@ -1731,20 +1731,20 @@ spec("CFlow reactive IO source") {
         check_true(close_stats.close_requested);
         check_true(close_stats.publisher_live);
         wake.released = true;
-        cmeta_cond_broadcast(&wake.changed);
-        cmeta_mutex_unlock(&wake.lock);
+        sync_cond_broadcast(&wake.changed);
+        sync_mutex_unlock(&wake.lock);
 
-        check_equal(cmeta_thread_join(&driver), SALTS_OK);
-        cmeta_thread_destroy(&driver);
-        check_equal(cmeta_thread_join(&closer), SALTS_OK);
-        cmeta_thread_destroy(&closer);
+        check_equal(sync_thread_join(&driver), SALTS_OK);
+        sync_thread_destroy(&driver);
+        check_equal(sync_thread_join(&closer), SALTS_OK);
+        sync_thread_destroy(&closer);
         check_equal(drive_context.status, SALTS_OK);
         check_true(drive_context.progressed > (size_t)0u);
         check_true(wake.close_returned);
         check_true(cflow_io_publisher_owner_is_quiescent(&owner));
         check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
-        cmeta_cond_destroy(&wake.changed);
-        cmeta_mutex_destroy(&wake.lock);
+        sync_cond_destroy(&wake.changed);
+        sync_mutex_destroy(&wake.lock);
     }
 
     it("allows Source cancel to return from inside its own waker") {
@@ -1803,15 +1803,15 @@ spec("CFlow reactive IO source") {
         cflow_step step_a;
         cflow_step step_b;
         io_source_nested_wake_probe probe = {0};
-        cmeta_thread_t worker = NULL;
+        sync_thread_t worker = NULL;
         size_t progressed = 0u;
         size_t waits = 0u;
         bool worker_completed;
         int output_a = 0;
         int output_b = 0;
 
-        cmeta_mutex_init(&probe.lock);
-        cmeta_cond_init(&probe.changed);
+        sync_mutex_init(&probe.lock);
+        sync_cond_init(&probe.changed);
         check_not_null(probe.lock);
         check_not_null(probe.changed);
         check_equal(cflow_publisher_from_io_actor(
@@ -1834,17 +1834,17 @@ spec("CFlow reactive IO source") {
         probe.waitable_a = step_a.waitable;
         probe.waitable_b = step_b.waitable;
         probe.owner_a_close_status = SALTS_EINVAL;
-        check_equal(cmeta_thread_create(
+        check_equal(sync_thread_create(
                         &worker, io_source_nested_arm_thread,
                         &probe), SALTS_OK);
-        cmeta_mutex_lock(&probe.lock);
+        sync_mutex_lock(&probe.lock);
         while (!probe.worker_completed &&
                waits++ < IO_SOURCE_NESTED_WAIT_LIMIT)
-            (void)cmeta_cond_timedwait(
+            (void)sync_cond_timedwait(
                 &probe.changed, &probe.lock,
                 IO_SOURCE_WAIT_SLICE_NS);
         worker_completed = probe.worker_completed;
-        cmeta_mutex_unlock(&probe.lock);
+        sync_mutex_unlock(&probe.lock);
 
         if (!worker_completed) {
             fprintf(stderr,
@@ -1853,8 +1853,8 @@ spec("CFlow reactive IO source") {
             fflush(stderr);
             abort();
         }
-        check_equal(cmeta_thread_join(&worker), SALTS_OK);
-        cmeta_thread_destroy(&worker);
+        check_equal(sync_thread_join(&worker), SALTS_OK);
+        sync_thread_destroy(&worker);
         check_true(probe.arm_a_accepted);
         check_true(probe.arm_b_accepted);
         check_true(probe.destroy_a_returned);
@@ -1871,8 +1871,8 @@ spec("CFlow reactive IO source") {
         check_true(cflow_io_publisher_owner_is_quiescent(&owner_b));
         check_equal(cflow_io_publisher_owner_close(
                         &owner_b), SALTS_OK);
-        cmeta_cond_destroy(&probe.changed);
-        cmeta_mutex_destroy(&probe.lock);
+        sync_cond_destroy(&probe.changed);
+        sync_mutex_destroy(&probe.lock);
     }
 
     it("bounds owner progress and permits VALUE consumption before ACK") {

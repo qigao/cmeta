@@ -3,7 +3,7 @@
 #include <cflow/scheduler.h>
 #include "scheduler_internal.h"
 #include "timer_queue.h"
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -34,7 +34,7 @@ const cmeta_type_desc cflow_type_scheduler_stats_ptr = {
 };
 
 typedef struct cflow_test_loop_state {
-    cmeta_mutex_t mutex;
+    sync_mutex_t mutex;
     cflow_clock clock;
     cflow_executor executor;
     cflow_timer_queue timers;
@@ -349,27 +349,27 @@ static bool test_take_and_run_one(cflow_test_loop_state *state,
     cflow_admission_status admitted;
 
     if (!state) return false;
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     now = cflow_clock_now(&state->clock);
     if (advance_to_next) {
         cflow_deadline deadline;
         if (!cflow_timer_queue_next_deadline(&state->timers, &deadline)) {
-            cmeta_mutex_unlock(&state->mutex);
+            sync_mutex_unlock(&state->mutex);
             return false;
         }
         if (deadline.ns > now.ns &&
             !cflow_clock_advance(&state->clock,
                                  cflow_deadline_remaining(deadline, now))) {
-            cmeta_mutex_unlock(&state->mutex);
+            sync_mutex_unlock(&state->mutex);
             return false;
         }
         now = cflow_clock_now(&state->clock);
     }
     if (!cflow_timer_queue_take_ready(&state->timers, now, &task)) {
-        cmeta_mutex_unlock(&state->mutex);
+        sync_mutex_unlock(&state->mutex);
         return false;
     }
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     descriptor = cflow_timer_task_descriptor(&task);
     admitted = cflow_executor_try_post_task(&state->executor, &descriptor);
     if (admitted != CFLOW_ADMISSION_ACCEPTED) {
@@ -390,10 +390,10 @@ static cflow_schedule_result test_try_post_task_after(
 
     if (!state || !task || !task->run)
         return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     if (state->stopping) {
         ++state->rejected_closed;
-        cmeta_mutex_unlock(&state->mutex);
+        sync_mutex_unlock(&state->mutex);
         return (cflow_schedule_result){CFLOW_ADMISSION_CLOSED, 0u};
     }
     now = cflow_clock_now(&state->clock);
@@ -404,7 +404,7 @@ static cflow_schedule_result test_try_post_task_after(
         test_update_peak_locked(state);
     else if (result.status == CFLOW_ADMISSION_FULL)
         ++state->rejected_full;
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     return result;
 }
 
@@ -436,10 +436,10 @@ static bool test_cancel(void *self, cflow_task_id id) {
     bool cancelled;
 
     if (!state || id == 0u) return false;
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     cancelled = !state->stopping &&
                 cflow_timer_queue_take(&state->timers, id, &timer_task);
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     if (cancelled) {
         task = cflow_timer_task_descriptor(&timer_task);
         cflow_scheduler_settle_cancelled_task_internal(&task);
@@ -463,10 +463,10 @@ static size_t test_advance(void *self, uint64_t ticks_ms) {
     bool advanced;
 
     if (!state) return 0u;
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     advanced = cflow_clock_advance(&state->clock,
                                    cflow_duration_from_ms(ticks_ms));
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     if (!advanced) return 0u;
     return test_run_ready(state);
 }
@@ -489,9 +489,9 @@ static bool test_wait_idle(void *self) {
 
     if (!state) return false;
     (void)test_run_until_idle(state, 0u);
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     timers_idle = cflow_timer_queue_pending(&state->timers) == 0u;
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     return timers_idle && cflow_executor_wait_idle(&state->executor);
 }
 
@@ -500,9 +500,9 @@ static uint64_t test_now(void *self) {
     uint64_t now;
 
     if (!state) return 0u;
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     now = cflow_instant_to_ms(cflow_clock_now(&state->clock));
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     return now;
 }
 
@@ -511,10 +511,10 @@ static size_t test_pending(void *self) {
     size_t pending;
 
     if (!state) return 0u;
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     pending = cflow_timer_queue_pending(&state->timers) +
               cflow_executor_pending(&state->executor);
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     return pending;
 }
 
@@ -524,7 +524,7 @@ static bool test_shutdown(void *self) {
     bool should_shutdown = false;
 
     if (!state) return false;
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     if (!state->stopping) {
         state->stopping = true;
         should_shutdown = true;
@@ -533,18 +533,18 @@ static bool test_shutdown(void *self) {
         const cflow_executor_task task =
             cflow_timer_task_descriptor(&timer_task);
         ++state->cancelled_on_shutdown;
-        cmeta_mutex_unlock(&state->mutex);
+        sync_mutex_unlock(&state->mutex);
         cflow_scheduler_settle_cancelled_task_internal(&task);
-        cmeta_mutex_lock(&state->mutex);
+        sync_mutex_lock(&state->mutex);
     }
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     return !should_shutdown || cflow_executor_shutdown(&state->executor);
 }
 
 static bool test_get_stats(void *self, cflow_scheduler_stats *out) {
     cflow_test_loop_state *state = (cflow_test_loop_state *)self;
     if (!state || !out) return false;
-    cmeta_mutex_lock(&state->mutex);
+    sync_mutex_lock(&state->mutex);
     *out = (cflow_scheduler_stats){
         .ready_capacity = state->ready_capacity,
         .timer_capacity = state->timer_capacity,
@@ -556,7 +556,7 @@ static bool test_get_stats(void *self, cflow_scheduler_stats *out) {
         .rejected_closed = state->rejected_closed,
         .cancelled_on_shutdown = state->cancelled_on_shutdown
     };
-    cmeta_mutex_unlock(&state->mutex);
+    sync_mutex_unlock(&state->mutex);
     return true;
 }
 
@@ -567,7 +567,7 @@ static void test_destroy(void *self) {
     cflow_timer_queue_destroy(&state->timers);
     cflow_executor_destroy(&state->executor);
     cflow_clock_destroy(&state->clock);
-    cmeta_mutex_destroy(&state->mutex);
+    sync_mutex_destroy(&state->mutex);
     free(state);
 }
 
@@ -641,7 +641,7 @@ bool cflow_scheduler_test_init_with_capacity(cflow_scheduler *scheduler,
     state = (cflow_test_loop_state *)calloc(1, sizeof(*state));
     if (!state) return false;
 
-    cmeta_mutex_init(&state->mutex);
+    sync_mutex_init(&state->mutex);
     if (!state->mutex ||
         !cflow_clock_virtual_init(&state->clock, (cflow_instant){0u}) ||
         !cflow_executor_manual_init_with_capacity(&state->executor,
@@ -652,7 +652,7 @@ bool cflow_scheduler_test_init_with_capacity(cflow_scheduler *scheduler,
         if (cflow_executor_valid(&state->executor))
             cflow_executor_destroy(&state->executor);
         cflow_timer_queue_destroy(&state->timers);
-        cmeta_mutex_destroy(&state->mutex);
+        sync_mutex_destroy(&state->mutex);
         free(state);
         return false;
     }

@@ -2,7 +2,7 @@
 #include "executor_internal.h"
 #include "result_storage.h"
 #include "value_storage.h"
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -20,8 +20,8 @@ typedef struct cflow_parallel_reduce_task {
 } cflow_parallel_reduce_task;
 
 struct cflow_parallel_reduce_frame {
-    cmeta_mutex_t mutex;
-    cmeta_cond_t condition;
+    sync_mutex_t mutex;
+    sync_cond_t condition;
     const cflow_plan_inst *reducer;
     cflow_plan_value_vec prefix;
     cflow_parallel_reduce_task *tasks;
@@ -52,11 +52,11 @@ static void parallel_reduce_task_settle(cflow_parallel_reduce_task *task,
                                         bool succeeded) {
     cflow_parallel_reduce_frame *frame = task ? task->frame : NULL;
     if (!frame) return;
-    cmeta_mutex_lock(&frame->mutex);
+    sync_mutex_lock(&frame->mutex);
     if (!succeeded) frame->failed = true;
     ++frame->completed;
-    cmeta_cond_broadcast(&frame->condition);
-    cmeta_mutex_unlock(&frame->mutex);
+    sync_cond_broadcast(&frame->condition);
+    sync_mutex_unlock(&frame->mutex);
 }
 
 static void parallel_reduce_task_run(void *user) {
@@ -120,8 +120,8 @@ static void parallel_reduce_task_cancel(void *user) {
 
 static void parallel_reduce_frame_destroy(cflow_parallel_reduce_frame *frame) {
     if (!frame) return;
-    cmeta_cond_destroy(&frame->condition);
-    cmeta_mutex_destroy(&frame->mutex);
+    sync_cond_destroy(&frame->condition);
+    sync_mutex_destroy(&frame->mutex);
     if (frame->partial_slots) {
         for (size_t index = 0u; index < frame->slot_count; ++index)
             cflow_value_slot_destroy(managed_slot_at(
@@ -163,8 +163,8 @@ static bool parallel_reduce_frame_init(cflow_parallel_reduce_frame **out,
     }
     frame->managed_values =
         !cflow_value_storage_type_supported(frame->prefix.type);
-    cmeta_mutex_init(&frame->mutex);
-    cmeta_cond_init(&frame->condition);
+    sync_mutex_init(&frame->mutex);
+    sync_cond_init(&frame->condition);
     if (!frame->mutex || !frame->condition) {
         parallel_reduce_frame_destroy(frame);
         return false;
@@ -246,11 +246,11 @@ static size_t parallel_task_count(size_t item_count,
 static bool wait_for_accepted(cflow_parallel_reduce_frame *frame,
                               size_t accepted) {
     bool succeeded;
-    cmeta_mutex_lock(&frame->mutex);
+    sync_mutex_lock(&frame->mutex);
     while (frame->completed < accepted)
-        cmeta_cond_wait(&frame->condition, &frame->mutex);
+        sync_cond_wait(&frame->condition, &frame->mutex);
     succeeded = !frame->failed;
-    cmeta_mutex_unlock(&frame->mutex);
+    sync_mutex_unlock(&frame->mutex);
     return succeeded;
 }
 

@@ -2,7 +2,7 @@
 #define CMETA_FASTPATH_H
 
 #include <cmeta/function.h>
-#include <fastpath.h>
+#include <cmeta/fast_key.h>
 
 #ifndef __cplusplus
 #include <stdatomic.h>

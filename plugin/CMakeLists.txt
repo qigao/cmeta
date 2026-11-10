@@ -35,7 +35,7 @@ cmake_config_target(
 target_compile_features(cmeta_plugin PRIVATE c_std_11)
 target_link_libraries(cmeta_plugin
   PUBLIC cmeta_plugin_abi
-  PRIVATE Salts::Core Salts::Platform ${CMAKE_DL_LIBS})
+  PRIVATE Salts::Core ${CMAKE_DL_LIBS})
 
 install(
   TARGETS cmeta_plugin_abi cmeta_plugin
@@ -45,6 +45,6 @@ install(
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
 
-if(BUILD_TESTING)
+if(BUILD_TESTS)
   add_subdirectory(tests)
 endif()

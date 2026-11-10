@@ -2,7 +2,7 @@
 #define CMETA_POOL_H
 
 #include <cmeta/lifecycle.h>
-#include <object_pool.h>
+#include <memory/object_pool.h>
 
 /*
  * CMeta lifecycle adapter over Core-owned pool storage/lease semantics.

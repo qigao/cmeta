@@ -5,7 +5,7 @@
 #include "statechart_internal.h"
 #include "value_storage.h"
 
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -145,8 +145,8 @@ typedef struct cflow_statechart_instance_impl {
     char *error_storage;
     /* External transfer/accounting order is this lock, then mailbox lock.
        The private mailbox is never armed with a waker. */
-    cmeta_mutex_t lock;
-    cmeta_cond_t tasks_changed;
+    sync_mutex_t lock;
+    sync_cond_t tasks_changed;
     const char *error;
     bool error_owned;
     uint64_t configuration_version;
@@ -575,8 +575,8 @@ static void instance_impl_free(cflow_statechart_instance_impl *impl) {
     if (impl->adapter_internal_mailbox_initialized)
         cflow_mailbox_destroy(&impl->adapter_internal_mailbox);
     if (impl->tasks_changed != NULL)
-        cmeta_cond_destroy(&impl->tasks_changed);
-    if (impl->lock != NULL) cmeta_mutex_destroy(&impl->lock);
+        sync_cond_destroy(&impl->tasks_changed);
+    if (impl->lock != NULL) sync_mutex_destroy(&impl->lock);
     if (impl->error_owned) free((void *)impl->error);
     free(impl->internal_event_payloads);
     free(impl->external_origin_tokens);
@@ -636,17 +636,17 @@ static void release_instance_task_locked(
     cflow_statechart_instance_impl *impl) {
     if (impl->task_reservations != 0u) --impl->task_reservations;
     if (impl->task_reservations == 0u)
-        cmeta_cond_broadcast(&impl->tasks_changed);
+        sync_cond_broadcast(&impl->tasks_changed);
 }
 
 static cflow_statechart_instance_status wait_instance_tasks(
     cflow_statechart_instance_impl *impl) {
     if (cflow_executor_is_current_internal(impl->executor))
         return CFLOW_STATECHART_INSTANCE_WOULD_BLOCK;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     while (impl->task_reservations != 0u)
-        cmeta_cond_wait(&impl->tasks_changed, &impl->lock);
-    cmeta_mutex_unlock(&impl->lock);
+        sync_cond_wait(&impl->tasks_changed, &impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return CFLOW_STATECHART_INSTANCE_OK;
 }
 
@@ -1300,10 +1300,10 @@ static void deliver_external_settlements(
     cflow_statechart_external_settlement settlement;
     void *user;
     if (impl == NULL) return;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->external_settlement_delivery_active ||
         impl->hooks.on_external_settlement == NULL) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return;
     }
     impl->external_settlement_delivery_active = true;
@@ -1313,7 +1313,7 @@ static void deliver_external_settlements(
             impl->pending_external_settlement_ready = false;
         } else if (impl->external_in_flight) {
             impl->external_settlement_delivery_active = false;
-            cmeta_mutex_unlock(&impl->lock);
+            sync_mutex_unlock(&impl->lock);
             return;
         } else if (impl->cancelled_external_settlement_count != 0u) {
             const size_t index =
@@ -1333,14 +1333,14 @@ static void deliver_external_settlements(
                 .error = NULL};
         } else {
             impl->external_settlement_delivery_active = false;
-            cmeta_mutex_unlock(&impl->lock);
+            sync_mutex_unlock(&impl->lock);
             return;
         }
         callback = impl->hooks.on_external_settlement;
         user = impl->hook_user;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         callback(user, &settlement);
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
     }
 }
 
@@ -1365,14 +1365,14 @@ static void finish_terminal_side_effects(
     cflow_waker downstream_waker = {0};
     cflow_waker terminal_waker = {0};
     if (impl != NULL) {
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         terminal = impl->terminal_outcome != STATECHART_TERMINAL_NONE;
         settled = impl->done || impl->error != NULL;
         if (settled) {
             downstream_waker = take_downstream_waiter_locked(impl);
             terminal_waker = take_terminal_waiter_locked(impl);
         }
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         if (terminal && impl->timers_initialized)
             (void)cflow_timer_event_queue_close(&impl->timers);
     }
@@ -1475,14 +1475,14 @@ static void latch_terminal_failure(cflow_statechart_instance_impl *impl,
                                    const char *message) {
     cflow_waker waker = {0};
     if (impl == NULL) return;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->terminal_outcome == STATECHART_TERMINAL_NONE) {
         claim_external_for_failure_locked(impl);
         (void)win_terminal_locked(
             impl, STATECHART_TERMINAL_ERROR, status, message,
             true, status, &waker);
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     finish_terminal_side_effects(impl, waker);
 }
 
@@ -1802,22 +1802,22 @@ cflow_statechart_instance_status cflow_statechart_instance_select_internal(
     if (impl == NULL || trigger == NULL || out == NULL ||
         !trigger_valid(impl, trigger))
         return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->terminal_outcome == STATECHART_TERMINAL_ERROR) {
         const cflow_statechart_instance_status status = impl->last_status;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return status;
     }
     if (impl->closed || impl->done || impl->cancelled) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_INSTANCE_TASK_CANCELLED;
     }
     if (impl->microstep_pending || impl->selection_in_progress) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_INSTANCE_WOULD_BLOCK;
     }
     if (impl->selection_generation == UINT64_MAX) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_INSTANCE_LIMIT_EXCEEDED;
     }
     impl->selection_in_progress = true;
@@ -1842,7 +1842,7 @@ cflow_statechart_instance_status cflow_statechart_instance_select_internal(
         impl->selection_event.payload = impl->selection_event_payload;
         impl->selection_trigger.event = &impl->selection_event;
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     impl->selected_count = 0u;
     if (impl->ir->transition_count != 0u)
         memset(impl->candidate_seen, 0,
@@ -1870,10 +1870,10 @@ cflow_statechart_instance_status cflow_statechart_instance_select_internal(
                     &selection_staged_event_count,
                     selection_staged_event_capacity, &enabled);
                 if (status != CFLOW_STATECHART_INSTANCE_OK) {
-                    cmeta_mutex_lock(&impl->lock);
+                    sync_mutex_lock(&impl->lock);
                     impl->selected_count = 0u;
                     impl->selection_in_progress = false;
-                    cmeta_mutex_unlock(&impl->lock);
+                    sync_mutex_unlock(&impl->lock);
                     return status;
                 }
                 if (!enabled) continue;
@@ -1890,11 +1890,11 @@ cflow_statechart_instance_status cflow_statechart_instance_select_internal(
         }
         ++leaf_order;
     }
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->closed || impl->done || impl->cancelled) {
         impl->selected_count = 0u;
         impl->selection_in_progress = false;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_INSTANCE_TASK_CANCELLED;
     }
     ++impl->selection_generation;
@@ -1915,7 +1915,7 @@ cflow_statechart_instance_status cflow_statechart_instance_select_internal(
             ? impl->selection_event.id : 0u,
         impl->selection_trigger.kind == CFLOW_STATECHART_TRIGGER_COMPLETION
             ? impl->selection_trigger.completion : 0u};
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return CFLOW_STATECHART_INSTANCE_OK;
 }
 
@@ -1929,7 +1929,7 @@ bool cflow_statechart_selection_exits_internal(
     size_t state_index;
     bool exits = false;
     if (impl == NULL || selection == NULL) return false;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (!impl->selection_valid ||
         selection->instance_token != impl->instance_token ||
         selection->generation != impl->selection_generation ||
@@ -1939,7 +1939,7 @@ bool cflow_statechart_selection_exits_internal(
         selection->exit_set_stride != impl->bitset_bytes ||
         selection->transition_count != impl->selected_count ||
         transition_position >= selection->transition_count) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return false;
     }
     state_index = find_state_index(impl->ir, state);
@@ -1948,7 +1948,7 @@ bool cflow_statechart_selection_exits_internal(
             selection->exit_sets +
                 transition_position * selection->exit_set_stride,
             state_index);
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return exits;
 }
 
@@ -2831,7 +2831,7 @@ static void microstep_fail(cflow_statechart_instance_impl *impl,
     impl->staged_event_count = 0u;
     impl->staged_completion_count = 0u;
     discard_staged_effects(impl);
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     impl->microstep_result = status;
     if (impl->microstep_failed != UINT64_MAX) ++impl->microstep_failed;
     (void)win_terminal_locked(
@@ -2839,7 +2839,7 @@ static void microstep_fail(cflow_statechart_instance_impl *impl,
         error != NULL && error[0] != '\0'
             ? error : "Statechart action failed",
         true, status, &waker);
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     finish_terminal_side_effects(impl, waker);
 }
 
@@ -2956,12 +2956,12 @@ static cflow_statechart_host_result run_host_transaction_runtime_hook(
         return result;
     }
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->terminal_outcome != STATECHART_TERMINAL_NONE ||
         impl->error != NULL) {
         impl->staged_event_count = 0u;
         impl->staged_completion_count = 0u;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         discard_staged_effects(impl);
         if (context.state_edited)
             reset_transaction_state(impl, staged);
@@ -2974,7 +2974,7 @@ static cflow_statechart_host_result run_host_transaction_runtime_hook(
         if (impl->configuration_version != UINT64_MAX)
             ++impl->configuration_version;
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     commit_staged_effects(impl);
     return result;
 
@@ -3041,7 +3041,7 @@ static cflow_statechart_instance_status execute_initial_entry_actions(
         error = "Statechart action state finalization failed";
         goto fail;
     }
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     commit_internal_events(impl);
     commit_completions(impl);
     impl->published = staged;
@@ -3051,7 +3051,7 @@ static cflow_statechart_instance_status execute_initial_entry_actions(
     else
         impl->actions += (uint64_t)context.invoked;
     impl->initial_configuration_pending = false;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     commit_staged_effects(impl);
     return CFLOW_STATECHART_INSTANCE_OK;
 
@@ -3080,13 +3080,13 @@ static cflow_statechart_instance_status execute_controlled_exit(
         CFLOW_STATECHART_INSTANCE_OK;
     size_t exit_count, position;
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (!impl->exit_requested ||
         impl->terminal_outcome != STATECHART_TERMINAL_NONE) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_INSTANCE_TASK_CANCELLED;
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 
     impl->staged_event_count = 0u;
     impl->staged_completion_count = 0u;
@@ -3131,9 +3131,9 @@ static cflow_statechart_instance_status execute_controlled_exit(
         goto fail;
     }
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->terminal_outcome != STATECHART_TERMINAL_NONE) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         reset_transaction_state(impl, staged);
         discard_staged_effects(impl);
         return CFLOW_STATECHART_INSTANCE_TASK_CANCELLED;
@@ -3150,7 +3150,7 @@ static cflow_statechart_instance_status execute_controlled_exit(
         impl, STATECHART_TERMINAL_CANCEL,
         CFLOW_STATECHART_INSTANCE_OK, NULL, true,
         CFLOW_STATECHART_INSTANCE_TASK_CANCELLED, &waker);
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     commit_staged_effects(impl);
     finish_terminal_side_effects(impl, waker);
     return CFLOW_STATECHART_INSTANCE_OK;
@@ -3279,14 +3279,14 @@ static cflow_statechart_instance_status execute_microstep(
     for (position = 0u; position < exit_count; ++position)
         impl->timer_exit_scopes[position] =
             impl->ir->states[impl->exit_order[position]].id;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->cancelled) {
         impl->staged_event_count = 0u;
         impl->staged_completion_count = 0u;
         impl->microstep_result = CFLOW_STATECHART_INSTANCE_TASK_CANCELLED;
         if (impl->microstep_cancelled != UINT64_MAX)
             ++impl->microstep_cancelled;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         discard_staged_effects(impl);
         reset_transaction_state(impl, staged);
         return CFLOW_STATECHART_INSTANCE_TASK_CANCELLED;
@@ -3307,7 +3307,7 @@ static cflow_statechart_instance_status execute_microstep(
     impl->microstep_result = CFLOW_STATECHART_INSTANCE_OK;
     if (impl->microstep_completed != UINT64_MAX)
         ++impl->microstep_completed;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     commit_staged_effects(impl);
     return CFLOW_STATECHART_INSTANCE_OK;
 }
@@ -3324,7 +3324,7 @@ static void statechart_microstep_cancel(void *user) {
     cflow_waker waker = {0};
     void (*after_cancel)(void *) = NULL;
     void *hook_user = NULL;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->terminal_outcome == STATECHART_TERMINAL_NONE) {
         impl->microstep_result = CFLOW_STATECHART_INSTANCE_EXECUTOR_CLOSED;
         (void)win_terminal_locked(
@@ -3342,7 +3342,7 @@ static void statechart_microstep_cancel(void *user) {
         ++impl->microstep_cancelled;
     after_cancel = impl->test_hooks.after_microstep_cancel;
     hook_user = impl->test_hooks.user;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     finish_terminal_side_effects(impl, waker);
     if (after_cancel != NULL) after_cancel(hook_user);
 }
@@ -3352,7 +3352,7 @@ static void statechart_microstep_finalize(void *user) {
         (cflow_statechart_instance_impl *)user;
     cflow_statechart_instance_status result;
     bool continue_driver;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->microstep_finalized != UINT64_MAX)
         ++impl->microstep_finalized;
     result = impl->microstep_result;
@@ -3375,14 +3375,14 @@ static void statechart_microstep_finalize(void *user) {
     continue_driver = impl->driver_repost && !impl->done &&
         impl->error == NULL;
     impl->driver_repost = false;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     deliver_external_settlements(impl);
     if (continue_driver) {
         (void)schedule_statechart_driver_reserved(impl);
     } else {
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         release_instance_task_locked(impl);
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
     }
 }
 
@@ -3418,14 +3418,14 @@ cflow_admission_status cflow_statechart_instance_try_microstep_internal(
     if (impl == NULL || trigger == NULL || selection == NULL ||
         !trigger_valid(impl, trigger))
         return CFLOW_ADMISSION_INVALID_ARGUMENT;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->closed || impl->done || impl->cancelled) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_ADMISSION_CLOSED;
     }
     if (impl->microstep_pending || impl->selection_in_progress ||
         impl->error != NULL) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_ADMISSION_FULL;
     }
     if (!impl->selection_valid || impl->selection_consumed ||
@@ -3440,11 +3440,11 @@ cflow_admission_status cflow_statechart_instance_try_microstep_internal(
         selection->exit_set_stride != impl->bitset_bytes ||
         selection->transition_count != impl->selected_count ||
         !trigger_matches_selection(impl, trigger, selection)) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_ADMISSION_INVALID_ARGUMENT;
     }
     if (!reserve_instance_task_locked(impl)) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_ADMISSION_FULL;
     }
     impl->microstep_pending = true;
@@ -3471,13 +3471,13 @@ cflow_admission_status cflow_statechart_instance_try_microstep_internal(
         void (*before_post)(void *) =
             impl->test_hooks.before_microstep_post;
         void *hook_user = impl->test_hooks.user;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         if (before_post != NULL) before_post(hook_user);
     }
 
     admission = cflow_executor_try_post_task(impl->executor, &task);
     if (admission != CFLOW_ADMISSION_ACCEPTED) {
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         impl->microstep_pending = false;
         impl->selection_consumed = false;
         if (impl->microstep_accepted != 0u) --impl->microstep_accepted;
@@ -3488,11 +3488,11 @@ cflow_admission_status cflow_statechart_instance_try_microstep_internal(
                 impl, CFLOW_STATECHART_INSTANCE_TASK_CANCELLED);
             clear_semantic_queues_locked(impl);
         }
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         deliver_external_settlements(impl);
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         release_instance_task_locked(impl);
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
     }
     return admission;
 }
@@ -3509,13 +3509,13 @@ static bool root_configuration_complete(
 static bool root_completion_ready(
     cflow_statechart_instance_impl *impl) {
     bool ready;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     ready = root_configuration_complete(impl) &&
         (impl->ir->states[impl->ir->root].kind ==
              CFLOW_STATECHART_FINAL ||
          (impl->completion_count != 0u &&
           impl->completion_rows[impl->completion_head] == impl->ir->root));
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return ready;
 }
 
@@ -3524,9 +3524,9 @@ static bool pop_internal_event(cflow_statechart_instance_impl *impl,
                                uint64_t *out_origin_token) {
     size_t slot, type_index;
     const cmeta_type_desc *type;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->internal_event_count == 0u) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return false;
     }
     slot = impl->internal_event_head;
@@ -3542,7 +3542,7 @@ static bool pop_internal_event(cflow_statechart_instance_impl *impl,
     *out = (cflow_event_view){
         impl->ir->events[type_index].id, type, impl->driver_event_payload};
     *out_origin_token = impl->internal_event_slots[slot].origin_token;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return true;
 }
 
@@ -3551,32 +3551,32 @@ static bool pop_adapter_internal_event(
     cflow_event_id event_id = 0u;
     const cmeta_type_desc *event_type = NULL;
     cflow_mailbox_status status;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (!impl->adapter_internal_mailbox_initialized ||
         impl->adapter_internal_pending == 0u) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return false;
     }
     status = cflow_mailbox_try_receive(
         &impl->adapter_internal_mailbox, &event_id, &event_type,
         impl->driver_event_payload, impl->driver_event_capacity);
     if (status != CFLOW_MAILBOX_OK) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return false;
     }
     --impl->adapter_internal_pending;
     *out = (cflow_event_view){
         event_id, event_type, impl->driver_event_payload};
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return true;
 }
 
 static bool pop_completion(cflow_statechart_instance_impl *impl,
                            cflow_machine_state_id *out) {
     size_t state;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->completion_count == 0u) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return false;
     }
     state = impl->completion_rows[impl->completion_head];
@@ -3584,7 +3584,7 @@ static bool pop_completion(cflow_statechart_instance_impl *impl,
         (impl->completion_head + 1u) % impl->completion_capacity;
     --impl->completion_count;
     *out = impl->ir->states[state].id;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return true;
 }
 
@@ -3605,9 +3605,9 @@ static int driver_try_trigger(cflow_statechart_instance_impl *impl,
         return -1;
     }
     if (selection.transition_count == 0u) return 0;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->macrostep_microsteps >= impl->microstep_limit) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         latch_terminal_failure(
             impl, CFLOW_STATECHART_INSTANCE_MICROSTEP_LIMIT_EXCEEDED,
             "Statechart macrostep microstep limit exceeded");
@@ -3615,16 +3615,16 @@ static int driver_try_trigger(cflow_statechart_instance_impl *impl,
     }
     ++impl->macrostep_microsteps;
     impl->driver_after_microstep = true;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     admission = cflow_statechart_instance_try_microstep_internal(
         &handle, trigger, &selection);
     if (admission == CFLOW_ADMISSION_ACCEPTED) return 1;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     impl->driver_after_microstep = false;
     if (impl->macrostep_microsteps != 0u) --impl->macrostep_microsteps;
     {
         const bool terminal = impl->closed || impl->done || impl->cancelled;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         if (terminal) return -1;
     }
     latch_terminal_failure(
@@ -3654,7 +3654,7 @@ static int driver_try_completion(
 
 static void settle_quiescent_macrostep(cflow_statechart_instance_impl *impl) {
     cflow_waker waker = {0};
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->terminal_outcome == STATECHART_TERMINAL_NONE &&
         impl->exit_requested) {
         impl->driver_repost = true;
@@ -3672,7 +3672,7 @@ static void settle_quiescent_macrostep(cflow_statechart_instance_impl *impl) {
         impl->macrostep_microsteps = 0u;
         impl->skip_to_external = true;
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     finish_terminal_side_effects(impl, waker);
 }
 
@@ -3680,10 +3680,10 @@ static void invoke_before_root_completion_settle_test_hook(
     cflow_statechart_instance_impl *impl) {
     void (*before_settle)(void *) = NULL;
     void *hook_user = NULL;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     before_settle = impl->test_hooks.before_root_completion_settle;
     hook_user = impl->test_hooks.user;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     if (before_settle != NULL) before_settle(hook_user);
 }
 
@@ -3696,20 +3696,20 @@ static bool drain_root_completions(
     bool complete, pending;
     int result;
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     complete = root_configuration_complete(impl);
     if (impl->root_completion_draining && !complete)
         impl->root_completion_draining = false;
     if (!impl->root_completion_draining) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return false;
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 
     if (!pop_completion(impl, &completion)) {
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         impl->root_completion_draining = false;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         invoke_before_root_completion_settle_test_hook(impl);
         settle_quiescent_macrostep(impl);
         return true;
@@ -3718,7 +3718,7 @@ static bool drain_root_completions(
     result = driver_try_completion(impl, completion);
     if (result != 0) return true;
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     complete = root_configuration_complete(impl);
     pending = impl->completion_count != 0u;
     if (!complete) {
@@ -3728,7 +3728,7 @@ static bool drain_root_completions(
     } else {
         impl->root_completion_draining = false;
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     if (!complete) return false;
     if (pending) return true;
     invoke_before_root_completion_settle_test_hook(impl);
@@ -3751,22 +3751,22 @@ static void statechart_driver_run(void *user) {
     int result;
     bool terminal, exit_requested, skip_to_external, internal_work;
     if (impl == NULL) return;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     impl->driver_repost = false;
     terminal = impl->terminal_outcome != STATECHART_TERMINAL_NONE;
     skip_to_external = impl->skip_to_external;
     impl->skip_to_external = false;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     if (terminal) return;
     if (impl->initial_configuration_pending &&
         execute_initial_entry_actions(impl) !=
             CFLOW_STATECHART_INSTANCE_OK)
         return;
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     terminal = impl->terminal_outcome != STATECHART_TERMINAL_NONE;
     exit_requested = impl->exit_requested;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     if (terminal) return;
     if (exit_requested) {
         (void)execute_controlled_exit(impl);
@@ -3784,9 +3784,9 @@ static void statechart_driver_run(void *user) {
     if (root_completion_ready(impl)) {
         if (impl->ir->states[impl->ir->root].kind !=
             CFLOW_STATECHART_FINAL) {
-            cmeta_mutex_lock(&impl->lock);
+            sync_mutex_lock(&impl->lock);
             impl->root_completion_draining = true;
-            cmeta_mutex_unlock(&impl->lock);
+            sync_mutex_unlock(&impl->lock);
             if (drain_root_completions(impl)) return;
         }
         settle_quiescent_macrostep(impl);
@@ -3805,9 +3805,9 @@ static void statechart_driver_run(void *user) {
             CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
         result = driver_try_trigger(impl, &trigger);
         if (result != 0) return;
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         impl->driver_repost = true;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return;
     }
     if (pop_adapter_internal_event(impl, &event)) {
@@ -3821,61 +3821,61 @@ static void statechart_driver_run(void *user) {
             CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
         result = driver_try_trigger(impl, &trigger);
         if (result != 0) return;
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         impl->driver_repost = true;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return;
     }
     if (pop_completion(impl, &completion)) {
         result = driver_try_completion(impl, completion);
         if (result != 0) return;
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         impl->driver_repost = true;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return;
     }
 
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     terminal = impl->macrostep_active;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     if (terminal) {
         if (run_host_transaction_runtime_hook(
                 impl, CFLOW_STATECHART_HOST_PREPARE_QUIESCENCE, NULL) ==
             CFLOW_STATECHART_HOST_FATAL)
             return;
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         internal_work = impl->internal_event_count != 0u ||
             impl->adapter_internal_pending != 0u;
         if (internal_work) impl->driver_repost = true;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         if (internal_work) return;
         settle_quiescent_macrostep(impl);
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         terminal = impl->done;
         if (!terminal) impl->driver_repost = true;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return;
     }
 
 external_admission:
     if (!impl->external_mailbox_initialized) return;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     {
         void (*before_receive)(void *) =
             impl->test_hooks.before_external_receive;
         void *hook_user = impl->test_hooks.user;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         if (before_receive != NULL) before_receive(hook_user);
     }
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->adapter_internal_pending != 0u) {
         impl->skip_to_external = false;
         impl->driver_repost = true;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return;
     }
     if (impl->terminal_outcome != STATECHART_TERMINAL_NONE) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return;
     }
     mailbox_status = cflow_mailbox_try_receive(
@@ -3883,19 +3883,19 @@ external_admission:
         impl->driver_event_payload, impl->driver_event_capacity);
     if (mailbox_status == CFLOW_MAILBOX_EMPTY) {
         impl->skip_to_external = true;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return;
     }
     if (mailbox_status == CFLOW_MAILBOX_CLOSED ||
         mailbox_status == CFLOW_MAILBOX_CANCELLED) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         latch_terminal_failure(
             impl, CFLOW_STATECHART_INSTANCE_INVALID_CONFIGURATION,
             "Statechart external mailbox closed without a terminal winner");
         return;
     }
     if (mailbox_status != CFLOW_MAILBOX_OK) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         latch_terminal_failure(
             impl, CFLOW_STATECHART_INSTANCE_INVALID_CONFIGURATION,
             "Statechart external mailbox receive failed");
@@ -3918,7 +3918,7 @@ external_admission:
     impl->macrostep_active = true;
     impl->macrostep_has_external = true;
     impl->macrostep_microsteps = 0u;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     {
         const cflow_statechart_observed_event observed = {
             CFLOW_STATECHART_OBSERVED_EXTERNAL, &event, 0u,
@@ -3928,15 +3928,15 @@ external_admission:
     }
     if (host_result == CFLOW_STATECHART_HOST_FATAL)
         return;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     internal_work = impl->internal_event_count != 0u ||
         impl->adapter_internal_pending != 0u;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     if (host_result == CFLOW_STATECHART_HOST_DROP) {
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         impl->external_in_flight_dropped = true;
         impl->driver_repost = true;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return;
     }
     trigger = (cflow_statechart_selection_trigger){
@@ -3944,15 +3944,15 @@ external_admission:
     result = driver_try_trigger(impl, &trigger);
     if (result != 0) return;
     if (internal_work || impl->hooks.on_host_transaction != NULL) {
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         impl->driver_repost = true;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return;
     }
     settle_quiescent_macrostep(impl);
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (!impl->done) impl->driver_repost = true;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 }
 
 static void statechart_driver_cancel(void *user) {
@@ -3960,7 +3960,7 @@ static void statechart_driver_cancel(void *user) {
         (cflow_statechart_instance_impl *)user;
     cflow_waker waker = {0};
     if (impl == NULL) return;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->terminal_outcome == STATECHART_TERMINAL_NONE) {
         claim_external_for_failure_locked(impl);
         (void)win_terminal_locked(
@@ -3969,7 +3969,7 @@ static void statechart_driver_cancel(void *user) {
             "Statechart SerialExecutor cancelled a queued quantum",
             true, CFLOW_STATECHART_INSTANCE_EXECUTOR_CLOSED, &waker);
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     finish_terminal_side_effects(impl, waker);
 }
 
@@ -3979,7 +3979,7 @@ static void statechart_driver_finalize(void *user) {
     bool repost;
     void (*before_repost)(void *) = NULL;
     void *hook_user = NULL;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     impl->driver_scheduled = false;
     repost = impl->driver_repost && !impl->done && impl->error == NULL &&
         !impl->microstep_pending;
@@ -3989,7 +3989,7 @@ static void statechart_driver_finalize(void *user) {
         before_repost = impl->test_hooks.before_driver_repost;
         hook_user = impl->test_hooks.user;
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     if (repost) {
         if (before_repost != NULL) before_repost(hook_user);
         (void)schedule_statechart_driver_reserved(impl);
@@ -4003,24 +4003,24 @@ static cflow_admission_status schedule_statechart_driver_impl(
         statechart_driver_finalize, impl};
     cflow_admission_status admission;
     if (impl == NULL) return CFLOW_ADMISSION_INVALID_ARGUMENT;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->done || impl->error != NULL) {
         if (transfer_reservation) release_instance_task_locked(impl);
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_ADMISSION_CLOSED;
     }
     if (impl->driver_scheduled || impl->microstep_pending) {
         impl->driver_repost = true;
         if (transfer_reservation) release_instance_task_locked(impl);
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_ADMISSION_ACCEPTED;
     }
     if (!transfer_reservation && !reserve_instance_task_locked(impl)) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_ADMISSION_FULL;
     }
     impl->driver_scheduled = true;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     admission = cflow_executor_try_post_task(impl->executor, &task);
     if (admission != CFLOW_ADMISSION_ACCEPTED) {
         const cflow_statechart_instance_status failure =
@@ -4031,7 +4031,7 @@ static cflow_admission_status schedule_statechart_driver_impl(
             ? "Statechart SerialExecutor is full"
             : "Statechart SerialExecutor is closed";
         cflow_waker waker = {0};
-        cmeta_mutex_lock(&impl->lock);
+        sync_mutex_lock(&impl->lock);
         impl->driver_scheduled = false;
         if (impl->terminal_outcome == STATECHART_TERMINAL_NONE) {
             claim_external_for_failure_locked(impl);
@@ -4040,12 +4040,12 @@ static cflow_admission_status schedule_statechart_driver_impl(
                 true, failure, &waker);
         }
         if (!transfer_reservation) release_instance_task_locked(impl);
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         finish_terminal_side_effects(impl, waker);
         if (transfer_reservation) {
-            cmeta_mutex_lock(&impl->lock);
+            sync_mutex_lock(&impl->lock);
             release_instance_task_locked(impl);
-            cmeta_mutex_unlock(&impl->lock);
+            sync_mutex_unlock(&impl->lock);
         }
     }
     return admission;
@@ -4068,13 +4068,13 @@ bool cflow_statechart_instance_get_microstep_stats_internal(
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
     cflow_statechart_microstep_stats snapshot;
     if (impl == NULL || out == NULL) return false;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     snapshot = (cflow_statechart_microstep_stats){
         impl->microstep_accepted, impl->microstep_completed,
         impl->microstep_failed, impl->microstep_cancelled,
         impl->microstep_finalized, impl->microstep_result,
         impl->internal_event_capacity, impl->internal_event_count};
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     *out = snapshot;
     return true;
 }
@@ -4085,14 +4085,14 @@ bool cflow_statechart_instance_set_test_hooks_internal(
     cflow_statechart_instance_impl *impl = instance != NULL
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
     if (impl == NULL || hooks == NULL) return false;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->driver_scheduled || impl->microstep_pending ||
         impl->terminal_outcome != STATECHART_TERMINAL_NONE) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return false;
     }
     impl->test_hooks = *hooks;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return true;
 }
 
@@ -4113,9 +4113,9 @@ cflow_statechart_instance_copy_internal_event_internal(
     if (impl == NULL || out_id == NULL || out_type == NULL ||
         out_payload == NULL)
         return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (position >= impl->internal_event_count) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_INSTANCE_INTERNAL_EVENT_INVALID;
     }
     slot = (impl->internal_event_head + position) %
@@ -4124,7 +4124,7 @@ cflow_statechart_instance_copy_internal_event_internal(
     type = impl->ir->events[type_index].payload_type;
     if (payload_capacity < type->size ||
         ((uintptr_t)out_payload % type->align) != 0u) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     }
     memcpy(out_payload,
@@ -4132,7 +4132,7 @@ cflow_statechart_instance_copy_internal_event_internal(
            type->size);
     *out_id = impl->ir->events[type_index].id;
     *out_type = type;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return CFLOW_STATECHART_INSTANCE_OK;
 }
 
@@ -4158,15 +4158,15 @@ cflow_statechart_instance_copy_history_internal(
              CFLOW_STATECHART_HISTORY_DEEP))
         return CFLOW_STATECHART_SNAPSHOT_INVALID_ARGUMENT;
     slot = impl->history_slots[history_index];
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     required = impl->history_counts[impl->published][slot];
     if (state_capacity < required) {
         *out_state_count = required;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_SNAPSHOT_TOO_SMALL;
     }
     if (required != 0u && out_states == NULL) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_SNAPSHOT_INVALID_ARGUMENT;
     }
     bits = impl->history_bits[impl->published] + slot * impl->bitset_bytes;
@@ -4176,7 +4176,7 @@ cflow_statechart_instance_copy_history_internal(
             out_states[written++] = impl->ir->states[state].id;
     }
     *out_state_count = written;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return written == required
         ? CFLOW_STATECHART_SNAPSHOT_OK
         : CFLOW_STATECHART_SNAPSHOT_INVALID_ARGUMENT;
@@ -4310,8 +4310,8 @@ static cflow_statechart_instance_status statechart_instance_init_with_hook(
         }
         impl->external_event_capacity = config->external_event_capacity;
     }
-    cmeta_mutex_init(&impl->lock);
-    cmeta_cond_init(&impl->tasks_changed);
+    sync_mutex_init(&impl->lock);
+    sync_cond_init(&impl->tasks_changed);
     if (impl->lock == NULL || impl->tasks_changed == NULL) {
         instance_impl_free(impl);
         return CFLOW_STATECHART_INSTANCE_ALLOCATION_FAILED;
@@ -4425,16 +4425,16 @@ cflow_statechart_instance_copy_configuration(
     size_t index, required, published;
     if (impl == NULL || out_state_count == NULL || out_version == NULL)
         return CFLOW_STATECHART_SNAPSHOT_INVALID_ARGUMENT;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     published = impl->published;
     required = impl->configurations[published].state_count;
     if (state_capacity < required) {
         *out_state_count = required;
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_SNAPSHOT_TOO_SMALL;
     }
     if (required != 0u && out_states == NULL) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return CFLOW_STATECHART_SNAPSHOT_INVALID_ARGUMENT;
     }
     for (index = 0u; index < required; ++index) {
@@ -4443,7 +4443,7 @@ cflow_statechart_instance_copy_configuration(
     }
     *out_state_count = required;
     *out_version = impl->configuration_version;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return CFLOW_STATECHART_SNAPSHOT_OK;
 }
 
@@ -4477,10 +4477,10 @@ cflow_mailbox_status cflow_statechart_instance_try_send_detach_internal(
     if (out_waker != NULL) *out_waker = (cflow_waker){0};
     if (impl == NULL || out_waker == NULL || !impl->external_mailbox_initialized)
         return CFLOW_MAILBOX_INVALID_ARGUMENT;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     cancelled = impl->cancelled || impl->exit_requested;
     if (impl->closed || impl->done || impl->error != NULL) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return cancelled ? CFLOW_MAILBOX_CANCELLED : CFLOW_MAILBOX_CLOSED;
     }
     status = cflow_mailbox_try_send(&impl->external_mailbox, event);
@@ -4502,7 +4502,7 @@ cflow_mailbox_status cflow_statechart_instance_try_send_detach_internal(
             *out_waker = (cflow_waker){statechart_send_wake, impl};
     }
     cancelled = impl->cancelled || impl->exit_requested;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     if (status != CFLOW_MAILBOX_OK) {
         if (status == CFLOW_MAILBOX_CANCELLED)
             return cancelled ? CFLOW_MAILBOX_CANCELLED
@@ -4520,10 +4520,10 @@ cflow_mailbox_status cflow_statechart_instance_try_send_internal(
     bool cancelled;
     if (impl == NULL || !impl->adapter_internal_mailbox_initialized)
         return CFLOW_MAILBOX_INVALID_ARGUMENT;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     cancelled = impl->cancelled || impl->exit_requested;
     if (impl->closed || impl->done || impl->error != NULL) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return cancelled ? CFLOW_MAILBOX_CANCELLED : CFLOW_MAILBOX_CLOSED;
     }
     status = cflow_mailbox_try_send(
@@ -4535,7 +4535,7 @@ cflow_mailbox_status cflow_statechart_instance_try_send_internal(
         impl->skip_to_external = false;
     }
     cancelled = impl->cancelled || impl->exit_requested;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     if (status != CFLOW_MAILBOX_OK) {
         if (status == CFLOW_MAILBOX_CANCELLED)
             return cancelled ? CFLOW_MAILBOX_CANCELLED
@@ -4565,7 +4565,7 @@ cflow_timer_event_schedule_result cflow_statechart_instance_try_schedule_at(
         CFLOW_TIMER_EVENT_INVALID_ARGUMENT, 0u};
     if (impl == NULL || scope == 0u || !impl->timers_initialized)
         return result;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->closed ||
         impl->terminal_outcome != STATECHART_TERMINAL_NONE) {
         result.status = CFLOW_TIMER_EVENT_CLOSED;
@@ -4573,7 +4573,7 @@ cflow_timer_event_schedule_result cflow_statechart_instance_try_schedule_at(
         result = cflow_timer_event_queue_try_schedule_scoped_at(
             &impl->timers, deadline, event, scope);
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return result;
 }
 
@@ -4588,7 +4588,7 @@ cflow_timer_event_schedule_result cflow_statechart_instance_try_schedule_after(
         CFLOW_TIMER_EVENT_INVALID_ARGUMENT, 0u};
     if (impl == NULL || scope == 0u || !impl->timers_initialized)
         return result;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->closed ||
         impl->terminal_outcome != STATECHART_TERMINAL_NONE) {
         result.status = CFLOW_TIMER_EVENT_CLOSED;
@@ -4596,7 +4596,7 @@ cflow_timer_event_schedule_result cflow_statechart_instance_try_schedule_after(
         result = cflow_timer_event_queue_try_schedule_scoped_after(
             &impl->timers, delay, event, scope);
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return result;
 }
 
@@ -4608,12 +4608,12 @@ cflow_timer_event_status cflow_statechart_instance_cancel_timer(
     cflow_timer_event_status status;
     if (impl == NULL || !impl->timers_initialized)
         return CFLOW_TIMER_EVENT_INVALID_ARGUMENT;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     status = impl->closed ||
         impl->terminal_outcome != STATECHART_TERMINAL_NONE
         ? CFLOW_TIMER_EVENT_CLOSED
         : cflow_timer_event_queue_cancel(&impl->timers, timer_id);
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return status;
 }
 
@@ -4645,14 +4645,14 @@ static bool statechart_terminal_wait_arm(void *state, cflow_waker waker) {
         (cflow_statechart_instance_impl *)state;
     bool ready;
     if (impl == NULL || waker.wake == NULL) return false;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     ready = impl->done || impl->error != NULL;
     if (!ready && impl->downstream_waiter.wake != NULL) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return false;
     }
     if (!ready) impl->downstream_waiter = waker;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     if (ready) invoke_detached_waker(waker);
     return true;
 }
@@ -4661,9 +4661,9 @@ static void statechart_terminal_wait_cancel(void *state) {
     cflow_statechart_instance_impl *impl =
         (cflow_statechart_instance_impl *)state;
     if (impl == NULL) return;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     impl->downstream_waiter = (cflow_waker){0};
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 }
 
 CMETA_IMPLEMENTS(cflow_waitable, cflow_statechart_terminal_waitable, 0,
@@ -4682,10 +4682,10 @@ static cflow_step statechart_terminal_resume(
         return (cflow_step){
             CFLOW_STEP_ERROR, {0},
             "Statechart terminal adapter is invalid"};
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     error = impl->error;
     done = impl->done;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     if (error != NULL)
         return (cflow_step){CFLOW_STEP_ERROR, {0}, error};
     if (done)
@@ -4706,11 +4706,11 @@ static void statechart_terminal_detach(void *state) {
         (cflow_statechart_instance_impl *)state;
     if (impl == NULL) return;
     statechart_terminal_cancel(impl);
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     impl->downstream_waiter = (cflow_waker){0};
     impl->terminal_waiter = (cflow_waker){0};
     impl->adapter_attached = false;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
 }
 
 static const cflow_resumable_ops statechart_terminal_resumable_ops = {
@@ -4736,10 +4736,10 @@ static void statechart_terminal_source_bind(
         (cflow_statechart_instance_impl *)state;
     bool terminal;
     if (impl == NULL) return;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     terminal = impl->done || impl->error != NULL;
     impl->terminal_waiter = terminal ? (cflow_waker){0} : waker;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     if (terminal) invoke_detached_waker(waker);
 }
 
@@ -4754,14 +4754,14 @@ static cflow_publisher_terminal statechart_terminal_source_poll(
             *out_error = "Statechart terminal Source is invalid";
         return CFLOW_PUBLISHER_ERROR;
     }
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->error != NULL) {
         result = CFLOW_PUBLISHER_ERROR;
         if (out_error != NULL) *out_error = impl->error;
     } else if (impl->done) {
         result = CFLOW_PUBLISHER_DONE;
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return result;
 }
 
@@ -4782,13 +4782,13 @@ bool cflow_statechart_instance_as_terminal_resumable(
     if (impl == NULL || out == NULL || out->name != NULL ||
         out->output_type != NULL || out->ops != NULL || out->state != NULL)
         return false;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->adapter_attached) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return false;
     }
     impl->adapter_attached = true;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     *out = (cflow_resumable){
         "statechart-terminal", impl->ir->state_type,
         &statechart_terminal_resumable_ops, impl};
@@ -4802,13 +4802,13 @@ bool cflow_statechart_instance_as_terminal_publisher(
     if (impl == NULL || out == NULL || out->self != NULL ||
         out->vtable != NULL)
         return false;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->adapter_attached) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return false;
     }
     impl->adapter_attached = true;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     *out = cflow_statechart_terminal_source_as_cflow_publisher(impl);
     return true;
 }
@@ -4818,14 +4818,14 @@ void cflow_statechart_instance_close(cflow_statechart_instance *instance) {
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
     cflow_waker waker = {0};
     if (impl == NULL) return;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (!impl->exit_requested) {
         (void)win_terminal_locked(
             impl, STATECHART_TERMINAL_CLOSE,
             CFLOW_STATECHART_INSTANCE_OK, NULL, !impl->microstep_pending,
             CFLOW_STATECHART_INSTANCE_TASK_CANCELLED, &waker);
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     finish_terminal_side_effects(impl, waker);
 }
 
@@ -4836,7 +4836,7 @@ void cflow_statechart_instance_request_exit(
     cflow_waker waker = {0};
     bool accepted = false;
     if (impl == NULL) return;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (impl->terminal_outcome == STATECHART_TERMINAL_NONE &&
         !impl->exit_requested) {
         impl->exit_requested = true;
@@ -4852,7 +4852,7 @@ void cflow_statechart_instance_request_exit(
                 &impl->timers);
         accepted = true;
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     finish_terminal_side_effects(impl, waker);
     if (accepted) (void)schedule_statechart_driver(impl);
 }
@@ -4862,12 +4862,12 @@ void cflow_statechart_instance_cancel(cflow_statechart_instance *instance) {
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
     cflow_waker waker = {0};
     if (impl == NULL) return;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     (void)win_terminal_locked(
         impl, STATECHART_TERMINAL_CANCEL,
         CFLOW_STATECHART_INSTANCE_OK, NULL, !impl->microstep_pending,
         CFLOW_STATECHART_INSTANCE_TASK_CANCELLED, &waker);
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     finish_terminal_side_effects(impl, waker);
 }
 
@@ -4878,7 +4878,7 @@ cflow_machine_state_id cflow_statechart_instance_current_state(
     cflow_machine_state_id result = 0u;
     size_t index, leaf_count = 0u;
     if (impl == NULL) return 0u;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     for (index = 0u;
          index < impl->configurations[impl->published].state_count; ++index) {
         const size_t state =
@@ -4890,7 +4890,7 @@ cflow_machine_state_id cflow_statechart_instance_current_state(
             break;
         }
     }
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return result;
 }
 
@@ -4903,16 +4903,16 @@ bool cflow_statechart_instance_copy_state(
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
     if (out_type != NULL) *out_type = NULL;
     if (impl == NULL || out_type == NULL || out_state == NULL) return false;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     if (state_capacity < impl->ir->state_type->size ||
         !cflow_value_storage_type_supported(impl->ir->state_type)) {
-        cmeta_mutex_unlock(&impl->lock);
+        sync_mutex_unlock(&impl->lock);
         return false;
     }
     memcpy(out_state, impl->extended_states[impl->published],
            impl->ir->state_type->size);
     *out_type = impl->ir->state_type;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return true;
 }
 
@@ -4924,7 +4924,7 @@ bool cflow_statechart_instance_get_stats(
     cflow_statechart_instance_stats snapshot = {0};
     size_t index;
     if (impl == NULL || out == NULL) return false;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     snapshot.configuration_version = impl->configuration_version;
     snapshot.external_accepted = impl->external_accepted;
     snapshot.external_completed = impl->external_completed;
@@ -4955,7 +4955,7 @@ bool cflow_statechart_instance_get_stats(
     if (impl->timers_initialized)
         (void)cflow_timer_event_queue_get_stats(
             &impl->timers, &snapshot.timers);
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     *out = snapshot;
     return true;
 }
@@ -4966,9 +4966,9 @@ const char *cflow_statechart_instance_error(
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
     const char *error;
     if (impl == NULL) return NULL;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     error = impl->error;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     return error;
 }
 
@@ -4979,9 +4979,9 @@ cflow_statechart_instance_status cflow_statechart_instance_destroy(
     if (instance == NULL) return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     impl = (cflow_statechart_instance_impl *)instance->impl;
     if (impl == NULL) return CFLOW_STATECHART_INSTANCE_OK;
-    cmeta_mutex_lock(&impl->lock);
+    sync_mutex_lock(&impl->lock);
     adapter_attached = impl->adapter_attached;
-    cmeta_mutex_unlock(&impl->lock);
+    sync_mutex_unlock(&impl->lock);
     if (adapter_attached) return CFLOW_STATECHART_INSTANCE_WOULD_BLOCK;
     if (wait_instance_tasks(impl) != CFLOW_STATECHART_INSTANCE_OK)
         return CFLOW_STATECHART_INSTANCE_WOULD_BLOCK;

@@ -1,7 +1,7 @@
 #include <cflow/clock.h>
 #include <cflow/machine_instance.h>
 #include <cflow/timer_event.h>
-#include <thread.h>
+#include <threads/threads.h>
 
 #include "tinytest.h"
 #include "timer_event_internal.h"
@@ -534,7 +534,7 @@ suite("CFlow monotonic Timer Events") {
         cflow_timer_event_claim claim = {0};
         cflow_timer_event_fire_result fired;
         timer_close_context close_context = {&fixture.timers};
-        cmeta_thread_t close_thread = 0;
+        sync_thread_t close_thread = 0;
         cflow_timer_event_stats stats = {0};
         size_t attempts = 0u;
 
@@ -547,13 +547,13 @@ suite("CFlow monotonic Timer Events") {
         check_equal(scheduled.status, CFLOW_TIMER_EVENT_OK);
         check_true(cflow_timer_event_queue_claim_one_ready(
             &fixture.timers, &claim, &fired));
-        check_equal(cmeta_thread_create(
+        check_equal(sync_thread_create(
             &close_thread, close_timer_queue, &close_context), 0);
         do {
             check_true(cflow_timer_event_queue_get_stats(
                 &fixture.timers, &stats));
             if (stats.closed) break;
-            cmeta_thread_yield();
+            sync_thread_yield();
         } while (++attempts < 100000u);
         check_true(stats.closed);
         check_equal(atomic_load(&close_context.started), 1);
@@ -561,7 +561,7 @@ suite("CFlow monotonic Timer Events") {
 
         fired = cflow_timer_event_queue_commit_claim(&claim);
         check_equal(fired.status, CFLOW_TIMER_EVENT_FIRE_DELIVERED);
-        check_equal(cmeta_thread_join(&close_thread), 0);
+        check_equal(sync_thread_join(&close_thread), 0);
         check_equal(atomic_load(&close_context.finished), 1);
         check_equal(close_context.status, CFLOW_TIMER_EVENT_OK);
         check_true(cflow_timer_event_queue_get_stats(&fixture.timers, &stats));

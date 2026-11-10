@@ -16,21 +16,21 @@ if(BUILD_TESTS)
     ../tests/cmeta_native_targets.c LIBS CMeta::CMetaNative Salts::TinyTest FOLDER "cmeta/tests")
   set_target_properties(cmeta_native_thunk_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
   cmake_add_test(cmeta_native_thunk_cpp_test SOURCES ../tests/cmeta_native_thunk_cpp_test.cpp
-    LIBS CMeta::CMetaNative Salts::Platform Salts::TinyTest FOLDER "cmeta/tests")
+    LIBS CMeta::CMetaNative Salts::Core Salts::TinyTest FOLDER "cmeta/tests")
   set_target_properties(cmeta_native_thunk_cpp_test PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
   cmake_add_test(cmeta_native_object_test SOURCES ../tests/cmeta_native_object_test.c
     ../tests/cmeta_native_object_fixture.c
     LIBS CMeta::CMetaNative Salts::TinyTest FOLDER "cmeta/tests")
   cmake_add_test(cmeta_native_static_call_test SOURCES ../tests/cmeta_native_static_call_test.c
     ../tests/cmeta_native_targets.c
-    LIBS CMeta::CMetaNative Salts::Platform Salts::TinyTest FOLDER "cmeta/tests")
+    LIBS CMeta::CMetaNative Salts::Core Salts::TinyTest FOLDER "cmeta/tests")
   set_target_properties(cmeta_native_object_test cmeta_native_static_call_test
     PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 endif()
-if(BUILD_BENCHMARKS OR CMETA_BUILD_BENCHMARKS)
+if(BUILD_BENCHMARK OR CMETA_BUILD_BENCHMARK)
   cmake_add_benchmark(cmeta_native_benchmark SOURCES ../benchmarks/cmeta_native_benchmark.c
     ../tests/cmeta_native_targets.c ../tests/cmeta_native_object_fixture.c
-    LIBS CMeta::CMetaNative Salts::Platform Salts::TinyTest FOLDER "cmeta/benchmarks")
+    LIBS CMeta::CMetaNative Salts::Core Salts::TinyTest FOLDER "cmeta/benchmarks")
   if(BUILD_TESTS)
     add_test(NAME cmeta_native_benchmark COMMAND cmeta_native_benchmark)
   endif()

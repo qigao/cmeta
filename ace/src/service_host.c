@@ -1,7 +1,7 @@
 /* Canonical Salts ServiceHost: single Plugin generation/Scope owner. */
 #include <cmeta/service_host.h>
 #include "configurator_internal.h"
-#include <thread.h>
+#include <threads/threads.h>
 
 #include <string.h>
 
@@ -660,37 +660,37 @@ salts_service_host_status salts_service_host_runtime_publish(
      * bundle. A detached BUILT candidate is exclusively owned by this caller
      * until publish returns, so full graph validation can run outside the
      * runtime mutex without blocking Scope acquisition on the current graph. */
-    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_lock((sync_mutex_t *)&runtime->lock);
     if (generation->state != SALTS_SERVICE_HOST_GENERATION_BUILT ||
         generation->runtime_owner != NULL || generation->active_scopes != 0u ||
         generation->id <= runtime->last_generation_id) {
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_INVALID_STATE;
     }
-    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
 
     if (!service_host_generation_publishable(generation))
         return SALTS_SERVICE_HOST_INVALID_STATE;
 
-    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_lock((sync_mutex_t *)&runtime->lock);
     /* Another candidate may have published while validation ran. Recheck only
      * ownership/state/epoch admission here; no Provider callback or graph scan
      * belongs in this critical section. */
     if (generation->state != SALTS_SERVICE_HOST_GENERATION_BUILT ||
         generation->runtime_owner != NULL || generation->active_scopes != 0u ||
         generation->id <= runtime->last_generation_id) {
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_INVALID_STATE;
     }
     if (runtime->attached_generations >=
         SALTS_SERVICE_HOST_MAX_ATTACHED_GENERATIONS) {
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_BUSY;
     }
     previous = runtime->current;
     if (previous != NULL &&
         previous->state != SALTS_SERVICE_HOST_GENERATION_PUBLISHED) {
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_INVALID_STATE;
     }
 
@@ -702,7 +702,7 @@ salts_service_host_status salts_service_host_runtime_publish(
     if (previous != NULL)
         previous->state = SALTS_SERVICE_HOST_GENERATION_DRAINING;
     *out_previous = previous;
-    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
     return SALTS_SERVICE_HOST_OK;
 }
 
@@ -714,14 +714,14 @@ salts_service_host_status salts_service_host_runtime_close(
     if (runtime == NULL || out_previous == NULL || !runtime->initialized)
         return SALTS_SERVICE_HOST_INVALID_ARGUMENT;
 
-    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_lock((sync_mutex_t *)&runtime->lock);
     previous = runtime->current;
     if (previous == NULL) {
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_INVALID_STATE;
     }
     if (previous->state != SALTS_SERVICE_HOST_GENERATION_PUBLISHED) {
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_INVALID_STATE;
     }
 
@@ -729,7 +729,7 @@ salts_service_host_status salts_service_host_runtime_close(
     previous->state = SALTS_SERVICE_HOST_GENERATION_DRAINING;
     *out_previous = previous;
 
-    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
     return SALTS_SERVICE_HOST_OK;
 }
 
@@ -743,16 +743,16 @@ salts_service_host_status salts_service_host_scope_acquire(
     if (scope->live)
         return SALTS_SERVICE_HOST_INVALID_STATE;
 
-    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_lock((sync_mutex_t *)&runtime->lock);
     generation = runtime->current;
     if (generation == NULL ||
         generation->state != SALTS_SERVICE_HOST_GENERATION_PUBLISHED) {
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_INVALID_STATE;
     }
     if (generation->active_scopes == SIZE_MAX ||
         runtime->active_scopes == SIZE_MAX) {
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_CAPACITY_EXCEEDED;
     }
 
@@ -765,7 +765,7 @@ salts_service_host_status salts_service_host_scope_acquire(
     scope->owner_address = scope;
     scope->live = true;
 
-    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
     return SALTS_SERVICE_HOST_OK;
 }
 
@@ -787,18 +787,18 @@ salts_service_host_status salts_service_host_scope_release(
     if (!runtime->initialized)
         return SALTS_SERVICE_HOST_INVALID_STATE;
 
-    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_lock((sync_mutex_t *)&runtime->lock);
     if (generation->runtime_owner != runtime ||
         generation->id != scope->generation_id ||
         generation->active_scopes == 0u ||
         runtime->active_scopes == 0u) {
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_INVALID_STATE;
     }
 
     --generation->active_scopes;
     --runtime->active_scopes;
-    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
 
     *scope = (salts_service_host_scope)SALTS_SERVICE_HOST_SCOPE_INIT;
     return SALTS_SERVICE_HOST_OK;
@@ -864,18 +864,18 @@ salts_service_host_status salts_service_host_generation_drain(
     if (runtime == NULL || generation == NULL || !runtime->initialized)
         return SALTS_SERVICE_HOST_INVALID_ARGUMENT;
 
-    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_lock((sync_mutex_t *)&runtime->lock);
     if (generation->runtime_owner != runtime ||
         runtime->attached_generations == 0u ||
         (generation->state != SALTS_SERVICE_HOST_GENERATION_DRAINING &&
          !(generation->state == SALTS_SERVICE_HOST_GENERATION_FAILED &&
            (generation->components.state == SALTS_CONFIGURATOR_CONTEXT_FAILED ||
             generation->components.state == SALTS_CONFIGURATOR_CONTEXT_STOPPED)))) {
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_INVALID_STATE;
     }
     if (generation->active_scopes != 0u) {
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_BUSY;
     }
 
@@ -884,7 +884,7 @@ salts_service_host_status salts_service_host_generation_drain(
      * readers of another published generation keep making progress. */
     original_state = generation->state;
     generation->state = SALTS_SERVICE_HOST_GENERATION_STOPPING;
-    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
 
     if (original_state == SALTS_SERVICE_HOST_GENERATION_DRAINING) {
         salts_configurator_context_state context_state;
@@ -908,35 +908,35 @@ salts_service_host_status salts_service_host_generation_drain(
         configurator_status = SALTS_CONFIGURATOR_INVALID_STATE;
     if (configurator_status != SALTS_CONFIGURATOR_OK) {
         generation->failure.configurator_status = configurator_status;
-        cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_lock((sync_mutex_t *)&runtime->lock);
         generation->state = SALTS_SERVICE_HOST_GENERATION_FAILED;
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
     }
 
     plugin_status = release_modules(generation);
     if (plugin_status != CMETA_PLUGIN_OK) {
         generation->failure.plugin_status = plugin_status;
-        cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_lock((sync_mutex_t *)&runtime->lock);
         generation->state = SALTS_SERVICE_HOST_GENERATION_FAILED;
-        cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+        sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
         return SALTS_SERVICE_HOST_PLUGIN_ERROR;
     }
 
-    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_lock((sync_mutex_t *)&runtime->lock);
     generation_clear(generation);
     generation->state = SALTS_SERVICE_HOST_GENERATION_DRAINED;
     generation->runtime_owner = NULL;
     --runtime->attached_generations;
-    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
     return SALTS_SERVICE_HOST_OK;
 
 rejected_plan:
     /* No lifecycle callback ran. Preserve the original DRAINING/FAILED state,
      * all storage and leases, so the owner can repair and explicitly retry. */
-    cmeta_mutex_lock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_lock((sync_mutex_t *)&runtime->lock);
     generation->state = original_state;
-    cmeta_mutex_unlock((cmeta_mutex_t *)&runtime->lock);
+    sync_mutex_unlock((sync_mutex_t *)&runtime->lock);
     return SALTS_SERVICE_HOST_CONFIGURATOR_ERROR;
 }
 

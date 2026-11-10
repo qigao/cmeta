@@ -1,6 +1,6 @@
 #include <cflow/executor.h>
 #include <cflow/scheduler.h>
-#include <thread.h>
+#include <threads/threads.h>
 #include "scheduler_internal.h"
 #include <tinytest.h>
 
@@ -40,14 +40,14 @@ static void owner_sched_signal(void *user) {
 
 static void owner_sched_run(void *user) {
     owner_scheduler_probe *probe = (owner_scheduler_probe *)user;
-    if (probe->owner != cmeta_thread_current_token())
+    if (probe->owner != sync_thread_current_token())
         atomic_fetch_add(&probe->wrong_owner, 1);
     atomic_fetch_add(&probe->runs, 1);
 }
 
 static void owner_sched_cancel(void *user) {
     owner_scheduler_probe *probe = (owner_scheduler_probe *)user;
-    if (probe->owner != cmeta_thread_current_token())
+    if (probe->owner != sync_thread_current_token())
         atomic_fetch_add(&probe->cancel_off_owner, 1);
     atomic_fetch_add(&probe->cancels, 1);
 }
@@ -89,7 +89,7 @@ static void owner_blocked_run(void *user) {
 static void owner_blocked_cancel_fn(void *user) {
     owner_blocked_cancel *p = (owner_blocked_cancel *)user;
     atomic_store(&p->cancel_entered, true);
-    while (!atomic_load(&p->cancel_release)) cmeta_thread_yield();
+    while (!atomic_load(&p->cancel_release)) sync_thread_yield();
     owner_sched_cancel(&p->probe);
 }
 
@@ -110,7 +110,7 @@ typedef struct owner_cancel_race {
 
 static void owner_sched_cancel_race_foreign(void *user) {
     owner_cancel_race *r = (owner_cancel_race *)user;
-    while (!atomic_load(&r->started)) cmeta_thread_yield();
+    while (!atomic_load(&r->started)) sync_thread_yield();
     for (size_t i = 0u; i < OWNER_CANCEL_RACE_TASKS; ++i) {
         if (cflow_scheduler_cancel(r->scheduler, r->ids[i]))
             atomic_fetch_add(&r->won, 1);
@@ -133,7 +133,7 @@ typedef struct owner_order_task {
 static void owner_sched_record(void *user) {
     owner_order_task *item = (owner_order_task *)user;
     owner_queue_order *p = item->probe;
-    if (p->owner != cmeta_thread_current_token())
+    if (p->owner != sync_thread_current_token())
         atomic_fetch_add(&p->wrong_owner, 1);
     const int index = atomic_fetch_add(&p->count, 1);
     if (index >= 0 && index < 4) p->seen[index] = item->value;
@@ -147,7 +147,7 @@ suite("CFlow shared-owner Concurrent Scheduler") {
         cflow_schedule_result result;
         owner_scheduler_probe probe = {0};
 
-        probe.owner = cmeta_thread_current_token();
+        probe.owner = sync_thread_current_token();
         check_true(cflow_executor_manual_init_with_capacity(&manual, 8u));
         check_false(cflow_scheduler_owner_bind(&scheduler, &manual, 4u));
         check_false(cflow_scheduler_valid(&scheduler));
@@ -199,7 +199,7 @@ suite("CFlow shared-owner Concurrent Scheduler") {
         owner_order_task second = {&probe, 2};
         owner_order_task third = {&probe, 3};
 
-        probe.owner = cmeta_thread_current_token();
+        probe.owner = sync_thread_current_token();
         check_true(cflow_executor_owner_init_with_capacity(
             &executor, 8u, NULL, NULL));
         check_true(cflow_scheduler_owner_bind(&one, &executor, 4u));
@@ -234,12 +234,12 @@ suite("CFlow shared-owner Concurrent Scheduler") {
         cflow_executor executor = {0};
         cflow_scheduler scheduler = {0};
         owner_scheduler_probe probe = {0};
-        cmeta_thread_t producers[SCHED_TEST_PRODUCERS] = {0};
+        sync_thread_t producers[SCHED_TEST_PRODUCERS] = {0};
         owner_scheduler_sender senders[SCHED_TEST_PRODUCERS] = {0};
         cflow_scheduler_stats stats = {0};
         int i;
 
-        probe.owner = cmeta_thread_current_token();
+        probe.owner = sync_thread_current_token();
         check_true(cflow_executor_owner_init_with_capacity(
             &executor, SCHED_TEST_PRODUCERS * SCHED_TEST_POSTS,
             owner_sched_signal, &probe));
@@ -250,11 +250,11 @@ suite("CFlow shared-owner Concurrent Scheduler") {
             senders[i].scheduler = &scheduler;
             senders[i].probe = &probe;
             senders[i].count = SCHED_TEST_POSTS;
-            check_equal(cmeta_thread_create(
+            check_equal(sync_thread_create(
                 &producers[i], owner_sched_produce, &senders[i]), 0);
         }
         for (i = 0; i < SCHED_TEST_PRODUCERS; ++i)
-            check_equal(cmeta_thread_join(&producers[i]), 0);
+            check_equal(sync_thread_join(&producers[i]), 0);
         for (i = 0; i < SCHED_TEST_PRODUCERS; ++i) {
             check_equal(atomic_load(&senders[i].rejected), 0);
             check_equal(atomic_load(&senders[i].foreign_drive), 0);
@@ -287,7 +287,7 @@ suite("CFlow shared-owner Concurrent Scheduler") {
         cflow_scheduler scheduler = {0};
         owner_scheduler_probe probe = {0};
         owner_cancel_sender cancel = {0};
-        cmeta_thread_t canceller = NULL;
+        sync_thread_t canceller = NULL;
         cflow_schedule_result posted;
         cflow_executor_task task = {
             .run = owner_sched_run,
@@ -296,7 +296,7 @@ suite("CFlow shared-owner Concurrent Scheduler") {
             .user = &probe
         };
 
-        probe.owner = cmeta_thread_current_token();
+        probe.owner = sync_thread_current_token();
         check_true(cflow_executor_owner_init_with_capacity(
             &executor, 2u, NULL, NULL));
         check_true(cflow_scheduler_owner_bind(&scheduler, &executor, 1u));
@@ -306,9 +306,9 @@ suite("CFlow shared-owner Concurrent Scheduler") {
         check_equal(posted.status, CFLOW_ADMISSION_ACCEPTED);
         cancel.scheduler = &scheduler;
         cancel.task_id = posted.task_id;
-        check_equal(cmeta_thread_create(
+        check_equal(sync_thread_create(
             &canceller, owner_sched_cancel_foreign, &cancel), 0);
-        check_equal(cmeta_thread_join(&canceller), 0);
+        check_equal(sync_thread_join(&canceller), 0);
         check_true(atomic_load(&cancel.accepted));
         check_false(cflow_scheduler_cancel(&scheduler, posted.task_id));
         check_equal(atomic_load(&probe.runs), 0);
@@ -334,7 +334,7 @@ suite("CFlow shared-owner Concurrent Scheduler") {
         cflow_scheduler scheduler = {0};
         owner_blocked_cancel probe = {0};
         owner_cancel_sender cancel = {0};
-        cmeta_thread_t canceller = NULL;
+        sync_thread_t canceller = NULL;
         cflow_schedule_result first = {0};
         const cflow_executor_task task = {
             .run = owner_blocked_run,
@@ -343,7 +343,7 @@ suite("CFlow shared-owner Concurrent Scheduler") {
             .user = &probe
         };
 
-        probe.probe.owner = cmeta_thread_current_token();
+        probe.probe.owner = sync_thread_current_token();
         check_true(cflow_executor_owner_init_with_capacity(
             &executor, 2u, NULL, NULL));
         check_true(cflow_scheduler_owner_bind(&scheduler, &executor, 1u));
@@ -353,11 +353,11 @@ suite("CFlow shared-owner Concurrent Scheduler") {
 
         cancel.scheduler = &scheduler;
         cancel.task_id = first.task_id;
-        check_equal(cmeta_thread_create(
+        check_equal(sync_thread_create(
             &canceller, owner_sched_cancel_foreign, &cancel), 0);
         for (int tries = 0; tries < 5000 &&
                  !atomic_load(&probe.cancel_entered); ++tries)
-            cmeta_sleep_ms(1u);
+            sleep_ms(1u);
         check_true(atomic_load(&probe.cancel_entered));
 
         /* The owner consumes the Executor tombstone while cancellation is
@@ -370,7 +370,7 @@ suite("CFlow shared-owner Concurrent Scheduler") {
             CFLOW_ADMISSION_FULL);
 
         atomic_store(&probe.cancel_release, true);
-        check_equal(cmeta_thread_join(&canceller), 0);
+        check_equal(sync_thread_join(&canceller), 0);
         check_true(atomic_load(&cancel.accepted));
         check_equal(atomic_load(&probe.probe.cancels), 1);
         check_equal(atomic_load(&probe.probe.finalizers), 1);
@@ -392,7 +392,7 @@ suite("CFlow shared-owner Concurrent Scheduler") {
         cflow_scheduler scheduler = {0};
         owner_scheduler_probe probe = {0};
         owner_cancel_race race = {0};
-        cmeta_thread_t canceller = NULL;
+        sync_thread_t canceller = NULL;
         cflow_executor_task task = {
             .run = owner_sched_run,
             .cancel = owner_sched_cancel,
@@ -400,7 +400,7 @@ suite("CFlow shared-owner Concurrent Scheduler") {
             .user = &probe
         };
 
-        probe.owner = cmeta_thread_current_token();
+        probe.owner = sync_thread_current_token();
         check_true(cflow_executor_owner_init_with_capacity(
             &executor, OWNER_CANCEL_RACE_TASKS, NULL, NULL));
         check_true(cflow_scheduler_owner_bind(
@@ -414,15 +414,15 @@ suite("CFlow shared-owner Concurrent Scheduler") {
             check_equal(posted.status, CFLOW_ADMISSION_ACCEPTED);
             race.ids[i] = posted.task_id;
         }
-        check_equal(cmeta_thread_create(
+        check_equal(sync_thread_create(
             &canceller, owner_sched_cancel_race_foreign, &race), 0);
         atomic_store(&race.started, true);
         while (!atomic_load(&race.done) ||
                cflow_scheduler_pending(&scheduler) != 0u) {
             if (!cflow_executor_run_one(&executor))
-                cmeta_thread_yield();
+                sync_thread_yield();
         }
-        check_equal(cmeta_thread_join(&canceller), 0);
+        check_equal(sync_thread_join(&canceller), 0);
         check_true(cflow_scheduler_wait_idle(&scheduler));
         check_equal(atomic_load(&probe.runs) +
                     atomic_load(&probe.cancels), OWNER_CANCEL_RACE_TASKS);
@@ -439,7 +439,7 @@ suite("CFlow shared-owner Concurrent Scheduler") {
         cflow_executor executor = {0};
         cflow_scheduler scheduler = {0};
         owner_scheduler_probe probe = {0};
-        probe.owner = cmeta_thread_current_token();
+        probe.owner = sync_thread_current_token();
         check_true(cflow_executor_owner_init_with_capacity(
             &executor, 4u, NULL, NULL));
         check_true(cflow_scheduler_owner_bind(&scheduler, &executor, 2u));

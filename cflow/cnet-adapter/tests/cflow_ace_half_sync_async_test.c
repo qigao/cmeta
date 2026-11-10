@@ -1,6 +1,6 @@
 #include <cflow/cflow.h>
 #include <cnet/cnet.h>
-#include <clock.h>
+#include <core/clock.h>
 #include "tinytest.h"
 
 #include <stdatomic.h>
@@ -117,11 +117,11 @@ static bool ace_actor_action(void *user, const void *state, const void *event,
     /* The actor worker blocks on a test gate, not the CNet poll owner.
      * 99 is a control event already in flight before any TCP bytes arrive. */
     if (payload == 99) {
-        const uint64_t deadline = cmeta_monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
+        const uint64_t deadline = monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
         atomic_store(&fixture->gate_entered, true);
         while (!atomic_load(&fixture->gate_release) &&
-               cmeta_monotonic_ms() < deadline)
-            cmeta_sleep_ms(1u);
+               monotonic_ms() < deadline)
+            sleep_ms(1u);
         if (!atomic_load(&fixture->gate_release)) {
             *out_error = "actor gate timed out";
             return false;
@@ -274,7 +274,7 @@ static bool ace_handoff_init(ace_handoff_fixture *fixture) {
     cflow_actor_config actor_config = {0};
     const int kickoff = 99;
     const cflow_event_view control = {100u, &cmeta_type_int, &kickoff};
-    const uint64_t deadline = cmeta_monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
+    const uint64_t deadline = monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
 
     memset(fixture, 0, sizeof(*fixture));
     fixture->actor_context_live = true;
@@ -327,8 +327,8 @@ static bool ace_handoff_init(ace_handoff_fixture *fixture) {
         return false;
 
     while (!atomic_load(&fixture->gate_entered) &&
-           cmeta_monotonic_ms() < deadline)
-        cmeta_sleep_ms(1u);
+           monotonic_ms() < deadline)
+        sleep_ms(1u);
     if (!atomic_load(&fixture->gate_entered)) return false;
 
     cflow_graph_init(&fixture->surface, &cmeta_type_int);
@@ -384,9 +384,9 @@ static bool ace_handoff_network(ace_handoff_fixture *fixture) {
         SALTS_OK)
         return false;
 
-    deadline = cmeta_monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
+    deadline = monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
     while (fixture->connector_connected == 0u &&
-           cmeta_monotonic_ms() < deadline) {
+           monotonic_ms() < deadline) {
         size_t events = 0u;
         if (cnet_client_poll(&fixture->connector, 1u, &events) != SALTS_OK)
             return false;
@@ -398,9 +398,9 @@ static bool ace_handoff_network(ace_handoff_fixture *fixture) {
     if (cnet_listener_accept(&fixture->listener, &fixture->acceptor,
                              &incoming_observer, &fixture->accepted) != SALTS_OK)
         return false;
-    deadline = cmeta_monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
+    deadline = monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
     while (fixture->acceptor_connected == 0u &&
-           cmeta_monotonic_ms() < deadline) {
+           monotonic_ms() < deadline) {
         size_t events = 0u;
         if (cnet_client_poll(&fixture->acceptor, 1u, &events) != SALTS_OK)
             return false;
@@ -418,9 +418,9 @@ static bool ace_handoff_network(ace_handoff_fixture *fixture) {
     mem_buffer_release(buffer);
     if (send_status != SALTS_OK) return false;
 
-    deadline = cmeta_monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
+    deadline = monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
     while (fixture->source_values < 3u &&
-           cmeta_monotonic_ms() < deadline) {
+           monotonic_ms() < deadline) {
         size_t events = 0u;
         if (cnet_client_poll(&fixture->connector, 1u, &events) != SALTS_OK ||
             cnet_client_poll(&fixture->acceptor, 1u, &events) != SALTS_OK)
@@ -432,7 +432,7 @@ static bool ace_handoff_network(ace_handoff_fixture *fixture) {
 }
 
 static void ace_handoff_network_stop(ace_handoff_fixture *fixture) {
-    const uint64_t deadline = cmeta_monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
+    const uint64_t deadline = monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
     if (fixture->connector.impl != NULL && fixture->outbound.slot != 0u)
         check_equal(cnet_close(&fixture->connector, fixture->outbound), SALTS_OK);
     if (fixture->acceptor.impl != NULL && fixture->accepted.slot != 0u)
@@ -441,7 +441,7 @@ static void ace_handoff_network_stop(ace_handoff_fixture *fixture) {
            fixture->acceptor.impl != NULL &&
            (fixture->connector_terminal == 0u ||
             fixture->acceptor_terminal == 0u) &&
-           cmeta_monotonic_ms() < deadline) {
+           monotonic_ms() < deadline) {
         size_t events = 0u;
         check_equal(cnet_client_poll(&fixture->connector, 1u, &events),
                     SALTS_OK);
@@ -553,10 +553,10 @@ static void ace_handoff_assert_network_capacity(ace_handoff_fixture *fixture) {
 
 static bool ace_handoff_wait_actor_values(ace_handoff_fixture *fixture,
                                          int minimum) {
-    const uint64_t deadline = cmeta_monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
+    const uint64_t deadline = monotonic_ms() + ACE_HANDOFF_TIMEOUT_MS;
     while (atomic_load(&fixture->actor_values) < minimum &&
-           cmeta_monotonic_ms() < deadline)
-        cmeta_sleep_ms(1u);
+           monotonic_ms() < deadline)
+        sleep_ms(1u);
     return atomic_load(&fixture->actor_values) >= minimum;
 }
 

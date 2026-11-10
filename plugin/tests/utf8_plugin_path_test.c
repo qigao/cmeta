@@ -1,6 +1,6 @@
 /* Original PluginRegistry path validator against standalone Core. */
 #include <cmeta/plugin.h>
-#include <utf8.h>
+#include <core/vstr.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -19,8 +19,8 @@ int main(void) {
     "\xe0\x80\xaf", "\xf0\x8f\xbf\xbf", "\xe6\x97", "\x80"
   };
   size_t i;
-  CHECK(salts_core_utf8_valid("\xe6\x97\xa5",3u));
-  CHECK(!salts_core_utf8_valid("\xed\xa0\x80",3u));
+  CHECK(vstr_utf8_valid(vstr_from_buf("\xe6\x97\xa5", 3u)));
+  CHECK(!vstr_utf8_valid(vstr_from_buf("\xed\xa0\x80", 3u)));
   CHECK(cmeta_plugin_registry_init(&registry, &config) == CMETA_PLUGIN_OK);
   CHECK(cmeta_plugin_registry_load(&registry, "", &ref) ==
         CMETA_PLUGIN_INVALID_ARGUMENT);
