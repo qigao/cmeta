@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.27)
 include(CMakeOptions.cmake)
-project(CMeta VERSION 0.1.4 LANGUAGES C CXX)
+project(CMeta VERSION 0.1.5 LANGUAGES C CXX)
 set(CMETA_NATIVE_SOVERSION "0.1")
 if(BUILD_SHARED_LIBS OR CMETA_BUILD_NATIVE_THUNKS OR CFLOW_ENABLE_MINICORO)
   message(FATAL_ERROR "The CMeta split SDK has one static metadata/runtime composition; legacy source modes are unsupported")
