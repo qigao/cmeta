@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.27)
 include(CMakeOptions.cmake)
-project(CMeta VERSION 0.1.6 LANGUAGES C CXX)
+project(CMeta VERSION 0.1.7 LANGUAGES C CXX)
 set(CMETA_NATIVE_SOVERSION "0.1")
 if(BUILD_SHARED_LIBS OR CMETA_BUILD_NATIVE_THUNKS OR CFLOW_ENABLE_MINICORO)
   message(FATAL_ERROR "The CMeta split SDK has one static metadata/runtime composition; legacy source modes are unsupported")
@@ -43,8 +43,8 @@ find_package(SaltsBase "$ENV{SALTS_BASE_VERSION}" EXACT CONFIG REQUIRED
   PATHS "$ENV{SALTS_BASE_ROOT}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 if(BUILD_TESTS)
   # Only formal CNet composition tests depend on the network SDK.
-  unset(SaltsCore_DIR CACHE)
-  find_package(SaltsCore "$ENV{SALTS_CORE_VERSION}" EXACT CONFIG REQUIRED
+  unset(SaltsCNet_DIR CACHE)
+  find_package(SaltsCNet "$ENV{SALTS_CORE_VERSION}" EXACT CONFIG REQUIRED
     PATHS "$ENV{SALTSCORE_ROOT}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 endif()
 add_subdirectory(cmeta)

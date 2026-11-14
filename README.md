@@ -37,6 +37,19 @@ CMake does not load dotenv files or restore SDKs implicitly.
 
 ## Upstream dependency versions
 
+CMeta 0.1.7 selects SaltsBase 0.1.8 and vcpkg-cache 0.1.3.
+The formal native test graph uses SaltsCNet 0.1.12 with the same Base SDK;
+the existing `SALTSCORE_ROOT` input selects the `SaltsCNet` package prefix.
+The tests link the shared `Salts::CNet` target, so they do not resolve the
+unused static Crypto target's GmSSL dependency. Production CMeta does not
+depend on the network SDK. Public CMeta APIs and ABI layout are
+unchanged; the API compatibility floor remains Base 0.1.4.
+
+The released CMeta 0.1.6 archives require Base 0.1.6. Their package configs and
+release assets remain immutable. Build 0.1.7 against Base 0.1.8 to generate a
+matching exact dependency in `CMetaConfig.cmake`, then rebuild downstream
+hosts/plugins together. SDK publication follows successful qualification of the complete CI matrix.
+
 Select the upstream SDK release through `VCPKG_CACHE_VERSION` in the parent
 environment (for example, by loading the local `.env`). Use the same version
 for the `VCPKG_CACHE_REPOSITORY_ROOT` checkout. Values contain the version
@@ -65,10 +78,15 @@ version never overwrites an old SDK. CMake does not load `.env` or download
 the dependency SDK implicitly. Existing host-tool package locks remain exact.
 
 CI uses the same named repository Actions variables and selects local shared
-actions from the chosen infrastructure checkout. SaltsBase and SaltsCore
+actions from the chosen infrastructure checkout. SaltsBase and SaltsCNet
 prepare jobs resolve once, then distribute generated locks and verified blobs
 to all matrix workers. Set the CI variables before enabling these changes;
 the selected infrastructure release must contain `resolve-release`.
+For 0.1.7, CI variables select `SALTS_BASE_VERSION=0.1.8`,
+`SALTS_CORE_VERSION=0.1.12` and
+`SALTS_CORE_REF=a29cea5465b5423e512cb63a17d5e76b84f2fdad` (CNet's published
+0.1.12 source); `VCPKG_CACHE_VERSION` remains `0.1.3`. Activate these alongside
+the source update so the source-selected CNet test SDK uses the same Base.
 
 This keeps consumer version policy in the environment, asset digests in the
 upstream release, and generated restore locks in build inputs. Updating a
