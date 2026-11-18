@@ -555,7 +555,7 @@ spec("CFlow async file facade") {
     free(path);
   }
 
-  it("rejects invalid shapes access mismatches and unsupported flush") {
+  it("rejects invalid shapes and file access mismatches") {
     char byte = 0;
     char *path = tt_make_temp_file("cflow-io-file-validation-", ".bin");
     cflow_io_file file = {0};
@@ -595,10 +595,6 @@ spec("CFlow async file facade") {
     check_equal(cflow_io_file_open(&file, path, &config), SALTS_OK);
     submitted = cflow_io_file_try_read_at(&file, 2u, &byte, 1u, 0u);
     check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_ACCESS_DENIED);
-#if defined(_WIN32)
-    submitted = cflow_io_file_try_flush(&file, 2u);
-    check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_UNSUPPORTED);
-#endif
     file_test_close_destroy(&file);
     check_equal(tt_remove_file(path), 0);
     free(path);

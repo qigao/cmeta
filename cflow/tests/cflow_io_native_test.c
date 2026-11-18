@@ -548,6 +548,7 @@ static void native_check_file_read_write_iocp(void) {
     native_fixture fixture;
     native_test_file_operation write_operation = {0};
     native_test_file_operation read_operation = {0};
+    native_test_file_operation flush_operation = {0};
     unsigned char received[sizeof(payload)] = {0};
     cflow_io_submit_result submitted;
     char *path = NULL;
@@ -574,6 +575,18 @@ static void native_check_file_read_write_iocp(void) {
                 CFLOW_IO_ACK_RELEASED);
     check_equal(write_operation.released, 1);
 
+    flush_operation.native = (cflow_io_native_file_operation){
+        .kind = CFLOW_IO_NATIVE_FILE_FLUSH, .handle = (uintptr_t)file,
+        .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE};
+    submitted = native_file_submit(&fixture, 130u, &flush_operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
+    check_equal(fixture.completions.values[1].kind, CFLOW_IO_COMPLETION_OK);
+    check_equal(fixture.completions.values[1].bytes, 0u);
+    check_equal(flush_operation.released, 0);
+    check_equal(cflow_io_actor_acknowledge(&fixture.actor, submitted.request_id), CFLOW_IO_ACK_RELEASED);
+    check_equal(flush_operation.released, 1);
+
     read_operation.native = (cflow_io_native_file_operation){
         .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
         .handle = (uintptr_t)file,
@@ -583,10 +596,10 @@ static void native_check_file_read_write_iocp(void) {
         .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE};
     submitted = native_file_submit(&fixture, 111u, &read_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
-    check_equal(fixture.completions.values[1].kind,
+    check_equal(native_fixture_wait(&fixture, 3u), SALTS_OK);
+    check_equal(fixture.completions.values[2].kind,
                 CFLOW_IO_COMPLETION_OK);
-    check_equal(fixture.completions.values[1].bytes, sizeof(payload));
+    check_equal(fixture.completions.values[2].bytes, sizeof(payload));
     check_equal(received, payload, sizeof(payload));
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, submitted.request_id),
@@ -700,8 +713,8 @@ static void native_check_file_rejections_iocp(void) {
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
     check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(fixture.completions.values[1].kind,
-                CFLOW_IO_COMPLETION_FAILED);
-    check_equal(fixture.completions.values[1].error, SALTS_ENOTSUP);
+                CFLOW_IO_COMPLETION_OK);
+    check_equal(fixture.completions.values[1].bytes, 0u);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
@@ -803,7 +816,7 @@ static void native_check_file_capacity_reuse_iocp(void) {
     native_test_remove_file(second_path, second_file);
 }
 
-static void native_check_file_cancel_race_iocp(void) {
+static void native_check_file_cancel_race_iocp(bool flush) {
     native_fixture fixture;
     native_test_file_operation operation = {0};
     unsigned char byte = 0u;
@@ -816,22 +829,21 @@ static void native_check_file_cancel_race_iocp(void) {
                     &fixture, CFLOW_IO_NATIVE_IOCP, 1u), SALTS_OK);
     check_equal(native_test_open_overlapped_file(&path, &file), SALTS_OK);
     operation.native = (cflow_io_native_file_operation){
-        .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
+        .kind = flush ? CFLOW_IO_NATIVE_FILE_FLUSH : CFLOW_IO_NATIVE_FILE_READ_AT,
         .handle = (uintptr_t)file,
-        .buffer = &byte,
-        .length = 1u,
+        .buffer = flush ? NULL : &byte,
+        .length = flush ? 0u : 1u,
         .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE};
     submitted = native_file_submit(&fixture, 121u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
-    check_equal(cflow_io_actor_try_cancel(
-                    &fixture.actor, submitted.request_id),
-                CFLOW_IO_CANCEL_ACCEPTED);
+    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), SALTS_OK);
+    const cflow_io_cancel_status cancelled = cflow_io_actor_try_cancel(&fixture.actor, submitted.request_id);
+    check_true(cancelled == CFLOW_IO_CANCEL_ACCEPTED || cancelled == CFLOW_IO_CANCEL_NOT_FOUND);
     check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_true(fixture.completions.values[0].kind ==
                    CFLOW_IO_COMPLETION_CANCELLED ||
                fixture.completions.values[0].kind ==
-                   CFLOW_IO_COMPLETION_EOF);
+                   (flush ? CFLOW_IO_COMPLETION_OK : CFLOW_IO_COMPLETION_EOF));
     for (iteration = 0u; iteration < NATIVE_TEST_CANCEL_SETTLE_YIELDS;
          ++iteration) {
         (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
@@ -850,6 +862,66 @@ static void native_check_file_cancel_race_iocp(void) {
     file = INVALID_HANDLE_VALUE;
     native_fixture_destroy(&fixture);
     native_test_remove_file(path, file);
+}
+
+static void native_check_file_flush_capacity_iocp(void) {
+    native_fixture fixture;
+    native_test_file_operation operations[NATIVE_TEST_CAPACITY+1u] = {0};
+    cflow_io_request_id requests[NATIVE_TEST_CAPACITY];
+    char *path = NULL;
+    HANDLE file = INVALID_HANDLE_VALUE;
+    check_equal(native_file_fixture_init(&fixture, CFLOW_IO_NATIVE_IOCP, NATIVE_TEST_CAPACITY), SALTS_OK);
+    check_equal(native_test_open_overlapped_file(&path, &file), SALTS_OK);
+    for (size_t i = 0u; i <= NATIVE_TEST_CAPACITY; ++i) {
+        operations[i].native = (cflow_io_native_file_operation){
+            .kind = CFLOW_IO_NATIVE_FILE_FLUSH, .handle = (uintptr_t)file,
+            .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE};
+        const cflow_io_submit_result submitted = native_file_submit(&fixture, 200u+i, &operations[i]);
+        if (i == NATIVE_TEST_CAPACITY) check_equal(submitted.status, CFLOW_IO_SUBMIT_FULL);
+        else {
+            check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+            requests[i] = submitted.request_id;
+        }
+    }
+    check_equal(native_fixture_wait(&fixture, NATIVE_TEST_CAPACITY), SALTS_OK);
+    for (size_t i = 0u; i < NATIVE_TEST_CAPACITY; ++i) {
+        check_equal(fixture.completions.values[i].kind, CFLOW_IO_COMPLETION_OK);
+        check_equal(fixture.completions.values[i].bytes, 0u);
+        check_equal(operations[i].released, 0);
+        check_equal(cflow_io_actor_acknowledge(&fixture.actor, requests[i]), CFLOW_IO_ACK_RELEASED);
+        check_equal(operations[i].released, 1);
+    }
+    check_equal(operations[NATIVE_TEST_CAPACITY].released, 0);
+    check_true(CloseHandle(file));
+    check_equal(native_fixture_forget_file(&fixture, (uintptr_t)file), SALTS_OK);
+    native_fixture_destroy(&fixture);
+    native_test_remove_file(path, INVALID_HANDLE_VALUE);
+}
+
+static void native_check_file_flush_failure_iocp(void) {
+    native_fixture fixture;
+    char *path = NULL;
+    HANDLE file = INVALID_HANDLE_VALUE;
+    check_equal(native_file_fixture_init(&fixture, CFLOW_IO_NATIVE_IOCP, 1u), SALTS_OK);
+    check_equal(native_test_open_overlapped_file(&path, &file), SALTS_OK);
+    check_true(CloseHandle(file));
+    file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                       NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+    check_not_equal(file, INVALID_HANDLE_VALUE);
+    native_test_file_operation operation = {.native = {
+        .kind = CFLOW_IO_NATIVE_FILE_FLUSH, .handle = (uintptr_t)file,
+        .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE}};
+    const cflow_io_submit_result submitted = native_file_submit(&fixture, 220u, &operation);
+    check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
+    check_equal(fixture.completions.values[0].kind, CFLOW_IO_COMPLETION_FAILED);
+    check_equal(fixture.completions.values[0].error, -(int)ERROR_ACCESS_DENIED);
+    check_equal(cflow_io_actor_acknowledge(&fixture.actor, submitted.request_id), CFLOW_IO_ACK_RELEASED);
+    check_equal(operation.released, 1);
+    check_true(CloseHandle(file));
+    check_equal(native_fixture_forget_file(&fixture, (uintptr_t)file), SALTS_OK);
+    native_fixture_destroy(&fixture);
+    native_test_remove_file(path, INVALID_HANDLE_VALUE);
 }
 #endif
 
@@ -2495,7 +2567,7 @@ spec("CFlow native IO backend") {
             CFLOW_IO_NATIVE_IOCP, CFLOW_IO_NATIVE_FILE_READ_AT));
         check_true(cflow_io_native_backend_file_operation_supported(
             CFLOW_IO_NATIVE_IOCP, CFLOW_IO_NATIVE_FILE_WRITE_AT));
-        check_false(cflow_io_native_backend_file_operation_supported(
+        check_true(cflow_io_native_backend_file_operation_supported(
             CFLOW_IO_NATIVE_IOCP, CFLOW_IO_NATIVE_FILE_FLUSH));
         check_false(cflow_io_native_backend_file_operation_supported(
             CFLOW_IO_NATIVE_POLL, CFLOW_IO_NATIVE_FILE_READ_AT));
@@ -2626,7 +2698,16 @@ spec("CFlow native IO backend") {
         native_check_file_capacity_reuse_iocp();
     }
     it("delivers one authoritative regular-file cancel race through IOCP") {
-        native_check_file_cancel_race_iocp();
+        native_check_file_cancel_race_iocp(false);
+    }
+    it("delivers one authoritative flush cancel race through IOCP") {
+        native_check_file_cancel_race_iocp(true);
+    }
+    it("bounds and drains asynchronous IOCP flushes") {
+        native_check_file_flush_capacity_iocp();
+    }
+    it("preserves asynchronous FlushFileBuffers access errors") {
+        native_check_file_flush_failure_iocp();
     }
 #elif defined(__APPLE__)
     it("rejects regular files without touching them through kqueue") {

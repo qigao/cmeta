@@ -114,7 +114,14 @@ typedef struct cflow_io_native_vector_operation {
  *
  * CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE declares that a Windows disk handle was
  * opened with FILE_FLAG_OVERLAPPED. IOCP cannot recover that creation flag
- * from an arbitrary handle and rejects read/write without the declaration.
+ * from an arbitrary handle and rejects file operations without the declaration.
+ * IOCP FLUSH uses one thread-pool work object per backend, bounded by its request
+ * table, rather than blocking submit or the IOCP dispatcher. The caller must
+ * await preceding write terminals before FLUSH; no ordering with concurrent
+ * writes is implied. Cancel cannot interrupt a running FlushFileBuffers call:
+ * its real return precedes terminal publication and handle release. Shutdown
+ * remains EBUSY while native work is pending and fences callback tails before
+ * destroy. Native flush errors are preserved even when cancellation races.
  */
 typedef struct cflow_io_native_file_operation {
     cflow_io_native_file_operation_kind kind;

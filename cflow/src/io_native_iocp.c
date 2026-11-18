@@ -44,6 +44,7 @@ typedef struct cflow_iocp_record {
     unsigned char accept_addresses[
         2u * (sizeof(SOCKADDR_STORAGE) + 16u)];
     bool cancel_requested;
+    bool flush_queued;
     cflow_iocp_resource_kind resource_kind;
 } cflow_iocp_record;
 
@@ -61,12 +62,14 @@ typedef struct cflow_iocp_impl {
     sync_mutex_t gate;
     sync_cond_t changed;
     sync_thread_t worker;
+    PTP_WORK flush_work;
     HANDLE port;
     cflow_iocp_record *records;
     cflow_iocp_resource_record *resources;
     size_t request_capacity;
     size_t completion_batch_capacity;
     size_t active_requests;
+    size_t flush_cursor;
     uint64_t submitted;
     uint64_t completed;
     uint64_t cancelled;
@@ -78,6 +81,7 @@ typedef struct cflow_iocp_impl {
     bool worker_running;
     bool shutdown_complete;
     bool winsock_started;
+    bool flush_scheduled;
 } cflow_iocp_impl;
 
 static const ULONG_PTR CFLOW_IOCP_STOP_KEY = (ULONG_PTR)1u;
@@ -292,6 +296,16 @@ static int iocp_begin_file_operation(cflow_iocp_impl *impl,
     BOOL started;
     DWORD error;
 
+    if (operation->kind == CFLOW_IO_NATIVE_FILE_FLUSH) {
+        sync_mutex_lock(&impl->gate);
+        record->flush_queued = true;
+        if (!impl->flush_scheduled) {
+            impl->flush_scheduled = true;
+            SubmitThreadpoolWork(impl->flush_work);
+        }
+        sync_mutex_unlock(&impl->gate);
+        return SALTS_OK;
+    }
     record->overlapped.Offset =
         (DWORD)(operation->offset & (uint64_t)UINT32_MAX);
     record->overlapped.OffsetHigh = (DWORD)(operation->offset >> 32u);
@@ -386,7 +400,10 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     accepted_socket = record->accepted_socket;
     cancelled = record->cancel_requested &&
                 (native_error == ERROR_OPERATION_ABORTED ||
-                 native_error == WSA_OPERATION_ABORTED);
+                 native_error == WSA_OPERATION_ABORTED ||
+                 (resource_kind == CFLOW_IOCP_RESOURCE_FILE &&
+                  file_operation->kind == CFLOW_IO_NATIVE_FILE_FLUSH &&
+                  native_error == ERROR_SUCCESS));
     if (resource_kind == CFLOW_IOCP_RESOURCE_SOCKET &&
         record->vector_buffer_count == 0u &&
         native_error == ERROR_SUCCESS &&
@@ -403,6 +420,7 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     record->socket_value = INVALID_SOCKET;
     record->accepted_socket = INVALID_SOCKET;
     record->cancel_requested = false;
+    record->flush_queued = false;
     --impl->active_requests;
     iocp_counter_increment(&impl->completed);
     if (cancelled)
@@ -541,6 +559,44 @@ static int iocp_associate_resource(cflow_iocp_impl *impl,
     return SALTS_OK;
 }
 
+/* FlushFileBuffers has no overlapped form. One backend-owned worker consumes
+ * the existing bounded request records; the IOCP dispatcher remains available
+ * for unrelated sockets/reads/writes. The handle stays borrowed until the real
+ * flush returns, including after cancellation and shutdown admission sealing. */
+static VOID CALLBACK iocp_flush_worker(PTP_CALLBACK_INSTANCE instance,
+                                      PVOID user, PTP_WORK work) {
+    cflow_iocp_impl *impl = user;
+    (void)instance;
+    (void)work;
+    for (;;) {
+        cflow_iocp_record *record = NULL;
+        HANDLE handle;
+        bool cancelled;
+        sync_mutex_lock(&impl->gate);
+        for (size_t scanned = 0u; scanned < impl->request_capacity; ++scanned) {
+            const size_t index = (impl->flush_cursor + scanned) % impl->request_capacity;
+            if (impl->records[index].flush_queued) {
+                record = &impl->records[index];
+                impl->flush_cursor = (index + 1u) % impl->request_capacity;
+                break;
+            }
+        }
+        if (record == NULL) {
+            impl->flush_scheduled = false;
+            sync_mutex_unlock(&impl->gate);
+            return;
+        }
+        record->flush_queued = false;
+        handle = record->native_handle;
+        cancelled = record->cancel_requested;
+        sync_mutex_unlock(&impl->gate);
+
+        const DWORD error = cancelled ? ERROR_OPERATION_ABORTED :
+            FlushFileBuffers(handle) ? ERROR_SUCCESS : GetLastError();
+        iocp_finish_record(impl, record, 0u, error);
+    }
+}
+
 static void iocp_worker(void *user) {
     cflow_iocp_impl *impl = (cflow_iocp_impl *)user;
     for (;;) {
@@ -616,6 +672,7 @@ static int iocp_submit_record(
     record->socket_value = socket_value;
     record->accepted_socket = INVALID_SOCKET;
     record->cancel_requested = false;
+    record->flush_queued = false;
     record->resource_kind = resource_kind;
     ++impl->active_requests;
     sync_mutex_unlock(&impl->gate);
@@ -685,8 +742,6 @@ static int iocp_submit_file(cflow_io_native_impl *base,
     DWORD file_type;
     DWORD error;
 
-    if (operation->kind == CFLOW_IO_NATIVE_FILE_FLUSH)
-        return SALTS_ENOTSUP;
     if ((operation->flags & CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE) == 0u)
         return SALTS_ENOTSUP;
     if (handle == NULL || handle == INVALID_HANDLE_VALUE)
@@ -718,6 +773,11 @@ static int iocp_cancel(cflow_io_native_impl *base,
         return SALTS_ENOENT;
     }
     record->cancel_requested = true;
+    if (record->resource_kind == CFLOW_IOCP_RESOURCE_FILE &&
+        record->file_operation->kind == CFLOW_IO_NATIVE_FILE_FLUSH) {
+        sync_mutex_unlock(&impl->gate);
+        return SALTS_OK;
+    }
     native_handle = record->native_handle;
     overlapped = &record->overlapped;
     sync_mutex_unlock(&impl->gate);
@@ -811,6 +871,7 @@ static int iocp_shutdown(cflow_io_native_impl *base) {
     if (!PostQueuedCompletionStatus(impl->port, 0u,
                                     CFLOW_IOCP_STOP_KEY, NULL))
         return iocp_error(GetLastError());
+    WaitForThreadpoolWorkCallbacks(impl->flush_work, FALSE);
     join_status = sync_thread_join(&impl->worker);
     if (join_status != SALTS_OK)
         return join_status;
@@ -830,6 +891,7 @@ static int iocp_destroy(cflow_io_native_impl *base) {
         return SALTS_EBUSY;
     }
     sync_mutex_unlock(&impl->gate);
+    CloseThreadpoolWork(impl->flush_work);
     (void)CloseHandle(impl->port);
     if (impl->winsock_started)
         (void)WSACleanup();
@@ -912,8 +974,21 @@ int cflow_io_native_iocp_init(cflow_io_native_backend *backend,
         free(impl);
         return status;
     }
+    impl->flush_work = CreateThreadpoolWork(iocp_flush_worker, impl, NULL);
+    if (impl->flush_work == NULL) {
+        status = iocp_error(GetLastError());
+        (void)CloseHandle(impl->port);
+        (void)WSACleanup();
+        sync_cond_destroy(&impl->changed);
+        sync_mutex_destroy(&impl->gate);
+        free(impl->resources);
+        free(impl->records);
+        free(impl);
+        return status;
+    }
     status = sync_thread_create(&impl->worker, iocp_worker, impl);
     if (status != SALTS_OK) {
+        CloseThreadpoolWork(impl->flush_work);
         (void)CloseHandle(impl->port);
         (void)WSACleanup();
         sync_cond_destroy(&impl->changed);

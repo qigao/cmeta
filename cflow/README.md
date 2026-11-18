@@ -1695,7 +1695,7 @@ and reopen gates are recorded in the
 | epoll | Linux | readiness, O(ready) delivery | TCP/UDP plus accept/connect | nonblocking byte read/write | unsupported | Linux when enabled |
 | kqueue | macOS | readiness, O(ready) delivery | TCP/UDP plus accept/connect | nonblocking byte read/write | unsupported | macOS |
 | poll | POSIX | readiness, O(registration capacity) snapshot scan | TCP/UDP plus accept/connect | nonblocking byte read/write | unsupported | explicit only |
-| IOCP | Windows | completion | TCP/UDP plus accept/connect | overlapped named byte-pipe read/write | overlapped `READ_AT`/`WRITE_AT`; flush unsupported | Windows |
+| IOCP | Windows | completion | TCP/UDP plus accept/connect | overlapped named byte-pipe read/write | overlapped `READ_AT`/`WRITE_AT`; bounded worker `FLUSH` | Windows |
 | io_uring | Linux | completion | TCP/UDP plus accept/connect | native byte read/write | `READ_AT`/`WRITE_AT`/`FLUSH` | explicit only |
 | Darwin AIO | macOS | completion, bounded observer | unsupported | unsupported | `READ_AT`/`WRITE_AT`/`FLUSH` | explicit only |
 
@@ -1757,8 +1757,30 @@ length, or offset and completes with zero bytes.
 Use `cflow_io_native_backend_file_operation_supported()` per operation: IOCP
 supports overlapped read/write on disk handles opened with
 `FILE_FLAG_OVERLAPPED`, declared by
-`CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE`, but deliberately rejects flush because
-`FlushFileBuffers` is synchronous. io_uring supports explicit-offset
+`CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE`. Its FLUSH implementation queues the existing
+request record to one backend-owned Windows thread-pool work object. The callback
+serializes flushes with round-robin selection, calls
+[`FlushFileBuffers`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers)
+outside the backend lock, and publishes through the same thread-safe Actor
+completion path. No application callback runs on that worker. There is at most
+one active flush per backend; queued/in-flight work shares request_capacity with
+other I/O. Full admission keeps its existing rejection semantics. No additional
+unbounded queue, public layout, switch, or alternate backend is introduced.
+
+The Win32 call has no overlapped argument. Running it in submit or on the IOCP
+dispatcher would block caller or unrelated I/O progress; those alternatives were
+rejected. The work object is created at backend init and scheduled only on demand,
+so ordinary socket backends do not create an idle flush thread. Cancellation
+before execution skips the call; cancellation during it retains the handle until
+the actual call returns. Success then publishes CANCELLED if cancel won; native
+failure retains its error. Close/shutdown drains records and fences work callback
+tails before freeing backend storage. Callers await prior write completions before
+flush, and cannot infer that cancel prevented persistence. Removing this backend
+capability and work object reverts to explicit unsupported FLUSH without changing
+the enum, file facade or other backends. Formal native tests cover write/flush/read,
+retained capacity, access failure, cancellation and exact-once operation release.
+
+io_uring supports explicit-offset
 `IORING_OP_READ`/`IORING_OP_WRITE` and full `IORING_OP_FSYNC`; it validates that
 the descriptor is a regular file. epoll, kqueue, and poll reject all regular-
 file operations rather than blocking their readiness worker or hiding a

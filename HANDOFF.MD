@@ -35,3 +35,32 @@
   已有 SameMinorVersion 允许明确选择同 minor 的新 patch，同时继续强制
   CMeta 发布清单与 Base 精确一致。真正切换及完整验证需等待 0.1.7 发布，
   并修复 Toad 当前冻结 presets 中已记录的无效引用。
+
+## 2026-11-18: bounded asynchronous IOCP FLUSH
+
+- IOCP now supports CFLOW_IO_NATIVE_FILE_FLUSH through one Windows thread-pool
+  work object per backend. Existing request records are the bounded queue;
+  round-robin selection serializes FlushFileBuffers outside the backend gate.
+  Submit and the IOCP dispatcher remain free to progress unrelated I/O. No new
+  dependency, public layout, CMake switch, or fallback was introduced.
+- Native completion remains authoritative. Queued cancellation skips execution;
+  running flush retains the borrowed handle until the Windows call returns.
+  Native failure is preserved, including cancellation races. Successful native
+  return with admitted cancellation yields CANCELLED. Backend shutdown seals
+  admission, returns EBUSY for pending records, then fences work callback tails
+  before destroy. Callers await write terminals before flush.
+- .env initially pointed SALTS_BASE_SOURCE_ROOT at a newer master tree, causing
+  the mandatory release-tree check to fail. Preserve that checkout; .env now
+  selects build/upstream/salts-base-0.1.8, a detached exact v0.1.8 worktree.
+  No configuration guard or alternate dependency source bypass was added.
+- Loaded the existing nonsecret .env build fields and used cmake/WithVs.cmd:
+  cmake --fresh --preset ci-msvc-release-user; cmake --build --preset
+  ci-msvc-release-user --parallel 3; ctest --preset ci-msvc-release-user
+  --output-on-failure; cmake --build --preset install-ci-msvc-release-user.
+  Full build, 120/120 CTest (18.20 s), and installation passed. Formal native
+  cases cover write/flush/read, retained full capacity, exact-once cancellation
+  and operation release, and ERROR_ACCESS_DENIED. Evidence: build/async-flush.
+  Other-platform producer CI is qualified separately before SDK publication.
+- Pass CTest regexes without shell metacharacters through WithVs.cmd; its %*
+  forwarding leaves unquoted pipes to cmd parsing. -R cflow_io_ selects the
+  seven formal adjacent tests without introducing a separate validation target.

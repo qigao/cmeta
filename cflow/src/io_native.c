@@ -171,7 +171,7 @@ bool cflow_io_native_backend_file_operation_supported(
 #endif
 #if defined(CFLOW_HAS_NATIVE_IOCP)
         case CFLOW_IO_NATIVE_IOCP:
-            return operation_kind != CFLOW_IO_NATIVE_FILE_FLUSH;
+            return true;
 #endif
 #if defined(CFLOW_HAS_NATIVE_IO_URING)
         case CFLOW_IO_NATIVE_IO_URING:
