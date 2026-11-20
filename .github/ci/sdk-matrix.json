@@ -9,10 +9,26 @@
       "android_abi": ""
     },
     {
+      "sdk": "windows-msvc-arm64",
+      "runner": "windows-11-arm",
+      "preset": "msvc-arm64-release-user",
+      "triplet": "arm64-windows",
+      "test": true,
+      "android_abi": ""
+    },
+    {
       "sdk": "windows-llvm-mingw-x64",
       "runner": "windows-2025",
       "preset": "native-release-user",
       "triplet": "qigao-x64-windows-llvm-mingw",
+      "test": true,
+      "android_abi": ""
+    },
+    {
+      "sdk": "windows-llvm-mingw-arm64",
+      "runner": "windows-11-arm",
+      "preset": "llvm-mingw-native-arm64-release-user",
+      "triplet": "qigao-arm64-windows-llvm-mingw",
       "test": true,
       "android_abi": ""
     },
@@ -61,14 +77,6 @@
       "runner": "macos-15",
       "preset": "llvm-native-release-user",
       "triplet": "arm64-osx",
-      "test": true,
-      "android_abi": ""
-    },
-    {
-      "sdk": "macos-clang-x64",
-      "runner": "macos-15-intel",
-      "preset": "llvm-native-release-user",
-      "triplet": "x64-osx",
       "test": true,
       "android_abi": ""
     },

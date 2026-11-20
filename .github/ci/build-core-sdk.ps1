@@ -5,7 +5,11 @@ $root = [IO.Path]::GetFullPath('build/upstream/core')
 $actual = git -C $root rev-parse HEAD
 if ($LASTEXITCODE -ne 0 -or $actual -cne $env:SALTS_CORE_REF) { throw 'Unexpected Core SDK source' }
 $prefix = "$root/build/$Preset/stage"
-$env:LLVM_MINGW_TARGET = 'x86_64-w64-mingw32'
+if ($env:VCPKG_TARGET_TRIPLET -eq 'qigao-arm64-windows-llvm-mingw') {
+  $env:LLVM_MINGW_TARGET = 'aarch64-w64-mingw32'
+} elseif ($env:VCPKG_TARGET_TRIPLET -eq 'qigao-x64-windows-llvm-mingw') {
+  $env:LLVM_MINGW_TARGET = 'x86_64-w64-mingw32'
+}
 $env:MSVC_TARGET_TRIPLET = $env:VCPKG_TARGET_TRIPLET
 $env:LLVM_NATIVE_TARGET_TRIPLET = $env:VCPKG_TARGET_TRIPLET
 $env:GCC_TARGET_TRIPLET = $env:VCPKG_TARGET_TRIPLET

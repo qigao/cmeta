@@ -179,11 +179,10 @@ qualification.
 ## CI qualification
 
 CI downloads and verifies the selected Base/cache releases once, then passes
-the same locked blobs and infrastructure snapshot to all ten published Base
-profiles: Windows x64 MSVC/LLVM-MinGW, Linux x64 and ARM64 Clang/GCC, Linux x64
-Clang TSan, macOS ARM64 Clang, and Android x64/ARM64. The former Windows ARM64
-and macOS x64 lanes require Base SDKs that are not published in 0.1.4 and are
-outside this matrix. ASan/UBSan presets remain available for explicit runs.
+the same locked blobs and infrastructure snapshot to twelve Base profiles.
+Windows x64 and ARM64 use MSVC and LLVM-MinGW, Linux x64 and ARM64 use Clang and
+GCC, macOS ARM64 uses Clang, and Android x64 and ARM64 use the NDK. Linux x64
+also has a Clang TSan profile. ASan/UBSan presets remain available for explicit runs.
 
 `SALTS_CORE_REF` is a required immutable source commit for the test-only CNet
 SDK, whose normal product preset builds and installs the full configured

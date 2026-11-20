@@ -117,12 +117,17 @@ if args.phase == 'prepare':
             raise ValueError('Host tool release archive differs from package lock')
         acquire(value)
     compiler = read(infra / 'compiler-contracts/release-obfuscation.json')['sources']['llvm-mingw']
-    compiler_asset = next(a for a in compiler['assets'] if a['host'] == 'windows-x64')
-    lock = {'schema': 1, 'source': {'kind': 'url', 'url':
-        f"https://github.com/{compiler['repository']}/releases/download/{compiler['release_tag']}/{compiler_asset['name']}"},
-        'sha256': compiler_asset['sha256']}
-    write(inputs / 'locks/windows-compiler.json', lock)
-    run('python', reader, 'download', inputs / 'locks/windows-compiler.json', '--destination', inputs / 'blobs')
+    compiler_hosts = {profile['triplet'].split('-')[1] for profile in matrix['include']
+                      if profile['triplet'].endswith('-windows-llvm-mingw')}
+    for arch in sorted(compiler_hosts):
+        host = 'windows-' + arch
+        compiler_asset = next(a for a in compiler['assets'] if a['host'] == host)
+        lock = {'schema': 1, 'source': {'kind': 'url', 'url':
+            f"https://github.com/{compiler['repository']}/releases/download/{compiler['release_tag']}/{compiler_asset['name']}"},
+            'sha256': compiler_asset['sha256']}
+        lock_path = inputs / 'locks' / (host + '-compiler.json')
+        write(lock_path, lock)
+        run('python', reader, 'download', lock_path, '--destination', inputs / 'blobs')
     with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
         output.write('matrix=' + json.dumps(matrix, separators=(',', ':')) + '\n')
 else:
