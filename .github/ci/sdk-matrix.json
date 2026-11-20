@@ -65,6 +65,14 @@
       "android_abi": ""
     },
     {
+      "sdk": "macos-clang-x64",
+      "runner": "macos-15-intel",
+      "preset": "llvm-native-release-user",
+      "triplet": "x64-osx",
+      "test": true,
+      "android_abi": ""
+    },
+    {
       "sdk": "android-arm64",
       "runner": "ubuntu-24.04",
       "preset": "android-arm64-release-user",
