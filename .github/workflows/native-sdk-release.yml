@@ -4,16 +4,29 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      vcpkg_cache_version:
+        description: Exact published vcpkg-cache version
+        required: false
+        type: string
+      salts_base_version:
+        description: Exact published SaltsBase SDK version
+        required: false
+        type: string
+      salts_cnet_version:
+        description: Exact published SaltsCNet SDK version
+        required: false
+        type: string
 permissions:
   contents: read
 concurrency:
   group: cmeta-sdk-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 env:
-  VCPKG_CACHE_VERSION: ${{ vars.VCPKG_CACHE_VERSION }}
-  SALTS_BASE_VERSION: ${{ vars.SALTS_BASE_VERSION }}
-  SALTS_CORE_VERSION: ${{ vars.SALTS_CORE_VERSION }}
-  SALTS_CORE_REF: ${{ vars.SALTS_CORE_REF }}
+  VCPKG_CACHE_VERSION: ${{ inputs.vcpkg_cache_version || vars.VCPKG_CACHE_VERSION }}
+  SALTS_BASE_VERSION: ${{ inputs.salts_base_version || vars.SALTS_BASE_VERSION }}
+  SALTS_CORE_VERSION: ${{ inputs.salts_cnet_version || vars.SALTS_CORE_VERSION }}
+  SALTS_CORE_REF: ${{ inputs.salts_cnet_version && format('v{0}', inputs.salts_cnet_version) || vars.SALTS_CORE_REF }}
 jobs:
   prepare:
     name: Download shared SDK inputs once
