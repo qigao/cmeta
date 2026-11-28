@@ -338,12 +338,12 @@ suite("CMeta component declarations") {
     }
 
     it("bounds component config complexity in manifest view and fingerprint") {
-        const cmeta_enum_item enum_items[8] = {
-            {"A0", 0, "a0"}, {"A1", 1, "a1"}, {"A2", 2, "a2"}, {"A3", 3, "a3"},
-            {"A4", 4, "a4"}, {"A5", 5, "a5"}, {"A6", 6, "a6"}, {"A7", 7, "a7"}
+        const cmeta_enum_item_desc enum_items[8] = {
+            {0, "A0", "a0"}, {1, "A1", "a1"}, {2, "A2", "a2"}, {3, "A3", "a3"},
+            {4, "A4", "a4"}, {5, "A5", "a5"}, {6, "A6", "a6"}, {7, "A7", "a7"}
         };
         const cmeta_enum_desc enum_meta = {
-            "ComponentBudgetEnum", sizeof(int), enum_items, COMPONENT_SIZE(8u), false
+            "ComponentBudgetEnum", enum_items, COMPONENT_SIZE(8u)
         };
         const cmeta_data_enum_shape enum_shape = { &enum_meta };
         cmeta_data_desc enum_config = cmeta_data_int;

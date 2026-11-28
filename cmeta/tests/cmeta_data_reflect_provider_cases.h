@@ -206,13 +206,14 @@ suite("CMeta reflected provider lifecycle") {
         check_equal(source.values[0], REFLECT_ARRAY_COUNT);
     }
     it("guards collection accept against null zero_output and collection read against overflow") {
-        cmeta_collector bad_collector = {0};
+        cmeta_collector bad_collector;
         int element = 7;
         cmeta_data_collection_view overflow_view = {
             bytes, (SIZE_MAX / sizeof(int)) + 2u, sizeof(int), &cmeta_data_int
         };
-        cmeta_data_collection_view out_view = {0};
+        cmeta_data_collection_view out_view = {NULL, 0u, 0u, NULL};
 
+        memset(&bad_collector, 0, sizeof(bad_collector));
         check_equal(cmeta_data_collection_accept(
             &ReflectArrayProvider_cmeta_data, &bad_collector, &cmeta_data_int, &element),
             CMETA_INVALID_ARGUMENT);

@@ -160,26 +160,28 @@ suite("CMeta bounded reflection admission and lifecycle") {
     }
 
     it("enforces fixed_ops, flags, and variant lifecycle and null-pointer contracts") {
+        const uint8_t one_u8 = 1u, zero_u8 = 0u;
         uint8_t bool_src = 1u, bool_dst = 0u, bool_bad = 2u;
         ReflectModeFlags flags_src = ReflectModeFlags_Read, flags_dst = {0u};
         uint64_t raw_bits = 0u;
         int64_t raw_tag = 0;
         ReflectChoice choice_src, choice_dst, choice_empty;
+        const ReflectModeFlags *dst_flags = NULL;
         cmeta_lifecycle_binding choice_binding = CMETA_LIFECYCLE_BINDING_INIT;
 
         check_true(cmeta_data_value_move_supported(&cmeta_bool8_cmeta_data));
         check_equal(cmeta_data_value_move(&cmeta_bool8_cmeta_data, &bool_dst, &bool_src), CMETA_OK);
-        check_equal(bool_dst, (uint8_t)1u);
-        check_equal(bool_src, (uint8_t)0u);
+        check_equal(bool_dst, one_u8);
+        check_equal(bool_src, zero_u8);
         bool_src = 1u;
         check_equal(cmeta_data_value_move(&cmeta_bool8_cmeta_data, &bool_dst, &bool_src),
                     CMETA_INVALID_ARGUMENT);
-        check_equal(bool_dst, (uint8_t)1u);
-        check_equal(bool_src, (uint8_t)1u);
+        check_equal(bool_dst, one_u8);
+        check_equal(bool_src, one_u8);
         bool_dst = 0u;
         check_equal(cmeta_data_value_move(&cmeta_bool8_cmeta_data, &bool_dst, &bool_bad),
                     CMETA_INVALID_ARGUMENT);
-        check_equal(bool_dst, (uint8_t)0u);
+        check_equal(bool_dst, zero_u8);
 
         check_false(ReflectModeFlags__is_zero(NULL));
         check_equal(ReflectModeFlags__read(NULL, &raw_bits), CMETA_INVALID_ARGUMENT);
@@ -205,11 +207,14 @@ suite("CMeta bounded reflection admission and lifecycle") {
         check_equal(ReflectChoice_copy_Flags(&choice_src, &flags_dst), CMETA_OK);
         check_equal(cmeta_lifecycle_move(&choice_binding, &choice_dst, &choice_src), CMETA_OK);
         check_equal(choice_src.tag, INT64_C(0));
-        check_not_null(ReflectChoice_get_Flags(&choice_dst));
-        check_equal(ReflectChoice_get_Flags(&choice_dst)->bits, ReflectModeFlags_Read.bits);
+        dst_flags = ReflectChoice_get_Flags(&choice_dst);
+        check_not_null(dst_flags);
+        if (dst_flags != NULL) {
+            check_equal(dst_flags->bits, ReflectModeFlags_Read.bits);
+        }
         check_equal(cmeta_data_value_copy(ReflectChoice_cmeta_data(), &choice_dst, &choice_empty),
                     CMETA_INVALID_ARGUMENT);
-        check_equal(choice_dst.tag, (int64_t)ReflectChoice_Flags);
+        check_equal(choice_dst.tag, CMETA_VARIANT_INTEGER_(int64_t, ReflectChoice_Flags));
         check_equal(cmeta_lifecycle_restore(&choice_binding, &choice_dst), CMETA_OK);
         check_equal(cmeta_lifecycle_restore(&choice_binding, &choice_src), CMETA_OK);
         ReflectChoice_destroy(&choice_empty);
