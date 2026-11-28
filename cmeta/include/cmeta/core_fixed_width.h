@@ -52,8 +52,16 @@ static const cmeta_type_desc cmeta_bool8_cmeta_type = {
     NULL, &cmeta_bool8_cmeta_traits, &cmeta_bool8_cmeta_identity
 };
 
+#ifdef __cplusplus
+#define CMETA_CORE_FIXED_WIDTH_U8_PTR_(ptr_) static_cast<uint8_t *>(ptr_)
+#define CMETA_CORE_FIXED_WIDTH_CONST_U8_PTR_(ptr_) static_cast<const uint8_t *>(ptr_)
+#else
+#define CMETA_CORE_FIXED_WIDTH_U8_PTR_(ptr_) ((uint8_t *)(ptr_))
+#define CMETA_CORE_FIXED_WIDTH_CONST_U8_PTR_(ptr_) ((const uint8_t *)(ptr_))
+#endif
+
 static inline bool cmeta_bool8_cmeta_is_zero(const void *object) {
-  return object != NULL && *(const uint8_t *)object == 0u;
+  return object != NULL && *CMETA_CORE_FIXED_WIDTH_CONST_U8_PTR_(object) == 0u;
 }
 
 static inline cmeta_status cmeta_bool8_cmeta_copy(void *destination,
@@ -61,16 +69,19 @@ static inline cmeta_status cmeta_bool8_cmeta_copy(void *destination,
   uint8_t value;
   if (destination == NULL || source == NULL)
     return CMETA_INVALID_ARGUMENT;
-  value = *(const uint8_t *)source;
+  value = *CMETA_CORE_FIXED_WIDTH_CONST_U8_PTR_(source);
   if (value > 1u) return CMETA_INVALID_ARGUMENT;
-  *(uint8_t *)destination = value;
+  *CMETA_CORE_FIXED_WIDTH_U8_PTR_(destination) = value;
   return CMETA_OK;
 }
 
 static inline void cmeta_bool8_cmeta_restore_zero(void *object) {
   if (object != NULL)
-    *(uint8_t *)object = 0u;
+    *CMETA_CORE_FIXED_WIDTH_U8_PTR_(object) = 0u;
 }
+
+#undef CMETA_CORE_FIXED_WIDTH_U8_PTR_
+#undef CMETA_CORE_FIXED_WIDTH_CONST_U8_PTR_
 
 static inline bool cmeta_bool8_cmeta_copy_construct(void *destination,
                                                     const void *source) {

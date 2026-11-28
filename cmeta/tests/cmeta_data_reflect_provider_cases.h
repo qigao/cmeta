@@ -190,4 +190,35 @@ suite("CMeta reflected provider lifecycle") {
         check_equal(cmeta_contract_fingerprint_struct(StructMeta(ReflectManagedRecord),
             &limits, &fingerprint), CMETA_OK);
     }
+    it("preserves non-zero struct destination and source on rejected move") {
+        const unsigned char existing[] = {'x', 'y'};
+        check_equal(cmeta_data_buffer_assign(&reflect_text_data, &destination.second,
+            existing, sizeof(existing), REFLECT_TEXT_LIMIT), CMETA_OK);
+        destination.values[0] = 99;
+        check_equal(cmeta_data_value_move(data, &destination, &source), CMETA_INVALID_ARGUMENT);
+        check_equal(destination.values[0], 99);
+        check_not_null(destination.second.bytes);
+        check_equal(memcmp(destination.second.bytes, existing, sizeof(existing)), 0);
+        check_not_null(source.first.bytes);
+        check_equal(memcmp(source.first.bytes, bytes, sizeof(bytes)), 0);
+        check_not_null(source.second.bytes);
+        check_equal(memcmp(source.second.bytes, bytes, sizeof(bytes)), 0);
+        check_equal(source.values[0], REFLECT_ARRAY_COUNT);
+    }
+    it("guards collection accept against null zero_output and collection read against overflow") {
+        cmeta_collector bad_collector;
+        int element = 7;
+        cmeta_data_collection_view overflow_view = {
+            bytes, (SIZE_MAX / sizeof(int)) + 2u, sizeof(int), &cmeta_data_int
+        };
+        cmeta_data_collection_view out_view = {NULL, 0u, 0u, NULL};
+
+        memset(&bad_collector, 0, sizeof(bad_collector));
+        check_equal(cmeta_data_collection_accept(
+            &ReflectArrayProvider_cmeta_data, &bad_collector, &cmeta_data_int, &element),
+            CMETA_INVALID_ARGUMENT);
+        check_equal(cmeta_data_collection_read(
+            &cmeta_data_sequence_view, &overflow_view, &out_view),
+            CMETA_CALLBACK_ERROR);
+    }
 }

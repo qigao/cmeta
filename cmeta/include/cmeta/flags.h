@@ -66,11 +66,12 @@
         return CMETA_OK; \
     } \
     CMETA_INLINE bool name_##__is_zero(const void *object_) { \
-        return CMETA_FLAGS_CAST_(const name_, object_)->bits == 0u; \
+        return object_ != NULL && CMETA_FLAGS_CAST_(const name_, object_)->bits == 0u; \
     } \
     CMETA_INLINE cmeta_status name_##__read(const void *object_, uint64_t *out_) { \
         const name_ *value_ = CMETA_FLAGS_CAST_(const name_, object_); \
-        if (!name_##_valid(*value_)) return CMETA_INVALID_ARGUMENT; \
+        if (value_ == NULL || out_ == NULL || !name_##_valid(*value_)) \
+            return CMETA_INVALID_ARGUMENT; \
         *out_ = value_->bits; \
         return CMETA_OK; \
     } \
@@ -78,7 +79,7 @@
         return name_##_from_bits(bits_, CMETA_FLAGS_CAST_(name_, object_)); \
     } \
     CMETA_INLINE void name_##__restore(void *object_) { \
-        CMETA_FLAGS_CAST_(name_, object_)->bits = 0u; \
+        if (object_ != NULL) CMETA_FLAGS_CAST_(name_, object_)->bits = 0u; \
     } \
     CMETA_INLINE bool name_##__copy(void *out_, const void *source_) { \
         if (out_ == NULL || source_ == NULL || out_ == source_) return false; \
@@ -92,7 +93,8 @@
     CMETA_INLINE void name_##__move(void *out_, void *source_) { \
         name_ *destination_ = CMETA_FLAGS_CAST_(name_, out_); \
         name_ *value_ = CMETA_FLAGS_CAST_(name_, source_); \
-        if (destination_ == value_ || !name_##_valid(*value_)) abort(); \
+        if (destination_ == NULL || value_ == NULL || \
+            destination_ == value_ || !name_##_valid(*value_)) abort(); \
         destination_->bits = value_->bits; \
         value_->bits = 0u; \
     } \

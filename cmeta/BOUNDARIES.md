@@ -55,20 +55,14 @@ COFF 的共同参考；未实现 optional linker aggregation，无需 backend-sp
 查询，把 owned payload 从 Pool 移至 Local，检查 source release、析构恰好一次、
 fingerprint 前中后不变，以及资源关闭后 static metadata 仍可查询。
 
-`tests/installed` 只通过本次安装的 `CMetaConfig.cmake` 链接 `CMeta::CMeta` 与 TinyTest。
-C11/C++17 实际查询 descriptor、Function ABI、manifest 与 fingerprint，并以 header
-guard 拒绝 runtime 经 aggregate 引入。Find_package 禁用默认路径，防止消费其他 checkout。
+构建与验证统一复用仓库根目录 presets 与 `cmeta/tests` 正式测试目标，不维护独立的 installed-consumer 验证工程。C11 与 C++17 测试套件直接验证 canonical descriptor、Function ABI、manifest、fingerprint，以及 aggregate header 不隐式引入 runtime 依赖。
 
-在 VS x64 环境，配置根目录 release user preset 后：
+配置根目录 preset 后执行正式构建与 CTest 验证（以 Windows MSVC 与 Linux LLVM 为例）：
 
 ```powershell
-cmake --build --preset install-win-release-user --parallel 4
-$env:CMETA_PACKAGE_ROOT = "$env:PROJECT_ROOT/external/pkgs/salts/release"
-cd cmeta/tests/installed
-cmake --preset installed-win-release
-cmake --build --preset installed-win-release --parallel 4
-ctest --preset installed-win-release
+cmake --preset msvc-release-user
+cmake --build --preset msvc-release-user
+ctest --preset msvc-release-user -R "^cmeta_" --output-on-failure
 ```
 
-Linux CI 使用 `installed-linux-release`。回滚须成套恢复调用点与 owner，不保留两套
-namespace/ownership 同时运行；此次变化不迁移运行期数据、不引入外部依赖。
+Linux 环境对应使用 `llvm-native-release-user`、`gcc-release-user` 或 sanitizer presets（`llvm-native-asan-ubsan-user`、`llvm-native-tsan-user`）。回滚须成套恢复调用点与 owner，不保留两套 namespace/ownership 同时运行；此次变化不迁移运行期数据、不引入外部依赖。

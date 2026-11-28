@@ -150,6 +150,12 @@ static inline void cmeta_tstr_header_cmeta_destroy(void *object) {
 
 static inline int cmeta_tstr_header_cmeta_compare(
     const void *left, const void *right) {
+    if (left == right)
+        return 0;
+    if (left == NULL)
+        return -1;
+    if (right == NULL)
+        return 1;
     return tstr_cmp(*(const tstr *)left, *(const tstr *)right);
 }
 
@@ -256,7 +262,7 @@ static inline void cmeta_vstr_cmeta_restore_zero(void *object) {
 static inline void cmeta_vstr_cmeta_move(void *destination, void *source) {
     vstr *to = (vstr *)destination;
     vstr *from = (vstr *)source;
-    if (to == NULL || from == NULL)
+    if (to == NULL || from == NULL || to == from)
         return;
     *to = *from;
     from->data = NULL;

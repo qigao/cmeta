@@ -43,21 +43,27 @@ CMETA_INLINE cmeta_status cmeta_local_init(
     if (sync_thread_affine_init(&state->affinity, owner) != SALTS_OK)
         return CMETA_INVALID_ARGUMENT;
 
-    state->ops = ops;
-    if (sync_thread_affine_set_busy(&state->affinity, owner, true) != SALTS_OK)
+    if (sync_thread_affine_set_busy(&state->affinity, owner, true) != SALTS_OK) {
+        (void)sync_thread_affine_reset(&state->affinity, owner);
         return CMETA_INVALID_ARGUMENT;
+    }
+    state->ops = ops;
     status = ops->init_zero(value);
     if (status != CMETA_OK) {
         ops->restore_zero(value);
+        state->ops = NULL;
         if (sync_thread_affine_set_busy(&state->affinity, owner, false) != SALTS_OK ||
             sync_thread_affine_reset(&state->affinity, owner) != SALTS_OK)
             return CMETA_INVALID_ARGUMENT;
-        state->ops = NULL;
         return status;
     }
 
-    if (sync_thread_affine_set_busy(&state->affinity, owner, false) != SALTS_OK)
+    if (sync_thread_affine_set_busy(&state->affinity, owner, false) != SALTS_OK) {
+        ops->restore_zero(value);
+        state->ops = NULL;
+        (void)sync_thread_affine_reset(&state->affinity, owner);
         return CMETA_INVALID_ARGUMENT;
+    }
     return CMETA_OK;
 }
 

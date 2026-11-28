@@ -395,6 +395,9 @@ bool cmeta_function_projection_valid(const cmeta_function_abi_desc *source,
 
 #define CMETA_FUNCTION0_DECL_AS_ABI_RESULT( \
     contract, return_type, return_desc, return_abi_carrier, result_flags, name) \
+    CMETA_STATIC_ASSERT((return_abi_carrier) == CMETA_ABI_UNSPECIFIED || \
+        CMETA_TYPE_IS_VOID(return_type) == ((return_abi_carrier) == CMETA_ABI_VOID), \
+        "CMeta Function native result carrier mismatch"); \
     return_type name(void); \
     typedef return_type (*name##_function_type)(void); \
     CMETA_FUNCTION0_METADATA_AS_ABI_RESULT( \

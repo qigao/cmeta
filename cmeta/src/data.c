@@ -287,11 +287,9 @@ bool cmeta_data_desc_valid(const cmeta_data_desc *desc) {
   if (cmeta_data_kind_is_container(desc->kind)) {
     if (desc->shape != NULL) return false;
     /* Kind-only semantic descriptors remain valid. A concrete native
-     * provider may additionally select storage and collection_ops. */
+     * provider may additionally select storage and collection_ops or map_ops. */
     if (desc->storage_type == NULL)
-      return desc->struct_size <
-                 offsetof(cmeta_data_desc, collection_ops) + sizeof(desc->collection_ops) ||
-             desc->collection_ops == NULL;
+      return !CMETA_DATA_HAS_OPS(desc, collection_ops) && !CMETA_DATA_HAS_OPS(desc, map_ops);
     if (!cmeta_type_desc_valid(desc->storage_type)) return false;
     if (desc->kind == CMETA_DATA_MAP)
       return desc->struct_size >= offsetof(cmeta_data_desc, map_ops) + sizeof(desc->map_ops) &&
@@ -411,8 +409,7 @@ cmeta_status cmeta_data_buffer_move(const cmeta_data_desc *desc, void *destinati
   if (!ops->is_zero(source) || ops->is_zero(destination) != source_was_zero) {
     ops->restore_zero(destination);
     ops->restore_zero(source);
-    return ops->is_zero(destination) && ops->is_zero(source) ? CMETA_CALLBACK_ERROR
-                                                             : CMETA_CALLBACK_ERROR;
+    return CMETA_CALLBACK_ERROR;
   }
   return CMETA_OK;
 }
@@ -640,7 +637,10 @@ cmeta_status cmeta_data_enum_assign(const cmeta_data_desc *desc, void *object, i
     status = ops->read(object, &actual);
     if (status == CMETA_OK && actual != value) status = CMETA_CALLBACK_ERROR;
   }
-  if (status != CMETA_OK) ops->restore_zero(object);
+  if (status != CMETA_OK) {
+    ops->restore_zero(object);
+    if (!ops->is_zero(object)) return CMETA_CALLBACK_ERROR;
+  }
   return status;
 }
 
@@ -713,10 +713,15 @@ cmeta_status cmeta_data_enum_assign_bits(const cmeta_data_desc *desc, void *obje
   if (status != CMETA_OK) return status;
   if (!cmeta_data_enum_bits_valid(ops->domain, bits) || !ops->is_zero(object))
     return CMETA_INVALID_ARGUMENT;
-  if (ops->assign(object, bits) != CMETA_OK || ops->read(object, &actual) != CMETA_OK ||
-      actual != bits) {
+  status = ops->assign(object, bits);
+  if (status == CMETA_OK) {
+    if (ops->read(object, &actual) != CMETA_OK || actual != bits)
+      status = CMETA_CALLBACK_ERROR;
+  }
+  if (status != CMETA_OK) {
     ops->restore_zero(object);
-    return CMETA_CALLBACK_ERROR;
+    if (!ops->is_zero(object)) return CMETA_CALLBACK_ERROR;
+    return status;
   }
   return CMETA_OK;
 }
@@ -812,7 +817,10 @@ cmeta_status cmeta_data_variant_select(const cmeta_data_desc *desc, void *object
       if (status == CMETA_OK && active != tag) status = CMETA_CALLBACK_ERROR;
     }
   }
-  if (status != CMETA_OK) ops->restore_zero(object);
+  if (status != CMETA_OK) {
+    ops->restore_zero(object);
+    if (!ops->is_zero(object)) return CMETA_CALLBACK_ERROR;
+  }
   return status;
 }
 
@@ -939,7 +947,7 @@ static const cmeta_type_identity cmeta_collection_view_identity =
 
 const cmeta_type_desc cmeta_type_collection_view = {.name = "cmeta_data_collection_view",
                                                     .size = sizeof(cmeta_data_collection_view),
-                                                    .align = _Alignof(cmeta_data_collection_view),
+                                                    .align = CMETA_ALIGNOF(cmeta_data_collection_view),
                                                     .kind = CMETA_T_OBJECT,
                                                     .pointee = NULL,
                                                     .traits = NULL,
@@ -1078,7 +1086,8 @@ cmeta_status cmeta_data_collection_read(const cmeta_data_desc *desc, const void 
   if (status != CMETA_OK) return status;
 
   if (view.count != 0u) {
-    if (view.data == NULL || view.stride == 0u) return CMETA_CALLBACK_ERROR;
+    if (view.data == NULL || view.stride == 0u || view.count > SIZE_MAX / view.stride)
+      return CMETA_CALLBACK_ERROR;
     if (view.element == NULL) view.element = expected;
     if (view.element == NULL || !cmeta_data_desc_valid(view.element)) return CMETA_TRAIT_MISSING;
     if (expected != NULL && !cmeta_data_desc_equal(expected, view.element))
@@ -1521,19 +1530,24 @@ cmeta_status cmeta_data_collection_collector(const cmeta_data_desc *desc, void *
   const cmeta_data_collection_ops *ops = NULL;
   cmeta_collector collector;
   cmeta_status status;
+  if (out != NULL) memset(out, 0, sizeof(*out));
   if (zero_output == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
   status = cmeta_data_collection_ops_status(desc, &ops);
   if (status != CMETA_OK) return status;
   if (ops->struct_size >=
           offsetof(cmeta_data_collection_ops, collector_init) + sizeof(ops->collector_init) &&
       ops->collector_init != NULL) {
-    memset(out, 0, sizeof(*out));
     status = ops->collector_init(zero_output, limit, out);
-    if (status != CMETA_OK) return status;
+    if (status != CMETA_OK) {
+      memset(out, 0, sizeof(*out));
+      return status;
+    }
     if (!cmeta_collector_ops_valid(out->ops) || out->zero_output != zero_output ||
         out->limit != limit || out->input_type == NULL || out->state != CMETA_COLLECTOR_ZERO ||
-        out->count != 0u || out->status != CMETA_OK)
+        out->count != 0u || out->status != CMETA_OK) {
+      memset(out, 0, sizeof(*out));
       return CMETA_CALLBACK_ERROR;
+    }
     return CMETA_OK;
   }
   if (ops->struct_size < offsetof(cmeta_data_collection_ops, collector) +
@@ -1542,7 +1556,9 @@ cmeta_status cmeta_data_collection_collector(const cmeta_data_desc *desc, void *
     return CMETA_TRAIT_MISSING;
   collector = ops->collector(zero_output, limit);
   if (!cmeta_collector_ops_valid(collector.ops) || collector.zero_output != zero_output ||
-      collector.limit != limit || collector.input_type == NULL)
+      collector.limit != limit || collector.input_type == NULL ||
+      collector.state != CMETA_COLLECTOR_ZERO || collector.count != 0u ||
+      collector.status != CMETA_OK)
     return CMETA_CALLBACK_ERROR;
   *out = collector;
   return CMETA_OK;
@@ -1553,6 +1569,7 @@ cmeta_status cmeta_data_map_collector(const cmeta_data_desc *desc, void *zero_ou
   const cmeta_data_map_ops *ops = NULL;
   cmeta_collector collector;
   cmeta_status status;
+  if (out != NULL) memset(out, 0, sizeof(*out));
   if (zero_output == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
   status = cmeta_data_map_ops_status(desc, &ops);
   if (status != CMETA_OK) return status;
@@ -1562,7 +1579,9 @@ cmeta_status cmeta_data_map_collector(const cmeta_data_desc *desc, void *zero_ou
     return CMETA_TRAIT_MISSING;
   collector = ops->collector(zero_output, limit);
   if (!cmeta_collector_ops_valid(collector.ops) || collector.zero_output != zero_output ||
-      collector.limit != limit || collector.input_type == NULL)
+      collector.limit != limit || collector.input_type == NULL ||
+      collector.state != CMETA_COLLECTOR_ZERO || collector.count != 0u ||
+      collector.status != CMETA_OK)
     return CMETA_CALLBACK_ERROR;
   *out = collector;
   return CMETA_OK;
@@ -1585,7 +1604,9 @@ cmeta_status cmeta_data_collection_accept(const cmeta_data_desc *desc, cmeta_col
   const cmeta_data_collection_ops *ops = NULL;
   const cmeta_data_desc *expected;
   cmeta_status status;
-  if (collector == NULL || element_data == NULL || element == NULL) return CMETA_INVALID_ARGUMENT;
+  if (collector == NULL || collector->zero_output == NULL || element_data == NULL ||
+      element == NULL)
+    return CMETA_INVALID_ARGUMENT;
   status = cmeta_data_collection_ops_status(desc, &ops);
   if (status != CMETA_OK) return status;
   expected = ops->element(collector->zero_output);
@@ -1787,6 +1808,11 @@ static bool cmeta_data_value_lifecycle_supported_depth(const cmeta_data_desc *de
   size_t i;
   if (depth > 64u || !cmeta_data_desc_valid(desc) || desc->storage_type == NULL) return false;
   if (cmeta_data_reflection_is_view(desc)) return false;
+  if (CMETA_DATA_HAS_OPS(desc, fixed_ops)) {
+    if (cmeta_data_fixed_ops_of(desc) == NULL) return false;
+    if (CMETA_DATA_HAS_OPS(desc, buffer_ops)) return cmeta_data_buffer_ops_of(desc) != NULL;
+    return true;
+  }
   switch (desc->kind) {
   case CMETA_DATA_BOOL:
   case CMETA_DATA_SINT:
@@ -1796,6 +1822,8 @@ static bool cmeta_data_value_lifecycle_supported_depth(const cmeta_data_desc *de
   case CMETA_DATA_STRING:
   case CMETA_DATA_BYTES:
     return cmeta_data_buffer_ops_of(desc) != NULL;
+  case CMETA_DATA_ENUM:
+    return cmeta_data_enum_bits_ops_of(desc) != NULL || cmeta_data_enum_ops_of(desc) != NULL;
   case CMETA_DATA_STRUCT:
     shape = (const cmeta_data_struct_shape *)desc->shape;
     if (shape == NULL) return false;
@@ -1871,17 +1899,46 @@ static cmeta_status cmeta_data_struct_restore_zero(const cmeta_data_desc *desc, 
   return result;
 }
 
+static cmeta_status cmeta_data_destination_check_zero(const cmeta_data_desc *desc,
+                                                      const void *destination, unsigned depth) {
+  bool zero = false;
+  cmeta_status status;
+  if (depth > CMETA_DATA_ZERO_MAX_DEPTH || desc == NULL || destination == NULL)
+    return CMETA_INVALID_ARGUMENT;
+  if (desc->kind == CMETA_DATA_STRUCT && !CMETA_DATA_HAS_OPS(desc, fixed_ops) &&
+      !CMETA_DATA_HAS_OPS(desc, variant_ops)) {
+    const cmeta_data_struct_shape *shape = (const cmeta_data_struct_shape *)desc->shape;
+    size_t i;
+    if (shape == NULL) return CMETA_INVALID_ARGUMENT;
+    for (i = 0u; i < shape->field_count; ++i) {
+      const cmeta_data_field_desc *field = &shape->fields[i];
+      if (!cmeta_data_struct_field_bounds_valid(desc, field)) return CMETA_TYPE_MISMATCH;
+      status = cmeta_data_destination_check_zero(
+          field->value, (const unsigned char *)destination + field->offset, depth + 1u);
+      if (status != CMETA_OK) return status;
+    }
+    return CMETA_OK;
+  }
+  status = cmeta_data_value_is_zero_depth(desc, destination, &zero, depth);
+  if (status == CMETA_OK) return zero ? CMETA_OK : CMETA_INVALID_ARGUMENT;
+  if (status == CMETA_TRAIT_MISSING && desc->kind == CMETA_DATA_CUSTOM) return CMETA_OK;
+  return status;
+}
+
 static cmeta_status cmeta_data_struct_move(const cmeta_data_desc *desc, void *destination,
                                            void *source) {
   const cmeta_data_struct_shape *shape;
+  cmeta_status status;
   size_t i;
-  if (!cmeta_data_value_move_supported_depth(desc, 0u) || destination == NULL || source == NULL ||
-      destination == source)
-    return CMETA_TRAIT_MISSING;
+  if (!cmeta_data_value_move_supported_depth(desc, 0u)) return CMETA_TRAIT_MISSING;
+  if (destination == NULL || source == NULL || destination == source)
+    return CMETA_INVALID_ARGUMENT;
+  status = cmeta_data_destination_check_zero(desc, destination, 0u);
+  if (status != CMETA_OK) return status;
   shape = (const cmeta_data_struct_shape *)desc->shape;
   for (i = 0u; i < shape->field_count; ++i) {
     const cmeta_data_field_desc *field = &shape->fields[i];
-    cmeta_status status =
+    status =
         cmeta_data_value_move(field->value, (unsigned char *)destination + field->offset,
                               (unsigned char *)source + field->offset);
     if (status != CMETA_OK) {
@@ -2064,9 +2121,13 @@ static cmeta_status cmeta_data_variant_copy(const cmeta_data_desc *desc, void *d
   const cmeta_data_variant_shape *shape = (const cmeta_data_variant_shape *)desc->shape;
   const cmeta_data_variant_case *active_case;
   bool source_zero = false;
+  bool destination_zero = false;
   int64_t tag = 0;
   cmeta_status status = cmeta_data_variant_is_zero(desc, source, &source_zero);
   if (status != CMETA_OK) return status;
+  status = cmeta_data_variant_is_zero(desc, destination, &destination_zero);
+  if (status != CMETA_OK) return status;
+  if (!destination_zero) return CMETA_INVALID_ARGUMENT;
   if (source_zero) return CMETA_OK;
   status = cmeta_data_variant_active_tag(desc, source, &tag);
   if (status != CMETA_OK) return status;
@@ -2255,6 +2316,67 @@ void cmeta_data_trait_destroy(const cmeta_data_desc *desc, void *object) {
     abort();
 }
 
+static cmeta_status cmeta_data_fixed_move(const cmeta_data_desc *desc, void *destination,
+                                          void *source) {
+  const cmeta_data_fixed_ops *ops = NULL;
+  cmeta_status status = cmeta_data_fixed_ops_status(desc, &ops);
+  if (status != CMETA_OK) return status;
+  status = cmeta_data_fixed_copy(desc, destination, source, ops->extent);
+  if (status != CMETA_OK) return status;
+  status = cmeta_data_fixed_restore_zero(desc, source);
+  if (status != CMETA_OK) {
+    (void)cmeta_data_fixed_restore_zero(desc, destination);
+    return CMETA_CALLBACK_ERROR;
+  }
+  return CMETA_OK;
+}
+
+static cmeta_status cmeta_data_enum_move(const cmeta_data_desc *desc, void *destination,
+                                         void *source) {
+  bool source_zero = false;
+  bool destination_zero = false;
+  cmeta_status status;
+  if (CMETA_DATA_HAS_OPS(desc, enum_bits_ops)) {
+    uint64_t bits = 0u;
+    status = cmeta_data_enum_bits_is_zero(desc, destination, &destination_zero);
+    if (status != CMETA_OK) return status;
+    if (!destination_zero) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_enum_bits_is_zero(desc, source, &source_zero);
+    if (status != CMETA_OK) return status;
+    if (source_zero) return CMETA_OK;
+    status = cmeta_data_enum_read_bits(desc, source, &bits);
+    if (status != CMETA_OK) return status;
+    status = cmeta_data_enum_assign_bits(desc, destination, bits);
+    if (status != CMETA_OK) return status;
+    status = cmeta_data_enum_bits_restore_zero(desc, source);
+    if (status != CMETA_OK) {
+      (void)cmeta_data_enum_bits_restore_zero(desc, destination);
+      return CMETA_CALLBACK_ERROR;
+    }
+    return CMETA_OK;
+  }
+  if (CMETA_DATA_HAS_OPS(desc, enum_ops)) {
+    int64_t value = 0;
+    status = cmeta_data_enum_is_zero(desc, destination, &destination_zero);
+    if (status != CMETA_OK) return status;
+    if (!destination_zero) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_enum_is_zero(desc, source, &source_zero);
+    if (status != CMETA_OK) return status;
+    if (source_zero) return CMETA_OK;
+    status = cmeta_data_enum_read(desc, source, &value);
+    if (status != CMETA_OK) return status;
+    status = cmeta_data_enum_assign(desc, destination, value);
+    if (status != CMETA_OK) return status;
+    status = cmeta_data_enum_restore_zero(desc, source);
+    if (status != CMETA_OK) {
+      (void)cmeta_data_enum_restore_zero(desc, destination);
+      return CMETA_CALLBACK_ERROR;
+    }
+    return CMETA_OK;
+  }
+  return CMETA_TRAIT_MISSING;
+}
+
 bool cmeta_data_value_move_supported(const cmeta_data_desc *desc) {
   return cmeta_data_value_move_supported_depth(desc, 0u);
 }
@@ -2264,6 +2386,8 @@ cmeta_status cmeta_data_value_move(const cmeta_data_desc *desc, void *destinatio
   if (!cmeta_data_desc_valid(desc) || destination == NULL || source == NULL ||
       destination == source || desc->storage_type == NULL)
     return CMETA_INVALID_ARGUMENT;
+  if (CMETA_DATA_HAS_OPS(desc, fixed_ops) && !CMETA_DATA_HAS_OPS(desc, buffer_ops))
+    return cmeta_data_fixed_move(desc, destination, source);
   switch (desc->kind) {
   case CMETA_DATA_BOOL:
   case CMETA_DATA_SINT:
@@ -2275,6 +2399,8 @@ cmeta_status cmeta_data_value_move(const cmeta_data_desc *desc, void *destinatio
   case CMETA_DATA_STRING:
   case CMETA_DATA_BYTES:
     return cmeta_data_buffer_move(desc, destination, source);
+  case CMETA_DATA_ENUM:
+    return cmeta_data_enum_move(desc, destination, source);
   case CMETA_DATA_STRUCT:
     return cmeta_data_struct_move(desc, destination, source);
   case CMETA_DATA_VARIANT:
@@ -2345,6 +2471,7 @@ cmeta_status cmeta_data_temp_open(const cmeta_data_desc *desc, size_t max_bytes,
   } else {
     if (extent > SIZE_MAX - (alignment - 1u)) return CMETA_CAPACITY_EXCEEDED;
     padded = (extent + alignment - 1u) & ~(alignment - 1u);
+    if (padded > max_bytes) return CMETA_CAPACITY_EXCEEDED;
 #if defined(_WIN32)
     storage = _aligned_malloc(padded, alignment);
 #elif defined(__wasm__)
@@ -2412,7 +2539,8 @@ cmeta_status cmeta_data_map_accept(const cmeta_data_desc *desc, cmeta_collector 
   const cmeta_data_desc *expected_key;
   const cmeta_data_desc *expected_value;
   cmeta_status status;
-  if (collector == NULL || key_data == NULL || key == NULL || value_data == NULL || value == NULL)
+  if (collector == NULL || collector->zero_output == NULL || key_data == NULL || key == NULL ||
+      value_data == NULL || value == NULL)
     return CMETA_INVALID_ARGUMENT;
   status = cmeta_data_map_ops_status(desc, &ops);
   if (status != CMETA_OK) return status;

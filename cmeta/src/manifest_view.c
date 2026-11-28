@@ -83,8 +83,9 @@ static cmeta_status function_valid(const cmeta_function_abi_desc *abi,
 
 static cmeta_status struct_valid(const cmeta_struct_desc *desc,
     manifest_budget *budget) {
-    if (desc->name == NULL || desc->name[0] == '\0' || desc->size == 0u ||
-        desc->align == 0u || (desc->field_count != 0u && desc->fields == NULL))
+    if (desc == NULL || desc->name == NULL || desc->name[0] == '\0' ||
+        desc->size == 0u || desc->align == 0u ||
+        (desc->field_count != 0u && desc->fields == NULL))
         return CMETA_INVALID_ARGUMENT;
     if (desc->field_count > budget->limits->max_items) return CMETA_CAPACITY_EXCEEDED;
     for (size_t i = 0u; i < desc->field_count; ++i) {
@@ -116,7 +117,7 @@ static cmeta_status struct_valid(const cmeta_struct_desc *desc,
 
 static cmeta_status interface_valid(const cmeta_interface_desc *desc,
     manifest_budget *budget) {
-    if (desc->size < sizeof(*desc) ||
+    if (desc == NULL || desc->size < sizeof(*desc) ||
         (desc->method_count != 0u && desc->methods == NULL)) return CMETA_INVALID_ARGUMENT;
     if (desc->method_count > budget->limits->max_items) return CMETA_CAPACITY_EXCEEDED;
     for (size_t i = 0u; i < desc->method_count; ++i) {
@@ -132,10 +133,115 @@ static cmeta_status interface_valid(const cmeta_interface_desc *desc,
 }
 
 static cmeta_status enum_valid(const cmeta_enum_domain *desc, manifest_budget *budget) {
-    if (desc->struct_size < sizeof(*desc)) return CMETA_INVALID_ARGUMENT;
+    if (desc == NULL || desc->struct_size < sizeof(*desc)) return CMETA_INVALID_ARGUMENT;
     if (desc->abi_version != CMETA_ENUM_DOMAIN_ABI_VERSION) return CMETA_TYPE_MISMATCH;
     if (desc->count > budget->limits->max_items) return CMETA_CAPACITY_EXCEEDED;
     return cmeta_enum_domain_valid(desc) ? CMETA_OK : CMETA_INVALID_ARGUMENT;
+}
+
+static cmeta_status config_data_valid(const cmeta_data_desc *desc,
+    manifest_budget *budget) {
+    const size_t prefix =
+        offsetof(cmeta_data_desc, shape) + sizeof(desc->shape);
+    cmeta_status status;
+
+    if (desc == NULL || desc->struct_size < prefix ||
+        !cmeta_data_kind_valid(desc->kind))
+        return CMETA_INVALID_ARGUMENT;
+    if (desc->storage_type != NULL) {
+        status = type_valid(desc->storage_type, budget);
+        if (status != CMETA_OK) return status;
+    }
+    if (desc->abi_version == CMETA_DATA_DESC_REFLECTION_ABI_VERSION) {
+        const cmeta_data_reflection_shape *reflection =
+            (const cmeta_data_reflection_shape *)desc->shape;
+        if (desc->kind != CMETA_DATA_STRUCT || reflection == NULL ||
+            reflection->struct_size < sizeof(*reflection) ||
+            reflection->structure.layout == NULL)
+            return CMETA_INVALID_ARGUMENT;
+        if (reflection->structure.field_count > budget->limits->max_items ||
+            reflection->structure.layout->field_count > budget->limits->max_items)
+            return CMETA_CAPACITY_EXCEEDED;
+        if ((reflection->structure.field_count != 0u &&
+             reflection->structure.fields == NULL) ||
+            (reflection->structure.layout->field_count != 0u &&
+             reflection->structure.layout->fields == NULL))
+            return CMETA_INVALID_ARGUMENT;
+        for (size_t i = 0u; i < reflection->structure.field_count &&
+             i < reflection->structure.layout->field_count; ++i) {
+            const cmeta_data_field_desc *field = &reflection->structure.fields[i];
+            const cmeta_field_desc *layout_field =
+                &reflection->structure.layout->fields[i];
+            if (layout_field->type != NULL) {
+                status = type_valid(layout_field->type, budget);
+                if (status != CMETA_OK) return status;
+            }
+            if (field->value != NULL &&
+                field->value->struct_size >= prefix &&
+                field->value->storage_type != NULL) {
+                status = type_valid(field->value->storage_type, budget);
+                if (status != CMETA_OK) return status;
+            }
+        }
+    } else if (desc->abi_version == CMETA_DATA_DESC_ABI_VERSION) {
+        if (desc->kind == CMETA_DATA_STRUCT && desc->shape != NULL) {
+            const cmeta_data_struct_shape *shape =
+                (const cmeta_data_struct_shape *)desc->shape;
+            if (shape->layout == NULL) return CMETA_INVALID_ARGUMENT;
+            if (shape->field_count > budget->limits->max_items ||
+                shape->layout->field_count > budget->limits->max_items)
+                return CMETA_CAPACITY_EXCEEDED;
+        } else if (desc->kind == CMETA_DATA_ENUM) {
+            const size_t bits_size = offsetof(cmeta_data_desc, enum_bits_ops) +
+                sizeof(desc->enum_bits_ops);
+            if (desc->struct_size >= bits_size && desc->enum_bits_ops != NULL) {
+                const cmeta_data_enum_bits_ops *ops = desc->enum_bits_ops;
+                if (ops->struct_size <
+                        offsetof(cmeta_data_enum_bits_ops, restore_zero) +
+                            sizeof(ops->restore_zero) ||
+                    ops->domain == NULL ||
+                    ops->domain->struct_size < sizeof(*ops->domain))
+                    return CMETA_INVALID_ARGUMENT;
+                if (ops->domain->count > budget->limits->max_items)
+                    return CMETA_CAPACITY_EXCEEDED;
+            } else if (desc->shape != NULL) {
+                const cmeta_data_enum_shape *shape =
+                    (const cmeta_data_enum_shape *)desc->shape;
+                if (shape->meta == NULL) return CMETA_INVALID_ARGUMENT;
+                if (shape->meta->count > budget->limits->max_items)
+                    return CMETA_CAPACITY_EXCEEDED;
+            }
+        } else if (desc->kind == CMETA_DATA_VARIANT && desc->shape != NULL) {
+            const cmeta_data_variant_shape *shape =
+                (const cmeta_data_variant_shape *)desc->shape;
+            if (shape->case_count > budget->limits->max_items)
+                return CMETA_CAPACITY_EXCEEDED;
+            if (shape->tag != NULL && shape->tag->struct_size >= prefix) {
+                if (shape->tag->storage_type != NULL) {
+                    status = type_valid(shape->tag->storage_type, budget);
+                    if (status != CMETA_OK) return status;
+                }
+                if (shape->tag->kind == CMETA_DATA_ENUM && shape->tag->shape != NULL) {
+                    const cmeta_data_enum_shape *tag_enum =
+                        (const cmeta_data_enum_shape *)shape->tag->shape;
+                    if (tag_enum->meta != NULL &&
+                        tag_enum->meta->count > budget->limits->max_items)
+                        return CMETA_CAPACITY_EXCEEDED;
+                }
+            }
+            if (shape->case_count != 0u && shape->cases == NULL)
+                return CMETA_INVALID_ARGUMENT;
+            for (size_t i = 0u; i < shape->case_count; ++i) {
+                const cmeta_data_desc *val = shape->cases[i].value;
+                if (val != NULL && val->struct_size >= prefix &&
+                    val->storage_type != NULL) {
+                    status = type_valid(val->storage_type, budget);
+                    if (status != CMETA_OK) return status;
+                }
+            }
+        }
+    }
+    return cmeta_data_desc_valid(desc) ? CMETA_OK : CMETA_INVALID_ARGUMENT;
 }
 
 static cmeta_status component_valid(const cmeta_component_desc *desc,
@@ -150,13 +256,8 @@ static cmeta_status component_valid(const cmeta_component_desc *desc,
         desc->capability_count > SIZE_MAX / sizeof(*desc->capabilities))
         return CMETA_INVALID_ARGUMENT;
     if (desc->config != NULL) {
-        cmeta_status status;
-        if (!cmeta_data_desc_valid(desc->config))
-            return CMETA_INVALID_ARGUMENT;
-        if (desc->config->storage_type != NULL) {
-            status = type_valid(desc->config->storage_type, budget);
-            if (status != CMETA_OK) return status;
-        }
+        cmeta_status status = config_data_valid(desc->config, budget);
+        if (status != CMETA_OK) return status;
     }
     for (size_t i = 0u; i < desc->capability_count; ++i) {
         cmeta_status status =

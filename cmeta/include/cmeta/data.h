@@ -51,6 +51,14 @@ enum {
     CMETA_LIFECYCLE_FLAG_MASK = (1u << 4) - 1u
 };
 
+#ifdef __cplusplus
+#define CMETA_LIFECYCLE_FLAGS_CAST_(value) \
+    static_cast<cmeta_lifecycle_flags>(value)
+#else
+#define CMETA_LIFECYCLE_FLAGS_CAST_(value) \
+    ((cmeta_lifecycle_flags)(value))
+#endif
+
 typedef struct cmeta_data_construct_ops {
     size_t struct_size;
     uint32_t abi_version;
@@ -76,10 +84,11 @@ static inline cmeta_lifecycle_flags cmeta_lifecycle_flags_of(
 }
 static inline bool cmeta_lifecycle_flags_valid(const cmeta_data_construct_ops *ops) {
     const cmeta_lifecycle_flags flags = cmeta_lifecycle_flags_of(ops);
-    return (flags & ~CMETA_LIFECYCLE_FLAG_MASK) == 0u &&
-        ((flags & CMETA_LIFECYCLE_MOVABLE) == 0u || ops->move != NULL) &&
-        ((flags & CMETA_LIFECYCLE_TRIVIAL_ZERO) == 0u ||
-            (flags & CMETA_LIFECYCLE_INIT_NOFAIL) != 0u);
+    return (flags & ~CMETA_LIFECYCLE_FLAGS_CAST_(CMETA_LIFECYCLE_FLAG_MASK)) == 0u &&
+        ((flags & CMETA_LIFECYCLE_FLAGS_CAST_(CMETA_LIFECYCLE_MOVABLE)) == 0u ||
+            ops->move != NULL) &&
+        ((flags & CMETA_LIFECYCLE_FLAGS_CAST_(CMETA_LIFECYCLE_TRIVIAL_ZERO)) == 0u ||
+            (flags & CMETA_LIFECYCLE_FLAGS_CAST_(CMETA_LIFECYCLE_INIT_NOFAIL)) != 0u);
 }
 
 typedef struct cmeta_data_buffer_ops cmeta_data_buffer_ops;

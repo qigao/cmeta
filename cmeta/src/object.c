@@ -398,6 +398,8 @@ cmeta_status cmeta_object_field_read_admitted(
         return CMETA_INVALID_ARGUMENT;
     if (binding->fixed_value != NULL) value = binding->fixed_value;
     else {
+        if (!cmeta_object_field_provider_has_read(binding->provider))
+            return CMETA_TRAIT_MISSING;
         status = binding->provider->read(binding->provider->context,
             binding->object,binding->field,&value);
         if (status != CMETA_OK) return status;
@@ -411,7 +413,9 @@ cmeta_status cmeta_object_field_assign_admitted(
     const cmeta_object_field_binding *binding, const void *value) {
     if (binding == NULL || binding->object == NULL || binding->field == NULL || value == NULL)
         return CMETA_INVALID_ARGUMENT;
-    if (binding->provider == NULL || binding->provider->assign == NULL)
+    if (binding->provider == NULL ||
+        binding->provider->size < CMETA_OBJECT_FIELD_PROVIDER_ASSIGN_SIZE ||
+        binding->provider->assign == NULL)
         return CMETA_TRAIT_MISSING;
     return binding->provider->assign(binding->provider->context,
         binding->object,binding->field,value);

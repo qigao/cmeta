@@ -101,11 +101,18 @@ typedef enum cmeta_result_cleanup {
  * DataDesc storage lifecycle. BORROW requires an external authoritative owner
  * for escaping use. UNKNOWN cannot authorize automatic ownership lowering.
  * This is a pure decision; no cleanup callback is guessed from a C type. */
+#ifdef __cplusplus
+#define CMETA_RESULT_FLAGS_CAST_(value) static_cast<cmeta_result_flags>(value)
+#else
+#define CMETA_RESULT_FLAGS_CAST_(value) ((cmeta_result_flags)(value))
+#endif
+
 CMETA_INLINE cmeta_status cmeta_result_cleanup_classify(
     cmeta_result_flags flags, cmeta_result_cleanup *out) {
-    if (out == NULL || (flags & ~CMETA_RESULT_FLAG_MASK) != 0u)
+    if (out == NULL ||
+        (flags & ~CMETA_RESULT_FLAGS_CAST_(CMETA_RESULT_FLAG_MASK)) != 0u)
         return CMETA_INVALID_ARGUMENT;
-    switch (flags & CMETA_RESULT_CLASS_MASK) {
+    switch (flags & CMETA_RESULT_FLAGS_CAST_(CMETA_RESULT_CLASS_MASK)) {
     case CMETA_RESULT_VALUE: *out = CMETA_RESULT_CLEANUP_VALUE; return CMETA_OK;
     case CMETA_RESULT_BORROWED: *out = CMETA_RESULT_CLEANUP_BORROW; return CMETA_OK;
     case CMETA_RESULT_SHARED: *out = CMETA_RESULT_CLEANUP_RELEASE; return CMETA_OK;
