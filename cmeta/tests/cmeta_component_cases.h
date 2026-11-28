@@ -337,6 +337,89 @@ suite("CMeta component declarations") {
         check_false(cmeta_interface_borrowed_service_abi_valid(&candidate));
     }
 
+    it("bounds component config complexity in manifest view and fingerprint") {
+        const cmeta_enum_item enum_items[8] = {
+            {"A0", 0, "a0"}, {"A1", 1, "a1"}, {"A2", 2, "a2"}, {"A3", 3, "a3"},
+            {"A4", 4, "a4"}, {"A5", 5, "a5"}, {"A6", 6, "a6"}, {"A7", 7, "a7"}
+        };
+        const cmeta_enum_desc enum_meta = {
+            "ComponentBudgetEnum", sizeof(int), enum_items, COMPONENT_SIZE(8u), false
+        };
+        const cmeta_data_enum_shape enum_shape = { &enum_meta };
+        cmeta_data_desc enum_config = cmeta_data_int;
+        cmeta_component_desc component = *cmeta_component_meta(PatternConfiguredStorage);
+        const cmeta_manifest_entry entries[] = {
+            { "budget-config", CMETA_MANIFEST_COMPONENT, &component, UINT64_C(0), UINT32_C(0) }
+        };
+        const cmeta_manifest manifest = {
+            "budget-config", entries, COMPONENT_SIZE(1u), CMETA_MANIFEST_FORMAT_VERSION
+        };
+        const cmeta_manifest_limits tight_manifest = {
+            COMPONENT_SIZE(4u), CMETA_MANIFEST_DEFAULT_DEPTH, CMETA_MANIFEST_DEFAULT_NODES
+        };
+        const cmeta_manifest_limits ok_manifest = {
+            COMPONENT_SIZE(8u), CMETA_MANIFEST_DEFAULT_DEPTH, CMETA_MANIFEST_DEFAULT_NODES
+        };
+        const cmeta_fingerprint_limits tight_fp = {
+            CMETA_FINGERPRINT_DEFAULT_DEPTH, CMETA_FINGERPRINT_DEFAULT_NODES,
+            COMPONENT_SIZE(4u), CMETA_FINGERPRINT_DEFAULT_STRING_BYTES
+        };
+        const cmeta_fingerprint_limits default_fp = {
+            CMETA_FINGERPRINT_DEFAULT_DEPTH, CMETA_FINGERPRINT_DEFAULT_NODES,
+            CMETA_FINGERPRINT_DEFAULT_ROWS, CMETA_FINGERPRINT_DEFAULT_STRING_BYTES
+        };
+        const cmeta_component_desc *found = cmeta_component_meta(PatternStorage);
+        uint64_t tight_out = UINT64_C(0x55aa);
+        uint64_t expected_fp = UINT64_C(0);
+
+        enum_config.stable_id = "test.budget.enum";
+        enum_config.display_name = "ComponentBudgetEnum";
+        enum_config.kind = CMETA_DATA_ENUM;
+        enum_config.storage_type = &cmeta_type_int;
+        enum_config.shape = &enum_shape;
+        component.config = &enum_config;
+
+        check_true(cmeta_component_desc_valid(&component));
+        check_equal(cmeta_manifest_get_component(
+            &manifest, 0u, &tight_manifest, &found), CMETA_CAPACITY_EXCEEDED);
+        check_true(found == cmeta_component_meta(PatternStorage));
+        check_equal(cmeta_manifest_get_component(
+            &manifest, 0u, &ok_manifest, &found), CMETA_OK);
+        check_true(found == &component);
+
+        check_equal(cmeta_contract_fingerprint_component(
+            &component, &tight_fp, &tight_out), CMETA_CAPACITY_EXCEEDED);
+        check_equal(tight_out, UINT64_C(0x55aa));
+        check_equal(cmeta_contract_fingerprint_component(
+            &component, &default_fp, &expected_fp), CMETA_OK);
+        check_not_equal(expected_fp, UINT64_C(0));
+    }
+
+    it("rejects kind-only map with map_ops and bounds malformed ABI identities") {
+        cmeta_data_map_ops dummy_map_ops = {
+            sizeof(cmeta_data_map_ops), CMETA_DATA_MAP_OPS_ABI_VERSION,
+            &cmeta_type_int, CMETA_DATA_MAP_UNIQUE_KEYS,
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        };
+        cmeta_data_desc map_config = cmeta_data_map;
+        cmeta_type_identity cyclic = CMETA_TYPE_ID_POINTER_INIT(NULL);
+        cmeta_type_identity missing_args = {
+            CMETA_TYPE_APPLY, NULL, &cmeta_option_generic_desc, NULL, NULL, COMPONENT_SIZE(1u)
+        };
+        cmeta_type_desc cyclic_type = cmeta_type_int;
+        cmeta_type_desc missing_args_type = cmeta_type_int;
+
+        map_config.struct_size = sizeof(cmeta_data_desc);
+        map_config.map_ops = &dummy_map_ops;
+        check_false(cmeta_data_desc_valid(&map_config));
+
+        cyclic.base = &cyclic;
+        cyclic_type.identity = &cyclic;
+        missing_args_type.identity = &missing_args;
+        check_not_equal(cmeta_abi_fingerprint_type(&cyclic_type), UINT64_C(0));
+        check_not_equal(cmeta_abi_fingerprint_type(&missing_args_type), UINT64_C(0));
+    }
+
 }
 
 #undef COMPONENT_SIZE

@@ -112,14 +112,16 @@
         return name_##_validate(); \
     } \
     CMETA_INLINE bool name_##__is_zero(const void *object_) { \
-        return CMETA_VARIANT_CAST_(const name_, object_)->tag == 0; \
+        return object_ != NULL && CMETA_VARIANT_CAST_(const name_, object_)->tag == 0; \
     } \
     CMETA_INLINE cmeta_status name_##__active_tag(const void *object_, int64_t *out_) { \
+        if (object_ == NULL || out_ == NULL) return CMETA_INVALID_ARGUMENT; \
         *out_ = CMETA_VARIANT_CAST_(const name_, object_)->tag; \
         return CMETA_OK; \
     } \
     CMETA_INLINE cmeta_status name_##__select(void *object_, int64_t tag_) { \
         name_ *value_ = CMETA_VARIANT_CAST_(name_, object_); \
+        if (value_ == NULL || value_->tag != 0) return CMETA_INVALID_ARGUMENT; \
         switch (tag_) { \
             CMETA_PP_FOR_EACH(CMETA_VARIANT_SELECT_, name_, __VA_ARGS__) \
             default: return CMETA_INVALID_ARGUMENT; \
@@ -127,12 +129,17 @@
     } \
     CMETA_INLINE void name_##__restore(void *object_) { \
         name_ *value_ = CMETA_VARIANT_CAST_(name_, object_); \
+        if (value_ == NULL) return; \
         switch (value_->tag) { \
             case 0: return; \
             CMETA_PP_FOR_EACH(CMETA_VARIANT_RESTORE_, name_, __VA_ARGS__) \
             default: abort(); \
         } \
         value_->tag = 0; \
+    } \
+    CMETA_INLINE void name_##__construct_move(void *out_, void *source_) { \
+        if (cmeta_data_value_move(name_##_cmeta_data(), out_, source_) != CMETA_OK) \
+            abort(); \
     } \
     CMETA_INLINE bool name_##__trait_copy(void *out_, const void *source_) { \
         return cmeta_data_trait_copy_construct(name_##_cmeta_data(), out_, source_); \
@@ -164,7 +171,7 @@
         name_##__select, name_##__restore }; \
     CMETA_LOCAL const cmeta_data_construct_ops name_##__construct_ops = { \
         sizeof(cmeta_data_construct_ops), CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION, \
-        &name_##_cmeta_type, name_##__init_zero, name_##__restore, name_##__trait_move, 0 }; \
+        &name_##_cmeta_type, name_##__init_zero, name_##__restore, name_##__construct_move, 0 }; \
     CMETA_LOCAL const cmeta_data_desc name_##__data = { \
         sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION, id_ ".data", #name_, \
         CMETA_DATA_VARIANT, &name_##_cmeta_type, &name_##__shape, NULL, NULL, \

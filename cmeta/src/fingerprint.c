@@ -234,18 +234,196 @@ static bool interface_contract(fingerprint_state *state, const cmeta_interface_d
     return cmeta_interface_desc_valid(desc) || fail(state, CMETA_INVALID_ARGUMENT);
 }
 
+static bool budget_rows(fingerprint_state *state, size_t count,
+    const void *array, size_t stride) {
+    if (count > state->rows) return fail(state, CMETA_CAPACITY_EXCEEDED);
+    if ((count != 0u && array == NULL) || count > SIZE_MAX / stride)
+        return fail(state, CMETA_INVALID_ARGUMENT);
+    state->rows -= count;
+    return true;
+}
+
+static bool budget_identity(fingerprint_state *state,
+    const cmeta_type_identity *id, size_t depth) {
+    if (id == NULL) return fail(state, CMETA_INVALID_ARGUMENT);
+    if (!node(state, depth)) return false;
+    switch (id->form) {
+        case CMETA_TYPE_ATOM:
+            return string(state, id->stable_atom_id, false);
+        case CMETA_TYPE_POINTER:
+        case CMETA_TYPE_CONST:
+            return budget_identity(state, id->base, depth + 1u);
+        case CMETA_TYPE_APPLY:
+            if (id->constructor == NULL ||
+                !string(state, id->constructor->stable_id, false) ||
+                !string(state, id->constructor->display_name, false) ||
+                !budget_rows(state, id->arity, id->args, sizeof(*id->args)))
+                return false;
+            for (size_t i = 0u; i < id->arity; ++i)
+                if (!budget_identity(state, id->args[i], depth + 1u))
+                    return false;
+            return true;
+        default:
+            return fail(state, CMETA_INVALID_ARGUMENT);
+    }
+}
+
+static bool budget_type(fingerprint_state *state,
+    const cmeta_type_desc *desc, size_t depth) {
+    if (desc == NULL) return fail(state, CMETA_INVALID_ARGUMENT);
+    if (!node(state, depth) || !string(state, desc->name, false))
+        return false;
+    if (desc->identity != NULL &&
+        !budget_identity(state, desc->identity, depth + 1u))
+        return false;
+    if (desc->pointee != NULL &&
+        !budget_type(state, desc->pointee, depth + 1u))
+        return false;
+    return true;
+}
+
+static bool data_shape_budget(fingerprint_state *state,
+    const cmeta_data_desc *desc, size_t depth) {
+    const size_t prefix =
+        offsetof(cmeta_data_desc, shape) + sizeof(desc->shape);
+
+    if (desc->abi_version == CMETA_DATA_DESC_REFLECTION_ABI_VERSION) {
+        const cmeta_data_reflection_shape *reflection =
+            (const cmeta_data_reflection_shape *)desc->shape;
+        if (desc->kind != CMETA_DATA_STRUCT || reflection == NULL ||
+            reflection->struct_size < sizeof(*reflection) ||
+            reflection->structure.layout == NULL)
+            return fail(state, CMETA_INVALID_ARGUMENT);
+        const cmeta_data_struct_shape *shape = &reflection->structure;
+        const cmeta_struct_desc *layout = shape->layout;
+        if (!string(state, layout->name, false) ||
+            !budget_rows(state, shape->field_count, shape->fields,
+                         sizeof(*shape->fields)) ||
+            !budget_rows(state, layout->field_count, layout->fields,
+                         sizeof(*layout->fields)))
+            return false;
+        for (size_t i = 0u; i < shape->field_count &&
+             i < layout->field_count; ++i) {
+            const cmeta_data_field_desc *field = &shape->fields[i];
+            const cmeta_field_desc *layout_field = &layout->fields[i];
+            if (!string(state, field->stable_id, false) ||
+                !string(state, field->name, false) ||
+                !string(state, layout_field->name, false) ||
+                !budget_type(state, layout_field->type, depth + 1u))
+                return false;
+            if (field->value == NULL || field->value->struct_size < prefix ||
+                !budget_type(state, field->value->storage_type, depth + 1u))
+                return false;
+        }
+        return true;
+    }
+
+    if (desc->abi_version != CMETA_DATA_DESC_ABI_VERSION)
+        return fail(state, CMETA_INVALID_ARGUMENT);
+
+    if (desc->kind == CMETA_DATA_STRUCT && desc->shape != NULL) {
+        const cmeta_data_struct_shape *shape =
+            (const cmeta_data_struct_shape *)desc->shape;
+        if (shape->layout == NULL)
+            return fail(state, CMETA_INVALID_ARGUMENT);
+        if (!string(state, shape->layout->name, false) ||
+            !budget_rows(state, shape->field_count, shape->fields,
+                         sizeof(*shape->fields)) ||
+            !budget_rows(state, shape->layout->field_count,
+                         shape->layout->fields,
+                         sizeof(*shape->layout->fields)))
+            return false;
+        for (size_t i = 0u; i < shape->layout->field_count; ++i) {
+            if (shape->layout->fields[i].name != NULL &&
+                !string(state, shape->layout->fields[i].name, false))
+                return false;
+        }
+        for (size_t i = 0u; i < shape->field_count; ++i) {
+            if (!string(state, shape->fields[i].stable_id, false) ||
+                !string(state, shape->fields[i].name, false))
+                return false;
+        }
+    } else if (desc->kind == CMETA_DATA_ENUM) {
+        const size_t bits_size = offsetof(cmeta_data_desc, enum_bits_ops) +
+            sizeof(desc->enum_bits_ops);
+        if (desc->struct_size >= bits_size && desc->enum_bits_ops != NULL) {
+            const cmeta_data_enum_bits_ops *ops = desc->enum_bits_ops;
+            if (ops->struct_size <
+                    offsetof(cmeta_data_enum_bits_ops, restore_zero) +
+                        sizeof(ops->restore_zero) ||
+                ops->domain == NULL ||
+                ops->domain->struct_size < sizeof(*ops->domain))
+                return fail(state, CMETA_INVALID_ARGUMENT);
+            if (!budget_rows(state, ops->domain->count, ops->domain->items,
+                             sizeof(*ops->domain->items)))
+                return false;
+            for (size_t i = 0u; i < ops->domain->count; ++i) {
+                if (!string(state, ops->domain->items[i].symbol, false) ||
+                    !string(state, ops->domain->items[i].text, false))
+                    return false;
+            }
+        } else if (desc->shape != NULL) {
+            const cmeta_data_enum_shape *shape =
+                (const cmeta_data_enum_shape *)desc->shape;
+            if (shape->meta == NULL)
+                return fail(state, CMETA_INVALID_ARGUMENT);
+            if (!string(state, shape->meta->name, false) ||
+                !budget_rows(state, shape->meta->count, shape->meta->items,
+                             sizeof(*shape->meta->items)))
+                return false;
+        }
+    } else if (desc->kind == CMETA_DATA_VARIANT && desc->shape != NULL) {
+        const cmeta_data_variant_shape *shape =
+            (const cmeta_data_variant_shape *)desc->shape;
+        if (!budget_rows(state, shape->case_count, shape->cases,
+                         sizeof(*shape->cases)))
+            return false;
+        if (shape->tag == NULL || shape->tag->struct_size < prefix ||
+            !string(state, shape->tag->stable_id, false) ||
+            !string(state, shape->tag->display_name, false) ||
+            !budget_type(state, shape->tag->storage_type, depth + 1u))
+            return false;
+        if (shape->tag->kind == CMETA_DATA_ENUM && shape->tag->shape != NULL) {
+            const cmeta_data_enum_shape *tag_enum =
+                (const cmeta_data_enum_shape *)shape->tag->shape;
+            if (tag_enum->meta == NULL ||
+                !string(state, tag_enum->meta->name, false) ||
+                !budget_rows(state, tag_enum->meta->count,
+                             tag_enum->meta->items,
+                             sizeof(*tag_enum->meta->items)))
+                return false;
+        }
+        for (size_t i = 0u; i < shape->case_count; ++i) {
+            const cmeta_data_variant_case *item = &shape->cases[i];
+            if (!string(state, item->stable_id, false) ||
+                !string(state, item->name, false) ||
+                item->value == NULL || item->value->struct_size < prefix ||
+                !budget_type(state, item->value->storage_type, depth + 1u))
+                return false;
+        }
+    }
+    return true;
+}
+
 static bool data_contract_identity(fingerprint_state *state,
     const cmeta_data_desc *desc, size_t depth) {
-    if (desc == NULL || !cmeta_data_desc_valid(desc))
+    const size_t prefix =
+        offsetof(cmeta_data_desc, shape) + sizeof(desc->shape);
+
+    if (desc == NULL || desc->struct_size < prefix ||
+        !cmeta_data_kind_valid(desc->kind))
         return fail(state, CMETA_INVALID_ARGUMENT);
-    if (!node(state, depth) || !string(state, desc->stable_id, true))
+    if (!node(state, depth) || !string(state, desc->stable_id, true) ||
+        !string(state, desc->display_name, false))
         return false;
     number(state, (uint64_t)desc->kind);
     number(state, desc->storage_type != NULL);
     if (desc->storage_type != NULL &&
         !type(state, desc->storage_type, depth + 1u))
         return false;
-    return true;
+    if (!data_shape_budget(state, desc, depth + 1u))
+        return false;
+    return cmeta_data_desc_valid(desc) || fail(state, CMETA_INVALID_ARGUMENT);
 }
 
 static bool component_contract(fingerprint_state *state, const cmeta_component_desc *desc,

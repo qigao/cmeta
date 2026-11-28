@@ -193,6 +193,32 @@ endif()
 add_test(NAME cmeta_enum_tu_contract_test
   COMMAND cmeta_enum_tu_contract_test)
 
+add_executable(cmeta_safety_contract_test
+  cmeta_safety_contract_test.c)
+target_link_libraries(cmeta_safety_contract_test PRIVATE CMeta::CMeta)
+set_target_properties(cmeta_safety_contract_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+  FOLDER "cmeta/tests")
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_safety_contract_test PRIVATE
+    -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME cmeta_safety_contract_test
+  COMMAND cmeta_safety_contract_test)
+
+add_executable(cmeta_safety_contract_cpp_test
+  cmeta_safety_contract_cpp_test.cpp)
+target_link_libraries(cmeta_safety_contract_cpp_test PRIVATE CMeta::CMeta)
+set_target_properties(cmeta_safety_contract_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF
+  FOLDER "cmeta/tests")
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  target_compile_options(cmeta_safety_contract_cpp_test PRIVATE
+    -Wall -Wextra -Werror -pedantic -Werror=old-style-cast)
+endif()
+add_test(NAME cmeta_safety_contract_cpp_test
+  COMMAND cmeta_safety_contract_cpp_test)
+
 cmake_add_test(salts_native_cmeta_data_temp
   SOURCES cmeta_data_temp_test.c LIBS CMeta::CMeta Salts::CNet Salts::Core Salts::TinyTest
   FOLDER "cmeta/tests")

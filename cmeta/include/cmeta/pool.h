@@ -80,11 +80,18 @@ CMETA_INLINE cmeta_status cmeta_pool_acquire(
     }
 
     owner_status = object_pool_owner_begin(&pool->owner);
-    if (owner_status != SALTS_OK) return cmeta_pool_owner_status(owner_status);
+    if (owner_status != SALTS_OK) {
+        (void)object_pool_owner_release(&pool->owner, &lease->owner);
+        return cmeta_pool_owner_status(owner_status);
+    }
     status = pool->ops->init_zero(value);
     if (status != CMETA_OK) pool->ops->restore_zero(value);
     owner_status = object_pool_owner_end(&pool->owner);
-    if (owner_status != SALTS_OK) return cmeta_pool_owner_status(owner_status);
+    if (owner_status != SALTS_OK) {
+        if (status == CMETA_OK) pool->ops->restore_zero(value);
+        (void)object_pool_owner_release(&pool->owner, &lease->owner);
+        return cmeta_pool_owner_status(owner_status);
+    }
     if (status != CMETA_OK) {
         owner_status = object_pool_owner_release(&pool->owner, &lease->owner);
         if (owner_status != SALTS_OK) return cmeta_pool_owner_status(owner_status);
@@ -160,6 +167,12 @@ CMETA_INLINE cmeta_status cmeta_pool_destroy(cmeta_pool_state *pool) {
  * Explicit typed lifecycle adapter. This is intentionally not registered as a
  * cmeta_type(...) generic: pool runtime ownership belongs to Salts::Core.
  */
+#ifdef __cplusplus
+#define CMETA_POOL_CAST_(type_, value_) static_cast<type_ *>(value_)
+#else
+#define CMETA_POOL_CAST_(type_, value_) ((type_ *)(value_))
+#endif
+
 #define cmeta_pool_type(name_, type_) \
     typedef struct name_ { cmeta_pool_state state; } name_; \
     typedef struct name_##_lease { cmeta_pool_lease state; } name_##_lease; \
@@ -173,8 +186,8 @@ CMETA_INLINE cmeta_status cmeta_pool_destroy(cmeta_pool_state *pool) {
             p != NULL ? &p->state : NULL, l != NULL ? &l->state : NULL); \
     } \
     CMETA_INLINE type_ *name_##_get(name_ *p, name_##_lease *l) { \
-        return (type_ *)cmeta_pool_get( \
-            p != NULL ? &p->state : NULL, l != NULL ? &l->state : NULL); \
+        return CMETA_POOL_CAST_(type_, cmeta_pool_get( \
+            p != NULL ? &p->state : NULL, l != NULL ? &l->state : NULL)); \
     } \
     CMETA_INLINE cmeta_status name_##_release(name_ *p, name_##_lease *l) { \
         return cmeta_pool_release( \

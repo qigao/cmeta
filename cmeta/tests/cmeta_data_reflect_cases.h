@@ -1,7 +1,10 @@
 #include "cmeta_data_reflect_fixture.h"
+#include <cmeta/core_fixed_width.h>
+#include <cmeta/flags.h>
 #include <cmeta/object.h>
 #include <cmeta/fingerprint.h>
 #include <cmeta/lifecycle.h>
+#include <cmeta/variant.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,6 +33,16 @@ static const cmeta_data_desc reflect_nonmovable_data = {
 typedef struct ReflectNonmovableRecord { int value; } ReflectNonmovableRecord;
 cmeta_reflect_value(ReflectNonmovableRecord, "test.reflect.NonmovableRecord",
     cmeta_data_field(int, value, &reflect_nonmovable_data)
+);
+
+cmeta_flags(ReflectModeFlags, "test.reflect.ModeFlags",
+    cmeta_flag(Read, 1u, "read")
+    cmeta_flag(Write, 2u, "write")
+);
+
+cmeta_variant(ReflectChoice, "test.reflect.Choice",
+    cmeta_case(Count, 1, int, &cmeta_data_int)
+    cmeta_case(Flags, 2, ReflectModeFlags, &ReflectModeFlags__data)
 );
 
 suite("CMeta bounded reflection admission and lifecycle") {
@@ -144,6 +157,62 @@ suite("CMeta bounded reflection admission and lifecycle") {
         check_equal(cmeta_data_value_restore_zero(record_data, &record), CMETA_OK);
         check_equal(reflect_nonmovable_inits, 4u);
         check_equal(reflect_nonmovable_restores, 4u);
+    }
+
+    it("enforces fixed_ops, flags, and variant lifecycle and null-pointer contracts") {
+        uint8_t bool_src = 1u, bool_dst = 0u, bool_bad = 2u;
+        ReflectModeFlags flags_src = ReflectModeFlags_Read, flags_dst = {0u};
+        uint64_t raw_bits = 0u;
+        int64_t raw_tag = 0;
+        ReflectChoice choice_src, choice_dst, choice_empty;
+        cmeta_lifecycle_binding choice_binding = CMETA_LIFECYCLE_BINDING_INIT;
+
+        check_true(cmeta_data_value_move_supported(&cmeta_bool8_cmeta_data));
+        check_equal(cmeta_data_value_move(&cmeta_bool8_cmeta_data, &bool_dst, &bool_src), CMETA_OK);
+        check_equal(bool_dst, (uint8_t)1u);
+        check_equal(bool_src, (uint8_t)0u);
+        bool_src = 1u;
+        check_equal(cmeta_data_value_move(&cmeta_bool8_cmeta_data, &bool_dst, &bool_src),
+                    CMETA_INVALID_ARGUMENT);
+        check_equal(bool_dst, (uint8_t)1u);
+        check_equal(bool_src, (uint8_t)1u);
+        bool_dst = 0u;
+        check_equal(cmeta_data_value_move(&cmeta_bool8_cmeta_data, &bool_dst, &bool_bad),
+                    CMETA_INVALID_ARGUMENT);
+        check_equal(bool_dst, (uint8_t)0u);
+
+        check_false(ReflectModeFlags__is_zero(NULL));
+        check_equal(ReflectModeFlags__read(NULL, &raw_bits), CMETA_INVALID_ARGUMENT);
+        ReflectModeFlags__restore(NULL);
+        check_true(cmeta_data_value_move_supported(ReflectModeFlags_cmeta_data()));
+        check_equal(cmeta_data_value_move(ReflectModeFlags_cmeta_data(), &flags_dst, &flags_src),
+                    CMETA_OK);
+        check_equal(flags_dst.bits, ReflectModeFlags_Read.bits);
+        check_equal(flags_src.bits, UINT64_C(0));
+
+        check_false(ReflectChoice__is_zero(NULL));
+        check_equal(ReflectChoice__active_tag(NULL, &raw_tag), CMETA_INVALID_ARGUMENT);
+        check_equal(ReflectChoice__select(NULL, 1), CMETA_INVALID_ARGUMENT);
+        ReflectChoice__restore(NULL);
+
+        check_true(cmeta_data_value_move_supported(ReflectChoice_cmeta_data()));
+        check_equal(cmeta_lifecycle_admit(ReflectChoice_cmeta_data(), sizeof(ReflectChoice),
+                                          CMETA_ALIGNOF(ReflectChoice), &choice_binding),
+                    CMETA_OK);
+        check_equal(cmeta_lifecycle_init(&choice_binding, &choice_src), CMETA_OK);
+        check_equal(cmeta_lifecycle_init(&choice_binding, &choice_dst), CMETA_OK);
+        check_equal(ReflectChoice_init(&choice_empty), CMETA_OK);
+        check_equal(ReflectChoice_copy_Flags(&choice_src, &flags_dst), CMETA_OK);
+        check_equal(cmeta_lifecycle_move(&choice_binding, &choice_dst, &choice_src), CMETA_OK);
+        check_equal(choice_src.tag, INT64_C(0));
+        check_not_null(ReflectChoice_get_Flags(&choice_dst));
+        check_equal(ReflectChoice_get_Flags(&choice_dst)->bits, ReflectModeFlags_Read.bits);
+        check_equal(cmeta_data_value_copy(ReflectChoice_cmeta_data(), &choice_dst, &choice_empty),
+                    CMETA_INVALID_ARGUMENT);
+        check_equal(choice_dst.tag, (int64_t)ReflectChoice_Flags);
+        check_equal(cmeta_lifecycle_restore(&choice_binding, &choice_dst), CMETA_OK);
+        check_equal(cmeta_lifecycle_restore(&choice_binding, &choice_src), CMETA_OK);
+        ReflectChoice_destroy(&choice_empty);
     }
 }
 
@@ -309,6 +378,18 @@ suite("CMeta data reflection of existing native records") {
         check_equal(*(const int *)value, record.renamed);
         check_equal(cmeta_object_field_assign(&object, "renamed", &cmeta_data_int,
             &record.leaf.count), CMETA_TRAIT_MISSING);
+        {
+            cmeta_object_field_binding field_binding = CMETA_OBJECT_FIELD_BINDING_INIT;
+            const void *admitted_value = NULL;
+            check_equal(cmeta_object_field_bind(&object, "renamed", &field_binding), CMETA_OK);
+            check_equal(cmeta_object_field_read_admitted(
+                &field_binding, &admitted_value), CMETA_OK);
+            check_equal(*(const int *)admitted_value, record.renamed);
+            field_binding.fixed_value = NULL;
+            field_binding.provider = NULL;
+            check_equal(cmeta_object_field_read_admitted(
+                &field_binding, &admitted_value), CMETA_TRAIT_MISSING);
+        }
         check_equal(record.renamed, 9);
         cmeta_object_release(&object);
         check_equal(record.leaf.count, 3);

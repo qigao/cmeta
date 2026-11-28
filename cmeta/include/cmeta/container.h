@@ -18,6 +18,16 @@
 #define CMETA_CONTAINER_API_I(prefix, suffix) prefix##_##suffix
 #define CMETA_CONTAINER_API(prefix, suffix) CMETA_CONTAINER_API_I(prefix, suffix)
 
+#ifdef __cplusplus
+#define CMETA_CONTAINER_CAST_(type_, value_) static_cast<type_ *>(value_)
+#define CMETA_CONTAINER_CONST_CAST_(type_, value_) static_cast<const type_ *>(value_)
+#define CMETA_CONTAINER_ZERO_INIT_ {}
+#else
+#define CMETA_CONTAINER_CAST_(type_, value_) ((type_ *)(value_))
+#define CMETA_CONTAINER_CONST_CAST_(type_, value_) ((const type_ *)(value_))
+#define CMETA_CONTAINER_ZERO_INIT_ {0}
+#endif
+
 CMETA_INLINE bool cmeta_container_range_constructs_values(
     const cmeta_type_desc *type) {
     return type != NULL && type->traits != NULL &&
@@ -57,23 +67,23 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
     CMETA_CONTAINER1_INDEX_RANGE_DEFINE_WITH_TYPE_EXT_VALUE(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr, NULL, NULL)
 #define CMETA_CONTAINER1_INDEX_RANGE_DEFINE_WITH_TYPE_EXT_VALUE(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr, value_traits, value_identity) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
-        CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL, NULL, NULL \
+        CMETA_CONTAINER_STR(type), sizeof(type), CMETA_ALIGNOF(type), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
+        CMETA_CONTAINER_STR(name), sizeof(name), CMETA_ALIGNOF(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
     }; \
     CMETA_INLINE size_t name##_cmeta_range_size(const void *object) { \
-        const name *self = (const name *)object; \
+        const name *self = CMETA_CONTAINER_CONST_CAST_(name, object); \
         return self ? CMETA_CONTAINER_API(prefix, size)(&self->raw) : 0U; \
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_range_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
-        const name *self = (const name *)object; \
+        const name *self = CMETA_CONTAINER_CONST_CAST_(name, object); \
         const type *value; \
         size_t count; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
         count = CMETA_CONTAINER_API(prefix, size)(&self->raw); \
         if (cursor->index >= count) return CMETA_GEN_DONE; \
-        value = (const type *)CMETA_CONTAINER_API(prefix, at_const)(&self->raw, cursor->index); \
+        value = CMETA_CONTAINER_CONST_CAST_(type, CMETA_CONTAINER_API(prefix, at_const)(&self->raw, cursor->index)); \
         if (!value) return CMETA_GEN_ERROR; \
         if (!cmeta_container_range_construct( \
                 (type_desc), \
@@ -92,7 +102,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         return range; \
     } \
     CMETA_INLINE cmeta_range name##_cmeta_erased_range(const void *object) { \
-        return name##_range((const name *)object); \
+        return name##_range(CMETA_CONTAINER_CONST_CAST_(name, object)); \
     } \
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, \
@@ -109,17 +119,17 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
     CMETA_CONTAINER1_LINK_RANGE_DEFINE_WITH_TYPE_EXT_VALUE(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr, NULL, NULL)
 #define CMETA_CONTAINER1_LINK_RANGE_DEFINE_WITH_TYPE_EXT_VALUE(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr, value_traits, value_identity) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
-        CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL, NULL, NULL \
+        CMETA_CONTAINER_STR(type), sizeof(type), CMETA_ALIGNOF(type), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
+        CMETA_CONTAINER_STR(name), sizeof(name), CMETA_ALIGNOF(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
     }; \
     CMETA_INLINE size_t name##_cmeta_range_size(const void *object) { \
-        const name *self = (const name *)object; \
+        const name *self = CMETA_CONTAINER_CONST_CAST_(name, object); \
         return self ? CMETA_CONTAINER_API(prefix, size)(&self->raw) : 0U; \
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_range_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
-        const name *self = (const name *)object; const void *value = NULL; \
+        const name *self = CMETA_CONTAINER_CONST_CAST_(name, object); const void *value = NULL; \
         cmeta_range_cursor next_cursor; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
         next_cursor = *cursor; \
@@ -139,7 +149,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         return range; \
     } \
     CMETA_INLINE cmeta_range name##_cmeta_erased_range(const void *object) { \
-        return name##_range((const name *)object); \
+        return name##_range(CMETA_CONTAINER_CONST_CAST_(name, object)); \
     } \
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, \
@@ -250,39 +260,39 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
 #define CMETA_C1_INLINE_DESTROY(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
     CMETA_INLINE void name##_##pub(name *self) { if (self) { CMETA_CONTAINER_API(prefix, op)(&self->raw); self->cmeta.descriptor = NULL; } }
 #define CMETA_C1_INLINE_CLEAR(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
-    CMETA_INLINE void name##_##pub(name *self) { CMETA_CONTAINER_API(prefix, op)(&self->raw); }
+    CMETA_INLINE void name##_##pub(name *self) { if (self) CMETA_CONTAINER_API(prefix, op)(&self->raw); }
 
 #define CMETA_C1_INLINE_RESERVE(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
-    CMETA_INLINE int name##_##pub(name *self, size_t capacity) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, capacity); }
+    CMETA_INLINE int name##_##pub(name *self, size_t capacity) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw, capacity) : CMETA_INVALID_ARGUMENT; }
 
 #define CMETA_C1_INLINE_PUSH_VALUE(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
-    CMETA_INLINE int name##_##pub(name *self, type value) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, &value); }
+    CMETA_INLINE int name##_##pub(name *self, type value) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw, &value) : CMETA_INVALID_ARGUMENT; }
 
 #define CMETA_C1_INLINE_PUSH_VALUE_ITER(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
-    CMETA_INLINE int name##_##pub(name *self, type value) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, &value, NULL); }
+    CMETA_INLINE int name##_##pub(name *self, type value) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw, &value, NULL) : CMETA_INVALID_ARGUMENT; }
 
 #define CMETA_C1_INLINE_POP_BOOL(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
     CMETA_INLINE int name##_##pub(name *self, type *out_value) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw, out_value) : CMETA_INVALID_ARGUMENT; }
 
 #define CMETA_C1_INLINE_PTR_INDEX(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
-    CMETA_INLINE type *name##_##pub(name *self, size_t index) { return (type *)CMETA_CONTAINER_API(prefix, op)(&self->raw, index); }
+    CMETA_INLINE type *name##_##pub(name *self, size_t index) { return self ? CMETA_CONTAINER_CAST_(type, CMETA_CONTAINER_API(prefix, op)(&self->raw, index)) : NULL; }
 #define CMETA_C1_INLINE_CONST_PTR_INDEX(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
-    CMETA_INLINE const type *name##_##pub(const name *self, size_t index) { return (const type *)CMETA_CONTAINER_API(prefix, op)(&self->raw, index); }
+    CMETA_INLINE const type *name##_##pub(const name *self, size_t index) { return self ? CMETA_CONTAINER_CONST_CAST_(type, CMETA_CONTAINER_API(prefix, op)(&self->raw, index)) : NULL; }
 
 #define CMETA_C1_INLINE_PTR(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
-    CMETA_INLINE type *name##_##pub(name *self) { return (type *)CMETA_CONTAINER_API(prefix, op)(&self->raw); }
+    CMETA_INLINE type *name##_##pub(name *self) { return self ? CMETA_CONTAINER_CAST_(type, CMETA_CONTAINER_API(prefix, op)(&self->raw)) : NULL; }
 #define CMETA_C1_INLINE_CONST_PTR(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
-    CMETA_INLINE const type *name##_##pub(const name *self) { return (const type *)CMETA_CONTAINER_API(prefix, op)(&self->raw); }
+    CMETA_INLINE const type *name##_##pub(const name *self) { return self ? CMETA_CONTAINER_CONST_CAST_(type, CMETA_CONTAINER_API(prefix, op)(&self->raw)) : NULL; }
 
 #define CMETA_C1_INLINE_SIZE(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
-    CMETA_INLINE size_t name##_##pub(const name *self) { return CMETA_CONTAINER_API(prefix, op)(&self->raw); }
+    CMETA_INLINE size_t name##_##pub(const name *self) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw) : 0U; }
 #define CMETA_C1_INLINE_BOOL(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
-    CMETA_INLINE bool name##_##pub(const name *self) { return CMETA_CONTAINER_API(prefix, op)(&self->raw); }
+    CMETA_INLINE bool name##_##pub(const name *self) { return !self || CMETA_CONTAINER_API(prefix, op)(&self->raw); }
 
 #define CMETA_C1_INLINE_KEY_VALUE(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
-    CMETA_INLINE int name##_##pub(name *self, type value) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, &value); }
+    CMETA_INLINE int name##_##pub(name *self, type value) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw, &value) : CMETA_INVALID_ARGUMENT; }
 #define CMETA_C1_INLINE_KEY_CONTAINS(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
-    CMETA_INLINE bool name##_##pub(const name *self, type value) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, &value); }
+    CMETA_INLINE bool name##_##pub(const name *self, type value) { return self != NULL && CMETA_CONTAINER_API(prefix, op)(&self->raw, &value); }
 #define CMETA_C1_INLINE_KEY_REMOVE_BOOL(pub, op, extra, name, type, type_desc, raw_type, prefix, ok, aux) \
     CMETA_INLINE int name##_##pub(name *self, type value) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw, &value) : CMETA_INVALID_ARGUMENT; }
 
@@ -348,7 +358,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
 
 #define CMETA_C2_INLINE_FROM_ENTRIES(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) \
     CMETA_INLINE int name##_##pub(name *self, const name##_entry *entries, size_t count, size_t limit) { \
-        name temporary = {0}; size_t i; int rc; uint64_t generation; \
+        name temporary = CMETA_CONTAINER_ZERO_INIT_; size_t i; int rc; uint64_t generation; \
         if (!self || (count > 0U && !entries)) return extra; \
         generation = CMETA_CONTAINER_API(prefix, generation)(&self->raw) + UINT64_C(1); \
         rc = name##_init(&temporary, limit); \
@@ -367,7 +377,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
 
 #define CMETA_C2_INLINE_FROM_ENTRIES_LINK(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) \
     CMETA_INLINE int name##_##pub(name *self, const name##_entry *entries, size_t count, size_t limit) { \
-        name temporary = {0}; size_t i; int rc; uint64_t generation; \
+        name temporary = CMETA_CONTAINER_ZERO_INIT_; size_t i; int rc; uint64_t generation; \
         if (!self || (count > 0U && !entries)) return extra; \
         generation = CMETA_CONTAINER_API(prefix, generation)(&self->raw) + UINT64_C(1); \
         rc = name##_init(&temporary, limit); \
@@ -384,7 +394,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
 
 #define CMETA_C2_INLINE_FROM_ENTRIES_MULTIMAP(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) \
     CMETA_INLINE int name##_##pub(name *self, const name##_entry *entries, size_t count, size_t key_limit, size_t value_limit) { \
-        name temporary = {0}; size_t i; int rc; uint64_t generation; \
+        name temporary = CMETA_CONTAINER_ZERO_INIT_; size_t i; int rc; uint64_t generation; \
         if (!self || (count > 0U && !entries)) return extra; \
         generation = CMETA_CONTAINER_API(prefix, generation)(&self->raw) + UINT64_C(1); \
         rc = name##_init(&temporary, key_limit, value_limit); \
@@ -400,26 +410,26 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
     }
 
 #define CMETA_C2_INLINE_DESTROY(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE void name##_##pub(name *self) { if (self) { CMETA_CONTAINER_API(prefix, op)(&self->raw); self->cmeta.descriptor = NULL; } }
-#define CMETA_C2_INLINE_CLEAR(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE void name##_##pub(name *self) { CMETA_CONTAINER_API(prefix, op)(&self->raw); }
-#define CMETA_C2_INLINE_RESERVE(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE int name##_##pub(name *self, size_t capacity) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, capacity); }
-#define CMETA_C2_INLINE_PUT(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE int name##_##pub(name *self, kt key, vt value) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, &key, &value); }
-#define CMETA_C2_INLINE_GET(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE vt *name##_##pub(name *self, kt key) { return (vt *)CMETA_CONTAINER_API(prefix, op)(&self->raw, &key); }
-#define CMETA_C2_INLINE_GET_CONST(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE const vt *name##_##pub(const name *self, kt key) { return (const vt *)CMETA_CONTAINER_API(prefix, op)(&self->raw, &key); }
-#define CMETA_C2_INLINE_CONTAINS(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE bool name##_##pub(const name *self, kt key) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, &key); }
+#define CMETA_C2_INLINE_CLEAR(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE void name##_##pub(name *self) { if (self) CMETA_CONTAINER_API(prefix, op)(&self->raw); }
+#define CMETA_C2_INLINE_RESERVE(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE int name##_##pub(name *self, size_t capacity) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw, capacity) : CMETA_INVALID_ARGUMENT; }
+#define CMETA_C2_INLINE_PUT(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE int name##_##pub(name *self, kt key, vt value) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw, &key, &value) : CMETA_INVALID_ARGUMENT; }
+#define CMETA_C2_INLINE_GET(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE vt *name##_##pub(name *self, kt key) { return self ? CMETA_CONTAINER_CAST_(vt, CMETA_CONTAINER_API(prefix, op)(&self->raw, &key)) : NULL; }
+#define CMETA_C2_INLINE_GET_CONST(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE const vt *name##_##pub(const name *self, kt key) { return self ? CMETA_CONTAINER_CONST_CAST_(vt, CMETA_CONTAINER_API(prefix, op)(&self->raw, &key)) : NULL; }
+#define CMETA_C2_INLINE_CONTAINS(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE bool name##_##pub(const name *self, kt key) { return self != NULL && CMETA_CONTAINER_API(prefix, op)(&self->raw, &key); }
 #define CMETA_C2_INLINE_REMOVE_STATUS_BOOL(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE int name##_##pub(name *self, kt key, vt *out_value) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw, &key, out_value) : CMETA_INVALID_ARGUMENT; }
-#define CMETA_C2_INLINE_REMOVE_BOOL(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE bool name##_##pub(name *self, kt key, vt *out_value) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, &key, out_value); }
-#define CMETA_C2_INLINE_SIZE(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE size_t name##_##pub(const name *self) { return CMETA_CONTAINER_API(prefix, op)(&self->raw); }
-#define CMETA_C2_INLINE_CAPACITY(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE size_t name##_##pub(const name *self) { return CMETA_CONTAINER_API(prefix, op)(&self->raw); }
-#define CMETA_C2_INLINE_EMPTY(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE bool name##_##pub(const name *self) { return CMETA_CONTAINER_API(prefix, op)(&self->raw); }
-#define CMETA_C2_INLINE_KEY_AT(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE kt *name##_##pub(name *self, size_t index) { return (kt *)CMETA_CONTAINER_API(prefix, op)(&self->raw, index); }
-#define CMETA_C2_INLINE_KEY_AT_CONST(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE const kt *name##_##pub(const name *self, size_t index) { return (const kt *)CMETA_CONTAINER_API(prefix, op)(&self->raw, index); }
-#define CMETA_C2_INLINE_VALUE_AT(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE vt *name##_##pub(name *self, size_t index) { return (vt *)CMETA_CONTAINER_API(prefix, op)(&self->raw, index); }
-#define CMETA_C2_INLINE_VALUE_AT_CONST(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE const vt *name##_##pub(const name *self, size_t index) { return (const vt *)CMETA_CONTAINER_API(prefix, op)(&self->raw, index); }
-#define CMETA_C2_INLINE_FIND_SLOT(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE size_t name##_##pub(name *self, kt key, bool *found) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, &key, found); }
-#define CMETA_C2_INLINE_RAW_PTR_KEY(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE extra *name##_##pub(name *self, kt key) { return (extra *)CMETA_CONTAINER_API(prefix, op)(&self->raw, &key); }
-#define CMETA_C2_INLINE_RAW_CONST_PTR_KEY(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE const extra *name##_##pub(const name *self, kt key) { return (const extra *)CMETA_CONTAINER_API(prefix, op)(&self->raw, &key); }
-#define CMETA_C2_INLINE_COUNT_KEY(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE size_t name##_##pub(const name *self, kt key) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, &key); }
-#define CMETA_C2_INLINE_ERASE_KEY(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE size_t name##_##pub(name *self, kt key) { return CMETA_CONTAINER_API(prefix, op)(&self->raw, &key); }
+#define CMETA_C2_INLINE_REMOVE_BOOL(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE bool name##_##pub(name *self, kt key, vt *out_value) { return self != NULL && CMETA_CONTAINER_API(prefix, op)(&self->raw, &key, out_value); }
+#define CMETA_C2_INLINE_SIZE(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE size_t name##_##pub(const name *self) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw) : 0U; }
+#define CMETA_C2_INLINE_CAPACITY(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE size_t name##_##pub(const name *self) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw) : 0U; }
+#define CMETA_C2_INLINE_EMPTY(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE bool name##_##pub(const name *self) { return !self || CMETA_CONTAINER_API(prefix, op)(&self->raw); }
+#define CMETA_C2_INLINE_KEY_AT(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE kt *name##_##pub(name *self, size_t index) { return self ? CMETA_CONTAINER_CAST_(kt, CMETA_CONTAINER_API(prefix, op)(&self->raw, index)) : NULL; }
+#define CMETA_C2_INLINE_KEY_AT_CONST(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE const kt *name##_##pub(const name *self, size_t index) { return self ? CMETA_CONTAINER_CONST_CAST_(kt, CMETA_CONTAINER_API(prefix, op)(&self->raw, index)) : NULL; }
+#define CMETA_C2_INLINE_VALUE_AT(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE vt *name##_##pub(name *self, size_t index) { return self ? CMETA_CONTAINER_CAST_(vt, CMETA_CONTAINER_API(prefix, op)(&self->raw, index)) : NULL; }
+#define CMETA_C2_INLINE_VALUE_AT_CONST(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE const vt *name##_##pub(const name *self, size_t index) { return self ? CMETA_CONTAINER_CONST_CAST_(vt, CMETA_CONTAINER_API(prefix, op)(&self->raw, index)) : NULL; }
+#define CMETA_C2_INLINE_FIND_SLOT(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE size_t name##_##pub(name *self, kt key, bool *found) { if (!self) { if (found) *found = false; return 0U; } return CMETA_CONTAINER_API(prefix, op)(&self->raw, &key, found); }
+#define CMETA_C2_INLINE_RAW_PTR_KEY(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE extra *name##_##pub(name *self, kt key) { return self ? CMETA_CONTAINER_CAST_(extra, CMETA_CONTAINER_API(prefix, op)(&self->raw, &key)) : NULL; }
+#define CMETA_C2_INLINE_RAW_CONST_PTR_KEY(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE const extra *name##_##pub(const name *self, kt key) { return self ? CMETA_CONTAINER_CONST_CAST_(extra, CMETA_CONTAINER_API(prefix, op)(&self->raw, &key)) : NULL; }
+#define CMETA_C2_INLINE_COUNT_KEY(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE size_t name##_##pub(const name *self, kt key) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw, &key) : 0U; }
+#define CMETA_C2_INLINE_ERASE_KEY(pub, op, extra, name, kt, vt, key_desc, value_desc, raw_type, prefix, ok, aux) CMETA_INLINE size_t name##_##pub(name *self, kt key) { return self ? CMETA_CONTAINER_API(prefix, op)(&self->raw, &key) : 0U; }
 
 
 /* -------------------------------------------------------------------------
@@ -430,24 +440,24 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
     CMETA_CONTAINER1_SLOT_RANGE_DEFINE_WITH_TYPE_EXT_VALUE(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr, NULL, NULL)
 #define CMETA_CONTAINER1_SLOT_RANGE_DEFINE_WITH_TYPE_EXT_VALUE(name, type, type_desc, prefix, flags, version_accessor, collector_factory, ext_expr, value_traits, value_identity) \
     CMETA_LOCAL const cmeta_type_desc name##_element_cmeta_type = { \
-        CMETA_CONTAINER_STR(type), sizeof(type), _Alignof(type), CMETA_T_OBJECT, NULL, NULL, NULL \
+        CMETA_CONTAINER_STR(type), sizeof(type), CMETA_ALIGNOF(type), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
+        CMETA_CONTAINER_STR(name), sizeof(name), CMETA_ALIGNOF(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
     }; \
     CMETA_INLINE size_t name##_cmeta_range_size(const void *object) { \
-        const name *self = (const name *)object; \
+        const name *self = CMETA_CONTAINER_CONST_CAST_(name, object); \
         return self ? CMETA_CONTAINER_API(prefix, size)(&self->raw) : 0U; \
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_range_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
-        const name *self = (const name *)object; \
+        const name *self = CMETA_CONTAINER_CONST_CAST_(name, object); \
         cmeta_range_cursor start_cursor; \
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
         start_cursor = *cursor; \
         limit = CMETA_CONTAINER_API(prefix, capacity)(&self->raw); \
         while (cursor->index < limit) { \
-            const type *value = (const type *)CMETA_CONTAINER_API(prefix, key_at)(&self->raw, cursor->index); \
+            const type *value = CMETA_CONTAINER_CONST_CAST_(type, CMETA_CONTAINER_API(prefix, key_at)(&self->raw, cursor->index)); \
             ++cursor->index; \
             if (value) { \
                 if (!cmeta_container_range_construct( \
@@ -469,7 +479,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         return range; \
     } \
     CMETA_INLINE cmeta_range name##_cmeta_erased_range(const void *object) { \
-        return name##_range((const name *)object); \
+        return name##_range(CMETA_CONTAINER_CONST_CAST_(name, object)); \
     } \
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, \
@@ -496,7 +506,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
  * semantic lifetime traits. */
 #define CMETA_CONTAINER2_ENTRY_TRAITS_DEFINE_WITH_TYPES(name, key_type, value_type, key_desc_expr, value_desc_expr, semantic_flags, equal_member, hash_member, compare_member) \
     CMETA_INLINE bool name##_entry_cmeta_copy(void *destination_, const void *source_) { \
-        name##_entry *destination = (name##_entry *)destination_; const name##_entry *source = (const name##_entry *)source_; \
+        name##_entry *destination = CMETA_CONTAINER_CAST_(name##_entry, destination_); const name##_entry *source = CMETA_CONTAINER_CONST_CAST_(name##_entry, source_); \
         const cmeta_type_desc *key_desc = (key_desc_expr); const cmeta_type_desc *value_desc = (value_desc_expr); \
         if (destination == NULL || source == NULL || cmeta_type_require_traits(key_desc, CMETA_TRAIT_COPY | CMETA_TRAIT_DESTROY) != CMETA_OK || cmeta_type_require_traits(value_desc, CMETA_TRAIT_COPY | CMETA_TRAIT_DESTROY) != CMETA_OK) return false; \
         if (!key_desc->traits->copy_construct(&destination->key, &source->key)) return false; \
@@ -504,27 +514,27 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         return true; \
     } \
     CMETA_INLINE void name##_entry_cmeta_move(void *destination_, void *source_) { \
-        name##_entry *destination = (name##_entry *)destination_; name##_entry *source = (name##_entry *)source_; \
+        name##_entry *destination = CMETA_CONTAINER_CAST_(name##_entry, destination_); name##_entry *source = CMETA_CONTAINER_CAST_(name##_entry, source_); \
         const cmeta_type_desc *key_desc = (key_desc_expr); const cmeta_type_desc *value_desc = (value_desc_expr); \
         if (destination == NULL || source == NULL || cmeta_type_require_traits(key_desc, CMETA_TRAIT_MOVE) != CMETA_OK || cmeta_type_require_traits(value_desc, CMETA_TRAIT_MOVE) != CMETA_OK) return; \
         key_desc->traits->move_construct(&destination->key, &source->key); value_desc->traits->move_construct(&destination->value, &source->value); \
     } \
     CMETA_INLINE void name##_entry_cmeta_destroy(void *value_) { \
-        name##_entry *value = (name##_entry *)value_; const cmeta_type_desc *key_desc = (key_desc_expr); const cmeta_type_desc *value_desc = (value_desc_expr); \
+        name##_entry *value = CMETA_CONTAINER_CAST_(name##_entry, value_); const cmeta_type_desc *key_desc = (key_desc_expr); const cmeta_type_desc *value_desc = (value_desc_expr); \
         if (value == NULL) return; \
         if (cmeta_type_require_traits(value_desc, CMETA_TRAIT_DESTROY) == CMETA_OK) value_desc->traits->destroy(&value->value); \
         if (cmeta_type_require_traits(key_desc, CMETA_TRAIT_DESTROY) == CMETA_OK) key_desc->traits->destroy(&value->key); \
     } \
     CMETA_INLINE bool name##_entry_cmeta_equal(const void *left_, const void *right_) { \
-        const name##_entry *left = (const name##_entry *)left_; const name##_entry *right = (const name##_entry *)right_; const cmeta_type_desc *key_desc = (key_desc_expr); \
+        const name##_entry *left = CMETA_CONTAINER_CONST_CAST_(name##_entry, left_); const name##_entry *right = CMETA_CONTAINER_CONST_CAST_(name##_entry, right_); const cmeta_type_desc *key_desc = (key_desc_expr); \
         return left != NULL && right != NULL && cmeta_type_require_traits(key_desc, CMETA_TRAIT_EQUAL) == CMETA_OK && key_desc->traits->equal(&left->key, &right->key); \
     } \
     CMETA_INLINE uint64_t name##_entry_cmeta_hash(const void *value_) { \
-        const name##_entry *value = (const name##_entry *)value_; const cmeta_type_desc *key_desc = (key_desc_expr); \
+        const name##_entry *value = CMETA_CONTAINER_CONST_CAST_(name##_entry, value_); const cmeta_type_desc *key_desc = (key_desc_expr); \
         return value != NULL && cmeta_type_require_traits(key_desc, CMETA_TRAIT_HASH) == CMETA_OK ? key_desc->traits->hash(&value->key) : UINT64_C(0); \
     } \
     CMETA_INLINE int name##_entry_cmeta_compare(const void *left_, const void *right_) { \
-        const name##_entry *left = (const name##_entry *)left_; const name##_entry *right = (const name##_entry *)right_; const cmeta_type_desc *key_desc = (key_desc_expr); \
+        const name##_entry *left = CMETA_CONTAINER_CONST_CAST_(name##_entry, left_); const name##_entry *right = CMETA_CONTAINER_CONST_CAST_(name##_entry, right_); const cmeta_type_desc *key_desc = (key_desc_expr); \
         return left != NULL && right != NULL && cmeta_type_require_traits(key_desc, CMETA_TRAIT_COMPARE) == CMETA_OK ? key_desc->traits->compare(&left->key, &right->key) : 0; \
     } \
     CMETA_LOCAL const cmeta_type_traits name##_entry_cmeta_traits = { \
@@ -541,31 +551,31 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
     CMETA_CONTAINER2_RANGES_DEFINE_WITH_TYPES_EXT_VALUE(name, key_type, value_type, key_desc, value_desc, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor, collector_factory, ext_expr, NULL, NULL)
 #define CMETA_CONTAINER2_RANGES_DEFINE_WITH_TYPES_EXT_VALUE(name, key_type, value_type, key_desc, value_desc, prefix, key_at_op, value_at_op, key_flags, value_flags, entry_flags, version_accessor, collector_factory, ext_expr, value_traits, value_identity) \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
+        CMETA_CONTAINER_STR(name), sizeof(name), CMETA_ALIGNOF(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_key_cmeta_type = { \
-        CMETA_CONTAINER_STR(key_type), sizeof(key_type), _Alignof(key_type), CMETA_T_OBJECT, NULL, NULL, NULL \
+        CMETA_CONTAINER_STR(key_type), sizeof(key_type), CMETA_ALIGNOF(key_type), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_value_cmeta_type = { \
-        CMETA_CONTAINER_STR(value_type), sizeof(value_type), _Alignof(value_type), CMETA_T_OBJECT, NULL, NULL, NULL \
+        CMETA_CONTAINER_STR(value_type), sizeof(value_type), CMETA_ALIGNOF(value_type), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
     CMETA_CONTAINER2_ENTRY_TRAITS_DEFINE_WITH_TYPES(name, key_type, value_type, key_desc, value_desc, CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH, name##_entry_cmeta_equal, name##_entry_cmeta_hash, NULL) \
     CMETA_LOCAL cmeta_type_desc name##_entry_cmeta_type = { \
-        CMETA_CONTAINER_STR(name) "_entry", sizeof(name##_entry), _Alignof(name##_entry), CMETA_T_OBJECT, NULL, &name##_entry_cmeta_traits, NULL \
+        CMETA_CONTAINER_STR(name) "_entry", sizeof(name##_entry), CMETA_ALIGNOF(name##_entry), CMETA_T_OBJECT, NULL, &name##_entry_cmeta_traits, NULL \
     }; \
     CMETA_INLINE size_t name##_cmeta_assoc_range_size(const void *object) { \
-        const name *self = (const name *)object; \
+        const name *self = CMETA_CONTAINER_CONST_CAST_(name, object); \
         return self ? CMETA_CONTAINER_API(prefix, size)(&self->raw) : 0U; \
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_keys_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
-        const name *self = (const name *)object; \
+        const name *self = CMETA_CONTAINER_CONST_CAST_(name, object); \
         cmeta_range_cursor start_cursor; \
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
         start_cursor = *cursor; \
         limit = CMETA_CONTAINER_API(prefix, capacity)(&self->raw); \
         while (cursor->index < limit) { \
-            const key_type *key = (const key_type *)CMETA_CONTAINER_API(prefix, key_at_op)(&self->raw, cursor->index); \
+            const key_type *key = CMETA_CONTAINER_CONST_CAST_(key_type, CMETA_CONTAINER_API(prefix, key_at_op)(&self->raw, cursor->index)); \
             ++cursor->index; \
             if (key) { \
                 if (!cmeta_container_range_construct( \
@@ -577,14 +587,14 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         return CMETA_GEN_DONE; \
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_values_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
-        const name *self = (const name *)object; \
+        const name *self = CMETA_CONTAINER_CONST_CAST_(name, object); \
         cmeta_range_cursor start_cursor; \
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
         start_cursor = *cursor; \
         limit = CMETA_CONTAINER_API(prefix, capacity)(&self->raw); \
         while (cursor->index < limit) { \
-            const value_type *value = (const value_type *)CMETA_CONTAINER_API(prefix, value_at_op)(&self->raw, cursor->index); \
+            const value_type *value = CMETA_CONTAINER_CONST_CAST_(value_type, CMETA_CONTAINER_API(prefix, value_at_op)(&self->raw, cursor->index)); \
             ++cursor->index; \
             if (value) { \
                 if (!cmeta_container_range_construct( \
@@ -596,7 +606,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         return CMETA_GEN_DONE; \
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_entries_next(const void *object, cmeta_range_cursor *cursor, void *out_value) { \
-        const name *self = (const name *)object; \
+        const name *self = CMETA_CONTAINER_CONST_CAST_(name, object); \
         cmeta_range_cursor start_cursor; \
         size_t limit; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
@@ -604,8 +614,8 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         limit = CMETA_CONTAINER_API(prefix, capacity)(&self->raw); \
         while (cursor->index < limit) { \
             size_t slot = cursor->index; \
-            const key_type *key = (const key_type *)CMETA_CONTAINER_API(prefix, key_at_op)(&self->raw, slot); \
-            const value_type *value = (const value_type *)CMETA_CONTAINER_API(prefix, value_at_op)(&self->raw, slot); \
+            const key_type *key = CMETA_CONTAINER_CONST_CAST_(key_type, CMETA_CONTAINER_API(prefix, key_at_op)(&self->raw, slot)); \
+            const value_type *value = CMETA_CONTAINER_CONST_CAST_(value_type, CMETA_CONTAINER_API(prefix, value_at_op)(&self->raw, slot)); \
             ++cursor->index; \
             if (key && value) { \
                 name##_entry entry; \
@@ -644,13 +654,13 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
         return range; \
     } \
     CMETA_INLINE cmeta_range name##_cmeta_erased_keys_range(const void *object) { \
-        return name##_keys_range((const name *)object); \
+        return name##_keys_range(CMETA_CONTAINER_CONST_CAST_(name, object)); \
     } \
     CMETA_INLINE cmeta_range name##_cmeta_erased_values_range(const void *object) { \
-        return name##_values_range((const name *)object); \
+        return name##_values_range(CMETA_CONTAINER_CONST_CAST_(name, object)); \
     } \
     CMETA_INLINE cmeta_range name##_cmeta_erased_entries_range(const void *object) { \
-        return name##_entries_range((const name *)object); \
+        return name##_entries_range(CMETA_CONTAINER_CONST_CAST_(name, object)); \
     } \
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, NULL, \
@@ -676,24 +686,24 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
     CMETA_CONTAINER2_LINK_RANGES_DEFINE_WITH_TYPES_EXT_VALUE(name, key_type, value_type, key_desc, value_desc, prefix, key_flags, value_flags, entry_flags, version_accessor, collector_factory, ext_expr, NULL, NULL)
 #define CMETA_CONTAINER2_LINK_RANGES_DEFINE_WITH_TYPES_EXT_VALUE(name, key_type, value_type, key_desc, value_desc, prefix, key_flags, value_flags, entry_flags, version_accessor, collector_factory, ext_expr, value_traits, value_identity) \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
+        CMETA_CONTAINER_STR(name), sizeof(name), CMETA_ALIGNOF(name), CMETA_T_OBJECT, NULL, (value_traits), (value_identity) \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_key_cmeta_type = { \
-        CMETA_CONTAINER_STR(key_type), sizeof(key_type), _Alignof(key_type), CMETA_T_OBJECT, NULL, NULL, NULL \
+        CMETA_CONTAINER_STR(key_type), sizeof(key_type), CMETA_ALIGNOF(key_type), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
     CMETA_LOCAL const cmeta_type_desc name##_value_cmeta_type = { \
-        CMETA_CONTAINER_STR(value_type), sizeof(value_type), _Alignof(value_type), CMETA_T_OBJECT, NULL, NULL, NULL \
+        CMETA_CONTAINER_STR(value_type), sizeof(value_type), CMETA_ALIGNOF(value_type), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
     CMETA_CONTAINER2_ENTRY_TRAITS_DEFINE_WITH_TYPES(name, key_type, value_type, key_desc, value_desc, CMETA_TRAIT_COMPARE, NULL, NULL, name##_entry_cmeta_compare) \
     CMETA_LOCAL cmeta_type_desc name##_entry_cmeta_type = { \
-        CMETA_CONTAINER_STR(name) "_entry", sizeof(name##_entry), _Alignof(name##_entry), CMETA_T_OBJECT, NULL, &name##_entry_cmeta_traits, NULL \
+        CMETA_CONTAINER_STR(name) "_entry", sizeof(name##_entry), CMETA_ALIGNOF(name##_entry), CMETA_T_OBJECT, NULL, &name##_entry_cmeta_traits, NULL \
     }; \
     CMETA_INLINE size_t name##_cmeta_assoc_range_size(const void *object) { \
-        const name *self = (const name *)object; \
+        const name *self = CMETA_CONTAINER_CONST_CAST_(name, object); \
         return self ? CMETA_CONTAINER_API(prefix, size)(&self->raw) : 0U; \
     } \
     CMETA_INLINE cmeta_gen_status name##_cmeta_link_next(const void *object, cmeta_range_cursor *cursor, void *out_value, int view) { \
-        const name *self = (const name *)object; \
+        const name *self = CMETA_CONTAINER_CONST_CAST_(name, object); \
         const void *key = NULL; const void *value = NULL; \
         cmeta_range_cursor next_cursor; \
         if (!self || !cursor || !out_value) return CMETA_GEN_ERROR; \
@@ -730,9 +740,9 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
     CMETA_INLINE cmeta_range name##_entries_range(const name *self) { \
         cmeta_range range = { self, &name##_entry_cmeta_type, cmeta_container_range_flags_for(&name##_entry_cmeta_type, (entry_flags)), name##_cmeta_assoc_range_size, name##_cmeta_entries_next, cmeta_range_capture_version((version_accessor), self), (version_accessor) }; return range; \
     } \
-    CMETA_INLINE cmeta_range name##_cmeta_erased_keys_range(const void *object) { return name##_keys_range((const name *)object); } \
-    CMETA_INLINE cmeta_range name##_cmeta_erased_values_range(const void *object) { return name##_values_range((const name *)object); } \
-    CMETA_INLINE cmeta_range name##_cmeta_erased_entries_range(const void *object) { return name##_entries_range((const name *)object); } \
+    CMETA_INLINE cmeta_range name##_cmeta_erased_keys_range(const void *object) { return name##_keys_range(CMETA_CONTAINER_CONST_CAST_(name, object)); } \
+    CMETA_INLINE cmeta_range name##_cmeta_erased_values_range(const void *object) { return name##_values_range(CMETA_CONTAINER_CONST_CAST_(name, object)); } \
+    CMETA_INLINE cmeta_range name##_cmeta_erased_entries_range(const void *object) { return name##_entries_range(CMETA_CONTAINER_CONST_CAST_(name, object)); } \
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, NULL, (key_desc), (value_desc), name##_cmeta_erased_entries_range, name##_cmeta_erased_keys_range, name##_cmeta_erased_values_range, name##_cmeta_erased_entries_range, (collector_factory), (ext_expr) \
     };
@@ -750,7 +760,7 @@ CMETA_INLINE cmeta_range_flags cmeta_container_range_flags_for(
 /* Descriptor-only capability for typed containers that intentionally expose no Range view. */
 #define CMETA_CONTAINER2_OPAQUE_DESCRIPTOR_DEFINE(name, key_type, value_type) \
     CMETA_LOCAL const cmeta_type_desc name##_cmeta_type = { \
-        CMETA_CONTAINER_STR(name), sizeof(name), _Alignof(name), CMETA_T_OBJECT, NULL, NULL, NULL \
+        CMETA_CONTAINER_STR(name), sizeof(name), CMETA_ALIGNOF(name), CMETA_T_OBJECT, NULL, NULL, NULL \
     }; \
     CMETA_LOCAL cmeta_container_desc name##_cmeta_container_desc = { \
         CMETA_CONTAINER_STR(name), &name##_cmeta_type, NULL, NULL, NULL, \

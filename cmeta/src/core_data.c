@@ -63,7 +63,7 @@ static void cmeta_uuid_cmeta_restore_zero(void *object) {
 }
 
 static void cmeta_uuid_cmeta_move(void *destination, void *source) {
-  if (destination == NULL || source == NULL) return;
+  if (destination == NULL || source == NULL || destination == source) return;
   memcpy(destination, source, sizeof(uuid_t));
   memset(source, 0, sizeof(uuid_t));
 }
@@ -170,7 +170,7 @@ static void cmeta_tstr_cmeta_restore_zero(void *object) {
 static void cmeta_tstr_cmeta_move(void *destination, void *source) {
   tstr *to = (tstr *)destination;
   tstr *from = (tstr *)source;
-  if (to == NULL || from == NULL)
+  if (to == NULL || from == NULL || to == from)
     return;
   *to = *from;
   *from = NULL;
@@ -197,6 +197,12 @@ CMETA_INLINE void cmeta_tstr_cmeta_data_destroy(void *object) {
 
 static int cmeta_tstr_cmeta_compare(
     const void *left, const void *right) {
+  if (left == right)
+    return 0;
+  if (left == NULL)
+    return -1;
+  if (right == NULL)
+    return 1;
   return tstr_cmp(*(const tstr *)left, *(const tstr *)right);
 }
 

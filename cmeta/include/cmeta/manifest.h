@@ -138,14 +138,21 @@ static inline uint64_t cmeta_abi_fingerprint_finish(
     return builder == NULL ? UINT64_C(0) : builder->value;
 }
 
-static inline void cmeta_abi_fingerprint_identity(
+static inline void cmeta_abi_fingerprint_identity_bounded(
     cmeta_abi_fingerprint_builder *builder,
-    const cmeta_type_identity *identity) {
+    const cmeta_type_identity *identity,
+    size_t depth,
+    size_t *remaining_nodes) {
     size_t i;
     if (identity == NULL) {
         cmeta_abi_fingerprint_u64(builder, UINT64_C(0));
         return;
     }
+    if (depth > CMETA_TYPE_IDENTITY_MAX_DEPTH || *remaining_nodes == 0u) {
+        cmeta_abi_fingerprint_u64(builder, UINT64_MAX);
+        return;
+    }
+    --*remaining_nodes;
 
     cmeta_abi_fingerprint_u64(builder, CMETA_MANIFEST_U64(identity->form) + UINT64_C(1));
     switch (identity->form) {
@@ -154,20 +161,34 @@ static inline void cmeta_abi_fingerprint_identity(
             break;
         case CMETA_TYPE_POINTER:
         case CMETA_TYPE_CONST:
-            cmeta_abi_fingerprint_identity(builder, identity->base);
+            cmeta_abi_fingerprint_identity_bounded(
+                builder, identity->base, depth + 1u, remaining_nodes);
             break;
         case CMETA_TYPE_APPLY:
             cmeta_abi_fingerprint_string(
                 builder,
                 identity->constructor == NULL ? NULL : identity->constructor->stable_id);
             cmeta_abi_fingerprint_u64(builder, CMETA_MANIFEST_U64(identity->arity));
+            if (identity->arity != 0u && identity->args == NULL) {
+                cmeta_abi_fingerprint_u64(builder, UINT64_MAX);
+                break;
+            }
             for (i = 0u; i < identity->arity; ++i)
-                cmeta_abi_fingerprint_identity(builder, identity->args[i]);
+                cmeta_abi_fingerprint_identity_bounded(
+                    builder, identity->args[i], depth + 1u, remaining_nodes);
             break;
         default:
             cmeta_abi_fingerprint_u64(builder, UINT64_MAX);
             break;
     }
+}
+
+static inline void cmeta_abi_fingerprint_identity(
+    cmeta_abi_fingerprint_builder *builder,
+    const cmeta_type_identity *identity) {
+    size_t remaining_nodes = CMETA_TYPE_IDENTITY_MAX_NODES;
+    cmeta_abi_fingerprint_identity_bounded(
+        builder, identity, 0u, &remaining_nodes);
 }
 
 static inline uint64_t cmeta_abi_fingerprint_type(const cmeta_type_desc *type) {
